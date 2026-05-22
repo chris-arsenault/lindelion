@@ -1,0 +1,5 @@
+project: lindelion
+prefix: lindelion
+stack:
+  - rust
+rust_artifacts: {}

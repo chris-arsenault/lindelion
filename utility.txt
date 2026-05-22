@@ -1,0 +1,7 @@
+Repo / utility-crate sharing
+From the resonator-synth spec, the workspace already implies these crates we can extract and reuse:
+
+ahara-plugin-shell — VST3 integration (factory, component, parameter system, MIDI normalization, state I/O, baseview + Vizia binding). Fully reusable.
+ahara-sample-library — SQLite-indexed sample library with blake3 hashing, drag-drop ingest, waveform previews. Fully reusable, possibly with a small addition for slice-marker storage.
+ahara-dsp-utils — biquads, SVF, soft saturation, smoothing, common primitives. Reusable.
+ahara-ui — common Vizia widgets (knob, slider, waveform view, sample browser). Reusable; waveform view will get extended for slice-marker editing.

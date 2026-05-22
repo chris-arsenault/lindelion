@@ -1,0 +1,12 @@
+/target/
+**/*.vst3/
+.env
+.env.*
+.DS_Store
+node_modules/
+dist/
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+.idea/

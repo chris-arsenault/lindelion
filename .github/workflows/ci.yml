@@ -1,0 +1,24 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  ci:
+    uses: chris-arsenault/ahara/.github/workflows/ci.yml@main
+    with:
+      deploy: false
+      rust_extra_ci_commands: |
+        cargo run -p xtask -- check
+        rustup target add aarch64-apple-darwin
+        cargo check -p resonator-synth --target aarch64-apple-darwin
+    secrets: inherit

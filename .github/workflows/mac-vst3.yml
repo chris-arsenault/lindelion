@@ -1,0 +1,33 @@
+name: macOS VST3
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build resonator VST3
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Check workspace
+        run: cargo run -p xtask -- check
+
+      - name: Build VST3 bundle
+        run: cargo run -p xtask -- bundle resonator-synth --target aarch64-apple-darwin
+
+      - name: Upload VST3 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ahara-resonator-synth-vst3-macos-arm64
+          path: target/bundles/Ahara Resonator Synth.vst3

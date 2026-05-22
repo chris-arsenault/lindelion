@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ahara-dsp-utils",
+    "crates/ahara-onset-detect",
+    "crates/ahara-plugin-shell",
+    "crates/ahara-psola",
+    "crates/ahara-sample-library",
+    "crates/ahara-ui",
+    "plugins/resonator-synth",
+    "plugins/slicer",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+authors = ["Ahara"]
+
+[workspace.dependencies]
+ahara-dsp-utils = { path = "crates/ahara-dsp-utils" }
+ahara-onset-detect = { path = "crates/ahara-onset-detect" }
+ahara-plugin-shell = { path = "crates/ahara-plugin-shell" }
+ahara-psola = { path = "crates/ahara-psola" }
+ahara-sample-library = { path = "crates/ahara-sample-library" }
+ahara-ui = { path = "crates/ahara-ui" }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.9.8"
+vst3 = "0.3.0"
