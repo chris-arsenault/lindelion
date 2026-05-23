@@ -34,7 +34,7 @@ impl AnalysisJob {
         mut quantize_settings: QuantizeSettings,
     ) -> Self {
         let sample_rate = scratchpad.sample_rate;
-        quantize_settings.sample_rate = sample_rate;
+        scratchpad.apply_midi_context(&mut quantize_settings);
         Self {
             sequence,
             scratchpad,
@@ -223,6 +223,27 @@ mod tests {
         TimingGrid,
     };
     use lindelion_pitch_detect::{PitchContour, PitchFrame};
+
+    #[test]
+    fn analysis_job_uses_scratchpad_midi_context() {
+        let scratchpad = ScratchpadAudio::with_metadata(
+            44_100,
+            crate::ScratchpadMetadata::new(128.0, 5, 8, 8),
+            vec![0.1, 0.2],
+        );
+
+        let job = AnalysisJob::new(
+            4,
+            scratchpad,
+            AnalysisSettings::default(),
+            QuantizeSettings::default(),
+        );
+
+        assert_eq!(job.quantize_settings.sample_rate, 44_100);
+        assert_eq!(job.quantize_settings.bpm, 128.0);
+        assert_eq!(job.quantize_settings.time_signature_numerator, 5);
+        assert_eq!(job.quantize_settings.time_signature_denominator, 8);
+    }
 
     #[test]
     fn stale_job_result_does_not_overwrite_newer_cache_sequence() {

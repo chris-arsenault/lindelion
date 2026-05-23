@@ -160,6 +160,10 @@ pub struct QuantizeSettings {
     pub velocity_amount: f32,
     pub sample_rate: u32,
     pub bpm: f32,
+    #[serde(default = "default_time_signature_numerator")]
+    pub time_signature_numerator: u8,
+    #[serde(default = "default_time_signature_denominator")]
+    pub time_signature_denominator: u8,
     pub ppq: u16,
 }
 
@@ -175,6 +179,8 @@ impl Default for QuantizeSettings {
             velocity_amount: 0.0,
             sample_rate: 48_000,
             bpm: 120.0,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
             ppq: DEFAULT_PPQ,
         }
     }
@@ -199,11 +205,21 @@ pub struct MidiClip {
 
 impl MidiClip {
     pub fn empty(bpm: u16) -> Self {
+        Self::empty_with_time_signature(bpm, 4, 4)
+    }
+
+    pub fn empty_with_time_signature(
+        bpm: u16,
+        time_signature_numerator: u8,
+        time_signature_denominator: u8,
+    ) -> Self {
         Self {
             ppq: DEFAULT_PPQ,
             bpm,
-            time_signature_numerator: 4,
-            time_signature_denominator: 4,
+            time_signature_numerator: sanitize_time_signature_numerator(time_signature_numerator),
+            time_signature_denominator: sanitize_time_signature_denominator(
+                time_signature_denominator,
+            ),
             notes: Vec::new(),
         }
     }
@@ -301,10 +317,11 @@ pub fn quantize_notes(notes: &[DetectedNote], settings: &QuantizeSettings) -> Ve
         .fold(0.0, f32::max)
         .max(0.000_001);
 
-    notes
+    let notes = notes
         .iter()
         .filter_map(|note| quantize_note(*note, &settings, peak_capture_rms))
-        .collect()
+        .collect();
+    make_notes_monophonic(notes, settings.ppq)
 }
 
 pub fn clip_from_detected_notes(notes: &[DetectedNote], settings: &QuantizeSettings) -> MidiClip {
@@ -312,8 +329,8 @@ pub fn clip_from_detected_notes(notes: &[DetectedNote], settings: &QuantizeSetti
     MidiClip {
         ppq: settings.ppq,
         bpm: settings.bpm.round().clamp(1.0, u16::MAX as f32) as u16,
-        time_signature_numerator: 4,
-        time_signature_denominator: 4,
+        time_signature_numerator: settings.time_signature_numerator,
+        time_signature_denominator: settings.time_signature_denominator,
         notes: quantize_notes(notes, &settings),
     }
 }
@@ -344,7 +361,7 @@ fn quantize_note(
     let emitted_start_beats = start_beats + (target_beats - start_beats) * strength;
     let start_tick = beats_to_ticks(emitted_start_beats, settings.ppq);
     let duration_ticks =
-        beats_to_ticks(duration_beats, settings.ppq).max((settings.ppq / 16) as u32);
+        beats_to_ticks(duration_beats, settings.ppq).max(minimum_note_ticks(settings.ppq));
 
     Some(QuantizedNote {
         start_tick,
@@ -352,6 +369,17 @@ fn quantize_note(
         midi_note: snap_midi_note(midi_note_from_hz(note.pitch_hz), settings),
         velocity: velocity_from_rms(note.peak_rms, peak_capture_rms, settings.velocity_amount),
     })
+}
+
+fn make_notes_monophonic(mut notes: Vec<QuantizedNote>, ppq: u16) -> Vec<QuantizedNote> {
+    notes.sort_by_key(|note| (note.start_tick, note.midi_note));
+    let mut next_available_tick = 0;
+    for note in &mut notes {
+        note.start_tick = note.start_tick.max(next_available_tick);
+        note.duration_ticks = note.duration_ticks.max(minimum_note_ticks(ppq));
+        next_available_tick = note.start_tick.saturating_add(note.duration_ticks);
+    }
+    notes
 }
 
 fn snap_midi_note(note: f32, settings: &QuantizeSettings) -> u8 {
@@ -438,9 +466,39 @@ fn sanitize_settings(settings: &QuantizeSettings) -> QuantizeSettings {
     settings.velocity_amount = finite_or(settings.velocity_amount, 0.0).clamp(0.0, 1.0);
     settings.sample_rate = settings.sample_rate.max(1);
     settings.bpm = finite_or(settings.bpm, 120.0).clamp(1.0, 999.0);
+    settings.time_signature_numerator =
+        sanitize_time_signature_numerator(settings.time_signature_numerator);
+    settings.time_signature_denominator =
+        sanitize_time_signature_denominator(settings.time_signature_denominator);
     settings.ppq = settings.ppq.max(1);
     settings
 }
+
+fn minimum_note_ticks(ppq: u16) -> u32 {
+    (ppq.max(1) / 16).max(1) as u32
+}
+
+fn sanitize_time_signature_numerator(numerator: u8) -> u8 {
+    numerator.max(1)
+}
+
+fn sanitize_time_signature_denominator(denominator: u8) -> u8 {
+    match denominator {
+        1 | 2 | 4 | 8 | 16 | 32 => denominator,
+        _ => 4,
+    }
+}
+
+const fn default_time_signature_numerator() -> u8 {
+    4
+}
+
+const fn default_time_signature_denominator() -> u8 {
+    4
+}
+
+#[cfg(test)]
+mod midi_export_tests;
 
 #[cfg(test)]
 mod tests {

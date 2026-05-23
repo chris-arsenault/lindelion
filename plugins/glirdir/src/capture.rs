@@ -1,6 +1,6 @@
 use lindelion_plugin_shell::{AudioInputBuffer, ProcessSetup, TransportContext};
 
-use crate::patch::{CaptureSettings, CaptureState, ScratchpadAudio, SyncMode};
+use crate::patch::{CaptureSettings, CaptureState, ScratchpadAudio, ScratchpadMetadata, SyncMode};
 
 const MAX_CAPTURE_BARS: u8 = 16;
 const MIN_CAPTURE_BPM: f64 = 60.0;
@@ -21,6 +21,7 @@ pub struct CaptureEngine {
     write_len: usize,
     target_samples: usize,
     count_in_remaining_samples: usize,
+    capture_metadata: ScratchpadMetadata,
 }
 
 impl Default for CaptureEngine {
@@ -33,6 +34,7 @@ impl Default for CaptureEngine {
             write_len: 0,
             target_samples: 0,
             count_in_remaining_samples: 0,
+            capture_metadata: ScratchpadMetadata::default(),
         }
     }
 }
@@ -47,6 +49,7 @@ impl CaptureEngine {
         self.write_len = 0;
         self.target_samples = 0;
         self.count_in_remaining_samples = 0;
+        self.capture_metadata = ScratchpadMetadata::default();
         self.state = CaptureState::Idle;
     }
 
@@ -58,6 +61,7 @@ impl CaptureEngine {
         self.write_len = 0;
         self.target_samples = 0;
         self.count_in_remaining_samples = 0;
+        self.capture_metadata = ScratchpadMetadata::default();
         self.state = CaptureState::Armed;
     }
 
@@ -65,6 +69,7 @@ impl CaptureEngine {
         self.write_len = 0;
         self.target_samples = 0;
         self.count_in_remaining_samples = 0;
+        self.capture_metadata = ScratchpadMetadata::default();
         self.state = CaptureState::Idle;
     }
 
@@ -72,8 +77,11 @@ impl CaptureEngine {
         if self.state != CaptureState::Captured || self.write_len == 0 {
             return None;
         }
-        let scratchpad =
-            ScratchpadAudio::new(self.sample_rate, self.buffer[..self.write_len].to_vec());
+        let scratchpad = ScratchpadAudio::with_metadata(
+            self.sample_rate,
+            self.capture_metadata,
+            self.buffer[..self.write_len].to_vec(),
+        );
         self.write_len = 0;
         Some(scratchpad)
     }
@@ -147,6 +155,7 @@ impl CaptureEngine {
         self.target_samples = capture_samples(settings, transport, self.sample_rate)
             .min(self.buffer.len())
             .max(1);
+        self.capture_metadata = capture_metadata(settings, transport);
         self.state = CaptureState::Capturing;
     }
 
@@ -225,6 +234,16 @@ fn capture_paused(settings: CaptureSettings, transport: TransportContext) -> boo
     settings.sync_mode != SyncMode::Immediate && !transport.playing
 }
 
+fn capture_metadata(settings: CaptureSettings, transport: TransportContext) -> ScratchpadMetadata {
+    let signature = transport.time_signature_or_default();
+    ScratchpadMetadata::new(
+        transport.tempo_bpm_or(120.0),
+        signature.numerator,
+        signature.denominator,
+        settings.sanitized().bars.bars(),
+    )
+}
+
 fn seconds_to_samples(seconds: f64, sample_rate: u32) -> usize {
     (seconds.max(0.0) * sample_rate.max(1) as f64).round() as usize
 }
@@ -259,9 +278,46 @@ mod tests {
         let scratchpad = engine.take_completed_scratchpad().unwrap();
         assert_eq!(engine.state(), CaptureState::Captured);
         assert_eq!(scratchpad.sample_rate, 10);
+        assert_eq!(scratchpad.metadata.bpm, 120);
+        assert_eq!(scratchpad.metadata.time_signature_numerator, 4);
+        assert_eq!(scratchpad.metadata.time_signature_denominator, 4);
         assert_eq!(scratchpad.samples.len(), 80);
         assert_eq!(scratchpad.samples[0], 0.5);
         assert!(engine.take_completed_scratchpad().is_none());
+    }
+
+    #[test]
+    fn capture_stores_host_musical_context() {
+        let setup = ProcessSetup {
+            sample_rate: 10.0,
+            max_block_size: 280,
+            mode: ProcessMode::Realtime,
+        };
+        let transport = TransportContext {
+            tempo_bpm: Some(135.0),
+            time_signature: Some(TimeSignature::new(7, 8)),
+            ..TransportContext::default()
+        };
+        let input = vec![0.5; 280];
+        let mut engine = CaptureEngine::default();
+
+        engine.reset(setup);
+        engine.arm();
+        assert_eq!(
+            engine.process(
+                AudioInputBuffer::mono(&input),
+                setup,
+                transport,
+                CaptureSettings::default(),
+            ),
+            CaptureEvent::Completed
+        );
+
+        let scratchpad = engine.take_completed_scratchpad().unwrap();
+        assert_eq!(scratchpad.metadata.bpm, 135);
+        assert_eq!(scratchpad.metadata.time_signature_numerator, 7);
+        assert_eq!(scratchpad.metadata.time_signature_denominator, 8);
+        assert_eq!(scratchpad.metadata.capture_bars, 4);
     }
 
     #[test]

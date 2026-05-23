@@ -2,7 +2,12 @@ PLUGIN ?= lamath
 MACOS_TARGET ?= aarch64-apple-darwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
-BUNDLE_NAME ?= Lamath.vst3
+ifeq ($(PLUGIN),glirdir)
+DEFAULT_BUNDLE_NAME := Glirdir.vst3
+else
+DEFAULT_BUNDLE_NAME := Lamath.vst3
+endif
+BUNDLE_NAME ?= $(DEFAULT_BUNDLE_NAME)
 VST3_STAGING_DIR ?= $(CACHE_DIR)/bundles
 VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fs, rc::Rc};
 
 use lindelion_plugin_shell::{
     AudioBuffer, AudioInputBuffer, AudioPlugin, ProcessContext, ProcessMode, ProcessSetup,
@@ -10,7 +10,10 @@ use super::*;
 use crate::{
     AnalysisError, AnalysisJob, AnalysisJobResult, AnalysisSequence, AnalysisStatus, CaptureState,
     GlirdirPatch, GlirdirWorkerQueue, GlirdirWorkerResult, RequantizeJob,
-    TIMING_STRENGTH_PARAMETER_ID, patch_io,
+    TIMING_STRENGTH_PARAMETER_ID,
+    midi_export::{MidiExportJob, MidiExportPayload},
+    patch_io,
+    sample_library::{SampleLibrarySavePayload, SampleLibrarySaveStatus},
     vst3_entry::{
         controller::parameter_index, messages::GlirdirMessageKind, processor::GlirdirVst3Processor,
     },
@@ -18,9 +21,12 @@ use crate::{
 use lindelion_midi::MidiClip;
 use lindelion_pitch_detect::PitchContour;
 use lindelion_plugin_shell::ParameterId;
+use lindelion_ui::glirdir_vizia::{
+    GlirdirEditorCommand, GlirdirEditorLibraryStatus, GlirdirEditorMidiDrag,
+};
 
 #[test]
-fn plugin_message_roundtrips_phase5_payloads() {
+fn plugin_message_roundtrips_controller_payloads() {
     let status = GlirdirStatusPayload {
         capture_state: CaptureState::Captured,
         analysis_status: AnalysisStatus::Ready,
@@ -32,6 +38,14 @@ fn plugin_message_roundtrips_phase5_payloads() {
     assert_message_roundtrip(GlirdirPluginMessage::arm_capture());
     assert_message_roundtrip(GlirdirPluginMessage::clear_scratchpad());
     assert_message_roundtrip(GlirdirPluginMessage::finalize_capture_request());
+    assert_message_roundtrip(GlirdirPluginMessage::play_audition());
+    assert_message_roundtrip(GlirdirPluginMessage::stop_audition());
+    assert_message_roundtrip(GlirdirPluginMessage::toggle_audition_loop());
+    assert_message_roundtrip(GlirdirPluginMessage::toggle_audition_live_edit());
+    assert_message_roundtrip(GlirdirPluginMessage::sample_library_save_request());
+    assert_message_roundtrip(GlirdirPluginMessage::SampleLibrarySaveResponse(
+        SampleLibrarySavePayload::saved("scratch.wav").encode(),
+    ));
     assert_message_roundtrip(GlirdirPluginMessage::midi_export_request());
     assert_message_roundtrip(GlirdirPluginMessage::MidiExportResponse(b"midi".to_vec()));
     assert_message_roundtrip(GlirdirPluginMessage::status_request());
@@ -111,6 +125,24 @@ fn controller_status_response_updates_mirror() {
 }
 
 #[test]
+fn controller_sample_library_response_updates_editor_status() {
+    let controller = GlirdirVst3Controller::new();
+    let payload = SampleLibrarySavePayload::empty_scratchpad().encode();
+    let message = GlirdirPluginMessage::SampleLibrarySaveResponse(payload)
+        .into_com_message()
+        .to_com_ptr::<IMessage>()
+        .unwrap();
+    let host = super::editor::glirdir_editor_host(std::ptr::from_ref(&controller));
+
+    assert_eq!(unsafe { controller.notify(message.as_ptr()) }, kResultOk);
+
+    assert_eq!(
+        unsafe { host.status() }.library_status,
+        GlirdirEditorLibraryStatus::EmptyScratchpad
+    );
+}
+
+#[test]
 fn processor_notify_applies_patch_payload() {
     let processor = GlirdirVst3Processor::new();
     let patch = GlirdirPatch {
@@ -127,6 +159,26 @@ fn processor_notify_applies_patch_payload() {
 
     assert_eq!(result, kResultOk);
     assert_eq!(processor.plugin.borrow().patch().name, "Bridge Patch");
+}
+
+#[test]
+fn processor_save_request_rejects_empty_scratchpad_visibly() {
+    let controller_messages = Rc::new(RefCell::new(Vec::new()));
+    let peer = recording_peer(Rc::clone(&controller_messages));
+    let processor = GlirdirVst3Processor::new();
+
+    assert_eq!(unsafe { processor.connect(peer.as_ptr()) }, kResultOk);
+    notify_processor(
+        &processor,
+        GlirdirPluginMessage::sample_library_save_request(),
+    );
+
+    let messages = controller_messages.borrow();
+    let [GlirdirPluginMessage::SampleLibrarySaveResponse(payload)] = messages.as_slice() else {
+        panic!("expected sample-library save response");
+    };
+    let payload = SampleLibrarySavePayload::decode(payload).expect("save response payload");
+    assert_eq!(payload.status, SampleLibrarySaveStatus::EmptyScratchpad);
 }
 
 #[test]
@@ -224,6 +276,107 @@ fn controller_emits_finalize_request_to_peer() {
     assert_eq!(
         messages.borrow().as_slice(),
         &[GlirdirPluginMessage::FinalizeCaptureRequest]
+    );
+}
+
+#[test]
+fn editor_host_commands_emit_typed_controller_messages() {
+    let controller = GlirdirVst3Controller::new();
+    let messages = Rc::new(RefCell::new(Vec::new()));
+    let peer = recording_peer(Rc::clone(&messages));
+    let host = super::editor::glirdir_editor_host(std::ptr::from_ref(&controller));
+
+    assert_eq!(unsafe { controller.connect(peer.as_ptr()) }, kResultOk);
+    unsafe {
+        host.handle_command(GlirdirEditorCommand::ArmCapture);
+        host.handle_command(GlirdirEditorCommand::PlayAudition);
+        host.handle_command(GlirdirEditorCommand::StopAudition);
+        host.handle_command(GlirdirEditorCommand::ToggleLoop);
+        host.handle_command(GlirdirEditorCommand::ToggleLiveEdit);
+        host.handle_command(GlirdirEditorCommand::SaveScratchpadToLibrary);
+        host.handle_command(GlirdirEditorCommand::ExportMidi);
+    }
+
+    assert_eq!(
+        messages.borrow().as_slice(),
+        &[
+            GlirdirPluginMessage::ArmCapture,
+            GlirdirPluginMessage::PlayAudition,
+            GlirdirPluginMessage::StopAudition,
+            GlirdirPluginMessage::ToggleAuditionLoop,
+            GlirdirPluginMessage::ToggleAuditionLiveEdit,
+            GlirdirPluginMessage::SampleLibrarySaveRequest,
+            GlirdirPluginMessage::MidiExportRequest,
+        ]
+    );
+}
+
+#[test]
+fn controller_prepares_empty_drag_file_without_analysis() {
+    let controller = GlirdirVst3Controller::new();
+
+    let drag = controller.prepare_midi_drag_file();
+
+    let GlirdirEditorMidiDrag::Ready { path } = drag else {
+        panic!("empty drag should produce a MIDI file");
+    };
+    let bytes = fs::read(&path).expect("drag MIDI file should exist");
+    assert_eq!(&bytes[..4], b"MThd");
+    controller.cleanup_midi_drag_files();
+    assert!(!path.exists());
+}
+
+#[test]
+fn controller_bounds_repeated_drag_temp_files() {
+    let controller = GlirdirVst3Controller::new();
+    let midi = MidiClip::empty(120).to_smf_bytes().unwrap();
+    controller
+        .last_midi_export
+        .replace(Some(MidiExportPayload::new(
+            "glirdir-Cchrom-4bar-120bpm.mid",
+            midi,
+        )));
+    let mut paths = Vec::new();
+
+    for _ in 0..(super::controller::MAX_MIDI_DRAG_FILES + 2) {
+        let GlirdirEditorMidiDrag::Ready { path } = controller.prepare_midi_drag_file() else {
+            panic!("cached MIDI export should be drag-ready");
+        };
+        paths.push(path);
+    }
+
+    assert!(controller.midi_drag_files.borrow().len() <= super::controller::MAX_MIDI_DRAG_FILES);
+    assert!(
+        paths
+            .last()
+            .unwrap()
+            .ends_with("glirdir-Cchrom-4bar-120bpm.mid")
+    );
+    assert!(!paths[0].exists());
+    assert!(paths.last().is_some_and(|path| path.exists()));
+    controller.cleanup_midi_drag_files();
+}
+
+#[test]
+fn controller_queues_drag_export_when_analysis_has_no_cached_midi() {
+    let controller = GlirdirVst3Controller::new();
+    let messages = Rc::new(RefCell::new(Vec::new()));
+    let peer = recording_peer(Rc::clone(&messages));
+    controller.status.set(GlirdirStatusPayload {
+        capture_state: CaptureState::Captured,
+        analysis_status: AnalysisStatus::Ready,
+        has_scratchpad: true,
+        has_analysis: true,
+    });
+
+    assert_eq!(unsafe { controller.connect(peer.as_ptr()) }, kResultOk);
+    assert_eq!(
+        controller.prepare_midi_drag_file(),
+        GlirdirEditorMidiDrag::Requested
+    );
+    assert_eq!(
+        messages.borrow().as_slice(),
+        &[GlirdirPluginMessage::MidiExportRequest]
     );
 }
 
@@ -325,6 +478,7 @@ struct RecordingWorker {
     analysis_jobs: RefCell<Vec<AnalysisJob>>,
     requantize_jobs: RefCell<Vec<RequantizeJob>>,
     midi_exports: RefCell<Vec<AnalysisSequence>>,
+    sample_saves: RefCell<Vec<AnalysisSequence>>,
     results: RefCell<Vec<GlirdirWorkerResult>>,
 }
 
@@ -345,8 +499,16 @@ impl GlirdirWorkerQueue for Rc<RecordingWorker> {
         true
     }
 
-    fn schedule_midi_export(&self, sequence: AnalysisSequence, _clip: MidiClip) -> bool {
-        self.midi_exports.borrow_mut().push(sequence);
+    fn schedule_midi_export(&self, job: MidiExportJob) -> bool {
+        self.midi_exports.borrow_mut().push(job.sequence);
+        true
+    }
+
+    fn schedule_sample_library_save(
+        &self,
+        job: crate::sample_library::SampleLibrarySaveJob,
+    ) -> bool {
+        self.sample_saves.borrow_mut().push(job.sequence);
         true
     }
 

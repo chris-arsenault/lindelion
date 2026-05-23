@@ -11,6 +11,12 @@ pub(super) enum GlirdirMessageKind {
     ArmCapture,
     ClearScratchpad,
     FinalizeCaptureRequest,
+    PlayAudition,
+    StopAudition,
+    ToggleAuditionLoop,
+    ToggleAuditionLiveEdit,
+    SampleLibrarySaveRequest,
+    SampleLibrarySaveResponse,
     AnalysisStatusResponse,
     PatchUpdate,
     MidiExportRequest,
@@ -27,6 +33,12 @@ impl PluginMessageType for GlirdirMessageKind {
             Self::ArmCapture => "lindelion.glirdir.arm_capture",
             Self::ClearScratchpad => "lindelion.glirdir.clear_scratchpad",
             Self::FinalizeCaptureRequest => "lindelion.glirdir.finalize_capture_request",
+            Self::PlayAudition => "lindelion.glirdir.play_audition",
+            Self::StopAudition => "lindelion.glirdir.stop_audition",
+            Self::ToggleAuditionLoop => "lindelion.glirdir.toggle_audition_loop",
+            Self::ToggleAuditionLiveEdit => "lindelion.glirdir.toggle_audition_live_edit",
+            Self::SampleLibrarySaveRequest => "lindelion.glirdir.sample_library_save_request",
+            Self::SampleLibrarySaveResponse => "lindelion.glirdir.sample_library_save_response",
             Self::AnalysisStatusResponse => "lindelion.glirdir.analysis_status_response",
             Self::PatchUpdate => "lindelion.glirdir.patch_update",
             Self::MidiExportRequest => "lindelion.glirdir.midi_export_request",
@@ -43,6 +55,14 @@ impl PluginMessageType for GlirdirMessageKind {
             "lindelion.glirdir.arm_capture" => Some(Self::ArmCapture),
             "lindelion.glirdir.clear_scratchpad" => Some(Self::ClearScratchpad),
             "lindelion.glirdir.finalize_capture_request" => Some(Self::FinalizeCaptureRequest),
+            "lindelion.glirdir.play_audition" => Some(Self::PlayAudition),
+            "lindelion.glirdir.stop_audition" => Some(Self::StopAudition),
+            "lindelion.glirdir.toggle_audition_loop" => Some(Self::ToggleAuditionLoop),
+            "lindelion.glirdir.toggle_audition_live_edit" => Some(Self::ToggleAuditionLiveEdit),
+            "lindelion.glirdir.sample_library_save_request" => Some(Self::SampleLibrarySaveRequest),
+            "lindelion.glirdir.sample_library_save_response" => {
+                Some(Self::SampleLibrarySaveResponse)
+            }
             "lindelion.glirdir.analysis_status_response" => Some(Self::AnalysisStatusResponse),
             "lindelion.glirdir.patch_update" => Some(Self::PatchUpdate),
             "lindelion.glirdir.midi_export_request" => Some(Self::MidiExportRequest),
@@ -61,6 +81,12 @@ pub(super) enum GlirdirPluginMessage {
     ArmCapture,
     ClearScratchpad,
     FinalizeCaptureRequest,
+    PlayAudition,
+    StopAudition,
+    ToggleAuditionLoop,
+    ToggleAuditionLiveEdit,
+    SampleLibrarySaveRequest,
+    SampleLibrarySaveResponse(Vec<u8>),
     AnalysisStatusResponse(GlirdirStatusPayload),
     PatchUpdate(Vec<u8>),
     MidiExportRequest,
@@ -82,6 +108,26 @@ impl GlirdirPluginMessage {
 
     pub(super) fn finalize_capture_request() -> Self {
         Self::FinalizeCaptureRequest
+    }
+
+    pub(super) fn play_audition() -> Self {
+        Self::PlayAudition
+    }
+
+    pub(super) fn stop_audition() -> Self {
+        Self::StopAudition
+    }
+
+    pub(super) fn toggle_audition_loop() -> Self {
+        Self::ToggleAuditionLoop
+    }
+
+    pub(super) fn toggle_audition_live_edit() -> Self {
+        Self::ToggleAuditionLiveEdit
+    }
+
+    pub(super) fn sample_library_save_request() -> Self {
+        Self::SampleLibrarySaveRequest
     }
 
     pub(super) fn patch_update(payload: Vec<u8>) -> Self {
@@ -106,6 +152,20 @@ impl GlirdirPluginMessage {
             Self::ClearScratchpad => TypedPluginMessage::empty(GlirdirMessageKind::ClearScratchpad),
             Self::FinalizeCaptureRequest => {
                 TypedPluginMessage::empty(GlirdirMessageKind::FinalizeCaptureRequest)
+            }
+            Self::PlayAudition => TypedPluginMessage::empty(GlirdirMessageKind::PlayAudition),
+            Self::StopAudition => TypedPluginMessage::empty(GlirdirMessageKind::StopAudition),
+            Self::ToggleAuditionLoop => {
+                TypedPluginMessage::empty(GlirdirMessageKind::ToggleAuditionLoop)
+            }
+            Self::ToggleAuditionLiveEdit => {
+                TypedPluginMessage::empty(GlirdirMessageKind::ToggleAuditionLiveEdit)
+            }
+            Self::SampleLibrarySaveRequest => {
+                TypedPluginMessage::empty(GlirdirMessageKind::SampleLibrarySaveRequest)
+            }
+            Self::SampleLibrarySaveResponse(payload) => {
+                TypedPluginMessage::new(GlirdirMessageKind::SampleLibrarySaveResponse, payload)
             }
             Self::AnalysisStatusResponse(status) => {
                 TypedPluginMessage::new(GlirdirMessageKind::AnalysisStatusResponse, status.encode())
@@ -145,6 +205,20 @@ impl GlirdirPluginMessage {
             }
             GlirdirMessageKind::FinalizeCaptureRequest => {
                 empty_request(message.payload, Self::FinalizeCaptureRequest)
+            }
+            GlirdirMessageKind::PlayAudition => empty_request(message.payload, Self::PlayAudition),
+            GlirdirMessageKind::StopAudition => empty_request(message.payload, Self::StopAudition),
+            GlirdirMessageKind::ToggleAuditionLoop => {
+                empty_request(message.payload, Self::ToggleAuditionLoop)
+            }
+            GlirdirMessageKind::ToggleAuditionLiveEdit => {
+                empty_request(message.payload, Self::ToggleAuditionLiveEdit)
+            }
+            GlirdirMessageKind::SampleLibrarySaveRequest => {
+                empty_request(message.payload, Self::SampleLibrarySaveRequest)
+            }
+            GlirdirMessageKind::SampleLibrarySaveResponse => {
+                Ok(Some(Self::SampleLibrarySaveResponse(message.payload)))
             }
             GlirdirMessageKind::PatchUpdate => Ok(Some(Self::PatchUpdate(message.payload))),
             GlirdirMessageKind::MidiExportRequest => {

@@ -360,4 +360,45 @@ mod tests {
         );
         assert!(contour.frames.iter().all(|frame| frame.rms.is_finite()));
     }
+
+    #[test]
+    fn swiftf0_tracks_synthetic_sine_pitch() {
+        let audio = sine_wave(440.0, 16_000);
+
+        let contour = SwiftF0Detector::default().detect(&audio, 16_000).unwrap();
+        let voiced = contour
+            .frames
+            .iter()
+            .filter_map(|frame| frame.f0_hz)
+            .collect::<Vec<_>>();
+
+        assert!(
+            voiced.len() >= 4,
+            "expected voiced SwiftF0 frames, got {}",
+            voiced.len()
+        );
+        assert_close_cents(median(voiced), 440.0, 80.0);
+    }
+
+    fn sine_wave(frequency_hz: f32, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|index| {
+                let phase = std::f32::consts::TAU * frequency_hz * index as f32 / 16_000.0;
+                phase.sin() * 0.5
+            })
+            .collect()
+    }
+
+    fn median(mut values: Vec<f32>) -> f32 {
+        values.sort_by(f32::total_cmp);
+        values[values.len() / 2]
+    }
+
+    fn assert_close_cents(actual_hz: f32, expected_hz: f32, tolerance_cents: f32) {
+        let cents = 1200.0 * (actual_hz / expected_hz).log2().abs();
+        assert!(
+            cents <= tolerance_cents,
+            "expected {actual_hz} Hz within {tolerance_cents} cents of {expected_hz} Hz, got {cents}"
+        );
+    }
 }

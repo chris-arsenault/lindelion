@@ -3,11 +3,11 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use lindelion_midi::MidiClip;
-
 use crate::{
     AnalysisJob, AnalysisJobResult, AnalysisSequence, RequantizeJob,
     analysis_job::{run_analysis_job, run_requantize_job},
+    midi_export::MidiExportJob,
+    sample_library::SampleLibrarySaveJob,
 };
 
 pub(crate) trait GlirdirWorkerQueue {
@@ -15,7 +15,9 @@ pub(crate) trait GlirdirWorkerQueue {
 
     fn schedule_requantize(&self, job: RequantizeJob) -> bool;
 
-    fn schedule_midi_export(&self, sequence: AnalysisSequence, clip: MidiClip) -> bool;
+    fn schedule_midi_export(&self, job: MidiExportJob) -> bool;
+
+    fn schedule_sample_library_save(&self, job: SampleLibrarySaveJob) -> bool;
 
     fn drain_results(&self, publish: &mut dyn FnMut(GlirdirWorkerResult)) -> usize;
 }
@@ -25,7 +27,11 @@ pub(crate) enum GlirdirWorkerResult {
     Analysis(AnalysisJobResult),
     MidiExport {
         sequence: AnalysisSequence,
-        bytes: Vec<u8>,
+        payload: Vec<u8>,
+    },
+    SampleLibrarySave {
+        sequence: AnalysisSequence,
+        payload: Vec<u8>,
     },
 }
 
@@ -74,9 +80,15 @@ impl GlirdirWorkerQueue for GlirdirWorker {
             .is_ok()
     }
 
-    fn schedule_midi_export(&self, sequence: AnalysisSequence, clip: MidiClip) -> bool {
+    fn schedule_midi_export(&self, job: MidiExportJob) -> bool {
         self.commands
-            .send(GlirdirWorkerCommand::ExportMidi { sequence, clip })
+            .send(GlirdirWorkerCommand::ExportMidi(job))
+            .is_ok()
+    }
+
+    fn schedule_sample_library_save(&self, job: SampleLibrarySaveJob) -> bool {
+        self.commands
+            .send(GlirdirWorkerCommand::SaveSample(job))
             .is_ok()
     }
 
@@ -115,10 +127,8 @@ impl AnalysisJobRunner for DefaultAnalysisRunner {
 enum GlirdirWorkerCommand {
     Analyze(AnalysisJob),
     Requantize(RequantizeJob),
-    ExportMidi {
-        sequence: AnalysisSequence,
-        clip: MidiClip,
-    },
+    ExportMidi(MidiExportJob),
+    SaveSample(SampleLibrarySaveJob),
     Shutdown,
 }
 
@@ -139,10 +149,22 @@ fn run_worker<R>(
                 let result = run_requantize_job(job);
                 let _ = results.send(GlirdirWorkerResult::Analysis(result));
             }
-            GlirdirWorkerCommand::ExportMidi { sequence, clip } => {
-                if let Ok(bytes) = clip.to_smf_bytes() {
-                    let _ = results.send(GlirdirWorkerResult::MidiExport { sequence, bytes });
+            GlirdirWorkerCommand::ExportMidi(job) => {
+                let sequence = job.sequence;
+                if let Some(payload) = job.export() {
+                    let _ = results.send(GlirdirWorkerResult::MidiExport {
+                        sequence,
+                        payload: payload.encode(),
+                    });
                 }
+            }
+            GlirdirWorkerCommand::SaveSample(job) => {
+                let sequence = job.sequence;
+                let payload = job.save();
+                let _ = results.send(GlirdirWorkerResult::SampleLibrarySave {
+                    sequence,
+                    payload: payload.encode(),
+                });
             }
             GlirdirWorkerCommand::Shutdown => break,
         }
@@ -155,13 +177,13 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use lindelion_midi::{DetectedNote, MidiClip, QuantizedNote};
     use lindelion_pitch_detect::{PitchContour, PitchFrame};
 
     use super::*;
-    use crate::{AnalysisError, ScratchpadAudio};
+    use crate::{AnalysisError, GlirdirPatch, ScratchpadAudio};
 
     #[test]
     fn worker_runs_analysis_jobs_with_injected_runner() {
@@ -190,14 +212,51 @@ mod tests {
             calls: Arc::new(AtomicUsize::new(0)),
         });
 
-        assert!(worker.schedule_midi_export(3, MidiClip::empty(120)));
+        assert!(worker.schedule_midi_export(MidiExportJob {
+            sequence: 3,
+            clip: MidiClip::empty(120),
+            file_name: "glirdir-Cchrom-4bar-120bpm.mid".to_string(),
+        }));
 
         let result = wait_for_one_result(&worker);
-        let GlirdirWorkerResult::MidiExport { sequence, bytes } = result else {
+        let GlirdirWorkerResult::MidiExport { sequence, payload } = result else {
             panic!("expected MIDI export result");
         };
         assert_eq!(sequence, 3);
-        assert!(bytes.starts_with(b"MThd"));
+        let export = crate::midi_export::MidiExportPayload::decode(&payload).unwrap();
+        assert_eq!(export.file_name, "glirdir-Cchrom-4bar-120bpm.mid");
+        assert!(export.bytes.starts_with(b"MThd"));
+    }
+
+    #[test]
+    fn worker_saves_scratchpad_to_sample_library_off_thread() {
+        let worker = GlirdirWorker::with_runner(CountingRunner {
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("lindelion-worker-save-{nanos}"));
+        let patch = GlirdirPatch {
+            scratchpad: Some(ScratchpadAudio::new(48_000, vec![0.0, 0.25, -0.25])),
+            ..GlirdirPatch::default()
+        };
+        let job = SampleLibrarySaveJob::with_library_root(11, &patch, root)
+            .expect("scratchpad should create save job");
+
+        assert!(worker.schedule_sample_library_save(job));
+
+        let result = wait_for_one_result(&worker);
+        let GlirdirWorkerResult::SampleLibrarySave { sequence, payload } = result else {
+            panic!("expected sample-library save result");
+        };
+        assert_eq!(sequence, 11);
+        let payload = crate::sample_library::SampleLibrarySavePayload::decode(&payload).unwrap();
+        assert_eq!(
+            payload.status,
+            crate::sample_library::SampleLibrarySaveStatus::Saved
+        );
     }
 
     #[test]

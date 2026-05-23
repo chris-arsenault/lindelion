@@ -3,7 +3,7 @@ use lindelion_dsp_utils::{
     smoothing::{SmoothedParam, SmoothedParamSpec},
 };
 use lindelion_midi::MidiClip;
-use lindelion_plugin_shell::{AudioBuffer, ProcessSetup};
+use lindelion_plugin_shell::{AudioBuffer, ProcessSetup, TransportContext};
 
 use crate::patch::AuditionSettings;
 
@@ -45,6 +45,10 @@ impl AuditionEngine {
         self.position_samples = 0;
     }
 
+    pub fn resume(&mut self) {
+        self.playing = true;
+    }
+
     pub fn stop(&mut self) {
         self.playing = false;
         self.position_samples = 0;
@@ -60,6 +64,7 @@ impl AuditionEngine {
         &mut self,
         clip: Option<&MidiClip>,
         setup: ProcessSetup,
+        transport: TransportContext,
         buffer: &mut AudioBuffer<'_>,
     ) {
         if !self.playing {
@@ -74,8 +79,10 @@ impl AuditionEngine {
 
         let phrase_samples = clip_end_samples(clip, setup).max(1);
         let len = buffer.len();
+        let synced_position = synced_position_samples(clip, setup, transport);
+        let start_position = synced_position.unwrap_or(self.position_samples);
         for index in 0..len {
-            let position = self.position_samples + index;
+            let position = start_position + index;
             let phrase_position = if self.loop_enabled {
                 position % phrase_samples
             } else {
@@ -87,7 +94,7 @@ impl AuditionEngine {
             buffer.right[index] += sample;
         }
 
-        self.position_samples = self.position_samples.saturating_add(len);
+        self.position_samples = start_position.saturating_add(len);
         if !self.loop_enabled && self.position_samples >= phrase_samples {
             self.stop();
         }
@@ -111,6 +118,21 @@ impl AuditionEngine {
         }
         sample.clamp(-1.0, 1.0)
     }
+
+    #[cfg(test)]
+    const fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    #[cfg(test)]
+    const fn position_samples(&self) -> usize {
+        self.position_samples
+    }
+
+    #[cfg(test)]
+    const fn current_volume(&self) -> f32 {
+        self.volume.current()
+    }
 }
 
 fn volume_spec() -> SmoothedParamSpec {
@@ -124,6 +146,27 @@ fn clip_end_samples(clip: &MidiClip, setup: ProcessSetup) -> usize {
         .map(|tick| ticks_to_samples(tick, clip, setup))
         .max()
         .unwrap_or(0)
+}
+
+fn synced_position_samples(
+    clip: &MidiClip,
+    setup: ProcessSetup,
+    transport: TransportContext,
+) -> Option<usize> {
+    if !transport.playing {
+        return None;
+    }
+    if let Some(project_quarter_note) = transport.project_quarter_note
+        && project_quarter_note.is_finite()
+        && project_quarter_note >= 0.0
+    {
+        let seconds = project_quarter_note * 60.0 / f64::from(clip.bpm.max(1));
+        return Some((seconds * setup.sample_rate.max(1.0)).round() as usize);
+    }
+    transport
+        .sample_position
+        .filter(|position| *position >= 0)
+        .map(|position| position as usize)
 }
 
 fn ticks_to_samples(ticks: u32, clip: &MidiClip, setup: ProcessSetup) -> usize {
@@ -170,17 +213,188 @@ mod tests {
         let mut right = vec![0.0; 512];
 
         audition.play();
-        audition.render(
-            Some(&clip),
+        render_block(
+            &mut audition,
+            &clip,
             setup,
-            &mut AudioBuffer {
-                left: &mut left,
-                right: &mut right,
-            },
+            TransportContext::default(),
+            &mut left,
+            &mut right,
         );
 
         assert!(left.iter().all(|sample| sample.is_finite()));
         assert!(right.iter().all(|sample| sample.is_finite()));
         assert!(left.iter().any(|sample| sample.abs() > 0.000_001));
+    }
+
+    #[test]
+    fn render_does_not_allocate() {
+        let setup = setup();
+        let clip = test_clip();
+        let mut audition = AuditionEngine::new(setup.sample_rate as f32);
+        let mut left = vec![0.0; 512];
+        let mut right = vec![0.0; 512];
+
+        audition.play();
+        crate::assert_no_allocations("glirdir audition render", || {
+            render_block(
+                &mut audition,
+                &clip,
+                setup,
+                TransportContext::default(),
+                &mut left,
+                &mut right,
+            );
+        });
+    }
+
+    #[test]
+    fn loop_wraps_playhead_inside_clip() {
+        let setup = setup();
+        let clip = test_clip();
+        let mut audition = AuditionEngine::new(setup.sample_rate as f32);
+        let mut left = vec![0.0; 50_000];
+        let mut right = vec![0.0; 50_000];
+
+        audition.play();
+        render_block(
+            &mut audition,
+            &clip,
+            setup,
+            TransportContext::default(),
+            &mut left,
+            &mut right,
+        );
+
+        assert!(audition.is_playing());
+        assert!(
+            left[48_010..48_200]
+                .iter()
+                .any(|sample| sample.abs() > 0.000_001)
+        );
+    }
+
+    #[test]
+    fn stop_clears_playhead() {
+        let setup = setup();
+        let clip = test_clip();
+        let mut audition = AuditionEngine::new(setup.sample_rate as f32);
+        let mut left = vec![0.0; 512];
+        let mut right = vec![0.0; 512];
+
+        audition.play();
+        render_block(
+            &mut audition,
+            &clip,
+            setup,
+            TransportContext::default(),
+            &mut left,
+            &mut right,
+        );
+        assert!(audition.position_samples() > 0);
+
+        audition.stop();
+
+        assert!(!audition.is_playing());
+        assert_eq!(audition.position_samples(), 0);
+    }
+
+    #[test]
+    fn resume_keeps_current_playhead() {
+        let setup = setup();
+        let clip = test_clip();
+        let mut audition = AuditionEngine::new(setup.sample_rate as f32);
+        let mut left = vec![0.0; 512];
+        let mut right = vec![0.0; 512];
+
+        audition.play();
+        render_block(
+            &mut audition,
+            &clip,
+            setup,
+            TransportContext::default(),
+            &mut left,
+            &mut right,
+        );
+        let position = audition.position_samples();
+
+        audition.resume();
+
+        assert!(audition.is_playing());
+        assert_eq!(audition.position_samples(), position);
+    }
+
+    #[test]
+    fn volume_changes_are_smoothed() {
+        let mut audition = AuditionEngine::new(1_000.0);
+
+        audition.set_settings(AuditionSettings {
+            volume: 0.0,
+            ..AuditionSettings::default()
+        });
+
+        assert_eq!(audition.volume.target(), 0.0);
+        assert!(audition.volume.is_smoothing());
+        assert!(audition.current_volume() > 0.0);
+    }
+
+    #[test]
+    fn host_transport_syncs_audition_position_to_project_beats() {
+        let setup = setup();
+        let clip = test_clip();
+        let mut audition = AuditionEngine::new(setup.sample_rate as f32);
+        let mut left = vec![0.0; 512];
+        let mut right = vec![0.0; 512];
+
+        audition.play();
+        render_block(
+            &mut audition,
+            &clip,
+            setup,
+            TransportContext {
+                playing: true,
+                project_quarter_note: Some(1.0),
+                ..TransportContext::default()
+            },
+            &mut left,
+            &mut right,
+        );
+
+        assert_eq!(audition.position_samples(), 24_512);
+    }
+
+    fn setup() -> ProcessSetup {
+        ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            mode: ProcessMode::Realtime,
+        }
+    }
+
+    fn test_clip() -> MidiClip {
+        MidiClip {
+            ppq: 960,
+            bpm: 120,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
+            notes: vec![QuantizedNote {
+                start_tick: 0,
+                duration_ticks: 960,
+                midi_note: 69,
+                velocity: 100,
+            }],
+        }
+    }
+
+    fn render_block(
+        audition: &mut AuditionEngine,
+        clip: &MidiClip,
+        setup: ProcessSetup,
+        transport: TransportContext,
+        left: &mut [f32],
+        right: &mut [f32],
+    ) {
+        let mut buffer = AudioBuffer { left, right };
+        audition.render(Some(clip), setup, transport, &mut buffer);
     }
 }

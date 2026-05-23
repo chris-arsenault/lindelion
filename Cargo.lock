@@ -1111,6 +1111,7 @@ dependencies = [
  "lindelion-pitch-detect",
  "lindelion-plugin-shell",
  "lindelion-sample-library",
+ "lindelion-ui",
  "serde",
  "toml 0.9.12+spec-1.1.0",
  "vst3",
@@ -1583,6 +1584,9 @@ dependencies = [
 name = "lindelion-ui"
 version = "0.3.0"
 dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "rfd",
  "vizia",
 ]
@@ -2268,7 +2272,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn",

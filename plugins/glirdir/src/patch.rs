@@ -195,20 +195,73 @@ impl AuditionSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScratchpadAudio {
     pub sample_rate: u32,
+    #[serde(default)]
+    pub metadata: ScratchpadMetadata,
     pub samples: Vec<f32>,
 }
 
 impl ScratchpadAudio {
-    pub fn new(sample_rate: u32, mut samples: Vec<f32>) -> Self {
+    pub fn new(sample_rate: u32, samples: Vec<f32>) -> Self {
+        Self::with_metadata(sample_rate, ScratchpadMetadata::default(), samples)
+    }
+
+    pub fn with_metadata(
+        sample_rate: u32,
+        metadata: ScratchpadMetadata,
+        mut samples: Vec<f32>,
+    ) -> Self {
         sanitize_samples(&mut samples);
         Self {
             sample_rate: sample_rate.max(1),
+            metadata,
             samples,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
+    }
+
+    pub fn apply_midi_context(&self, settings: &mut QuantizeSettings) {
+        settings.sample_rate = self.sample_rate;
+        settings.bpm = f32::from(self.metadata.bpm);
+        settings.time_signature_numerator = self.metadata.time_signature_numerator;
+        settings.time_signature_denominator = self.metadata.time_signature_denominator;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScratchpadMetadata {
+    pub bpm: u16,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    pub capture_bars: u8,
+}
+
+impl Default for ScratchpadMetadata {
+    fn default() -> Self {
+        Self {
+            bpm: 120,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
+            capture_bars: 4,
+        }
+    }
+}
+
+impl ScratchpadMetadata {
+    pub fn new(
+        bpm: f64,
+        time_signature_numerator: u16,
+        time_signature_denominator: u16,
+        capture_bars: u8,
+    ) -> Self {
+        Self {
+            bpm: sanitize_bpm(bpm),
+            time_signature_numerator: sanitize_u8(time_signature_numerator, 1),
+            time_signature_denominator: sanitize_denominator(time_signature_denominator),
+            capture_bars: capture_bars.max(1),
+        }
     }
 }
 
@@ -225,5 +278,24 @@ fn sanitize_samples(samples: &mut [f32]) {
         if !sample.is_finite() {
             *sample = 0.0;
         }
+    }
+}
+
+fn sanitize_bpm(value: f64) -> u16 {
+    if value.is_finite() {
+        value.round().clamp(1.0, 999.0) as u16
+    } else {
+        120
+    }
+}
+
+fn sanitize_u8(value: u16, fallback: u8) -> u8 {
+    u8::try_from(value).unwrap_or(fallback).max(1)
+}
+
+fn sanitize_denominator(value: u16) -> u8 {
+    match value {
+        1 | 2 | 4 | 8 | 16 | 32 => value as u8,
+        _ => 4,
     }
 }

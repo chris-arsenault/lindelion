@@ -9,14 +9,14 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `crates/lindelion-plugin-shell` | Shared plugin boundary: descriptors, parameters, process context, MIDI/control events, state, typed VST3 messages, VST3 factory helpers, TOML patch I/O, and voice allocation. |
 | `crates/lindelion-dsp-utils` | DSP support code: analysis, delay/interpolation, envelopes, filters, math, smoothing, saturation, and parameter smoothing policies. |
 | `crates/lindelion-sample-library` | Sample references, hashing, file-library ingest, preview generation, and moved-file recovery by content hash. |
-| `crates/lindelion-ui` | Shared UI command model, editor services, and the Lamath Vizia editor surface. |
+| `crates/lindelion-ui` | Shared UI command model, editor services, and product Vizia editor surfaces. |
 | `crates/lindelion-onset-detect` | Onset detection interfaces and detectors used by Linnod and Glirdir. |
 | `crates/lindelion-pitch-detect` | SwiftF0 ONNX pitch detection, confidence filtering, resampling, and pitch-contour DTOs shared by pitch-aware products. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, and Standard MIDI File emission. |
 | `crates/lindelion-psola` | Pitch-analysis and PSOLA boundary types for future melodic sample manipulation. |
 | `plugins/lamath` | Implemented breath-excited resonator VST3 instrument. |
 | `plugins/linnod` | Melodic sample-slicer scaffold with descriptor, parameters, patch model, and silent plugin implementation. |
-| `plugins/glirdir` | Sing-to-MIDI core crate: capture state, pitch/onset analysis, segmentation, quantized MIDI derivation, patch state, and audition. VST3/UI/drag-out integration are pending. |
+| `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: capture state, pitch/onset analysis, segmentation, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
 ## Shared Runtime Boundaries
@@ -28,7 +28,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 - `MidiEventNormalizer` converts host MIDI into internal `MidiEvent` values with plugin-provided controller routes and pitch-bend range.
 - `VoiceManager` owns allocation, stealing, retrigger reuse, active/released/idle transitions, and per-channel/per-note expression routing.
 - Pitch, onset, and MIDI derivation live in shared crates. Product plugins compose those crates and own only product-specific capture, segmentation policy, UI, and host integration.
-- `lindelion-ui` owns reusable editor commands and services; Lamath composes those into its product editor surface.
+- `lindelion-ui` owns reusable editor commands, editor services, and product editor surfaces while the workspace remains small.
 
 ## Durable Architecture Principles
 
@@ -82,18 +82,19 @@ These principles came out of the Lamath architecture remediation work and apply 
 - Patch I/O tests should cover valid roundtrips, malformed TOML, forward versions, migrations, and atomic writes.
 - DSP constant tests should pin numerical behavior for non-obvious formulas such as boundary models and conditioning filters.
 
-## Lamath VST3 Boundary
+## VST3 Product Boundaries
 
-Lamath is the only currently bundleable VST3 product. Its plugin crate keeps host ABI code under `plugins/lamath/src/vst3_entry/` and keeps audio/runtime code outside that boundary:
+Lamath and Glirdir are the current bundleable VST3 products. Their plugin crates keep host ABI code under `plugins/*/src/vst3_entry/` and keep audio/runtime code outside that boundary:
 
 | Module | Role |
 | ---- | ---- |
-| `plugin.rs` | `AudioPlugin` implementation, patch state, sample-library loading, and telemetry. |
-| `patch.rs` | Serializable patch model. |
-| `parameters.rs` | Parameter registry, patch binding, runtime binding, formatting, and editor-surface metadata. |
-| `runtime.rs` | Runtime patch conversion and processor boundary. |
-| `dsp/` | Excitation playback, resonators, voice rendering, modulation state, and output stage. |
+| `plugin.rs` | Product `AudioPlugin` implementation and patch/state composition. |
+| `patch.rs` / `patch_io.rs` | Serializable patch model and shared TOML/state adapters. |
+| `parameters.rs` | Parameter registry, patch binding, apply policy, formatting, and editor-surface metadata. |
 | `vst3_entry/` | Processor/controller/factory/editor/state/message adapters for VST3 hosts. |
+| Lamath `runtime.rs` / `dsp/` | Resonator runtime patch conversion, excitation playback, resonators, voice rendering, modulation state, and output stage. |
+| Glirdir `capture.rs` / `analysis.rs` / `audition.rs` / `worker.rs` | Scratchpad capture, pitch/onset analysis, MIDI derivation, audition rendering, and off-audio-thread jobs. |
+| Glirdir `midi_export.rs` / `sample_library.rs` | SMF drag/export payloads and shared sample-library scratchpad ingest. |
 
 ## Real-Time Rule
 

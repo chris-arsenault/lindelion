@@ -2,10 +2,14 @@ mod analysis;
 mod analysis_job;
 mod audition;
 mod capture;
+#[cfg(test)]
+mod detection_quality_tests;
+mod midi_export;
 mod parameters;
 mod patch;
 mod patch_io;
 mod plugin;
+mod sample_library;
 mod vst3_entry;
 mod worker;
 
@@ -16,19 +20,20 @@ pub use analysis_job::{
 };
 pub use parameters::{
     AUDITION_VOLUME_PARAMETER_ID, CAPTURE_BARS_PARAMETER_ID, CONFIDENCE_PARAMETER_ID,
-    COUNT_IN_PARAMETER_ID, GRID_PARAMETER_ID, MIN_NOTE_PARAMETER_ID,
+    COUNT_IN_PARAMETER_ID, EDITOR_PARAMETER_BINDINGS, GRID_PARAMETER_ID, MIN_NOTE_PARAMETER_ID,
     ONSET_SENSITIVITY_PARAMETER_ID, PARAMETER_BINDINGS, PARAMETERS, ParameterApplyKind,
     ParameterBinding, ROOT_PARAMETER_ID, SCALE_PARAMETER_ID, SNAP_PARAMETER_ID,
     SYNC_MODE_PARAMETER_ID, TIMING_STRENGTH_PARAMETER_ID, VELOCITY_AMOUNT_PARAMETER_ID,
-    apply_parameter_plain, parameter_binding,
+    apply_parameter_plain, editor_parameter_bindings, parameter_binding,
 };
 pub use patch::{
     AnalysisSettings, AuditionSettings, CaptureBars, CaptureSettings, CaptureState, GlirdirPatch,
-    ScratchpadAudio, SyncMode,
+    ScratchpadAudio, ScratchpadMetadata, SyncMode,
 };
 pub use patch_io::{
-    FORMAT_VERSION, PatchIoError, from_plugin_state, from_toml_str, load_library_patch, load_patch,
-    save_library_patch, save_patch, to_plugin_state, to_toml_string,
+    FORMAT_VERSION, PLUGIN_STATE_FORMAT_VERSION, PatchIoError, from_plugin_state, from_toml_str,
+    load_library_patch, load_patch, save_library_patch, save_patch, to_plugin_state,
+    to_toml_string,
 };
 pub use plugin::{DESCRIPTOR, Glirdir};
 pub(crate) use worker::{GlirdirWorker, GlirdirWorkerQueue, GlirdirWorkerResult};

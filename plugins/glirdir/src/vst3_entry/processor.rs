@@ -12,11 +12,13 @@ use lindelion_plugin_shell::{
         transport_context_from_vst_process_context, write_plugin_state_to_stream,
     },
 };
-use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*};
+use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{
     AnalysisStatus, Glirdir, GlirdirWorker, GlirdirWorkerQueue, GlirdirWorkerResult,
     ParameterApplyKind,
+    midi_export::MidiExportJob,
+    sample_library::{SampleLibrarySaveJob, SampleLibrarySavePayload},
 };
 
 use super::{GlirdirPluginMessage, GlirdirStatusPayload, GlirdirVst3Controller};
@@ -40,6 +42,8 @@ impl Class for GlirdirVst3Processor {
 }
 
 impl GlirdirVst3Processor {
+    pub(super) const CID: TUID = uid(0x7C2E2B8A, 0xB1C44F0D, 0xA6F92427, 0x6C9E0D5B);
+
     pub(super) fn new() -> Self {
         Self::with_worker(Box::new(GlirdirWorker::new()))
     }
@@ -112,6 +116,14 @@ impl GlirdirVst3Processor {
         kResultOk
     }
 
+    fn update_plugin(&self, update: fn(&mut Glirdir)) -> tresult {
+        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
+            return kResultFalse;
+        };
+        update(&mut plugin);
+        kResultOk
+    }
+
     fn arm_capture(&self) -> tresult {
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
             return kResultFalse;
@@ -148,130 +160,9 @@ impl GlirdirVst3Processor {
         self.pending_requantize.set(false);
         self.send_status_update(GlirdirStatusMessage::Analysis)
     }
-
-    fn schedule_deferred_jobs(&self) -> tresult {
-        if self.schedule_pending_analysis() == kResultFalse {
-            return kResultFalse;
-        }
-        if self.pending_requantize.replace(false) {
-            return self.schedule_pending_requantize();
-        }
-        kResultOk
-    }
-
-    fn schedule_pending_analysis(&self) -> tresult {
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return kResultFalse;
-        };
-        let job = request_pending_analysis_job(&mut plugin);
-        drop(plugin);
-        if let Some(job) = job {
-            self.pending_requantize.set(false);
-            if self.worker.borrow().schedule_analysis(job) {
-                kResultOk
-            } else {
-                kResultFalse
-            }
-        } else {
-            kResultOk
-        }
-    }
-
-    fn schedule_pending_requantize(&self) -> tresult {
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return kResultFalse;
-        };
-        let job = plugin.request_requantize_job();
-        drop(plugin);
-        if let Some(job) = job
-            && !self.worker.borrow().schedule_requantize(job)
-        {
-            return kResultFalse;
-        }
-        kResultOk
-    }
-
-    fn schedule_midi_export(&self) -> tresult {
-        let Ok(plugin) = self.plugin.try_borrow() else {
-            return kResultFalse;
-        };
-        let Some(analysis) = plugin.analysis() else {
-            return kResultFalse;
-        };
-        let sequence = plugin.analysis_cache().sequence();
-        let clip = analysis.midi_clip.clone();
-        drop(plugin);
-
-        if self.worker.borrow().schedule_midi_export(sequence, clip) {
-            kResultOk
-        } else {
-            kResultFalse
-        }
-    }
-
-    fn drain_worker_results(&self) -> tresult {
-        let mut status = kResultOk;
-        self.worker
-            .borrow()
-            .drain_results(&mut |result| match result {
-                GlirdirWorkerResult::Analysis(result) => {
-                    if let Ok(mut plugin) = self.plugin.try_borrow_mut() {
-                        plugin.publish_analysis_result(result);
-                    } else {
-                        status = kResultFalse;
-                    }
-                }
-                GlirdirWorkerResult::MidiExport { sequence, bytes } => {
-                    if self.midi_export_is_current(sequence) {
-                        let result =
-                            self.send_to_peer(GlirdirPluginMessage::MidiExportResponse(bytes));
-                        if result != kResultOk {
-                            status = result;
-                        }
-                    }
-                }
-            });
-        status
-    }
-
-    fn midi_export_is_current(&self, sequence: u64) -> bool {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.analysis_cache().sequence() == sequence)
-            .unwrap_or(false)
-    }
-
-    fn send_status_update(&self, kind: GlirdirStatusMessage) -> tresult {
-        let Ok(plugin) = self.plugin.try_borrow() else {
-            return kResultFalse;
-        };
-        let status = GlirdirStatusPayload::from_plugin(&plugin);
-        drop(plugin);
-
-        match kind {
-            GlirdirStatusMessage::Analysis => {
-                self.send_to_peer(GlirdirPluginMessage::AnalysisStatusResponse(status))
-            }
-            GlirdirStatusMessage::Status => {
-                self.send_to_peer(GlirdirPluginMessage::StatusResponse(status))
-            }
-            GlirdirStatusMessage::Telemetry => {
-                self.send_to_peer(GlirdirPluginMessage::TelemetryResponse(status))
-            }
-        }
-    }
-
-    fn send_to_peer(&self, message: GlirdirPluginMessage) -> tresult {
-        let Some(peer) = (unsafe { ComRef::from_raw(self.peer.get()) }) else {
-            return kResultOk;
-        };
-        let message = message.into_com_message();
-        let Some(message) = message.to_com_ptr::<IMessage>() else {
-            return kResultFalse;
-        };
-        unsafe { peer.notify(message.as_ptr()) }
-    }
 }
+
+include!("processor_jobs.rs");
 
 impl IPluginBaseTrait for GlirdirVst3Processor {
     unsafe fn initialize(&self, _context: *mut FUnknown) -> tresult {
@@ -402,17 +293,13 @@ impl IAudioProcessorTrait for GlirdirVst3Processor {
             return kInvalidArgument;
         }
 
-        match dir as BusDirections {
-            BusDirections_::kInput => {
-                *arrangement = self.input_arrangement.get();
-                kResultOk
-            }
-            BusDirections_::kOutput => {
-                *arrangement = SpeakerArr::kStereo;
-                kResultOk
-            }
-            _ => kInvalidArgument,
-        }
+        let speaker_arrangement = match dir as BusDirections {
+            BusDirections_::kInput => self.input_arrangement.get(),
+            BusDirections_::kOutput => SpeakerArr::kStereo,
+            _ => return kInvalidArgument,
+        };
+        *arrangement = speaker_arrangement;
+        kResultOk
     }
 
     unsafe fn canProcessSampleSize(&self, symbolic_sample_size: i32) -> tresult {
@@ -538,6 +425,15 @@ impl IConnectionPointTrait for GlirdirVst3Processor {
             GlirdirPluginMessage::ArmCapture => self.arm_capture(),
             GlirdirPluginMessage::ClearScratchpad => self.clear_scratchpad(),
             GlirdirPluginMessage::FinalizeCaptureRequest => self.finalize_completed_capture(),
+            GlirdirPluginMessage::PlayAudition => self.update_plugin(Glirdir::play_audition),
+            GlirdirPluginMessage::StopAudition => self.update_plugin(Glirdir::stop_audition),
+            GlirdirPluginMessage::ToggleAuditionLoop => {
+                self.update_plugin(Glirdir::toggle_audition_loop)
+            }
+            GlirdirPluginMessage::ToggleAuditionLiveEdit => {
+                self.update_plugin(Glirdir::toggle_audition_live_edit)
+            }
+            GlirdirPluginMessage::SampleLibrarySaveRequest => self.schedule_sample_library_save(),
             GlirdirPluginMessage::PatchUpdate(payload) => self.apply_patch_payload(&payload),
             GlirdirPluginMessage::StatusRequest => {
                 self.send_status_update(GlirdirStatusMessage::Status)
@@ -548,23 +444,11 @@ impl IConnectionPointTrait for GlirdirVst3Processor {
             GlirdirPluginMessage::MidiExportRequest => self.schedule_midi_export(),
             GlirdirPluginMessage::AnalysisStatusResponse(_)
             | GlirdirPluginMessage::MidiExportResponse(_)
+            | GlirdirPluginMessage::SampleLibrarySaveResponse(_)
             | GlirdirPluginMessage::StatusResponse(_)
             | GlirdirPluginMessage::TelemetryResponse(_) => kNotImplemented,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GlirdirStatusMessage {
-    Analysis,
-    Status,
-    Telemetry,
-}
-
-fn request_pending_analysis_job(plugin: &mut Glirdir) -> Option<crate::AnalysisJob> {
-    (plugin.analysis_status() == AnalysisStatus::CapturedPendingAnalysis)
-        .then(|| plugin.request_analysis_job())
-        .flatten()
 }
 
 fn input_arrangement_supported(arrangement: SpeakerArrangement) -> bool {

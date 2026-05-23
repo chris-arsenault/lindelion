@@ -1,0 +1,564 @@
+use super::*;
+use std::{
+    cell::RefCell,
+    ffi::{CStr, CString as StdCString, c_char, c_void},
+    ptr,
+};
+
+use crate::{PluginDescriptor, TimeSignature, TransportContext};
+use vst3::{Class, ComPtr, ComWrapper, Interface, Steinberg::Vst::*, Steinberg::*, uid};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestMessage {
+    PatchUpdate,
+    TelemetryRequest,
+}
+
+impl PluginMessageType for TestMessage {
+    fn id(self) -> &'static str {
+        match self {
+            Self::PatchUpdate => "lindelion.test.patch_update",
+            Self::TelemetryRequest => "lindelion.test.telemetry_request",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "lindelion.test.patch_update" => Some(Self::PatchUpdate),
+            "lindelion.test.telemetry_request" => Some(Self::TelemetryRequest),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn typed_message_roundtrips_payload() {
+    let expected = TypedPluginMessage::new(TestMessage::PatchUpdate, b"patch".to_vec());
+    let message = PluginMessage::from_typed(expected.clone())
+        .to_com_ptr::<IMessage>()
+        .unwrap();
+
+    let decoded = unsafe { decode_typed_message::<TestMessage>(message.as_ptr()) };
+
+    assert_eq!(decoded, Ok(Some(expected)));
+}
+
+#[test]
+fn unknown_message_ids_are_ignored() {
+    let message = PluginMessage::with_payload("lindelion.test.unknown", Vec::new())
+        .to_com_ptr::<IMessage>()
+        .unwrap();
+
+    let decoded = unsafe { decode_typed_message::<TestMessage>(message.as_ptr()) };
+
+    assert_eq!(decoded, Ok(None));
+}
+
+#[test]
+fn malformed_message_payload_returns_error_instead_of_panicking() {
+    let message = ComWrapper::new(MessageWithoutAttributes::new(TestMessage::PatchUpdate.id()))
+        .to_com_ptr::<IMessage>()
+        .unwrap();
+
+    let decoded = unsafe { decode_typed_message::<TestMessage>(message.as_ptr()) };
+
+    assert_eq!(decoded, Err(PluginMessageDecodeError::MissingPayload));
+}
+
+#[test]
+fn string_helpers_null_terminate_truncated_strings() {
+    let mut text = [1 as c_char; 4];
+    copy_cstring("abcd", &mut text);
+
+    assert_eq!(text[3], 0);
+
+    let mut wide = [1 as TChar; 4];
+    copy_wstring("abcd", &mut wide);
+
+    assert_eq!(wide[3], 0);
+}
+
+#[test]
+fn string_helpers_roundtrip_ascii_and_unicode_without_overflow() {
+    let mut text = [1 as c_char; 16];
+    copy_cstring("Lindelion", &mut text);
+
+    assert_eq!(c_string(&text), "Lindelion");
+    assert_eq!(text[10], 1);
+
+    let mut wide = [1 as TChar; 16];
+    copy_wstring("Résonateur", &mut wide);
+
+    assert_eq!(wide_string(&wide), "Résonateur");
+    assert_eq!(wide[10], 0);
+    assert_eq!(wide[11], 1);
+}
+
+#[test]
+fn vst_process_data_projects_mono_audio_input_buffer() {
+    let mono = [0.25_f32, -0.5];
+    let mut channels = [mono.as_ptr() as *mut Sample32];
+    let mut input_bus = AudioBusBuffers {
+        numChannels: 1,
+        silenceFlags: 0,
+        __field0: AudioBusBuffers__type0 {
+            channelBuffers32: channels.as_mut_ptr(),
+        },
+    };
+    let data = ProcessData {
+        processMode: ProcessModes_::kRealtime as i32,
+        symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
+        numSamples: 2,
+        numInputs: 1,
+        numOutputs: 0,
+        inputs: &mut input_bus,
+        outputs: ptr::null_mut(),
+        inputParameterChanges: ptr::null_mut(),
+        outputParameterChanges: ptr::null_mut(),
+        inputEvents: ptr::null_mut(),
+        outputEvents: ptr::null_mut(),
+        processContext: ptr::null_mut(),
+    };
+
+    let input = unsafe { audio_input_buffer_from_vst_process_data(&data) };
+
+    assert_eq!(input.len(), 2);
+    assert_eq!(input.mono_sample(0), 0.25);
+    assert_eq!(input.mono_sample(1), -0.5);
+}
+
+#[test]
+fn vst_process_data_projects_stereo_audio_input_buffer() {
+    let left = [0.0_f32, 0.5];
+    let right = [1.0_f32, -0.25];
+    let mut channels = [
+        left.as_ptr() as *mut Sample32,
+        right.as_ptr() as *mut Sample32,
+    ];
+    let mut input_bus = AudioBusBuffers {
+        numChannels: 2,
+        silenceFlags: 0,
+        __field0: AudioBusBuffers__type0 {
+            channelBuffers32: channels.as_mut_ptr(),
+        },
+    };
+    let data = ProcessData {
+        processMode: ProcessModes_::kRealtime as i32,
+        symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
+        numSamples: 2,
+        numInputs: 1,
+        numOutputs: 0,
+        inputs: &mut input_bus,
+        outputs: ptr::null_mut(),
+        inputParameterChanges: ptr::null_mut(),
+        outputParameterChanges: ptr::null_mut(),
+        inputEvents: ptr::null_mut(),
+        outputEvents: ptr::null_mut(),
+        processContext: ptr::null_mut(),
+    };
+
+    let input = unsafe { audio_input_buffer_from_vst_process_data(&data) };
+
+    assert_eq!(input.len(), 2);
+    assert_eq!(input.mono_sample(0), 0.5);
+    assert_eq!(input.mono_sample(1), 0.125);
+}
+
+#[test]
+fn vst_process_data_rejects_invalid_audio_input_buffers() {
+    let left = [0.0_f32, 0.5];
+    let mut channels = [left.as_ptr() as *mut Sample32];
+    let mut input_bus = AudioBusBuffers {
+        numChannels: 1,
+        silenceFlags: 0,
+        __field0: AudioBusBuffers__type0 {
+            channelBuffers32: channels.as_mut_ptr(),
+        },
+    };
+    let mut data = ProcessData {
+        processMode: ProcessModes_::kRealtime as i32,
+        symbolicSampleSize: SymbolicSampleSizes_::kSample64 as i32,
+        numSamples: 2,
+        numInputs: 1,
+        numOutputs: 0,
+        inputs: &mut input_bus,
+        outputs: ptr::null_mut(),
+        inputParameterChanges: ptr::null_mut(),
+        outputParameterChanges: ptr::null_mut(),
+        inputEvents: ptr::null_mut(),
+        outputEvents: ptr::null_mut(),
+        processContext: ptr::null_mut(),
+    };
+
+    assert!(unsafe { audio_input_buffer_from_vst_process_data(&data) }.is_empty());
+
+    data.symbolicSampleSize = SymbolicSampleSizes_::kSample32 as i32;
+    data.inputs = ptr::null_mut();
+    assert!(unsafe { audio_input_buffer_from_vst_process_data(&data) }.is_empty());
+
+    let mut null_channel_bus = AudioBusBuffers {
+        numChannels: 1,
+        silenceFlags: 0,
+        __field0: AudioBusBuffers__type0 {
+            channelBuffers32: ptr::null_mut(),
+        },
+    };
+    data.inputs = &mut null_channel_bus;
+    assert!(unsafe { audio_input_buffer_from_vst_process_data(&data) }.is_empty());
+}
+
+#[test]
+fn vst_process_data_projects_stereo_output_buffer() {
+    let mut left = [1.0_f32, 2.0];
+    let mut right = [3.0_f32, 4.0];
+    let mut channels = [left.as_mut_ptr(), right.as_mut_ptr()];
+    let mut output_bus = AudioBusBuffers {
+        numChannels: 2,
+        silenceFlags: 0,
+        __field0: AudioBusBuffers__type0 {
+            channelBuffers32: channels.as_mut_ptr(),
+        },
+    };
+    let mut data = ProcessData {
+        processMode: ProcessModes_::kRealtime as i32,
+        symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
+        numSamples: 2,
+        numInputs: 0,
+        numOutputs: 1,
+        inputs: ptr::null_mut(),
+        outputs: &mut output_bus,
+        inputParameterChanges: ptr::null_mut(),
+        outputParameterChanges: ptr::null_mut(),
+        inputEvents: ptr::null_mut(),
+        outputEvents: ptr::null_mut(),
+        processContext: ptr::null_mut(),
+    };
+
+    let buffer = unsafe { stereo_output_buffers_from_vst_process_data(&mut data) }
+        .expect("stereo output should project");
+    buffer.left[0] = -1.0;
+    buffer.right[1] = -4.0;
+
+    assert_eq!(left, [-1.0, 2.0]);
+    assert_eq!(right, [3.0, -4.0]);
+}
+
+#[test]
+fn clear_vst_outputs_clears_valid_32_bit_outputs() {
+    let mut left = [1.0_f32, 2.0];
+    let mut right = [3.0_f32, 4.0];
+    let mut channels = [left.as_mut_ptr(), right.as_mut_ptr()];
+    let mut output_bus = AudioBusBuffers {
+        numChannels: 2,
+        silenceFlags: 0,
+        __field0: AudioBusBuffers__type0 {
+            channelBuffers32: channels.as_mut_ptr(),
+        },
+    };
+    let mut data = ProcessData {
+        processMode: ProcessModes_::kRealtime as i32,
+        symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
+        numSamples: 2,
+        numInputs: 0,
+        numOutputs: 1,
+        inputs: ptr::null_mut(),
+        outputs: &mut output_bus,
+        inputParameterChanges: ptr::null_mut(),
+        outputParameterChanges: ptr::null_mut(),
+        inputEvents: ptr::null_mut(),
+        outputEvents: ptr::null_mut(),
+        processContext: ptr::null_mut(),
+    };
+
+    unsafe { clear_vst_outputs(&mut data) };
+
+    assert_eq!(left, [0.0, 0.0]);
+    assert_eq!(right, [0.0, 0.0]);
+}
+
+#[test]
+fn vst_process_context_projects_full_transport_context() {
+    let mut context = unsafe { std::mem::zeroed::<ProcessContext>() };
+    context.state = full_transport_flags();
+    context.projectTimeSamples = 4_096;
+    context.projectTimeMusic = 12.0;
+    context.barPositionMusic = 16.0;
+    context.cycleStartMusic = 8.0;
+    context.cycleEndMusic = 24.0;
+    context.tempo = 128.0;
+    context.timeSigNumerator = 7;
+    context.timeSigDenominator = 8;
+
+    let transport = unsafe { transport_context_from_vst_process_context(&context) };
+
+    assert_full_transport(transport);
+}
+
+#[test]
+fn vst_process_context_rejects_null_and_invalid_transport_values() {
+    assert_eq!(
+        unsafe { transport_context_from_vst_process_context(ptr::null()) },
+        TransportContext::default()
+    );
+
+    let mut context = unsafe { std::mem::zeroed::<ProcessContext>() };
+    context.state = invalid_transport_flags();
+    context.projectTimeSamples = -1;
+    context.projectTimeMusic = f64::NAN;
+    context.barPositionMusic = f64::INFINITY;
+    context.cycleStartMusic = f64::NAN;
+    context.cycleEndMusic = f64::INFINITY;
+    context.tempo = -120.0;
+    context.timeSigNumerator = 0;
+    context.timeSigDenominator = 0;
+
+    let transport = unsafe { transport_context_from_vst_process_context(&context) };
+
+    assert_eq!(transport.sample_position, None);
+    assert_eq!(transport.project_quarter_note, None);
+    assert_eq!(transport.bar_position_quarter_note, None);
+    assert_eq!(transport.cycle_start_quarter_note, None);
+    assert_eq!(transport.cycle_end_quarter_note, None);
+    assert_eq!(transport.tempo_bpm, None);
+    assert_eq!(transport.time_signature, None);
+}
+
+#[test]
+fn factory_enumerates_registered_classes_through_ipluginfactory() {
+    let factory = unsafe { ComPtr::from_raw(plugin_factory_ptr(test_vst3_factory())).unwrap() };
+
+    assert_eq!(unsafe { factory.countClasses() }, 2);
+
+    let mut processor = unsafe { std::mem::zeroed::<PClassInfo>() };
+    assert_eq!(
+        unsafe { factory.getClassInfo(0, &mut processor) },
+        kResultOk
+    );
+    assert_eq!(processor.cid, TEST_PROCESSOR_CID);
+    assert_eq!(c_string(&processor.category), "Audio Module Class");
+    assert_eq!(c_string(&processor.name), "Lindelion Test Processor");
+
+    let mut controller = unsafe { std::mem::zeroed::<PClassInfo>() };
+    assert_eq!(
+        unsafe { factory.getClassInfo(1, &mut controller) },
+        kResultOk
+    );
+    assert_eq!(controller.cid, TEST_CONTROLLER_CID);
+    assert_eq!(c_string(&controller.category), "Component Controller Class");
+    assert_eq!(c_string(&controller.name), "Lindelion Test Controller");
+}
+
+#[test]
+fn factory_dispatches_class_creation_by_cid() {
+    let factory = test_vst3_factory();
+    let mut obj = ptr::null_mut::<c_void>();
+
+    assert_eq!(
+        unsafe {
+            factory.createInstance(
+                TEST_PROCESSOR_CID.as_ptr(),
+                IPluginBase::IID.as_ptr().cast(),
+                &mut obj,
+            )
+        },
+        kResultOk
+    );
+
+    let plugin_base = unsafe { ComPtr::from_raw(obj.cast::<IPluginBase>()).unwrap() };
+    assert_eq!(
+        unsafe { plugin_base.initialize(ptr::null_mut()) },
+        kResultOk
+    );
+
+    let mut missing = std::ptr::dangling_mut::<c_void>();
+    assert_eq!(
+        unsafe {
+            factory.createInstance(
+                TEST_UNKNOWN_CID.as_ptr(),
+                IPluginBase::IID.as_ptr().cast(),
+                &mut missing,
+            )
+        },
+        kInvalidArgument
+    );
+    assert!(missing.is_null());
+}
+
+#[test]
+fn fixed_size_plug_view_reports_and_enforces_declared_size() {
+    let view = FixedSizePlugView::new(TestPlugViewDelegate, FixedSizePlugViewSize::new(320, 180));
+
+    let mut size = unsafe { std::mem::zeroed::<ViewRect>() };
+    assert_eq!(unsafe { view.getSize(&mut size) }, kResultOk);
+    assert_rect(size, 0, 0, 320, 180);
+
+    let mut requested = rect(12, 24, 640, 480);
+    assert_eq!(unsafe { view.onSize(&mut requested) }, kResultOk);
+    assert_eq!(unsafe { view.getSize(&mut size) }, kResultOk);
+    assert_rect(size, 12, 24, 332, 204);
+
+    assert_eq!(unsafe { view.canResize() }, kResultFalse);
+
+    let mut constrained = rect(8, 16, 100, 100);
+    assert_eq!(
+        unsafe { view.checkSizeConstraint(&mut constrained) },
+        kResultOk
+    );
+    assert_rect(constrained, 0, 0, 320, 180);
+}
+
+struct MessageWithoutAttributes {
+    message_id: RefCell<StdCString>,
+}
+
+impl MessageWithoutAttributes {
+    fn new(id: &str) -> Self {
+        Self {
+            message_id: RefCell::new(StdCString::new(id).unwrap()),
+        }
+    }
+}
+
+impl Class for MessageWithoutAttributes {
+    type Interfaces = (IMessage,);
+}
+
+impl IMessageTrait for MessageWithoutAttributes {
+    unsafe fn getMessageID(&self) -> FIDString {
+        self.message_id.borrow().as_ptr()
+    }
+
+    unsafe fn setMessageID(&self, id: FIDString) {
+        if id.is_null() {
+            self.message_id.replace(StdCString::default());
+        } else {
+            self.message_id.replace(CStr::from_ptr(id).to_owned());
+        }
+    }
+
+    unsafe fn getAttributes(&self) -> *mut IAttributeList {
+        ptr::null_mut()
+    }
+}
+
+static TEST_DESCRIPTOR: PluginDescriptor =
+    PluginDescriptor::instrument("Lindelion Test", *b"lindelion_test!!");
+
+const TEST_PROCESSOR_CID: TUID = uid(0x98E5D65D, 0x3B32489D, 0x89498A31, 0x4544F110);
+const TEST_CONTROLLER_CID: TUID = uid(0x2B77C756, 0x2E144A2A, 0xB05B702D, 0x797DD064);
+const TEST_UNKNOWN_CID: TUID = uid(0x530C977B, 0xB1004DB7, 0xB24EF0FE, 0xF7F1A040);
+
+const TEST_CLASSES: &[Vst3ClassRegistration] = &[
+    Vst3ClassRegistration::audio_processor(
+        TEST_PROCESSOR_CID,
+        "Lindelion Test Processor",
+        "Instrument|Synth",
+        create_test_component,
+    ),
+    Vst3ClassRegistration::edit_controller(
+        TEST_CONTROLLER_CID,
+        "Lindelion Test Controller",
+        create_test_component,
+    ),
+];
+
+fn test_vst3_factory() -> Vst3PluginFactory {
+    Vst3PluginFactory::new(&TEST_DESCRIPTOR, TEST_CLASSES)
+}
+
+fn create_test_component() -> ComPtr<FUnknown> {
+    ComWrapper::new(TestPluginBase)
+        .to_com_ptr::<FUnknown>()
+        .expect("TestPluginBase must expose FUnknown")
+}
+
+struct TestPluginBase;
+
+impl Class for TestPluginBase {
+    type Interfaces = (IPluginBase,);
+}
+
+impl IPluginBaseTrait for TestPluginBase {
+    unsafe fn initialize(&self, _context: *mut FUnknown) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn terminate(&self) -> tresult {
+        kResultOk
+    }
+}
+
+struct TestPlugViewDelegate;
+
+impl FixedSizePlugViewDelegate for TestPlugViewDelegate {
+    unsafe fn attached(&self, _parent: *mut c_void, _size: ViewRect) -> tresult {
+        kResultOk
+    }
+}
+
+fn c_string(buffer: &[c_char]) -> String {
+    unsafe {
+        CStr::from_ptr(buffer.as_ptr())
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+fn wide_string(buffer: &[TChar]) -> String {
+    let len = unsafe { len_wstring(buffer.as_ptr()) };
+    let chars = buffer[..len].to_vec();
+    String::from_utf16(&chars).unwrap()
+}
+
+fn full_transport_flags() -> u32 {
+    ProcessContext_::StatesAndFlags_::kPlaying
+        | ProcessContext_::StatesAndFlags_::kRecording
+        | ProcessContext_::StatesAndFlags_::kProjectTimeMusicValid
+        | ProcessContext_::StatesAndFlags_::kTempoValid
+        | ProcessContext_::StatesAndFlags_::kTimeSigValid
+        | ProcessContext_::StatesAndFlags_::kBarPositionValid
+        | ProcessContext_::StatesAndFlags_::kCycleActive
+        | ProcessContext_::StatesAndFlags_::kCycleValid
+}
+
+fn invalid_transport_flags() -> u32 {
+    ProcessContext_::StatesAndFlags_::kProjectTimeMusicValid
+        | ProcessContext_::StatesAndFlags_::kBarPositionValid
+        | ProcessContext_::StatesAndFlags_::kCycleValid
+        | ProcessContext_::StatesAndFlags_::kTempoValid
+        | ProcessContext_::StatesAndFlags_::kTimeSigValid
+}
+
+fn assert_full_transport(transport: TransportContext) {
+    assert_eq!(
+        transport,
+        TransportContext {
+            playing: true,
+            recording: true,
+            sample_position: Some(4_096),
+            project_quarter_note: Some(12.0),
+            bar_position_quarter_note: Some(16.0),
+            cycle_active: true,
+            cycle_start_quarter_note: Some(8.0),
+            cycle_end_quarter_note: Some(24.0),
+            tempo_bpm: Some(128.0),
+            time_signature: Some(TimeSignature::new(7, 8)),
+        }
+    );
+}
+
+fn rect(left: i32, top: i32, right: i32, bottom: i32) -> ViewRect {
+    ViewRect {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+fn assert_rect(rect: ViewRect, left: i32, top: i32, right: i32, bottom: i32) {
+    assert_eq!(
+        (rect.left, rect.top, rect.right, rect.bottom),
+        (left, top, right, bottom)
+    );
+}

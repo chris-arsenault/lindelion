@@ -22,7 +22,7 @@ In Rust, that rule is meaningful: ordinary stack values, slices, fixed-size arra
 - `lamath::plugin_tests::audio_plugin_process_does_not_allocate` covers the plugin process path.
 - `lamath::plugin_tests::loaded_excitation_buffers_render_without_audio_thread_allocations` covers sample-backed excitation rendering.
 - `lindelion-dsp-utils` and `lamath` tests assert finite output, bounded peaks, frequency behavior, filter behavior, and sweep stability.
-- `cargo run -p xtask -- check` runs rustfmt, workspace/all-targets release clippy with `-D warnings -W clippy::cognitive_complexity`, and workspace tests.
+- `make ci` runs the canonical workspace formatting, lint, file-size, and test checks.
 
 ## Allowed Allocation Zones
 

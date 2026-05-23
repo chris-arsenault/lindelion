@@ -9,6 +9,7 @@ use crate::{
     AUDITION_VOLUME_PARAMETER_ID, AnalysisJob, AnalysisJobResult, AnalysisSequence, AnalysisStatus,
     CaptureState, GlirdirPatch, GlirdirWorkerQueue, GlirdirWorkerResult, RequantizeJob,
     ScratchpadAudio, TIMING_STRENGTH_PARAMETER_ID,
+    midi_export::MidiExportJob,
     vst3_entry::{messages::GlirdirPluginMessage, processor::GlirdirVst3Processor},
 };
 
@@ -354,6 +355,7 @@ struct RecordingWorker {
     analysis_jobs: RefCell<Vec<AnalysisJob>>,
     requantize_jobs: RefCell<Vec<RequantizeJob>>,
     midi_exports: RefCell<Vec<AnalysisSequence>>,
+    sample_saves: RefCell<Vec<AnalysisSequence>>,
     results: RefCell<Vec<GlirdirWorkerResult>>,
 }
 
@@ -368,8 +370,16 @@ impl GlirdirWorkerQueue for Rc<RecordingWorker> {
         true
     }
 
-    fn schedule_midi_export(&self, sequence: AnalysisSequence, _clip: MidiClip) -> bool {
-        self.midi_exports.borrow_mut().push(sequence);
+    fn schedule_midi_export(&self, job: MidiExportJob) -> bool {
+        self.midi_exports.borrow_mut().push(job.sequence);
+        true
+    }
+
+    fn schedule_sample_library_save(
+        &self,
+        job: crate::sample_library::SampleLibrarySaveJob,
+    ) -> bool {
+        self.sample_saves.borrow_mut().push(job.sequence);
         true
     }
 

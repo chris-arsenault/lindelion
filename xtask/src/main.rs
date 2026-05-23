@@ -7,6 +7,9 @@ use std::{
 
 const RUST_FILE_LINE_LIMIT: usize = 600;
 
+#[cfg(test)]
+mod tests;
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
@@ -328,6 +331,7 @@ struct BundleSpec {
     executable_name: &'static str,
     bundle_identifier: &'static str,
     library_stem: &'static str,
+    sub_categories: &'static [&'static str],
     processor_cid: [u32; 4],
     controller_cid: [u32; 4],
     version: &'static str,
@@ -342,8 +346,20 @@ impl BundleSpec {
                 executable_name: "Lamath",
                 bundle_identifier: "com.ahara.lamath",
                 library_stem: "lamath",
+                sub_categories: &["Instrument", "Synth"],
                 processor_cid: [0x4B410E03, 0x80AD49B6, 0x9B7D5479, 0xF4A9B0D1],
                 controller_cid: [0x15C8B012, 0xF4B64F5E, 0x93D9AA38, 0x69383E3B],
+                version: env!("CARGO_PKG_VERSION"),
+            }),
+            "glirdir" => Some(Self {
+                package: "glirdir",
+                bundle_name: "Glirdir",
+                executable_name: "Glirdir",
+                bundle_identifier: "com.ahara.glirdir",
+                library_stem: "glirdir",
+                sub_categories: &["Fx"],
+                processor_cid: [0x7C2E2B8A, 0xB1C44F0D, 0xA6F92427, 0x6C9E0D5B],
+                controller_cid: [0x0D0466D2, 0x53E446E5, 0x8E90CF13, 0x25B5E241],
                 version: env!("CARGO_PKG_VERSION"),
             }),
             _ => None,
@@ -469,8 +485,7 @@ fn module_info(spec: &BundleSpec) -> String {
       "Version": "{version}",
       "SDKVersion": "VST 3.8.0",
       "Sub Categories": [
-        "Instrument",
-        "Synth"
+{sub_categories}
       ],
       "Class Flags": 1,
       "Cardinality": 2147483647
@@ -492,7 +507,16 @@ fn module_info(spec: &BundleSpec) -> String {
         version = escape_json(spec.version),
         processor_cid = cid_hex(spec.processor_cid),
         controller_cid = cid_hex(spec.controller_cid),
+        sub_categories = sub_categories_json(spec.sub_categories),
     )
+}
+
+fn sub_categories_json(sub_categories: &[&str]) -> String {
+    sub_categories
+        .iter()
+        .map(|category| format!("        \"{}\"", escape_json(category)))
+        .collect::<Vec<_>>()
+        .join(",\n")
 }
 
 fn cid_hex(words: [u32; 4]) -> String {

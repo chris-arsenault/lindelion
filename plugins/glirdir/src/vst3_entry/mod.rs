@@ -5,6 +5,8 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 mod controller;
+mod editor;
+mod factory;
 mod messages;
 mod processor;
 
@@ -16,6 +18,8 @@ mod tests;
 use crate::PARAMETERS;
 
 const VST3_PARAMETER_COUNT: usize = PARAMETERS.len();
+const SUBCATEGORY: &str = "Fx";
 
 use controller::GlirdirVst3Controller;
 use messages::{GlirdirPluginMessage, GlirdirStatusPayload};
+use processor::GlirdirVst3Processor;

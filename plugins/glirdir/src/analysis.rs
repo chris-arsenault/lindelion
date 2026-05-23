@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::patch::{AnalysisSettings, ScratchpadAudio};
 
+const MIN_INHERITED_PITCH_RMS: f32 = 0.04;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnalysisResult {
     pub pitch_contour: PitchContour,
@@ -117,7 +119,7 @@ pub(crate) fn analyze_with_pitch_contour(
         analysis_settings,
     );
     let mut quantize_settings = quantize_settings.clone();
-    quantize_settings.sample_rate = scratchpad.sample_rate;
+    scratchpad.apply_midi_context(&mut quantize_settings);
     let midi_clip = clip_from_detected_notes(&detected_notes, &quantize_settings);
 
     AnalysisResult {
@@ -162,23 +164,110 @@ pub(crate) fn segment_notes(
         }
 
         let frames = frames_in_range(pitch_contour, start, end);
-        let pitch = median_pitch(frames).or(previous_pitch);
+        let pitch = median_pitch(frames);
+        let inherited_pitch = pitch.is_none();
+        let pitch = pitch.or(previous_pitch);
         let Some(pitch_hz) = pitch else {
             continue;
         };
-        previous_pitch = Some(pitch_hz);
 
         let (peak_rms, mean_rms) = note_rms(audio, start, end, frames);
-        notes.push(DetectedNote {
-            start_sample: start,
-            end_sample: end,
-            pitch_hz,
-            peak_rms,
-            mean_rms,
+        let audio_region = audio.get(start..end).unwrap_or_default();
+        if inherited_pitch
+            && (peak_rms < MIN_INHERITED_PITCH_RMS
+                || minimum_chunk_rms(audio_region) < MIN_INHERITED_PITCH_RMS)
+        {
+            continue;
+        }
+
+        previous_pitch = Some(pitch_hz);
+        notes.push(SegmentedNote {
+            note: DetectedNote {
+                start_sample: start,
+                end_sample: end,
+                pitch_hz,
+                peak_rms,
+                mean_rms,
+            },
+            inherited_pitch,
         });
     }
 
-    notes
+    merge_unarticulated_same_pitch_notes(notes, audio, sample_rate)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SegmentedNote {
+    note: DetectedNote,
+    inherited_pitch: bool,
+}
+
+fn merge_unarticulated_same_pitch_notes(
+    notes: Vec<SegmentedNote>,
+    audio: &[f32],
+    sample_rate: u32,
+) -> Vec<DetectedNote> {
+    let mut merged: Vec<SegmentedNote> = Vec::new();
+    for note in notes {
+        if let Some(previous) = merged.last_mut()
+            && should_merge_same_pitch_split(previous, &note, audio, sample_rate)
+        {
+            previous.note.end_sample = note.note.end_sample;
+            previous.note.peak_rms = previous.note.peak_rms.max(note.note.peak_rms);
+            previous.note.mean_rms = previous.note.mean_rms.max(note.note.mean_rms);
+            continue;
+        }
+        merged.push(note);
+    }
+    merged.into_iter().map(|note| note.note).collect()
+}
+
+fn should_merge_same_pitch_split(
+    previous: &SegmentedNote,
+    next: &SegmentedNote,
+    audio: &[f32],
+    sample_rate: u32,
+) -> bool {
+    !previous.inherited_pitch
+        && !next.inherited_pitch
+        && pitch_distance_cents(previous.note.pitch_hz, next.note.pitch_hz) <= 35.0
+        && !has_articulation_gap(previous.note, next.note, audio, sample_rate)
+}
+
+fn has_articulation_gap(
+    previous: DetectedNote,
+    next: DetectedNote,
+    audio: &[f32],
+    sample_rate: u32,
+) -> bool {
+    if audio.is_empty() {
+        return false;
+    }
+    let search_radius = ms_to_samples(45.0, sample_rate).max(1);
+    let boundary = next.start_sample.min(audio.len() - 1);
+    let start = boundary.saturating_sub(search_radius);
+    let end = boundary;
+    let window = audio.get(start..end).unwrap_or_default();
+    let reference = previous
+        .peak_rms
+        .min(next.peak_rms)
+        .max(MIN_INHERITED_PITCH_RMS);
+    minimum_chunk_rms(window) < reference * 0.35
+}
+
+fn minimum_chunk_rms(audio: &[f32]) -> f32 {
+    audio
+        .chunks(256)
+        .filter(|chunk| !chunk.is_empty())
+        .map(analysis::rms)
+        .fold(f32::MAX, f32::min)
+}
+
+fn pitch_distance_cents(left_hz: f32, right_hz: f32) -> f32 {
+    if left_hz <= 0.0 || right_hz <= 0.0 {
+        return f32::MAX;
+    }
+    1200.0 * (right_hz / left_hz).log2().abs()
 }
 
 fn pitch_track_frames(contour: &PitchContour) -> Vec<PitchTrackFrame> {

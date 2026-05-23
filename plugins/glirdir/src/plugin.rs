@@ -84,6 +84,15 @@ impl Glirdir {
         self.audition.stop();
     }
 
+    pub fn toggle_audition_loop(&mut self) {
+        self.patch.audition.loop_enabled = !self.patch.audition.loop_enabled;
+        self.audition.set_settings(self.patch.audition);
+    }
+
+    pub fn toggle_audition_live_edit(&mut self) {
+        self.patch.audition.live_edit = !self.patch.audition.live_edit;
+    }
+
     pub fn finalize_completed_capture(&mut self) -> Option<AnalysisJob> {
         let scratchpad = self.capture.take_completed_scratchpad()?;
         self.patch.scratchpad = Some(scratchpad);
@@ -92,7 +101,7 @@ impl Glirdir {
 
     pub fn request_analysis_job(&mut self) -> Option<AnalysisJob> {
         let scratchpad = self.patch.scratchpad.as_ref()?.clone();
-        self.patch.quantize.sample_rate = scratchpad.sample_rate;
+        scratchpad.apply_midi_context(&mut self.patch.quantize);
         let sequence = self.advance_analysis_sequence();
         let job = AnalysisJob::new(
             sequence,
@@ -110,7 +119,7 @@ impl Glirdir {
             && self.analysis_cache.status() == AnalysisStatus::Ready
             && self.patch.audition.live_edit
         {
-            self.audition.play();
+            self.audition.resume();
         }
         accepted
     }
@@ -139,7 +148,7 @@ impl Glirdir {
             .map(|scratchpad| scratchpad.sample_rate)
             .unwrap_or(result.pitch_contour.source_sample_rate);
         let sequence = self.advance_analysis_sequence();
-        self.patch.quantize.sample_rate = sample_rate;
+        self.refresh_quantize_context();
         let job = RequantizeJob::new(sequence, result, self.patch.quantize.clone(), sample_rate);
         self.analysis_cache.mark_requantizing(sequence);
         Some(job)
@@ -176,7 +185,7 @@ impl Glirdir {
     fn handle_deferred_parameter_apply(&mut self, apply: ParameterApplyKind) {
         match apply {
             ParameterApplyKind::Analysis => self.mark_scratchpad_pending_or_idle(),
-            ParameterApplyKind::Quantize => self.refresh_quantize_sample_rate(),
+            ParameterApplyKind::Quantize => self.refresh_quantize_context(),
             ParameterApplyKind::Audition => self.audition.set_settings(self.patch.audition),
             ParameterApplyKind::Capture | ParameterApplyKind::Ignored => {}
         }
@@ -185,7 +194,7 @@ impl Glirdir {
     fn mark_scratchpad_pending_or_idle(&mut self) {
         let sequence = self.advance_analysis_sequence();
         if let Some(scratchpad) = self.patch.scratchpad.as_ref() {
-            self.patch.quantize.sample_rate = scratchpad.sample_rate;
+            scratchpad.apply_midi_context(&mut self.patch.quantize);
             self.analysis_cache.mark_captured_pending_analysis(sequence);
         } else {
             self.analysis_cache.mark_idle(sequence);
@@ -193,13 +202,16 @@ impl Glirdir {
     }
 
     fn requantize(&mut self) {
-        self.refresh_quantize_sample_rate();
+        self.refresh_quantize_context();
         self.analysis_cache.requantize_current(&self.patch.quantize);
+        if self.patch.audition.live_edit {
+            self.audition.resume();
+        }
     }
 
-    fn refresh_quantize_sample_rate(&mut self) {
+    fn refresh_quantize_context(&mut self) {
         if let Some(scratchpad) = self.patch.scratchpad.as_ref() {
-            self.patch.quantize.sample_rate = scratchpad.sample_rate;
+            scratchpad.apply_midi_context(&mut self.patch.quantize);
         }
     }
 
@@ -241,12 +253,14 @@ impl AudioPlugin for Glirdir {
         self.audition.render(
             self.analysis_cache.result().map(|result| &result.midi_clip),
             setup,
+            context.transport,
             &mut context.buffer,
         );
     }
 
     fn state(&self) -> PluginState {
-        patch_io::to_plugin_state(&self.patch).unwrap_or_else(|_| PluginState::empty(1))
+        patch_io::to_plugin_state(&self.patch)
+            .unwrap_or_else(|_| PluginState::empty(patch_io::PLUGIN_STATE_FORMAT_VERSION))
     }
 
     fn load_state(&mut self, state: PluginState) {

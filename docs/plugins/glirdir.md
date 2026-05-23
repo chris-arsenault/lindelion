@@ -3,7 +3,7 @@
 **Name etymology:** Sindarin, *singer* / *song-bearer*. From *glir-* (to sing, song) + *-dir* (masculine agentive: man, one-who), with the same morphology as Lindir, the Rivendell minstrel. The suffix descends from earlier *-ndir*, related to Sindarin *dîr* (man, adult), and is distinct from *-dil* (friend/devotee, as in Eärendil) and *-dan* (wright, as in Círdan).
 **Project umbrella:** Lindelion (Cargo workspace, GitHub repo).
 **Target:** macOS (Apple Silicon primary), VST3.
-**Status:** Core Rust crate implemented. Capture state, analysis/segmentation, shared SwiftF0 pitch detection, shared onset detection, MIDI quantization/export DTOs, TOML patch state, and a simple audition engine exist. VST3 adapter, editor surface, drag-out integration, worker-thread scheduling, and FLAC scratchpad storage are pending.
+**Status:** Core Rust crate implemented. Capture state, analysis/segmentation, shared SwiftF0 pitch detection, shared onset detection, synthetic detection-quality regression tests, MIDI quantization/export DTOs, deterministic MIDI export naming, TOML patch state, a transport-aware audition engine, worker-thread scheduling, VST3 state persistence, shared sample-library scratchpad save, a VST3 adapter, the first typed Vizia editor surface, the drag-out spike, and macOS VST3 bundle support exist. Ableton drag validation, recorded vocal fixtures, Apple Silicon performance numbers, and FLAC scratchpad storage are pending.
 
 ---
 
@@ -72,8 +72,10 @@ The current crate implements the non-UI core in focused modules:
 | `analysis.rs` | SwiftF0 pitch contour integration, pitch-track fed hybrid onset detection, note segmentation, and MIDI clip derivation. |
 | `parameters.rs` | Host parameter metadata and patch application policy. |
 | `patch.rs` / `patch_io.rs` | Serializable patch schema and shared `TomlPatchFormat` adapters. |
-| `audition.rs` | Simple sine audition renderer using shared MIDI clip DTOs and DSP smoothing. |
+| `audition.rs` | Simple transport-aware sine audition renderer using shared MIDI clip DTOs and DSP smoothing. |
 | `plugin.rs` | `AudioPlugin` implementation around the shared shell boundary. |
+| `vst3_entry/` | VST3 processor/controller/messages/editor bridge with typed UI commands and status payloads. |
+| `lindelion-ui::glirdir_vizia` | Product editor host contract, macOS Vizia surface, waveform preview, piano-roll preview, parameter controls, and command buttons. |
 
 ---
 
@@ -123,10 +125,11 @@ Count-in begins after the sync-mode trigger condition is met, immediately preced
 
 ### 3.5 Buffer persistence
 
-- Current core state stores captured audio as `ScratchpadAudio` in the TOML-backed patch state. The VST3 persistence target is still FLAC-encoded mono audio in the plugin state blob so large captures do not bloat project files.
+- Patch files remain TOML-backed settings. VST3 state stores the patch TOML without `ScratchpadAudio` and carries captured audio plus capture-time tempo/time-signature metadata as a separate bounded binary f32 payload inside the plugin state envelope.
+- FLAC remains the compression target, but v1 uses the binary payload until a Rust encoder choice is validated.
 - **Clear Scratchpad** button drops the buffer.
 - Closing the plugin or DAW session preserves the scratchpad — it returns on session reload.
-- **Save to Library** button — separately ingests the current scratchpad audio into the shared `lindelion-sample-library` as a regular sample (useful when a take is worth keeping as source material for Linnod or Lamath).
+- **Save to Library** button — writes the current scratchpad to a temporary mono WAV and ingests it through `lindelion-sample-library` into the shared `~/Music/Ahara` library. The sample filename embeds Glirdir source context such as key/scale, capture bars, and BPM while the current library schema remains audio-metadata-only.
 
 ---
 
@@ -216,6 +219,20 @@ Where `rms_to_midi` is:
 
 At `velocity_amount = 0`, every note is velocity 100. At `velocity_amount = 1`, full dynamic range maps to 0–127.
 
+### 4.7 Detection quality coverage
+
+Fast CI coverage uses synthetic fixture-style tests to guard the failure modes most likely to cause post-drag MIDI cleanup:
+
+- silence and breath/noise do not create phantom notes;
+- clipped input stays finite;
+- soft vowel entries and hard consonant-style restarts create expected note boundaries;
+- vibrato and gradual scoops collapse to one stable note;
+- legato pitch jumps split even without an energy transient;
+- repeated same-pitch articulation remains two notes;
+- low-register and high-near-boundary inputs remain finite and quantized.
+
+The shared SwiftF0 crate also runs a real inference test against a synthetic pitched sine, so pitch coverage is not limited to model-byte loading or silence. Recorded vocal/instrument fixtures and Apple Silicon timing numbers remain validation artifacts for the macOS/DAW pass.
+
 ---
 
 ## 5. Quantization
@@ -261,7 +278,7 @@ emitted_time = note.start + strength * (quantized_time - note.start)
 
 At 100%, every note locked to grid. At 0%, original detected timing preserved.
 
-Note **durations** are scaled with onsets (the gap between consecutive onsets is preserved in proportion) — the analyzed note duration from §4.5 determines emitted duration, and the next note's quantized onset doesn't override the prior note's end.
+Note **durations** are based on the analyzed note duration from §4.5, extended to the minimum duration when needed, and then laid out as a monophonic stream so one note-off always lands before the next note-on.
 
 ### 5.3 Re-derivation
 
@@ -282,10 +299,11 @@ The quantized note list is serialized to a Standard MIDI File (Format 0, single 
 - **PPQ**: 960 (high resolution to preserve sub-grid timing when strength < 100%).
 - **Notes**: each emitted as `NoteOn(channel=0, note, velocity)` followed by `NoteOff(channel=0, note, 0)` at the appropriate tick.
 - **No CC events** in v1 (no pitch bend, mod wheel, etc.).
+- **Filename**: deterministic and filesystem-safe, e.g. `glirdir-Cmin-4bar-120bpm.mid`.
 
 ### 6.2 Edge cases
 
-- **Overlapping notes**: Glirdir source material is monophonic, so notes never overlap by construction. Polyphonic output is not supported (would require chord-detection logic out of scope here).
+- **Overlapping notes**: Glirdir source material is monophonic, and export enforces a non-overlapping note stream after timing quantization. Polyphonic output is not supported.
 - **Notes shorter than minimum**: notes with quantized duration shorter than 1/64 (one MIDI tick at the grid resolution boundary) are extended to 1/64 minimum.
 - **Empty capture**: if no notes detected (silent capture, pure noise), the MIDI file contains tempo/time-signature meta events only. Drag-out still works; the user gets an empty clip.
 
@@ -301,19 +319,16 @@ The MIDI preview area in the UI (see §10) is the drag source. Mouse-down + drag
 
 On drag-start:
 
-1. Write current quantized MIDI to a temp file at `/tmp/glirdir-scratch-<uuid>.mid` (or macOS equivalent: `NSTemporaryDirectory()`).
-2. File is named based on patch state — e.g., `glirdir-Cmin-16bar-120bpm.mid` — so when Ableton renames the dropped clip, the name is meaningful.
-3. Initiate `NSDraggingSession` from the plugin's NSView with the temp file URL as drag pasteboard content (`kUTTypeMIDIAudio` / `public.midi-audio` pasteboard type).
-4. Standard `NSDraggingSource` protocol: Ableton (and any other audio app supporting MIDI drag) accepts the drop and copies the MIDI clip onto the target track.
+1. Ask the VST3 controller for a drag-ready temp MIDI file. The controller also requests a fresh worker MIDI export for the current analysis; if no analysis exists, it writes an empty MIDI file with tempo metadata so empty drags behave predictably.
+2. Write temp files under the OS temp directory in `lindelion-glirdir-midi-drag/`, preserving the deterministic `.mid` filename inside a unique temp directory. The controller tracks owned paths, keeps only the newest bounded set, and removes tracked files when the controller is dropped.
+3. Try to initiate an AppKit file drag from the plugin's NSView using Cocoa interop and the current AppKit mouse event.
+4. If AppKit drag cannot start, put the MIDI file URL on the macOS pasteboard. The editor export icon also opens a save dialog and copies the same temp MIDI file to a user-selected path.
 
 ### 7.3 Risk: NSDragging from baseview
 
-This is the most uncertain integration point in the spec. baseview exposes the raw NSView, but registering it as an NSDraggingSource and orchestrating the drag session requires direct Cocoa interop via `objc2` (preferred over the older `cocoa` crate).
+This remains the most uncertain integration point in the spec. The phase-9 spike now has the plugin-view drag source, temp-file generation, bounded cleanup, and pasteboard/export-to-file fallback in code. The AppKit drag path still needs validation inside Ableton on macOS.
 
-**Risk mitigation:** validated as a spike during Step 1 of the build order (§16). If `objc2`-based dragging doesn't work cleanly within baseview's event loop, fallback options:
-- Drag from a small auxiliary NSWindow rendered just behind the plugin window (workable but ugly).
-- Drag via the plugin's editor view treated as a transparent overlay (cleaner, requires more event-loop wrangling).
-- Worst case: "Copy MIDI to clipboard" + paste in DAW. Most DAWs support pasting MIDI clips. Loses the drag-and-drop affordance but the workflow still works.
+**Risk mitigation:** if dragging from the embedded plugin NSView is unreliable in Ableton, v1 keeps the export-to-file button and pasteboard file URL fallback. Only add an auxiliary overlay/window if manual validation proves the direct NSView drag cannot be made reliable.
 
 ---
 
@@ -326,14 +341,14 @@ A built-in audition synth lets the user hear the captured/quantized MIDI without
 - Polyphonic sine oscillator (up to 4 voices, voice stealing as needed — Glirdir's output is monophonic by construction, but the synth has headroom for release tails overlapping new notes).
 - Simple AD envelope (10ms attack, 200ms release).
 - Mixes to the plugin's audio output.
-- Audition plays in sync with host transport when host is playing; falls back to its own internal playback clock when host is stopped (so you can audition without playing the DAW).
+- Audition syncs to host musical position when host transport is playing; it falls back to its own internal playback clock when host is stopped.
 
 ### 8.2 Audition controls
 
 - **Play / Stop** button — toggles audition playback.
 - **Loop** toggle — loops the captured phrase indefinitely while pressed.
 - **Volume** knob — audition synth's output level.
-- **Audition while editing** toggle — if on, settings changes restart audition from current playhead position so you hear changes immediately.
+- **Audition while editing** toggle — if on, settings changes keep audition running from the current playhead while the updated MIDI replaces the previous derivation.
 
 The audition synth is intentionally simple/dry. It's a sanity check, not a presentation. The user's actual synth is the one they drop the MIDI onto in their DAW.
 
@@ -400,7 +415,7 @@ Key UI behaviors:
 
 - Patches are versioned through shared `TomlPatchFormat<GlirdirPatch>`.
 - Current patch state contains capture settings (bars, sync mode, count-in), analysis settings (confidence threshold, onset sensitivity, min note), quantization settings (key, scale, snap mode, grid, strength, velocity amount), audition settings, and optional `ScratchpadAudio`.
-- VST3 state integration is pending. The target remains compressed scratchpad storage plus settings restore through `IComponent::getState`/`setState`.
+- VST3 state uses a versioned Glirdir envelope: TOML settings are stored separately from bounded binary scratchpad audio and restored through `IComponent::getState`/`setState`. Legacy TOML-only state still loads.
 
 ---
 
@@ -417,7 +432,8 @@ Same Lindelion stack as siblings, with additions:
 | Onset detect     | `lindelion-onset-detect` (shared with Linnod)         | SuperFlux + pitch-stability used here.                         |
 | Resampling       | `lindelion-dsp-utils` interpolation                   | Capture-rate audio → 16 kHz for SwiftF0 analysis.              |
 | MIDI             | `lindelion-midi`                                      | Quantization, key/scale logic, SMF emission via `midly`.       |
-| FLAC             | Pending                                               | Target encoding for large scratchpad audio in VST3 state.      |
+| Scratchpad state | Bounded binary f32 payload                            | Temporary VST3 state format; FLAC remains the compression target. |
+| Sample library   | `lindelion-sample-library`                           | Scratchpad WAV ingest, hashing, indexing, and moved-file recovery. |
 | Drag-out         | `objc2` + direct NSDragging interop                   | Plugin-local code; not a reusable crate.                       |
 | Audition synth   | Inline module (no separate crate)                     | ~100 LOC.                                                      |
 
@@ -520,113 +536,48 @@ Pure quantization (no re-analysis) is on a note list of ~50-200 notes. Trivially
 
 ---
 
-## 15. Open Questions
+## 15. Current Decisions
 
-1. **Audition synth scope.** Pure sine is minimal but uncharacterful. Should there be a small built-in voice palette (sine, triangle, saw, FM bell) so the audition sounds something like the user's intended target instrument? Argument against: it's a sanity check, not a presentation; users should drag MIDI to their real synth quickly rather than over-tweaking against the audition.
+- **Audition voice:** v1 ships a simple sine audition synth. The audition is a sanity check for the derived MIDI, not a destination instrument.
+- **Audition output:** v1 emits audition audio through the main stereo output. A separate audition output is deferred.
+- **Live edit behavior:** when live edit is enabled, audition keeps its current playhead and swaps in the updated derived MIDI as quantize/key/grid settings change.
+- **Phrase sync:** Bar 1 sync aligns to the host musical position using the selected capture length as the phrase interval: `bar_position % bars_per_phrase == 0`.
+- **Drag fallback:** direct AppKit file drag from the plugin view is the primary path. Pasteboard file URL export and export-to-file remain the v1 fallback paths. An auxiliary overlay/window should only be added if Ableton validation proves the direct view drag cannot be made reliable.
+- **Scratchpad state:** v1 uses a bounded binary f32 payload inside the VST3 state envelope. FLAC remains the target storage format after a Rust encoder is selected and validated.
+- **Detection quality:** fast CI coverage uses synthetic fixture-style tests. Recorded vocal/instrument fixtures and Apple Silicon timing numbers are validation/hardening artifacts.
+- **Confidence threshold:** the confidence threshold remains user-visible as a secondary detection control.
+- **MIDI naming:** drag/export filenames are deterministic and filesystem-safe: `glirdir-<key><scale>-<bars>bar-<bpm>bpm.mid`.
+- **Pitch range:** SwiftF0's G1-C7 range is accepted for v1. High flute/piccolo fallback detection is deferred.
+- **Build semantics:** `make build` builds one selected plugin, defaulting to Lamath. `make build PLUGIN=glirdir` selects Glirdir. A both-plugin build target is deferred until it is needed.
 
-2. **Bar 1 sync semantics.** "Next bar 1" needs definition: bar 1 of the session, bar 1 of the loop region, or every Nth bar where N matches the capture length? The third is most musically useful (capture aligned with phrase boundaries) but most surprising — needs a clear UI label.
+## 16. VST3 Bundle Metadata
 
-3. **MIDI clip naming on drag.** Current spec: `glirdir-Cmin-16bar-120bpm.mid`. Useful but verbose. Acceptable, or prefer a shorter name (and accept that Ableton will rename it to "MIDI Clip 1" or similar on drop)?
+| Field | Value |
+| ---- | ---- |
+| Bundle name | `Glirdir` |
+| Executable | `Glirdir` |
+| Bundle identifier | `com.ahara.glirdir` |
+| VST3 subcategory | `Fx` |
+| Processor CID | `7C2E2B8AB1C44F0DA6F924276C9E0D5B` |
+| Controller CID | `0D0466D253E446E58E90CF1325B5E241` |
 
-4. **Confidence threshold UI exposure.** Default 0.5 is reasonable. Should it be exposed as a user knob (more control, more rope) or hidden as an advanced setting (cleaner UI, less customization)? Lean: exposed but secondary.
+Glirdir is an audio-effect VST3: it exposes an audio input bus, stereo output bus, and no MIDI input in v1. It produces MIDI files for drag/export rather than live MIDI output.
 
-5. **Live edit toggle in audition.** When on, every settings change restarts audition from current playhead position. Could also: just smoothly re-derive the MIDI underneath ongoing audition (notes "shift" as the user adjusts grid strength). Latter is fancier but might be visually/audibly disorienting. Lean: simple restart.
+## 17. Validation And Deferred Work
 
-6. **Should the audition synth output pass through the plugin's audio output, or be routable to a separate output?** Latter would let users keep the audition out of the master mix while previewing. v2 likely; v1 ship single-output.
+Manual macOS/DAW validation remains:
 
-7. **SwiftF0 frequency range cap (C7 = 2093 Hz).** Covers vocal range, clarinet, alto/soprano flute completely. Upper end of concert flute (D7 ≈ 2349 Hz) and piccolo fall above the model's range. Three options: (a) accept the cap and document it (most likely fine for songwriting-sketch use); (b) detune-and-detect — apply an octave-down pitch shift to incoming audio, run SwiftF0, then octave-up the detected pitch (works but degrades quality at upper extremes); (c) add a fallback secondary detector for high-range content (significant scope). Lean (a).
+- build, stage, install, and inspect `Glirdir.vst3` on macOS;
+- confirm exported VST3 symbols and code signature;
+- confirm Ableton scans the plugin, shows it in the expected category, and opens/closes the editor repeatedly;
+- validate capture modes, count-in behavior, transport stop/resume, analysis status, live re-derivation, audition, drag/export, and project reload;
+- record Apple Silicon performance numbers for 4/8/16-bar captures.
 
-8. **Anything inherently broken about the workflow that I haven't caught?** Specifically: anyone who sketches songs by singing — is the capture-then-drag flow actually how they'd want to work, or is there a missing affordance?
+Deferred hardening:
 
----
-
-## 16. Implementation Sequence
-
-Concrete observable acceptance criteria per step.
-
-### Step 1 — Drag-out integration spike
-
-This is the highest-risk piece. Validate it before building anything else, so the rest of the plugin doesn't get built around an assumption that turns out broken.
-
-- Standalone test plugin (built from `lindelion-plugin-shell` skeleton) with a single button.
-- Pressing the button creates a temp .mid file with a hardcoded one-bar C major scale.
-- Dragging from the button area initiates NSDragging.
-- Dropping on an Ableton MIDI track creates a clip containing the C major scale.
-
-**Acceptance:** drag works reliably in Ableton on Mac. If broken, evaluate fallback options before proceeding (see §7.3).
-
-### Step 2 — Audio capture state machine
-
-- Buffer allocation, capture state machine, three sync modes, count-in.
-- Visualize captured audio as a waveform in the UI.
-- Arm → wait for trigger → count-in → capture → captured.
-
-**Acceptance:** arm the plugin, hit play in Ableton, sing into the input, see the captured waveform appear after N bars.
-
-### Step 3 — SwiftF0 integration + visualization
-
-- `lindelion-pitch-detect` crate with SwiftF0 ONNX model embedded, `tract` inference path, and a frame-iterator API.
-- Resampling pipeline: captured audio → 16 kHz for analysis via shared interpolation.
-- Run SwiftF0 over captured audio, overlay pitch contour and confidence band on the waveform display.
-
-**Acceptance:** capture audio, see a smooth pitch line drawn over the waveform with low-confidence regions visually distinguished. Confirm no denormal/NaN artifacts in pathological inputs (silence, clipped audio, pure noise).
-
-### Step 4 — Onset + segmentation + naive MIDI
-
-- SuperFlux + pitch-stability onset detection from `lindelion-onset-detect`.
-- Note segmentation per §4.5 including low-confidence pitch hold.
-- Render derived notes as a piano-roll display below the waveform.
-- No quantization yet — notes shown at detected pitches and times.
-
-**Acceptance:** sing a melody, see piano-roll notes appear matching what was sung (uncleanly, but visibly).
-
-### Step 5 — Quantization + key/scale snap
-
-- `lindelion-midi` crate with key/scale logic and grid quantization.
-- Wire key, scale, snap mode, grid, strength controls.
-- Piano-roll updates live as quantization settings change.
-
-**Acceptance:** sing a sloppy melody in C, set key=C scale=Major snap=Hard, see notes snap to scale; toggle snap modes and watch the piano-roll change.
-
-### Step 6 — Velocity mapping
-
-- Per-note peak RMS extraction.
-- Velocity amount knob wired through the v=f(rms,amount) formula.
-- Piano-roll renders note blocks with velocity-correlated opacity or height.
-
-**Acceptance:** sing dynamically, set velocity amount = 1, see varied note heights; set amount = 0, see uniform notes.
-
-### Step 7 — Audition synth
-
-- Polyphonic sine synth with AD envelope.
-- Play / loop / volume controls.
-- Sync to host transport when playing; internal clock when stopped.
-- Live-edit toggle.
-
-**Acceptance:** hit play on audition, hear the captured/quantized melody back as sine tones; adjust grid strength while playing, hear timing change.
-
-### Step 8 — MIDI emission + drag-out (full)
-
-- `midly` SMF write of current quantized notes.
-- Wire drag-out from MIDI preview area to the temp-file + NSDragging flow validated in Step 1.
-
-**Acceptance:** capture, audition, adjust quantization, drag the MIDI preview onto an Ableton track, see a clean MIDI clip appear.
-
-### Step 9 — State persistence
-
-- Patch save/load with scratchpad audio, moving large VST3 state toward FLAC-encoded storage.
-- DAW state save/restore (close project, reopen, scratchpad and settings restored).
-- "Save to Library" action ingests scratchpad into shared `lindelion-sample-library`.
-
-**Acceptance:** capture, save Ableton project, close, reopen → plugin restores with audio and derived MIDI ready to re-derive/drag.
-
-### Step 10 — Polish
-
-- UI refinement, especially the piano-roll and waveform rendering performance.
-- SwiftF0 inference performance pass (profile, evaluate CoreML EP swap, consider streaming-during-capture optimization).
-- Validator regression.
-
-**Acceptance:** plugin passes validator; 16-bar capture re-derives MIDI in under 100ms on M-series silicon; UI is responsive during re-derivation.
+- replace bounded binary f32 scratchpad state with FLAC after encoder validation;
+- add recorded vocal/instrument fixture tests after manual validation identifies useful fixture categories and tolerances;
+- address host-specific drag or editor lifecycle issues found in Ableton.
 
 ---
 

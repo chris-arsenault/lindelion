@@ -1,5 +1,8 @@
 use lindelion_midi::{RootNote, Scale, SnapMode, TimingGrid};
 use lindelion_plugin_shell::{ParameterId, ParameterInfo, ParameterRange};
+use lindelion_ui::glirdir_vizia::{
+    GlirdirEditorControlKind, GlirdirEditorParameterBinding, GlirdirEditorSurfaceSlot,
+};
 
 use crate::patch::{CaptureBars, GlirdirPatch, SyncMode};
 
@@ -16,6 +19,27 @@ pub const GRID_PARAMETER_ID: u32 = 23;
 pub const TIMING_STRENGTH_PARAMETER_ID: u32 = 24;
 pub const VELOCITY_AMOUNT_PARAMETER_ID: u32 = 25;
 pub const AUDITION_VOLUME_PARAMETER_ID: u32 = 30;
+
+const BARS_LABELS: &[&str] = &["4", "8", "16"];
+const SYNC_LABELS: &[&str] = &["Now", "Phrase", "Bar"];
+const COUNT_IN_LABELS: &[&str] = &["0", "1", "2"];
+const ROOT_LABELS: &[&str] = &[
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+const SCALE_LABELS: &[&str] = &[
+    "Chrom",
+    "Major",
+    "Minor",
+    "Harm",
+    "Mel",
+    "Penta Maj",
+    "Penta Min",
+    "Blues",
+    "Dorian",
+    "Mix",
+];
+const SNAP_LABELS: &[&str] = &["Hard", "Soft", "Off"];
+const GRID_LABELS: &[&str] = &["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T"];
 
 pub const PARAMETERS: &[ParameterInfo] = &[
     ParameterInfo::stepped(
@@ -150,11 +174,117 @@ pub const PARAMETER_BINDINGS: &[ParameterBinding] = &[
     ParameterBinding::new(PARAMETERS[12], ParameterApplyKind::Audition),
 ];
 
+pub const EDITOR_PARAMETER_BINDINGS: &[GlirdirEditorParameterBinding] = &[
+    GlirdirEditorParameterBinding::new(
+        CAPTURE_BARS_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::CaptureBars,
+        "Bars",
+        GlirdirEditorControlKind::Segmented {
+            labels: BARS_LABELS,
+            width: 126.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        SYNC_MODE_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::SyncMode,
+        "Sync",
+        GlirdirEditorControlKind::Segmented {
+            labels: SYNC_LABELS,
+            width: 168.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        COUNT_IN_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::CountIn,
+        "Count",
+        GlirdirEditorControlKind::Segmented {
+            labels: COUNT_IN_LABELS,
+            width: 126.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        CONFIDENCE_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::Confidence,
+        "Confidence",
+        GlirdirEditorControlKind::Slider { width: 216.0 },
+    ),
+    GlirdirEditorParameterBinding::new(
+        ONSET_SENSITIVITY_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::OnsetSensitivity,
+        "Onset",
+        GlirdirEditorControlKind::Slider { width: 216.0 },
+    ),
+    GlirdirEditorParameterBinding::new(
+        MIN_NOTE_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::MinNote,
+        "Min Note",
+        GlirdirEditorControlKind::Slider { width: 216.0 },
+    ),
+    GlirdirEditorParameterBinding::new(
+        ROOT_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::Root,
+        "Key",
+        GlirdirEditorControlKind::Selector {
+            labels: ROOT_LABELS,
+            width: 128.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        SCALE_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::Scale,
+        "Scale",
+        GlirdirEditorControlKind::Selector {
+            labels: SCALE_LABELS,
+            width: 164.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        SNAP_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::Snap,
+        "Snap",
+        GlirdirEditorControlKind::Segmented {
+            labels: SNAP_LABELS,
+            width: 150.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        GRID_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::Grid,
+        "Grid",
+        GlirdirEditorControlKind::Selector {
+            labels: GRID_LABELS,
+            width: 142.0,
+        },
+    ),
+    GlirdirEditorParameterBinding::new(
+        TIMING_STRENGTH_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::TimingStrength,
+        "Strength",
+        GlirdirEditorControlKind::Slider { width: 216.0 },
+    ),
+    GlirdirEditorParameterBinding::new(
+        VELOCITY_AMOUNT_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::VelocityAmount,
+        "Velocity",
+        GlirdirEditorControlKind::Slider { width: 216.0 },
+    ),
+    GlirdirEditorParameterBinding::new(
+        AUDITION_VOLUME_PARAMETER_ID,
+        GlirdirEditorSurfaceSlot::AuditionVolume,
+        "Volume",
+        GlirdirEditorControlKind::Slider { width: 216.0 },
+    ),
+];
+
 pub fn parameter_binding(id: u32) -> Option<ParameterBinding> {
     PARAMETER_BINDINGS
         .iter()
         .copied()
         .find(|binding| binding.info.id == ParameterId(id))
+}
+
+pub fn editor_parameter_bindings() -> impl Iterator<Item = GlirdirEditorParameterBinding> {
+    EDITOR_PARAMETER_BINDINGS.iter().copied()
 }
 
 pub fn apply_parameter_plain(patch: &mut GlirdirPatch, id: u32, plain: f32) -> ParameterApplyKind {
@@ -260,6 +390,29 @@ mod tests {
                 parameter_binding(parameter.id.0).map(ParameterBinding::info),
                 Some(*parameter)
             );
+        }
+    }
+
+    #[test]
+    fn every_visible_editor_control_resolves_to_one_parameter_binding() {
+        assert_eq!(
+            EDITOR_PARAMETER_BINDINGS.len(),
+            GlirdirEditorSurfaceSlot::ALL.len()
+        );
+
+        for editor in editor_parameter_bindings() {
+            let matches = PARAMETER_BINDINGS
+                .iter()
+                .filter(|binding| binding.info().id.0 == editor.id())
+                .count();
+            assert_eq!(matches, 1, "editor binding {:?}", editor.slot());
+        }
+
+        for slot in GlirdirEditorSurfaceSlot::ALL {
+            let count = editor_parameter_bindings()
+                .filter(|binding| binding.slot() == slot)
+                .count();
+            assert_eq!(count, 1, "editor slot {slot:?}");
         }
     }
 }

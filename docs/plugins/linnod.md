@@ -463,7 +463,7 @@ Each step has concrete acceptance criteria. Step 1 is partially implemented by t
 - `plugins/linnod/` defines the Linnod descriptor, parameters, patch model, and a silent `AudioPlugin` implementation.
 - Linnod VST3 bundle automation and Ableton validation remain future work.
 
-**Acceptance:** `cargo check -p linnod` and `cargo test -p linnod` pass; when bundle support is added, Ableton sees Linnod as a separate plugin.
+**Acceptance:** workspace checks include Linnod; when bundle support is added, Ableton sees Linnod as a separate plugin.
 
 ### Step 2 — Sample loading + waveform view
 
