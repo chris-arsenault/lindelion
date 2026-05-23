@@ -1,0 +1,12 @@
+[package]
+name = "lindelion-plugin-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lindelion-dsp-utils = { path = "../lindelion-dsp-utils" }
+serde.workspace = true
+toml.workspace = true
+vst3.workspace = true

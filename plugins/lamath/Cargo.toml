@@ -1,0 +1,18 @@
+[package]
+name = "lamath"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-plugin-shell.workspace = true
+lindelion-sample-library = { workspace = true, features = ["file-library"] }
+lindelion-ui.workspace = true
+serde.workspace = true
+toml.workspace = true
+vst3.workspace = true

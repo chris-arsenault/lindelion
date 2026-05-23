@@ -1,8 +1,8 @@
-PLUGIN ?= resonator-synth
+PLUGIN ?= lamath
 MACOS_TARGET ?= aarch64-apple-darwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
-BUNDLE_NAME ?= Ahara Resonator Synth.vst3
+BUNDLE_NAME ?= Lamath.vst3
 VST3_STAGING_DIR ?= $(CACHE_DIR)/bundles
 VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
@@ -31,7 +31,7 @@ test:
 	cargo test --workspace
 
 macos-check:
-	cargo check -p resonator-synth --target aarch64-apple-darwin
+	cargo check -p lamath --target aarch64-apple-darwin
 
 build: cache-dir
 	@if [ "$$(uname -s)" != "Darwin" ]; then \

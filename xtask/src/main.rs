@@ -30,7 +30,7 @@ fn main() -> ExitCode {
 }
 
 fn print_help() {
-    println!("Ahara xtask");
+    println!("Lindelion xtask");
     println!();
     println!("Commands:");
     println!("  check|workspace       Run Rust fmt, clippy, and tests");
@@ -173,7 +173,7 @@ impl BundleOptions {
         }
 
         Ok(Self {
-            plugin: plugin.unwrap_or_else(|| "resonator-synth".to_string()),
+            plugin: plugin.unwrap_or_else(|| "lamath".to_string()),
             target,
             bundle_dir,
         })
@@ -220,12 +220,12 @@ struct BundleSpec {
 impl BundleSpec {
     fn from_plugin(plugin: &str) -> Option<Self> {
         match plugin {
-            "resonator-synth" => Some(Self {
-                package: "resonator-synth",
-                bundle_name: "Ahara Resonator Synth",
-                executable_name: "Ahara Resonator Synth",
-                bundle_identifier: "com.ahara.resonator-synth",
-                library_stem: "resonator_synth",
+            "lamath" => Some(Self {
+                package: "lamath",
+                bundle_name: "Lamath",
+                executable_name: "Lamath",
+                bundle_identifier: "com.ahara.lamath",
+                library_stem: "lamath",
                 processor_cid: [0x4B410E03, 0x80AD49B6, 0x9B7D5479, 0xF4A9B0D1],
                 controller_cid: [0x15C8B012, 0xF4B64F5E, 0x93D9AA38, 0x69383E3B],
                 version: env!("CARGO_PKG_VERSION"),

@@ -1,30 +1,30 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/ahara-dsp-utils",
-    "crates/ahara-onset-detect",
-    "crates/ahara-plugin-shell",
-    "crates/ahara-psola",
-    "crates/ahara-sample-library",
-    "crates/ahara-ui",
-    "plugins/resonator-synth",
-    "plugins/slicer",
+    "crates/lindelion-dsp-utils",
+    "crates/lindelion-onset-detect",
+    "crates/lindelion-plugin-shell",
+    "crates/lindelion-psola",
+    "crates/lindelion-sample-library",
+    "crates/lindelion-ui",
+    "plugins/lamath",
+    "plugins/linnod",
     "xtask",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 license = "UNLICENSED"
 authors = ["Ahara"]
 
 [workspace.dependencies]
-ahara-dsp-utils = { path = "crates/ahara-dsp-utils" }
-ahara-onset-detect = { path = "crates/ahara-onset-detect" }
-ahara-plugin-shell = { path = "crates/ahara-plugin-shell" }
-ahara-psola = { path = "crates/ahara-psola" }
-ahara-sample-library = { path = "crates/ahara-sample-library", default-features = false }
-ahara-ui = { path = "crates/ahara-ui" }
+lindelion-dsp-utils = { path = "crates/lindelion-dsp-utils" }
+lindelion-onset-detect = { path = "crates/lindelion-onset-detect" }
+lindelion-plugin-shell = { path = "crates/lindelion-plugin-shell" }
+lindelion-psola = { path = "crates/lindelion-psola" }
+lindelion-sample-library = { path = "crates/lindelion-sample-library", default-features = false }
+lindelion-ui = { path = "crates/lindelion-ui" }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.8"
 vizia = { git = "https://github.com/vizia/vizia.git", rev = "cb3346008ece56c09c39344ed1289357dba96ce1", default-features = false, features = ["baseview"] }

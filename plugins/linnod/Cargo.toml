@@ -1,0 +1,17 @@
+[package]
+name = "linnod"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-onset-detect.workspace = true
+lindelion-plugin-shell.workspace = true
+lindelion-psola.workspace = true
+lindelion-sample-library.workspace = true
+lindelion-ui.workspace = true
