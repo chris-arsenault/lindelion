@@ -5,6 +5,12 @@ use ahara_dsp_utils::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::constants::{
+    DEFAULT_BIQUAD_Q, FILTER_RESONANCE, STRIKE_POSITION, TUBE_BOUNDARY,
+    WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_FILTER_Q, WAVEGUIDE_LOOP_GAIN,
+    WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH,
+};
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WaveguideStyle {
     #[default]
@@ -56,12 +62,12 @@ impl Default for WaveguideParams {
         Self {
             style: WaveguideStyle::String,
             frequency_hz: 220.0,
-            loop_filter_cutoff: 8_000.0,
-            loop_filter_resonance: 0.0,
-            loop_gain: 0.92,
+            loop_filter_cutoff: WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ.default,
+            loop_filter_resonance: FILTER_RESONANCE.default,
+            loop_gain: WAVEGUIDE_LOOP_GAIN.default,
             loop_nonlinearity: 0.0,
-            position_of_strike: 0.5,
-            boundary_reflection: 0.75,
+            position_of_strike: STRIKE_POSITION.default,
+            boundary_reflection: TUBE_BOUNDARY.reflection.default,
         }
     }
 }
@@ -81,7 +87,11 @@ impl WaveguideResonator {
             sample_rate,
             delay: DelayLine::new(max_delay),
             fractional_delay: FirstOrderAllpass::default(),
-            loop_filter: Biquad::new(BiquadCoefficients::lowpass(sample_rate, 8_000.0, 0.707)),
+            loop_filter: Biquad::new(BiquadCoefficients::lowpass(
+                sample_rate,
+                WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ.default,
+                DEFAULT_BIQUAD_Q,
+            )),
         }
     }
 
@@ -116,8 +126,10 @@ impl WaveguideResonator {
             damped
         };
 
-        let resonance_gain_compensation =
-            1.0 / (1.0 + params.loop_filter_resonance.clamp(0.0, 0.999) * 0.45);
+        let resonance_gain_compensation = 1.0
+            / (1.0
+                + FILTER_RESONANCE.clamp(params.loop_filter_resonance)
+                    * WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH);
         let feedback = feedback_sample(nonlinear, params, resonance_gain_compensation);
         self.delay.push(math::snap_to_zero(feedback));
         self.delay.add_at(
@@ -134,12 +146,11 @@ fn feedback_sample(
     params: WaveguideParams,
     resonance_gain_compensation: f32,
 ) -> f32 {
-    let loop_gain = params.loop_gain.clamp(0.0, 0.999) * resonance_gain_compensation;
+    let loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(params.loop_gain) * resonance_gain_compensation;
     match params.style {
         WaveguideStyle::String => loop_sample * loop_gain,
         WaveguideStyle::Tube => {
-            let reflection = math::finite_clamp(params.boundary_reflection, -1.0, 1.0, 0.75);
-            loop_sample * loop_gain * reflection
+            loop_sample * loop_gain * TUBE_BOUNDARY.feedback_gain(params.boundary_reflection)
         }
     }
 }
@@ -148,9 +159,7 @@ fn excitation_sample(excitation: f32, params: WaveguideParams) -> f32 {
     match params.style {
         WaveguideStyle::String => excitation,
         WaveguideStyle::Tube => {
-            let reflection = math::finite_clamp(params.boundary_reflection, -1.0, 1.0, 0.75);
-            let boundary_loss = 1.0 - reflection.abs() * 0.25;
-            excitation * boundary_loss.clamp(0.5, 1.0)
+            excitation * TUBE_BOUNDARY.excitation_gain(params.boundary_reflection)
         }
     }
 }
@@ -158,10 +167,7 @@ fn excitation_sample(excitation: f32, params: WaveguideParams) -> f32 {
 fn output_sample(delayed: f32, params: WaveguideParams) -> f32 {
     match params.style {
         WaveguideStyle::String => delayed,
-        WaveguideStyle::Tube => {
-            let reflection = math::finite_clamp(params.boundary_reflection, -1.0, 1.0, 0.75);
-            delayed * (0.8 + reflection.abs() * 0.2)
-        }
+        WaveguideStyle::Tube => delayed * TUBE_BOUNDARY.output_gain(params.boundary_reflection),
     }
 }
 
@@ -170,13 +176,12 @@ fn loop_filter_coefficients(
     loop_filter_cutoff: f32,
     loop_filter_resonance: f32,
 ) -> BiquadCoefficients {
-    let resonance = math::finite_clamp(loop_filter_resonance, 0.0, 0.999, 0.0);
-    let q = 0.55 + resonance * 4.0;
+    let q = WAVEGUIDE_LOOP_FILTER_Q.from_resonance(loop_filter_resonance);
     BiquadCoefficients::lowpass(sample_rate, loop_filter_cutoff, q)
 }
 
 fn injection_delay_samples(loop_delay_samples: f32, position_of_strike: f32) -> f32 {
-    let position = math::finite_clamp(position_of_strike, 0.001, 0.999, 0.5);
+    let position = STRIKE_POSITION.clamp(position_of_strike);
     (loop_delay_samples * position).clamp(0.0, loop_delay_samples.max(0.0))
 }
 

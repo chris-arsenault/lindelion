@@ -1,63 +1,40 @@
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
+use ahara_plugin_shell::{PluginState, TomlPatchError, TomlPatchFormat, TomlPatchMigration};
 use ahara_sample_library::LibraryPaths;
 
 use crate::ResonatorSynthPatch;
 
-#[derive(Debug)]
-pub enum PatchIoError {
-    Io(io::Error),
-    Encode(toml::ser::Error),
-    Decode(toml::de::Error),
-}
+pub const FORMAT_VERSION: u32 = 1;
+pub type PatchIoError = TomlPatchError;
 
-impl From<io::Error> for PatchIoError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
-impl From<toml::ser::Error> for PatchIoError {
-    fn from(value: toml::ser::Error) -> Self {
-        Self::Encode(value)
-    }
-}
-
-impl From<toml::de::Error> for PatchIoError {
-    fn from(value: toml::de::Error) -> Self {
-        Self::Decode(value)
-    }
-}
+const PATCH_FORMAT: TomlPatchFormat<ResonatorSynthPatch> = TomlPatchFormat::new(FORMAT_VERSION);
 
 pub fn to_toml_string(patch: &ResonatorSynthPatch) -> Result<String, PatchIoError> {
-    toml::to_string_pretty(patch).map_err(PatchIoError::from)
+    PATCH_FORMAT.to_toml_string(patch)
 }
 
 pub fn from_toml_str(input: &str) -> Result<ResonatorSynthPatch, PatchIoError> {
-    match toml::from_str(input) {
-        Ok(patch) => Ok(patch),
-        Err(error) => {
-            let Some(migrated) = migrate_legacy_series_routing(input) else {
-                return Err(PatchIoError::Decode(error));
-            };
-            toml::from_str(&migrated).map_err(PatchIoError::from)
-        }
-    }
+    PATCH_FORMAT.from_toml_str_with_migration(input, ResonatorPatchMigration)
 }
 
 pub fn save_patch(path: impl AsRef<Path>, patch: &ResonatorSynthPatch) -> Result<(), PatchIoError> {
-    if let Some(parent) = path.as_ref().parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, to_toml_string(patch)?)?;
-    Ok(())
+    PATCH_FORMAT.save_patch(path, patch)
 }
 
 pub fn load_patch(path: impl AsRef<Path>) -> Result<ResonatorSynthPatch, PatchIoError> {
-    from_toml_str(&fs::read_to_string(path)?)
+    PATCH_FORMAT.load_patch_with_migration(path, ResonatorPatchMigration)
+}
+
+pub fn to_plugin_state(patch: &ResonatorSynthPatch) -> Result<PluginState, PatchIoError> {
+    PATCH_FORMAT.to_plugin_state(patch)
+}
+
+pub fn from_plugin_state(state: PluginState) -> Result<ResonatorSynthPatch, PatchIoError> {
+    PATCH_FORMAT.from_plugin_state_with_migration(state, ResonatorPatchMigration)
 }
 
 pub fn save_library_patch(
@@ -102,6 +79,15 @@ fn migrate_legacy_series_routing(input: &str) -> Option<String> {
         .then(|| input.replacen(legacy, "[routing.Series]\nmix_a = 0.5\nmix_b = 0.5", 1))
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ResonatorPatchMigration;
+
+impl TomlPatchMigration<ResonatorSynthPatch> for ResonatorPatchMigration {
+    fn migrate_legacy(&self, input: &str, _error: &toml::de::Error) -> Option<String> {
+        migrate_legacy_series_routing(input)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,7 +115,7 @@ mod tests {
 
     #[test]
     fn legacy_unit_series_routing_toml_loads_with_default_mix() {
-        let input = to_toml_string(&ResonatorSynthPatch::default()).unwrap();
+        let input = legacy_toml_string(&ResonatorSynthPatch::default());
         let legacy = input.replace(
             "[routing.Parallel]\nmix_a = 1.0\nmix_b = 0.0",
             "routing = \"Series\"",
@@ -146,7 +132,7 @@ mod tests {
 
     #[test]
     fn legacy_waveguide_patch_loads_with_default_style_fields() {
-        let input = to_toml_string(&ResonatorSynthPatch::default()).unwrap();
+        let input = legacy_toml_string(&ResonatorSynthPatch::default());
         let legacy = input
             .replace("style = \"String\"\n", "")
             .replace("boundary_reflection = 0.75\n", "");
@@ -186,5 +172,44 @@ mod tests {
         assert!(path.ends_with("Library Patch.toml"));
         assert_eq!(restored.name, "Library Patch");
         assert_eq!(restored.excitation_slots[0].sample, Some(reference));
+    }
+
+    #[test]
+    fn plugin_state_roundtrips_through_shared_patch_format() {
+        let patch = ResonatorSynthPatch {
+            name: "State Patch".to_string(),
+            ..ResonatorSynthPatch::default()
+        };
+
+        let state = to_plugin_state(&patch).unwrap();
+        let restored = from_plugin_state(state).unwrap();
+
+        assert_eq!(restored.name, "State Patch");
+    }
+
+    #[test]
+    fn malformed_patch_returns_typed_error() {
+        let error = from_toml_str("not valid =").unwrap_err();
+
+        assert!(matches!(error, PatchIoError::Decode(_)));
+    }
+
+    #[test]
+    fn forward_version_fails_cleanly() {
+        let input = "format_version = 99\n[patch]\nname = \"Future\"\n";
+
+        let error = from_toml_str(input).unwrap_err();
+
+        assert!(matches!(
+            error,
+            PatchIoError::UnsupportedVersion {
+                found: 99,
+                supported: FORMAT_VERSION
+            }
+        ));
+    }
+
+    fn legacy_toml_string(patch: &ResonatorSynthPatch) -> String {
+        toml::to_string_pretty(patch).unwrap()
     }
 }

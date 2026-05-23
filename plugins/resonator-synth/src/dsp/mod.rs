@@ -1,3 +1,4 @@
+pub(crate) mod constants;
 pub mod engine;
 pub mod excitation;
 pub mod modal;

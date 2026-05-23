@@ -28,6 +28,12 @@ version = "0.1.0"
 [[package]]
 name = "ahara-plugin-shell"
 version = "0.1.0"
+dependencies = [
+ "ahara-dsp-utils",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+ "vst3",
+]
 
 [[package]]
 name = "ahara-psola"
@@ -45,6 +51,10 @@ dependencies = [
 [[package]]
 name = "ahara-ui"
 version = "0.1.0"
+dependencies = [
+ "rfd",
+ "vizia",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -2001,10 +2011,8 @@ dependencies = [
  "ahara-plugin-shell",
  "ahara-sample-library",
  "ahara-ui",
- "rfd",
  "serde",
  "toml 0.9.12+spec-1.1.0",
- "vizia",
  "vst3",
 ]
 

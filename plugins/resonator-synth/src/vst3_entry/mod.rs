@@ -1,0 +1,47 @@
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
+#![allow(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
+mod controller;
+mod editor;
+mod factory;
+mod messages;
+mod midi;
+mod processor;
+mod state;
+
+#[cfg(test)]
+mod tests;
+
+use crate::PARAMETERS;
+
+const MAX_BLOCK_EVENTS: usize = 128;
+const SUBCATEGORY: &str = "Instrument|Synth";
+const PITCH_BEND_PARAMETER_ID: u32 = 10_000;
+const PITCH_BEND_PARAMETER_INDEX: usize = PARAMETERS.len();
+const VST3_PARAMETER_COUNT: usize = PARAMETERS.len() + 1;
+const DEFAULT_PITCH_BEND_RANGE_SEMITONES: f32 = 2.0;
+const DEFAULT_LIBRARY_DIR: &str = "Ahara";
+
+#[cfg(any(test, target_os = "macos"))]
+use controller::{EditorPatchSummary, parameter_index};
+#[cfg(target_os = "macos")]
+use controller::{
+    EditorSampleSummary, EditorSlotSummary, EditorTelemetry, EditorWaveformPoint,
+    default_library_paths,
+};
+use controller::{ResonatorVst3Controller, encode_telemetry};
+#[cfg(test)]
+use controller::{
+    decode_telemetry, format_parameter_plain_value, normalized_parameter_value,
+    parameter_values_from_patch, pitch_bend_normalized_from_plain,
+    pitch_bend_plain_from_normalized,
+};
+#[cfg(test)]
+use messages::ResonatorMessageKind;
+use messages::ResonatorPluginMessage;
+use midi::{RESONATOR_MIDI_CONTROLLER_ROUTES, empty_midi_event, vst_event_to_midi};
+use processor::ResonatorVst3Processor;
+use state::{read_plugin_state_from_stream, write_plugin_state_to_stream};

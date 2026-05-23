@@ -50,6 +50,9 @@ The numbered items are stable references for implementation and discussion.
      round-trip property test per enum codec.
 
 2. **ARCH-002: Replace editor command float codes with a typed command bus.**
+   - Status: Fixed. `ahara-ui` now owns an `EditorCommandBus` plus the only
+     primitive `EditorCommandFloatAdapter`; the resonator editor carries typed
+     `UiCommand` status and no longer has plugin-local command code matches.
    - Problem: editor commands are encoded as `f32` magic numbers and decoded
      back to `UiCommand`, which is brittle and not reusable across editors or
      plugins.
@@ -64,6 +67,10 @@ The numbered items are stable references for implementation and discussion.
      identity.
 
 3. **ARCH-003: Move editor action handling into reusable services.**
+   - Status: Fixed. `ahara-ui` now owns reusable `PatchIoService`,
+     `SampleSlotService`, `TelemetryRequestService`, and
+     `EditorCommandHandler` abstractions; the resonator editor only performs
+     host file-dialog selection and adapts its controller to those services.
    - Problem: patch save/load/export, sample ingest, slot assignment, and
      telemetry requests are handled by a plugin-local command branch in the VST3
      editor.
@@ -78,6 +85,10 @@ The numbered items are stable references for implementation and discussion.
      outside the audio path.
 
 4. **ARCH-004: Move VST3 message strings and payload plumbing into a typed plugin-message layer.**
+   - Status: Fixed. `ahara-plugin-shell::vst3` now owns the shared typed
+     message traits, VST3 `IMessage`/`IAttributeList` payload wrappers,
+     payload decoding, and string-copy helpers; resonator defines only its
+     plugin-specific message enum and payload handling on top.
    - Problem: controller/processor messages use plugin-local string IDs and raw
      payload extraction, so patch updates and telemetry are encoded as local
      protocol glue. The supporting C-FFI string helpers and COM wrappers are
@@ -98,6 +109,11 @@ The numbered items are stable references for implementation and discussion.
      cannot panic.
 
 5. **ARCH-005: Move host MIDI normalization out of the VST3 entrypoint.**
+   - Status: Fixed. `ahara-plugin-shell` now owns a reusable
+     `MidiEventNormalizer` with host-neutral MIDI event fixtures, plugin-supplied
+     CC routing, configurable pitch-bend range, and configurable expression CC
+     mapping; the resonator VST3 adapter only translates VST3 fields into those
+     host-neutral events.
    - Problem: `MidiExpressionSource` now owns expression mapping, but low-level
      host MIDI normalization still lives in VST3-local branches. The CC dispatch
      specifically is a 37-branch match that will be re-written verbatim in the
@@ -122,6 +138,11 @@ The numbered items are stable references for implementation and discussion.
      the configurable path.
 
 6. **ARCH-006: Derive editor parameter surface from parameter metadata.**
+   - Status: Fixed. Resonator parameter bindings now carry editor surface slot,
+     group, label, order, and control-kind metadata. The Vizia editor builds its
+     parameter signal table from that registry and requests controls by surface
+     slot, so parameter IDs, labels, and signal routing no longer live in a
+     separate editor surface.
    - Problem: visible editor parameter IDs and Vizia signals are manually
      curated, so the editor can silently drift from the plugin parameter model.
      The 28-branch id-to-signal match (`editor.rs:1501–1531`) and the static
@@ -139,6 +160,13 @@ The numbered items are stable references for implementation and discussion.
      parameters cannot remain in the editor surface.
 
 7. **ARCH-007: Split monolithic `lib.rs` and `vst3_entry.rs` into focused modules.**
+   - Status: Fixed. The resonator crate root now only wires modules,
+     descriptor constants, test allocation hooks, and existing re-exports.
+     Patch schema lives in `patch.rs`, the `AudioPlugin` wrapper/state/loading
+     code lives in `plugin.rs`, and the long plugin tests live in
+     `plugin_tests.rs`. The VST3 entrypoint is now `vst3_entry/mod.rs` with
+     focused `processor.rs`, `controller.rs`, `factory.rs`, `messages.rs`,
+     `midi.rs`, `state.rs`, and `tests.rs` modules.
    - Problem: `plugins/resonator-synth/src/lib.rs` is 3791 LOC mixing module
      wiring, plugin descriptor + `PARAMETERS` table, patch data structures,
      parameter dispatch trees, the `AudioPlugin` impl, telemetry/state
@@ -166,6 +194,16 @@ The numbered items are stable references for implementation and discussion.
      --target aarch64-apple-darwin` still succeeds.
 
 8. **ARCH-008: Move the Vizia editor UI out of the VST3 plugin into `ahara-ui`.**
+   - Status: Fixed. `ahara-ui` now owns `resonator_vizia.rs`, including the
+     Vizia application, resonator editor surface model, mockable callback host,
+     file-dialog command bridge, parameter signal routing, and UI smoke tests.
+     The resonator VST3 editor is reduced to `IPlugView` lifecycle plumbing plus
+     a controller adapter that supplies callbacks and DTO projections to
+     `ahara-ui`; the plugin no longer depends directly on `vizia` or `rfd`.
+   - Follow-on consideration: after the next plugin ships, revisit whether
+     `ahara-ui` should remain an owner for product-specific UI surfaces or be
+     split into a smaller reusable component layer plus plugin-specific
+     compositions such as `resonator_vizia`.
    - Problem: `plugins/resonator-synth/src/vst3_entry/editor.rs` is 2106 LOC, of
      which only ~180 are VST3 `IPlugView` plumbing; the remaining ~1900 LOC
      under `mod macos` is Vizia application code (panels, knob/slider
@@ -187,6 +225,12 @@ The numbered items are stable references for implementation and discussion.
      the VST3 editor stub still attaches/detaches against the host adapter.
 
 9. **ARCH-009: Lift hand-rolled VST3 plumbing into `ahara-plugin-shell`.**
+   - Status: Fixed. `ahara-plugin-shell::vst3` now owns the shared VST3 class
+     registration table, factory implementation, entrypoint export macro, FFI
+     string helpers, and fixed-size `IPlugView` base stub. The resonator VST3
+     entrypoint declares only its processor/controller CIDs, class names, and
+     creation hooks, while the editor delegates common view lifecycle behavior
+     to the shell.
    - Problem: the resonator plugin crate currently owns plugin-agnostic VST3
      plumbing (factory boilerplate, class-id dispatch, FFI string helpers,
      `IPlugView` platform stubs). When slicer ships, every line will be
@@ -211,6 +255,13 @@ The numbered items are stable references for implementation and discussion.
      overflow.
 
 10. **ARCH-010: Decompose the `Voice` struct into substates.**
+    - Status: Fixed. `Voice` now coordinates owned `ResonatorStack`,
+      `ModulationState`, and `OutputStage` substates split across
+      `dsp/voice/resonator_stack.rs`, `dsp/voice/modulation_state.rs`, and
+      `dsp/voice/output_stage.rs`. Resonator routing and dual-engine
+      processing, expression/LFO/pitch/loop-gain modulation state, and output
+      filtering/gain/pan/saturation each own their own update paths, keeping
+      `Voice::process_sample` as orchestration over those components.
     - Problem: `Voice` carries 42 fields covering excitation, two resonator
       engines, routing, dual ADSR pairs, an LFO, pitch-bend smoothing,
       waveguide loop-gain smoothing, output filter, gain, pan, and saturation.
@@ -230,6 +281,14 @@ The numbered items are stable references for implementation and discussion.
       no-allocation assertion still holds (`engine.rs:693–707`).
 
 11. **ARCH-011: Shared voice allocation / stealing in `ahara-plugin-shell`.**
+    - Status: Fixed. `ahara-plugin-shell::voices` now provides
+      `VoiceManager<const N: usize, V: VoiceLike>` plus shared
+      `VoiceSlotState`, `ManagedVoiceExpression`, and render-status plumbing.
+      The manager owns allocation, deterministic stealing, retrigger reuse,
+      active/released/idle transitions, per-channel control routing,
+      per-note pressure overrides, and expression-source sync. Resonator
+      supplies only `VoiceLike` / expression adapters and plugin-specific
+      trigger/render callbacks.
     - Problem: voice allocation, stealing policy, per-channel/per-note
       tracking, and retrigger handling currently live inside the resonator
       engine. Slicer will need an equivalent — and the next plugin after that
@@ -247,6 +306,13 @@ The numbered items are stable references for implementation and discussion.
       is delivered only to voices on that channel.
 
 12. **ARCH-012: Generic atomic-parameter → smoothed-parameter bridge.**
+    - Status: Fixed. `ahara-plugin-shell` now owns
+      `SmoothedAtomicParamSpec` and `SmoothedAtomicParam`, pairing
+      registry-supplied `ParameterInfo`, an `AtomicParameter`, and
+      `ahara-dsp-utils::SmoothedParam`. Resonator live output and routing
+      smoothers now consume smoothing metadata from the parameter binding
+      registry, including the master-gain plain dB to linear-gain transform,
+      rather than defining independent smoother specs in DSP modules.
     - Problem: each parameter that needs smoothing is wired by hand from its
       atomic in the plugin state to a `SmoothedParam` in the voice/engine.
       The pattern is repeated dozens of times in `lib.rs` and `runtime.rs`
@@ -263,6 +329,12 @@ The numbered items are stable references for implementation and discussion.
       audio thread when the atomic changes.
 
 13. **ARCH-013: Generic TOML patch I/O in `ahara-plugin-shell`.**
+    - Status: Fixed. `ahara-plugin-shell::patch_io` now provides
+      `TomlPatchFormat<T>`, a versioned TOML envelope, same-directory atomic
+      writes, typed decode / unsupported-version errors, migration hooks, and
+      `PluginState` round-trip helpers. Resonator patch I/O is now a thin
+      adapter over that shared format, keeping only library patch naming and
+      the resonator-specific legacy series-routing migration.
     - Problem: patch serialization is currently a resonator-shaped module
       (`patch_io.rs`) and slicer will need a parallel copy with the same
       atomic-write / version-tagging / migration scaffolding.
@@ -279,6 +351,11 @@ The numbered items are stable references for implementation and discussion.
       migration hook.
 
 14. **ARCH-014: Consolidate DSP magic numbers into named constants.**
+    - Status: Fixed. Resonator DSP now owns shared `dsp::constants`
+      ranges, Q mappings, modulation depths, tube boundary model, and
+      series-conditioner parameters; patch defaults, parameter metadata,
+      smoothing specs, modal/waveguide sanitizers, output filtering, and
+      voice resonator routing consume those definitions.
     - Problem: while voice-level constants (`INTERNAL_HEADROOM_DB`,
       `PARAMETER_SMOOTH_MS`, etc.) are already named, several semantic
       constants and formulas are duplicated as bare literals across the

@@ -6,3 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rfd = "0.15.4"
+vizia.workspace = true

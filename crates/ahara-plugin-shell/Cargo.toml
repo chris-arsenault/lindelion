@@ -6,3 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+ahara-dsp-utils = { path = "../ahara-dsp-utils" }
+serde.workspace = true
+toml.workspace = true
+vst3.workspace = true

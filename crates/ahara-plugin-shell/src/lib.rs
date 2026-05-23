@@ -1,15 +1,27 @@
 pub mod events;
 pub mod parameters;
+pub mod patch_io;
 pub mod process;
 pub mod state;
+pub mod voices;
+pub mod vst3;
 
 pub use events::{
-    ControlEvent, ExpressionSource, ExpressionStream, MIDI_CHANNEL_COUNT, ManualExpressionSource,
-    MidiEvent, MidiExpressionSource, MidiExpressionUpdate, MidiVoiceExpression, NoteEvent,
+    ControlEvent, ExpressionSource, ExpressionStream, HostMidiEvent, MIDI_CHANNEL_COUNT,
+    ManualExpressionSource, MidiControllerRoute, MidiEvent, MidiEventNormalizer,
+    MidiExpressionControl, MidiExpressionControlRoute, MidiExpressionMapping, MidiExpressionSource,
+    MidiExpressionUpdate, MidiVoiceExpression, NoteEvent,
 };
-pub use parameters::{AtomicParameter, ParameterFlags, ParameterId, ParameterInfo, ParameterRange};
+pub use parameters::{
+    AtomicParameter, ParameterFlags, ParameterId, ParameterInfo, ParameterRange,
+    PlainToSmoothedValue, SmoothedAtomicParam, SmoothedAtomicParamSpec,
+};
+pub use patch_io::{NoPatchMigration, TomlPatchError, TomlPatchFormat, TomlPatchMigration};
 pub use process::{AudioBuffer, AudioPlugin, ProcessContext, ProcessMode, ProcessSetup};
 pub use state::{PluginState, StateError};
+pub use voices::{
+    ManagedVoiceExpression, VoiceLike, VoiceManager, VoiceRenderStatus, VoiceSlotState,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginCategory {

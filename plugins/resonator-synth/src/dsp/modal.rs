@@ -1,6 +1,6 @@
 use ahara_dsp_utils::math;
 
-use crate::ModalPreset;
+use crate::{ModalPreset, dsp::constants::STRIKE_POSITION};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModalBankParams {
@@ -24,7 +24,7 @@ impl Default for ModalBankParams {
             brightness: 0.5,
             decay_global: 1.0,
             decay_tilt: 0.5,
-            position_of_strike: 0.5,
+            position_of_strike: STRIKE_POSITION.default,
         }
     }
 }
@@ -60,7 +60,7 @@ impl ModalBank {
         }
         let nyquist = self.sample_rate * 0.5;
         let brightness = params.brightness.clamp(0.0, 1.0);
-        let position = params.position_of_strike.clamp(0.001, 0.999);
+        let position = STRIKE_POSITION.clamp(params.position_of_strike);
         let template = template_for(params.preset);
 
         for index in 0..mode_count {
@@ -105,7 +105,7 @@ impl ModalBank {
         let mode_count = params.mode_count.clamp(1, 256);
         let nyquist = self.sample_rate * 0.5;
         let brightness = params.brightness.clamp(0.0, 1.0);
-        let position = params.position_of_strike.clamp(0.001, 0.999);
+        let position = STRIKE_POSITION.clamp(params.position_of_strike);
         let template = template_for(params.preset);
 
         for (index, mode) in self.modes.iter_mut().enumerate() {

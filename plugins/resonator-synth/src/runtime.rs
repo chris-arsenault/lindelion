@@ -1,10 +1,12 @@
 use ahara_plugin_shell::{
-    ControlEvent, ExpressionSource, MIDI_CHANNEL_COUNT, MidiEvent, MidiExpressionSource,
-    MidiExpressionUpdate, MidiVoiceExpression, NoteEvent, ParameterId,
+    ControlEvent, ExpressionSource, MIDI_CHANNEL_COUNT, MidiEvent, MidiExpressionControl,
+    MidiExpressionControlRoute, MidiExpressionMapping, MidiExpressionSource, MidiExpressionUpdate,
+    MidiVoiceExpression, NoteEvent, ParameterId,
 };
 
 use crate::{
-    ExcitationSlot, ResonatorSynthPatch,
+    ExcitationSlot, RESONATOR_BRIGHTNESS_CONTROLLER, RESONATOR_MOD_WHEEL_CONTROLLER,
+    ResonatorSynthPatch,
     dsp::{
         ExcitationSelector, MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations,
         SynthEngine, VoiceExpression, VoiceTrigger,
@@ -13,6 +15,20 @@ use crate::{
 
 const MIDI_EXPRESSION_VOICES: usize = MIDI_CHANNEL_COUNT;
 const GLOBAL_EXPRESSION_CHANNEL: u8 = 0;
+const RESONATOR_EXPRESSION_CONTROL_ROUTES: &[MidiExpressionControlRoute] = &[
+    MidiExpressionControlRoute::new(
+        RESONATOR_MOD_WHEEL_CONTROLLER,
+        MidiExpressionControl::ModWheel,
+    ),
+    MidiExpressionControlRoute::new(
+        RESONATOR_BRIGHTNESS_CONTROLLER,
+        MidiExpressionControl::Brightness,
+    ),
+];
+
+const fn resonator_expression_mapping() -> MidiExpressionMapping<'static> {
+    MidiExpressionMapping::new(RESONATOR_EXPRESSION_CONTROL_ROUTES)
+}
 
 pub const BUILTIN_EXCITATION_SAMPLE_RATE: f32 = 48_000.0;
 pub static BUILTIN_EXCITATION: [f32; 64] = [
@@ -241,10 +257,11 @@ impl<'a> ResonatorProcessor<'a> {
                 value,
             } => self.engine.set_poly_pressure(channel, note, value),
             _ => {
-                if let Some(update) = self
-                    .expression_source
-                    .apply_control(control, self.pitch_bend_range())
-                {
+                if let Some(update) = self.expression_source.apply_control_with_mapping(
+                    control,
+                    self.pitch_bend_range(),
+                    resonator_expression_mapping(),
+                ) {
                     self.sync_expression_update_to_engine(update);
                 }
             }

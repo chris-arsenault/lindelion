@@ -1,10 +1,20 @@
-use ahara_dsp_utils::params::StructuralChangePolicy;
-use ahara_plugin_shell::{ParameterId, ParameterInfo, ParameterRange};
+use ahara_dsp_utils::{db_to_gain, params::StructuralChangePolicy, smoothing::SmoothedParamSpec};
+use ahara_plugin_shell::{
+    ParameterId, ParameterInfo, ParameterRange, SmoothedAtomicParam, SmoothedAtomicParamSpec,
+};
+pub(crate) use ahara_ui::resonator_vizia::{
+    ResonatorEditorControlKind as EditorControlKind,
+    ResonatorEditorSurfaceSlot as EditorSurfaceSlot,
+};
 
+use crate::dsp::constants::{
+    FILTER_RESONANCE, MASTER_GAIN_DB, MASTER_GAIN_LINEAR, OUTPUT_FILTER_CUTOFF_HZ, STRIKE_POSITION,
+    TUBE_BOUNDARY, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
+};
 use crate::{
     EnvelopeConfig, FilterMode, LfoShape, ModalConfig, ModalPreset, ModulationConfig,
     ModulationDestination, ModulationSource, ResonatorConfig, ResonatorRouting,
-    ResonatorSynthPatch, WaveguideConfig, WaveguideStyle, default_boundary_reflection,
+    ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
 };
 
 const LIVE: ParameterApplyKind = ParameterApplyKind::Live;
@@ -12,12 +22,39 @@ const NOTE_BOUNDARY: ParameterApplyKind =
     ParameterApplyKind::Structural(StructuralChangePolicy::NoteBoundary);
 const LIVE_MUTE_RAMP: ParameterApplyKind =
     ParameterApplyKind::Structural(StructuralChangePolicy::LiveMuteRamp);
+const RUNTIME_PARAMETER_SMOOTH_MS: f32 = 20.0;
+const RUNTIME_PARAMETER_EPSILON: f32 = 0.000_001;
+const FILTER_CUTOFF_EPSILON: f32 = 0.001;
+
+pub(crate) const MASTER_GAIN_PARAMETER_ID: u32 = 1;
+pub(crate) const FILTER_CUTOFF_PARAMETER_ID: u32 = 3;
+pub(crate) const SATURATION_PARAMETER_ID: u32 = 4;
+pub(crate) const MASTER_PAN_PARAMETER_ID: u32 = 5;
+pub(crate) const FILTER_RESONANCE_PARAMETER_ID: u32 = 6;
+pub(crate) const PARALLEL_MIX_A_PARAMETER_ID: u32 = 11;
+pub(crate) const PARALLEL_MIX_B_PARAMETER_ID: u32 = 12;
+
+macro_rules! runtime_smoothing {
+    () => {
+        None
+    };
+    ($smoothing:expr) => {
+        Some($smoothing)
+    };
+}
+
+macro_rules! parameter_range {
+    ($range:expr) => {
+        ParameterRange::linear($range.min, $range.max, $range.default)
+    };
+}
 
 macro_rules! parameter_binding_registry {
     ($($info:expr => {
         path: $path:expr,
         apply: $apply:expr,
         runtime: $runtime:expr,
+        $(smoothing: $smoothing:expr,)?
         format: $format:expr,
         editor: $editor:expr $(,)?
     }),+ $(,)?) => {
@@ -26,72 +63,96 @@ macro_rules! parameter_binding_registry {
         ];
 
         pub(crate) const PARAMETER_BINDINGS: &[ParameterBinding] = &[
-            $(ParameterBinding::new($info, $path, $apply, $runtime, $format, $editor)),+
+            $(ParameterBinding::new(
+                $info,
+                $path,
+                $apply,
+                $runtime,
+                runtime_smoothing!($($smoothing)?),
+                $format,
+                $editor,
+            )),+
         ];
     };
 }
 
 parameter_binding_registry! {
-    ParameterInfo::continuous(1, "Master Gain", "dB", ParameterRange::linear(-60.0, 12.0, 0.0)) => {
+    ParameterInfo::continuous(MASTER_GAIN_PARAMETER_ID, "Master Gain", "dB", parameter_range!(MASTER_GAIN_DB)) => {
         path: ParameterPath::Output(OutputParameter::MasterGain),
         apply: LIVE,
         runtime: RuntimeParameterTarget::Output,
+        smoothing: RuntimeSmoothing::mapped(
+            SmoothedParamSpec::new(
+                MASTER_GAIN_LINEAR.min,
+                MASTER_GAIN_LINEAR.max,
+                MASTER_GAIN_LINEAR.default,
+                RUNTIME_PARAMETER_SMOOTH_MS,
+                RUNTIME_PARAMETER_EPSILON,
+            ),
+            output_gain_from_plain,
+        ),
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Master)),
+        editor: Some(EditorParameterBinding::knob(EditorSurfaceSlot::Master, EditorSurfaceGroup::OutputKnobs, 0, "Master")),
     },
-    ParameterInfo::continuous(3, "Filter Cutoff", "Hz", ParameterRange::linear(20.0, 20_000.0, 20_000.0)) => {
+    ParameterInfo::continuous(FILTER_CUTOFF_PARAMETER_ID, "Filter Cutoff", "Hz", parameter_range!(OUTPUT_FILTER_CUTOFF_HZ)) => {
         path: ParameterPath::Output(OutputParameter::FilterCutoff),
         apply: LIVE,
         runtime: RuntimeParameterTarget::Output,
+        smoothing: RuntimeSmoothing::identity(RUNTIME_PARAMETER_SMOOTH_MS, FILTER_CUTOFF_EPSILON),
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Cutoff)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::Cutoff, EditorSurfaceGroup::OutputFilter, 0, "Cutoff")),
     },
-    ParameterInfo::continuous(4, "Saturation", "", ParameterRange::linear(0.0, 1.0, 0.0)) => {
+    ParameterInfo::continuous(SATURATION_PARAMETER_ID, "Saturation", "", ParameterRange::linear(0.0, 1.0, 0.0)) => {
         path: ParameterPath::Output(OutputParameter::Saturation),
         apply: LIVE,
         runtime: RuntimeParameterTarget::Output,
+        smoothing: RuntimeSmoothing::identity(RUNTIME_PARAMETER_SMOOTH_MS, RUNTIME_PARAMETER_EPSILON),
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Saturation)),
+        editor: Some(EditorParameterBinding::knob(EditorSurfaceSlot::Saturation, EditorSurfaceGroup::OutputKnobs, 2, "Saturate")),
     },
-    ParameterInfo::continuous(5, "Master Pan", "", ParameterRange::linear(-1.0, 1.0, 0.0)) => {
+    ParameterInfo::continuous(MASTER_PAN_PARAMETER_ID, "Master Pan", "", ParameterRange::linear(-1.0, 1.0, 0.0)) => {
         path: ParameterPath::Output(OutputParameter::Pan),
         apply: LIVE,
         runtime: RuntimeParameterTarget::Output,
+        smoothing: RuntimeSmoothing::identity(RUNTIME_PARAMETER_SMOOTH_MS, RUNTIME_PARAMETER_EPSILON),
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Pan)),
+        editor: Some(EditorParameterBinding::knob(EditorSurfaceSlot::Pan, EditorSurfaceGroup::OutputKnobs, 1, "Pan")),
     },
-    ParameterInfo::continuous(6, "Filter Resonance", "", ParameterRange::linear(0.0, 0.999, 0.0)) => {
+    ParameterInfo::continuous(FILTER_RESONANCE_PARAMETER_ID, "Filter Resonance", "", parameter_range!(FILTER_RESONANCE)) => {
         path: ParameterPath::Output(OutputParameter::FilterResonance),
         apply: LIVE,
         runtime: RuntimeParameterTarget::Output,
+        smoothing: RuntimeSmoothing::identity(RUNTIME_PARAMETER_SMOOTH_MS, RUNTIME_PARAMETER_EPSILON),
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Resonance)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::Resonance, EditorSurfaceGroup::OutputFilter, 1, "Res")),
     },
     ParameterInfo::stepped(7, "Filter Mode", "", ParameterRange::linear(0.0, 2.0, 0.0), 2) => {
         path: ParameterPath::Output(OutputParameter::FilterMode),
         apply: LIVE_MUTE_RAMP,
         runtime: RuntimeParameterTarget::Output,
         format: ParameterFormatter::Label(filter_mode_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::FilterMode)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::FilterMode, EditorSurfaceGroup::OutputFilter, 2, "Mode")),
     },
     ParameterInfo::stepped(10, "Routing", "", ParameterRange::linear(0.0, 1.0, 0.0), 1) => {
         path: ParameterPath::RoutingMode,
         apply: LIVE_MUTE_RAMP,
         runtime: RuntimeParameterTarget::Routing,
         format: ParameterFormatter::Label(routing_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Routing)),
+        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::Routing, EditorSurfaceGroup::Routing, 0, "Routing", "Parallel", "Series", 144.0)),
     },
-    ParameterInfo::continuous(11, "Parallel Mix A", "", ParameterRange::linear(0.0, 1.0, 0.5)) => {
+    ParameterInfo::continuous(PARALLEL_MIX_A_PARAMETER_ID, "Parallel Mix A", "", ParameterRange::linear(0.0, 1.0, 0.5)) => {
         path: ParameterPath::ParallelMixA,
         apply: LIVE,
         runtime: RuntimeParameterTarget::Routing,
+        smoothing: RuntimeSmoothing::identity(RUNTIME_PARAMETER_SMOOTH_MS, RUNTIME_PARAMETER_EPSILON),
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(12, "Parallel Mix B", "", ParameterRange::linear(0.0, 1.0, 0.5)) => {
+    ParameterInfo::continuous(PARALLEL_MIX_B_PARAMETER_ID, "Parallel Mix B", "", ParameterRange::linear(0.0, 1.0, 0.5)) => {
         path: ParameterPath::ParallelMixB,
         apply: LIVE,
         runtime: RuntimeParameterTarget::Routing,
+        smoothing: RuntimeSmoothing::identity(RUNTIME_PARAMETER_SMOOTH_MS, RUNTIME_PARAMETER_EPSILON),
         format: ParameterFormatter::Plain,
         editor: None,
     },
@@ -100,7 +161,7 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(retrigger_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::RetriggerResonators)),
+        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::RetriggerResonators, EditorSurfaceGroup::ResonatorHeader, 0, "Retrigger", "Carry", "Retrig", 144.0)),
     },
 
     ParameterInfo::stepped(20, "Resonator A Model", "", ParameterRange::linear(0.0, 1.0, 0.0), 1) => {
@@ -108,14 +169,14 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(resonator_model_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorAModel)),
+        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::ResonatorAModel, EditorSurfaceGroup::ResonatorAHeader, 0, "Model", "Modal", "Wave", 118.0)),
     },
     ParameterInfo::stepped(21, "Resonator A Modal Preset", "", ParameterRange::linear(0.0, 6.0, 1.0), 6) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Modal(ModalParameter::Preset) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(modal_preset_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorAPreset)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorAPreset, EditorSurfaceGroup::ResonatorAControls, 0, "Preset")),
     },
     ParameterInfo::stepped(22, "Resonator A Mode Count", "", ParameterRange::linear(16.0, 256.0, 64.0), 240) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Modal(ModalParameter::ModeCount) },
@@ -150,14 +211,14 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorABrightness)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorABrightness, EditorSurfaceGroup::ResonatorAControls, 1, "Bright")),
     },
     ParameterInfo::continuous(27, "Resonator A Decay", "s", ParameterRange::linear(0.05, 10.0, 1.0)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Modal(ModalParameter::Decay) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorADecay)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorADecay, EditorSurfaceGroup::ResonatorAControls, 2, "Decay")),
     },
     ParameterInfo::continuous(28, "Resonator A Decay Tilt", "", ParameterRange::linear(0.0, 1.0, 0.5)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Modal(ModalParameter::DecayTilt) },
@@ -166,28 +227,28 @@ parameter_binding_registry! {
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(29, "Resonator A Strike Position", "", ParameterRange::linear(0.001, 0.999, 0.5)) => {
+    ParameterInfo::continuous(29, "Resonator A Strike Position", "", parameter_range!(STRIKE_POSITION)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Modal(ModalParameter::StrikePosition) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(30, "Resonator A Loop Filter", "Hz", ParameterRange::linear(20.0, 20_000.0, 8_000.0)) => {
+    ParameterInfo::continuous(30, "Resonator A Loop Filter", "Hz", parameter_range!(WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Waveguide(WaveguideParameter::LoopFilter) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(31, "Resonator A Loop Resonance", "", ParameterRange::linear(0.0, 0.999, 0.0)) => {
+    ParameterInfo::continuous(31, "Resonator A Loop Resonance", "", parameter_range!(FILTER_RESONANCE)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Waveguide(WaveguideParameter::LoopResonance) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(32, "Resonator A Loop Gain", "", ParameterRange::linear(0.0, 0.999, 0.92)) => {
+    ParameterInfo::continuous(32, "Resonator A Loop Gain", "", parameter_range!(WAVEGUIDE_LOOP_GAIN)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Waveguide(WaveguideParameter::LoopGain) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
@@ -201,7 +262,7 @@ parameter_binding_registry! {
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(34, "Resonator A Waveguide Position", "", ParameterRange::linear(0.001, 0.999, 0.5)) => {
+    ParameterInfo::continuous(34, "Resonator A Waveguide Position", "", parameter_range!(STRIKE_POSITION)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Waveguide(WaveguideParameter::Position) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
@@ -213,14 +274,14 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(waveguide_style_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorAWaveguideStyle)),
+        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::ResonatorAWaveguideStyle, EditorSurfaceGroup::ResonatorAHeader, 1, "Style", "String", "Tube", 118.0)),
     },
-    ParameterInfo::continuous(36, "Resonator A Boundary Reflection", "", ParameterRange::linear(-1.0, 1.0, 0.75)) => {
+    ParameterInfo::continuous(36, "Resonator A Boundary Reflection", "", parameter_range!(TUBE_BOUNDARY.reflection)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Waveguide(WaveguideParameter::BoundaryReflection) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorABoundaryReflection)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorABoundaryReflection, EditorSurfaceGroup::ResonatorAControls, 3, "Reflect")),
     },
 
     ParameterInfo::stepped(40, "Resonator B Model", "", ParameterRange::linear(0.0, 1.0, 1.0), 1) => {
@@ -228,7 +289,7 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(resonator_model_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorBModel)),
+        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::ResonatorBModel, EditorSurfaceGroup::ResonatorBHeader, 0, "Model", "Modal", "Wave", 118.0)),
     },
     ParameterInfo::stepped(41, "Resonator B Modal Preset", "", ParameterRange::linear(0.0, 6.0, 1.0), 6) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Modal(ModalParameter::Preset) },
@@ -286,42 +347,42 @@ parameter_binding_registry! {
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(49, "Resonator B Strike Position", "", ParameterRange::linear(0.001, 0.999, 0.5)) => {
+    ParameterInfo::continuous(49, "Resonator B Strike Position", "", parameter_range!(STRIKE_POSITION)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Modal(ModalParameter::StrikePosition) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(50, "Resonator B Loop Filter", "Hz", ParameterRange::linear(20.0, 20_000.0, 8_000.0)) => {
+    ParameterInfo::continuous(50, "Resonator B Loop Filter", "Hz", parameter_range!(WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::LoopFilter) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorBLoopFilter)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBLoopFilter, EditorSurfaceGroup::ResonatorBControls, 0, "Filter")),
     },
-    ParameterInfo::continuous(51, "Resonator B Loop Resonance", "", ParameterRange::linear(0.0, 0.999, 0.0)) => {
+    ParameterInfo::continuous(51, "Resonator B Loop Resonance", "", parameter_range!(FILTER_RESONANCE)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::LoopResonance) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
         editor: None,
     },
-    ParameterInfo::continuous(52, "Resonator B Loop Gain", "", ParameterRange::linear(0.0, 0.999, 0.92)) => {
+    ParameterInfo::continuous(52, "Resonator B Loop Gain", "", parameter_range!(WAVEGUIDE_LOOP_GAIN)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::LoopGain) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorBLoopGain)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBLoopGain, EditorSurfaceGroup::ResonatorBControls, 1, "Loop")),
     },
     ParameterInfo::continuous(53, "Resonator B Nonlinearity", "", ParameterRange::linear(0.0, 1.0, 0.0)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::Nonlinearity) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorBNonlinearity)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBNonlinearity, EditorSurfaceGroup::ResonatorBControls, 2, "Drive")),
     },
-    ParameterInfo::continuous(54, "Resonator B Waveguide Position", "", ParameterRange::linear(0.001, 0.999, 0.5)) => {
+    ParameterInfo::continuous(54, "Resonator B Waveguide Position", "", parameter_range!(STRIKE_POSITION)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::Position) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
@@ -333,14 +394,14 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(waveguide_style_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorBWaveguideStyle)),
+        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::ResonatorBWaveguideStyle, EditorSurfaceGroup::ResonatorBHeader, 1, "Style", "String", "Tube", 118.0)),
     },
-    ParameterInfo::continuous(56, "Resonator B Boundary Reflection", "", ParameterRange::linear(-1.0, 1.0, 0.75)) => {
+    ParameterInfo::continuous(56, "Resonator B Boundary Reflection", "", parameter_range!(TUBE_BOUNDARY.reflection)) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::BoundaryReflection) },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::ResonatorBBoundaryReflection)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBBoundaryReflection, EditorSurfaceGroup::ResonatorBControls, 3, "Reflect")),
     },
 
     ParameterInfo::continuous(60, "Amp Attack", "ms", ParameterRange::linear(0.0, 5_000.0, 1.0)) => {
@@ -348,7 +409,7 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::AmpAttack)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::AmpAttack, EditorSurfaceGroup::OutputEnvelope, 0, "Attack")),
     },
     ParameterInfo::continuous(61, "Amp Decay", "ms", ParameterRange::linear(0.0, 5_000.0, 80.0)) => {
         path: ParameterPath::Envelope { target: EnvelopeTarget::Amp, parameter: EnvelopeParameter::Decay },
@@ -369,7 +430,7 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::AmpRelease)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::AmpRelease, EditorSurfaceGroup::OutputEnvelope, 1, "Release")),
     },
     ParameterInfo::continuous(64, "Secondary Attack", "ms", ParameterRange::linear(0.0, 5_000.0, 0.0)) => {
         path: ParameterPath::Envelope { target: EnvelopeTarget::Secondary, parameter: EnvelopeParameter::Attack },
@@ -404,14 +465,14 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::LfoRate)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::LfoRate, EditorSurfaceGroup::OutputModulation, 0, "LFO")),
     },
     ParameterInfo::stepped(69, "LFO Shape", "", ParameterRange::linear(0.0, 4.0, 0.0), 4) => {
         path: ParameterPath::LfoShape,
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(lfo_shape_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::LfoShape)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::LfoShape, EditorSurfaceGroup::OutputModulation, 1, "Shape")),
     },
     ParameterInfo::stepped(70, "LFO Tempo Sync", "", ParameterRange::linear(0.0, 1.0, 0.0), 1) => {
         path: ParameterPath::LfoTempoSync,
@@ -440,28 +501,28 @@ parameter_binding_registry! {
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(enabled_label_from_plain),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Mod1Enabled)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::Mod1Enabled, EditorSurfaceGroup::OutputModulation, 2, "Enable")),
     },
     ParameterInfo::stepped(81, "Mod 1 Source", "", ParameterRange::linear(0.0, 5.0, 2.0), 5) => {
         path: ParameterPath::ModulationSlot { slot: 0, parameter: ModulationSlotParameter::Source },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(format_modulation_source_label),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Mod1Source)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::Mod1Source, EditorSurfaceGroup::OutputModulation, 3, "Source")),
     },
     ParameterInfo::stepped(82, "Mod 1 Destination", "", ParameterRange::linear(0.0, 6.0, 0.0), 6) => {
         path: ParameterPath::ModulationSlot { slot: 0, parameter: ModulationSlotParameter::Destination },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(format_modulation_destination_label),
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Mod1Destination)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::Mod1Destination, EditorSurfaceGroup::OutputModulation, 4, "Target")),
     },
     ParameterInfo::continuous(83, "Mod 1 Amount", "", ParameterRange::linear(-1.0, 1.0, 0.0)) => {
         path: ParameterPath::ModulationSlot { slot: 0, parameter: ModulationSlotParameter::Amount },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
-        editor: Some(EditorParameterBinding::new(EditorSignalId::Mod1Amount)),
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::Mod1Amount, EditorSurfaceGroup::OutputModulation, 5, "Amount")),
     },
     ParameterInfo::stepped(84, "Mod 2 Enabled", "", ParameterRange::linear(0.0, 1.0, 0.0), 1) => {
         path: ParameterPath::ModulationSlot { slot: 1, parameter: ModulationSlotParameter::Enabled },
@@ -570,11 +631,56 @@ impl RuntimeParameterTarget {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub(crate) enum RuntimeSmoothing {
+    Identity {
+        smoothing_ms: f32,
+        epsilon: f32,
+    },
+    Mapped {
+        smoothed: SmoothedParamSpec,
+        plain_to_smoothed: fn(f32) -> f32,
+    },
+}
+
+impl RuntimeSmoothing {
+    pub(crate) const fn identity(smoothing_ms: f32, epsilon: f32) -> Self {
+        Self::Identity {
+            smoothing_ms,
+            epsilon,
+        }
+    }
+
+    pub(crate) const fn mapped(
+        smoothed: SmoothedParamSpec,
+        plain_to_smoothed: fn(f32) -> f32,
+    ) -> Self {
+        Self::Mapped {
+            smoothed,
+            plain_to_smoothed,
+        }
+    }
+
+    pub(crate) fn spec(self, info: ParameterInfo) -> SmoothedAtomicParamSpec {
+        match self {
+            Self::Identity {
+                smoothing_ms,
+                epsilon,
+            } => SmoothedAtomicParamSpec::from_parameter(info, smoothing_ms, epsilon),
+            Self::Mapped {
+                smoothed,
+                plain_to_smoothed,
+            } => SmoothedAtomicParamSpec::mapped(info, smoothed, plain_to_smoothed),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ParameterBinding {
     info: ParameterInfo,
     path: ParameterPath,
     apply_kind: ParameterApplyKind,
     runtime_target: RuntimeParameterTarget,
+    smoothing: Option<RuntimeSmoothing>,
     formatter: ParameterFormatter,
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     editor: Option<EditorParameterBinding>,
@@ -586,6 +692,7 @@ impl ParameterBinding {
         path: ParameterPath,
         apply_kind: ParameterApplyKind,
         runtime_target: RuntimeParameterTarget,
+        smoothing: Option<RuntimeSmoothing>,
         formatter: ParameterFormatter,
         editor: Option<EditorParameterBinding>,
     ) -> Self {
@@ -594,6 +701,7 @@ impl ParameterBinding {
             path,
             apply_kind,
             runtime_target,
+            smoothing,
             formatter,
             editor,
         }
@@ -609,6 +717,10 @@ impl ParameterBinding {
 
     pub(crate) const fn runtime_target(self) -> RuntimeParameterTarget {
         self.runtime_target
+    }
+
+    pub(crate) fn smoothed_atomic_spec(self) -> Option<SmoothedAtomicParamSpec> {
+        self.smoothing.map(|smoothing| smoothing.spec(self.info))
     }
 
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
@@ -634,53 +746,127 @@ impl ParameterBinding {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct EditorParameterBinding {
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
-    signal: EditorSignalId,
+    slot: EditorSurfaceSlot,
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    group: EditorSurfaceGroup,
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    order: u8,
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    label: &'static str,
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    control: EditorControlKind,
 }
 
 impl EditorParameterBinding {
-    pub(crate) const fn new(signal: EditorSignalId) -> Self {
-        Self { signal }
+    pub(crate) const fn knob(
+        slot: EditorSurfaceSlot,
+        group: EditorSurfaceGroup,
+        order: u8,
+        label: &'static str,
+    ) -> Self {
+        Self {
+            slot,
+            group,
+            order,
+            label,
+            control: EditorControlKind::Knob,
+        }
+    }
+
+    pub(crate) const fn slider(
+        slot: EditorSurfaceSlot,
+        group: EditorSurfaceGroup,
+        order: u8,
+        label: &'static str,
+    ) -> Self {
+        Self {
+            slot,
+            group,
+            order,
+            label,
+            control: EditorControlKind::Slider,
+        }
+    }
+
+    pub(crate) const fn binary(
+        slot: EditorSurfaceSlot,
+        group: EditorSurfaceGroup,
+        order: u8,
+        label: &'static str,
+        left_label: &'static str,
+        right_label: &'static str,
+        width: f32,
+    ) -> Self {
+        Self {
+            slot,
+            group,
+            order,
+            label,
+            control: EditorControlKind::Binary {
+                left_label,
+                right_label,
+                width,
+            },
+        }
     }
 
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
-    pub(crate) const fn signal(self) -> EditorSignalId {
-        self.signal
+    pub(crate) const fn slot(self) -> EditorSurfaceSlot {
+        self.slot
+    }
+
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    pub(crate) const fn group(self) -> EditorSurfaceGroup {
+        self.group
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const fn order(self) -> u8 {
+        self.order
+    }
+
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    pub(crate) const fn label(self) -> &'static str {
+        self.label
+    }
+
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    pub(crate) const fn control(self) -> EditorControlKind {
+        self.control
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EditorSignalId {
-    Master,
-    Cutoff,
-    Saturation,
-    Pan,
-    Resonance,
-    FilterMode,
+pub(crate) enum EditorSurfaceGroup {
+    ResonatorHeader,
+    ResonatorAHeader,
+    ResonatorAControls,
+    ResonatorBHeader,
+    ResonatorBControls,
     Routing,
-    RetriggerResonators,
-    ResonatorAModel,
-    ResonatorAPreset,
-    ResonatorABrightness,
-    ResonatorADecay,
-    ResonatorAWaveguideStyle,
-    ResonatorABoundaryReflection,
-    ResonatorBModel,
-    ResonatorBLoopFilter,
-    ResonatorBLoopGain,
-    ResonatorBNonlinearity,
-    ResonatorBWaveguideStyle,
-    ResonatorBBoundaryReflection,
-    AmpAttack,
-    AmpRelease,
-    LfoRate,
-    LfoShape,
-    Mod1Enabled,
-    Mod1Source,
-    Mod1Destination,
-    Mod1Amount,
+    OutputKnobs,
+    OutputFilter,
+    OutputEnvelope,
+    OutputModulation,
+}
+
+impl EditorSurfaceGroup {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const REQUIRED: [Self; 10] = [
+        Self::ResonatorHeader,
+        Self::ResonatorAHeader,
+        Self::ResonatorAControls,
+        Self::ResonatorBHeader,
+        Self::ResonatorBControls,
+        Self::Routing,
+        Self::OutputKnobs,
+        Self::OutputFilter,
+        Self::OutputEnvelope,
+        Self::OutputModulation,
+    ];
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -810,14 +996,14 @@ impl OutputParameter {
 
     fn apply_plain(self, output: &mut crate::OutputConfig, value: f32) {
         match self {
-            Self::MasterGain => output.master_gain_db = finite_value(value, -60.0, 12.0, 0.0),
+            Self::MasterGain => output.master_gain_db = MASTER_GAIN_DB.clamp(value),
             Self::FilterCutoff => {
-                output.filter_cutoff = finite_value(value, 20.0, 20_000.0, 20_000.0);
+                output.filter_cutoff = OUTPUT_FILTER_CUTOFF_HZ.clamp(value);
             }
             Self::Saturation => output.saturation_drive = finite_value(value, 0.0, 1.0, 0.0),
             Self::Pan => output.master_pan = finite_value(value, -1.0, 1.0, 0.0),
             Self::FilterResonance => {
-                output.filter_resonance = finite_value(value, 0.0, 0.999, 0.0);
+                output.filter_resonance = FILTER_RESONANCE.clamp(value);
             }
             Self::FilterMode => output.filter_mode = FilterMode::from_plain(value),
         }
@@ -911,7 +1097,7 @@ impl ModalParameter {
                     }
                     Self::Cents => waveguide.cent_offset = finite_value(value, -100.0, 100.0, 0.0),
                     Self::StrikePosition => {
-                        waveguide.position_of_strike = finite_value(value, 0.001, 0.999, 0.5);
+                        waveguide.position_of_strike = STRIKE_POSITION.clamp(value);
                     }
                     _ => {}
                 }
@@ -934,7 +1120,7 @@ impl ModalParameter {
             Self::Decay => config.decay_global = finite_value(value, 0.05, 10.0, 1.0),
             Self::DecayTilt => config.decay_tilt = finite_value(value, 0.0, 1.0, 0.5),
             Self::StrikePosition => {
-                config.position_of_strike = finite_value(value, 0.001, 0.999, 0.5);
+                config.position_of_strike = STRIKE_POSITION.clamp(value);
             }
         }
     }
@@ -969,7 +1155,7 @@ impl WaveguideParameter {
             ResonatorConfig::Waveguide(waveguide) => self.apply_plain(waveguide, value),
             ResonatorConfig::Modal(modal) => {
                 if self == Self::Position {
-                    modal.position_of_strike = finite_value(value, 0.001, 0.999, 0.5);
+                    modal.position_of_strike = STRIKE_POSITION.clamp(value);
                 }
             }
         }
@@ -978,18 +1164,15 @@ impl WaveguideParameter {
     fn apply_plain(self, config: &mut WaveguideConfig, value: f32) {
         match self {
             Self::LoopFilter => {
-                config.loop_filter_cutoff = finite_value(value, 20.0, 20_000.0, 8_000.0)
+                config.loop_filter_cutoff = WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ.clamp(value)
             }
-            Self::LoopResonance => {
-                config.loop_filter_resonance = finite_value(value, 0.0, 0.999, 0.0)
-            }
-            Self::LoopGain => config.loop_gain = finite_value(value, 0.0, 0.999, 0.92),
+            Self::LoopResonance => config.loop_filter_resonance = FILTER_RESONANCE.clamp(value),
+            Self::LoopGain => config.loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(value),
             Self::Nonlinearity => config.loop_nonlinearity = finite_value(value, 0.0, 1.0, 0.0),
-            Self::Position => config.position_of_strike = finite_value(value, 0.001, 0.999, 0.5),
+            Self::Position => config.position_of_strike = STRIKE_POSITION.clamp(value),
             Self::Style => config.style = WaveguideStyle::from_plain(value),
             Self::BoundaryReflection => {
-                config.boundary_reflection =
-                    finite_value(value, -1.0, 1.0, default_boundary_reflection());
+                config.boundary_reflection = TUBE_BOUNDARY.reflection(value);
             }
         }
     }
@@ -1412,6 +1595,9 @@ pub(crate) fn parameter_binding_by_index(index: usize) -> Option<&'static Parame
     PARAMETER_BINDINGS.get(index)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const PARAMETER_BINDING_COUNT: usize = PARAMETER_BINDINGS.len();
+
 pub(crate) fn parameter_binding_index(id: u32) -> Option<usize> {
     PARAMETER_BINDINGS
         .iter()
@@ -1425,19 +1611,42 @@ pub(crate) fn editor_parameter_bindings() -> impl Iterator<Item = &'static Param
         .filter(|binding| binding.editor().is_some())
 }
 
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn editor_parameter_binding(
-    signal: EditorSignalId,
+    slot: EditorSurfaceSlot,
 ) -> Option<&'static ParameterBinding> {
-    PARAMETER_BINDINGS.iter().find(|binding| {
+    PARAMETER_BINDINGS
+        .iter()
+        .find(|binding| binding.editor().is_some_and(|editor| editor.slot() == slot))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn editor_parameter_bindings_for_group(
+    group: EditorSurfaceGroup,
+) -> impl Iterator<Item = &'static ParameterBinding> {
+    editor_parameter_bindings().filter(move |binding| {
         binding
             .editor()
-            .is_some_and(|editor| editor.signal() == signal)
+            .is_some_and(|editor| editor.group() == group)
     })
 }
 
 pub(crate) fn patch_parameter_plain_value(patch: &ResonatorSynthPatch, id: u32) -> Option<f32> {
     parameter_binding(id).map(|binding| binding.plain_value(patch))
+}
+
+pub(crate) fn smoothed_runtime_parameter(
+    id: u32,
+    sample_rate: f32,
+    initial_plain: f32,
+) -> Option<SmoothedAtomicParam> {
+    let binding = parameter_binding(id)?;
+    let spec = binding.smoothed_atomic_spec()?;
+    Some(SmoothedAtomicParam::with_initial_plain(
+        spec,
+        sample_rate,
+        initial_plain,
+    ))
 }
 
 pub(crate) fn apply_parameter_plain(
@@ -1468,6 +1677,10 @@ pub(crate) fn finite_value(value: f32, min: f32, max: f32, default: f32) -> f32 
     } else {
         default
     }
+}
+
+fn output_gain_from_plain(gain_db: f32) -> f32 {
+    db_to_gain(MASTER_GAIN_DB.clamp(gain_db))
 }
 
 fn modal_config_from(config: ResonatorConfig) -> ModalConfig {
@@ -1598,6 +1811,7 @@ fn enabled_label_from_plain(value: f32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assert_no_allocations;
 
     #[test]
     fn exposed_parameters_have_exactly_one_binding() {
@@ -1670,6 +1884,67 @@ mod tests {
     }
 
     #[test]
+    fn live_smoothed_parameters_are_declared_in_registry() {
+        for id in [
+            MASTER_GAIN_PARAMETER_ID,
+            FILTER_CUTOFF_PARAMETER_ID,
+            SATURATION_PARAMETER_ID,
+            MASTER_PAN_PARAMETER_ID,
+            FILTER_RESONANCE_PARAMETER_ID,
+            PARALLEL_MIX_A_PARAMETER_ID,
+            PARALLEL_MIX_B_PARAMETER_ID,
+        ] {
+            let binding = parameter_binding(id).expect("missing parameter binding");
+            assert!(
+                binding.smoothed_atomic_spec().is_some(),
+                "parameter {} ({}) should declare smoothing metadata",
+                binding.id().0,
+                binding.info().name
+            );
+        }
+
+        assert!(
+            parameter_binding(7)
+                .unwrap()
+                .smoothed_atomic_spec()
+                .is_none()
+        );
+        assert!(
+            parameter_binding(10)
+                .unwrap()
+                .smoothed_atomic_spec()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn registry_smoothing_metadata_maps_master_gain_to_linear_gain() {
+        let spec = parameter_binding(MASTER_GAIN_PARAMETER_ID)
+            .unwrap()
+            .smoothed_atomic_spec()
+            .unwrap();
+
+        assert_eq!(spec.info.id, ParameterId(MASTER_GAIN_PARAMETER_ID));
+        assert_eq!(spec.smoothed_value(0.0), 1.0);
+        assert!((spec.smoothed_value(-60.0) - MASTER_GAIN_LINEAR.min).abs() < 0.000_001);
+        assert!((spec.smoothed_value(12.0) - MASTER_GAIN_LINEAR.max).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn smoothed_runtime_parameter_update_does_not_allocate() {
+        let mut parameter =
+            smoothed_runtime_parameter(FILTER_CUTOFF_PARAMETER_ID, 48_000.0, 20_000.0).unwrap();
+
+        assert_no_allocations("smoothed runtime parameter update", || {
+            parameter.atomic().store_normalized(0.25);
+            assert!(parameter.sync_from_atomic());
+            for _ in 0..8 {
+                parameter.next_sample();
+            }
+        });
+    }
+
+    #[test]
     fn editor_bindings_are_single_source_metadata() {
         let mut count = 0;
         for binding in editor_parameter_bindings() {
@@ -1678,14 +1953,68 @@ mod tests {
                 .editor()
                 .expect("visible binding should have editor metadata");
             assert_eq!(
-                editor_parameter_binding(editor.signal())
-                    .expect("signal should map back to a binding")
+                editor_parameter_binding(editor.slot())
+                    .expect("surface slot should map back to a binding")
                     .id(),
                 binding.id()
             );
+            assert_eq!(
+                parameter_binding(binding.id().0)
+                    .expect("editor binding should be real")
+                    .id(),
+                binding.id()
+            );
+            assert!(!editor.label().is_empty());
+            match editor.control() {
+                EditorControlKind::Knob | EditorControlKind::Slider => {}
+                EditorControlKind::Binary {
+                    left_label,
+                    right_label,
+                    width,
+                } => {
+                    assert!(!left_label.is_empty());
+                    assert!(!right_label.is_empty());
+                    assert!(width > 0.0);
+                }
+            }
         }
 
-        assert_eq!(count, 28);
+        assert_eq!(count, EditorSurfaceSlot::ALL.len());
+        assert_eq!(PARAMETER_BINDING_COUNT, PARAMETER_BINDINGS.len());
+    }
+
+    #[test]
+    fn every_editor_surface_slot_resolves_to_a_binding() {
+        for slot in EditorSurfaceSlot::ALL {
+            let binding = editor_parameter_binding(slot)
+                .unwrap_or_else(|| panic!("missing binding for editor slot {slot:?}"));
+            assert_eq!(binding.editor().unwrap().slot(), slot);
+        }
+    }
+
+    #[test]
+    fn required_editor_surface_groups_have_visible_parameters() {
+        for group in EditorSurfaceGroup::REQUIRED {
+            assert!(
+                editor_parameter_bindings_for_group(group).next().is_some(),
+                "missing visible editor parameter for {group:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn editor_surface_group_orders_are_unique() {
+        for group in EditorSurfaceGroup::REQUIRED {
+            let mut orders = Vec::new();
+            for binding in editor_parameter_bindings_for_group(group) {
+                let order = binding.editor().unwrap().order();
+                assert!(
+                    !orders.contains(&order),
+                    "duplicate editor order {order} in {group:?}",
+                );
+                orders.push(order);
+            }
+        }
     }
 
     #[test]
