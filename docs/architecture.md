@@ -11,19 +11,23 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `crates/lindelion-sample-library` | Sample references, hashing, file-library ingest, preview generation, and moved-file recovery by content hash. |
 | `crates/lindelion-ui` | Shared UI command model, editor services, and the Lamath Vizia editor surface. |
 | `crates/lindelion-onset-detect` | Onset detection interfaces and detectors used by Linnod and Glirdir. |
+| `crates/lindelion-pitch-detect` | SwiftF0 ONNX pitch detection, confidence filtering, resampling, and pitch-contour DTOs shared by pitch-aware products. |
+| `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, and Standard MIDI File emission. |
 | `crates/lindelion-psola` | Pitch-analysis and PSOLA boundary types for future melodic sample manipulation. |
 | `plugins/lamath` | Implemented breath-excited resonator VST3 instrument. |
 | `plugins/linnod` | Melodic sample-slicer scaffold with descriptor, parameters, patch model, and silent plugin implementation. |
-| `plugins/glirdir` | Planned sing-to-MIDI product directory. No Cargo package yet. |
+| `plugins/glirdir` | Sing-to-MIDI core crate: capture state, pitch/onset analysis, segmentation, quantized MIDI derivation, patch state, and audition. VST3/UI/drag-out integration are pending. |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
 ## Shared Runtime Boundaries
 
 - `AudioPlugin` in `lindelion-plugin-shell` is the host-facing contract used by plugin crates.
+- `ProcessContext` carries shared output buffers, optional audio input buffers, MIDI events, and host transport data so instruments and input-driven effects use the same shell boundary.
 - Parameter metadata is registry-driven: stable IDs, normalized/plain conversion, formatting, editor grouping, and runtime smoothing are declared together.
 - `TomlPatchFormat<T>` owns versioned TOML patch envelopes, typed decode errors, migrations, atomic file writes, and `PluginState` roundtrips.
 - `MidiEventNormalizer` converts host MIDI into internal `MidiEvent` values with plugin-provided controller routes and pitch-bend range.
 - `VoiceManager` owns allocation, stealing, retrigger reuse, active/released/idle transitions, and per-channel/per-note expression routing.
+- Pitch, onset, and MIDI derivation live in shared crates. Product plugins compose those crates and own only product-specific capture, segmentation policy, UI, and host integration.
 - `lindelion-ui` owns reusable editor commands and services; Lamath composes those into its product editor surface.
 
 ## Durable Architecture Principles
@@ -43,6 +47,7 @@ These principles came out of the Lamath architecture remediation work and apply 
 - VST3 factory registration, FFI string copying, entrypoint exports, fixed-size `IPlugView` base behavior, typed `IMessage` wrappers, and malformed-message handling belong in `lindelion-plugin-shell::vst3`.
 - Plugin crates declare CIDs, class names, parameter sets, processor/controller construction, and product-specific message payloads on top of the shared VST3 layer.
 - Host MIDI must be normalized through `MidiEventNormalizer`. VST3/AU/CLAP adapters should translate host fields into host-neutral events, then delegate CC routing, pitch-bend range, and expression mapping to shared code.
+- Audio input buffers and transport state belong in `ProcessContext`; product processors should not invent parallel host-context DTOs.
 
 ### Editor Boundary
 
@@ -64,6 +69,7 @@ These principles came out of the Lamath architecture remediation work and apply 
 - Plugin-specific patch I/O should be a thin adapter around the shared format, keeping only product-specific migrations and file naming.
 - Live smoothed parameters should use `SmoothedAtomicParam` or equivalent shared smoothing bridges fed by the parameter registry.
 - Structural changes must have explicit apply policies. If a change affects active audio, the policy must specify whether it is live, note-boundary, reset-state, live crossfade, or live mute-ramp behavior.
+- Detection algorithms must be configured through shared pitch/onset DTOs. Pitch-aware products should pass pitch tracks into onset/segmentation code rather than making onset detectors own pitch inference.
 - Audio-thread code must not allocate, block, perform file or database I/O, log, call host/UI services, or loop without hard bounds. See [performance.md](performance.md).
 
 ### Architectural Tests

@@ -173,7 +173,7 @@ impl Default for ResonatorEditorPatchSummary {
     fn default() -> Self {
         Self {
             patch_name: "Default".to_string(),
-            slots: std::array::from_fn(|index| ResonatorEditorSlotSummary::empty(index)),
+            slots: std::array::from_fn(ResonatorEditorSlotSummary::empty),
             library_samples: Vec::new(),
         }
     }
@@ -303,42 +303,62 @@ impl ResonatorEditorHost {
         self.parameter_bindings
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn refresh_library(self) {
         unsafe { (self.callbacks.refresh_library)(self.context) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn parameter_value(self, id: u32) -> f32 {
         unsafe { (self.callbacks.parameter_value)(self.context, id) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn set_parameter(self, id: u32, normalized: f64) {
         unsafe { (self.callbacks.set_parameter)(self.context, id, normalized) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn parameter_value_text(self, id: u32, normalized: f64) -> String {
         unsafe { (self.callbacks.parameter_value_text)(self.context, id, normalized) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn default_normalized(self, id: u32) -> f32 {
         unsafe { (self.callbacks.default_normalized)(self.context, id) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn summary(self) -> ResonatorEditorPatchSummary {
         unsafe { (self.callbacks.summary)(self.context) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn telemetry(self) -> ResonatorEditorTelemetry {
         unsafe { (self.callbacks.telemetry)(self.context) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn directories(self) -> ResonatorEditorDirectories {
         unsafe { (self.callbacks.directories)(self.context) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn request_telemetry(self) {
         unsafe { (self.callbacks.request_telemetry)(self.context) }
     }
 
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn handle_command(self, request: ResonatorEditorCommandRequest<'_>) {
         unsafe { (self.callbacks.handle_command)(self.context, request) }
     }

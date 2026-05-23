@@ -10,7 +10,6 @@ mod factory;
 mod messages;
 mod midi;
 mod processor;
-mod state;
 
 #[cfg(test)]
 mod tests;
@@ -39,9 +38,11 @@ use controller::{
     parameter_values_from_patch, pitch_bend_normalized_from_plain,
     pitch_bend_plain_from_normalized,
 };
+use lindelion_plugin_shell::vst3::{
+    read_plugin_state_from_stream, vst_event_to_midi, write_plugin_state_to_stream,
+};
 #[cfg(test)]
 use messages::ResonatorMessageKind;
 use messages::ResonatorPluginMessage;
-use midi::{RESONATOR_MIDI_CONTROLLER_ROUTES, empty_midi_event, vst_event_to_midi};
+use midi::{RESONATOR_MIDI_CONTROLLER_ROUTES, empty_midi_event};
 use processor::ResonatorVst3Processor;
-use state::{read_plugin_state_from_stream, write_plugin_state_to_stream};

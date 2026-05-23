@@ -34,14 +34,14 @@ fn audio_plugin_process_renders_default_patch() {
     })];
 
     synth.reset(setup);
-    synth.process(ProcessContext {
+    synth.process(ProcessContext::new(
         setup,
-        buffer: AudioBuffer {
+        AudioBuffer {
             left: &mut left,
             right: &mut right,
         },
-        events: &events,
-    });
+        &events,
+    ));
 
     assert_all_finite(&left);
     assert_all_finite(&right);
@@ -87,14 +87,14 @@ fn default_single_note_velocity_100_has_nominal_headroom() {
     })];
 
     synth.reset(setup);
-    synth.process(ProcessContext {
+    synth.process(ProcessContext::new(
         setup,
-        buffer: AudioBuffer {
+        AudioBuffer {
             left: &mut left,
             right: &mut right,
         },
-        events: &events,
-    });
+        &events,
+    ));
 
     assert_all_finite(&left);
     assert_all_finite(&right);
@@ -137,18 +137,18 @@ fn live_filter_cutoff_changes_do_not_emit_non_finite_audio() {
     let mut right = vec![0.0; 256];
 
     synth.reset(setup);
-    synth.process(ProcessContext {
+    synth.process(ProcessContext::new(
         setup,
-        buffer: AudioBuffer {
+        AudioBuffer {
             left: &mut left,
             right: &mut right,
         },
-        events: &[MidiEvent::Note(NoteEvent::On {
+        &[MidiEvent::Note(NoteEvent::On {
             channel: 0,
             note: 60,
             velocity: 100.0 / 127.0,
         })],
-    });
+    ));
 
     for normalized in [
         1.0,
@@ -162,14 +162,14 @@ fn live_filter_cutoff_changes_do_not_emit_non_finite_audio() {
         1.0,
     ] {
         synth.set_parameter_normalized(ParameterId(3), normalized);
-        synth.process(ProcessContext {
+        synth.process(ProcessContext::new(
             setup,
-            buffer: AudioBuffer {
+            AudioBuffer {
                 left: &mut left,
                 right: &mut right,
             },
-            events: &[],
-        });
+            &[],
+        ));
         assert_all_finite(&left);
         assert_all_finite(&right);
         let peak = peak_abs(&left).max(peak_abs(&right));
@@ -1028,14 +1028,14 @@ fn audio_plugin_process_does_not_allocate() {
 
     synth.reset(setup);
     assert_no_allocations("audio plugin process", || {
-        synth.process(ProcessContext {
+        synth.process(ProcessContext::new(
             setup,
-            buffer: AudioBuffer {
+            AudioBuffer {
                 left: &mut left,
                 right: &mut right,
             },
-            events: &events,
-        });
+            &events,
+        ));
     });
 }
 
@@ -1087,14 +1087,14 @@ fn loaded_excitation_buffers_render_without_audio_thread_allocations() {
         vec![LoadedExcitationBuffer::new(excitation, 48_000.0)],
     );
     assert_no_allocations("loaded excitation render", || {
-        synth.process(ProcessContext {
+        synth.process(ProcessContext::new(
             setup,
-            buffer: AudioBuffer {
+            AudioBuffer {
                 left: &mut left,
                 right: &mut right,
             },
-            events: &events,
-        });
+            &events,
+        ));
     });
 
     assert_all_finite(&left);
@@ -1131,18 +1131,18 @@ fn patch_sample_references_load_from_sample_library_and_render() {
     assert_eq!(report.loaded_slots, 1);
     assert!(report.missing_samples.is_empty());
     assert_no_allocations("resolved sample render", || {
-        synth.process(ProcessContext {
+        synth.process(ProcessContext::new(
             setup,
-            buffer: AudioBuffer {
+            AudioBuffer {
                 left: &mut left,
                 right: &mut right,
             },
-            events: &[MidiEvent::Note(NoteEvent::On {
+            &[MidiEvent::Note(NoteEvent::On {
                 channel: 0,
                 note: 60,
                 velocity: 1.0,
             })],
-        });
+        ));
     });
 
     assert_all_finite(&left);
@@ -1216,14 +1216,14 @@ fn render_one_block_after_state_load(synth: &mut ResonatorSynth, setup: ProcessS
     })];
 
     assert_no_allocations("state-loaded sample render", || {
-        synth.process(ProcessContext {
+        synth.process(ProcessContext::new(
             setup,
-            buffer: AudioBuffer {
+            AudioBuffer {
                 left: &mut left,
                 right: &mut right,
             },
-            events: &events,
-        });
+            &events,
+        ));
     });
     left
 }
@@ -1248,14 +1248,14 @@ fn render_default_note(master_gain_db: f32, saturation_drive: f32) -> Vec<f32> {
 
     synth.reset(setup);
     synth.set_patch_for_test(patch);
-    synth.process(ProcessContext {
+    synth.process(ProcessContext::new(
         setup,
-        buffer: AudioBuffer {
+        AudioBuffer {
             left: &mut left,
             right: &mut right,
         },
-        events: &events,
-    });
+        &events,
+    ));
 
     left
 }
@@ -1509,11 +1509,11 @@ fn process_block(
     right: &mut [f32],
     events: &[MidiEvent],
 ) {
-    synth.process(ProcessContext {
+    synth.process(ProcessContext::new(
         setup,
-        buffer: AudioBuffer { left, right },
+        AudioBuffer { left, right },
         events,
-    });
+    ));
 }
 
 fn render_single_note_rms(sample_rate: f32, block_size: usize, note: u8, velocity: f32) -> f32 {

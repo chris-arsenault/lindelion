@@ -166,7 +166,7 @@ fn output_filter_coefficients(
     mode: FilterMode,
 ) -> BiquadCoefficients {
     let cutoff_hz = sanitize_output_filter_cutoff(cutoff_hz);
-    let q = OUTPUT_FILTER_Q.from_resonance(resonance);
+    let q = OUTPUT_FILTER_Q.q_for_resonance(resonance);
     match mode {
         FilterMode::LowPass => BiquadCoefficients::lowpass(sample_rate, cutoff_hz, q),
         FilterMode::BandPass => BiquadCoefficients::bandpass(sample_rate, cutoff_hz, q),

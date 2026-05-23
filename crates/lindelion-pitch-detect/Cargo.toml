@@ -1,5 +1,5 @@
 [package]
-name = "lindelion-onset-detect"
+name = "lindelion-pitch-detect"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,5 +7,5 @@ authors.workspace = true
 
 [dependencies]
 lindelion-dsp-utils.workspace = true
-realfft.workspace = true
 serde.workspace = true
+tract-onnx.workspace = true

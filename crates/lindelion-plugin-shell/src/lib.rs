@@ -17,7 +17,10 @@ pub use parameters::{
     PlainToSmoothedValue, SmoothedAtomicParam, SmoothedAtomicParamSpec,
 };
 pub use patch_io::{NoPatchMigration, TomlPatchError, TomlPatchFormat, TomlPatchMigration};
-pub use process::{AudioBuffer, AudioPlugin, ProcessContext, ProcessMode, ProcessSetup};
+pub use process::{
+    AudioBuffer, AudioInputBuffer, AudioPlugin, ProcessContext, ProcessMode, ProcessSetup,
+    TimeSignature, TransportContext,
+};
 pub use state::{PluginState, StateError};
 pub use voices::{
     ManagedVoiceExpression, VoiceLike, VoiceManager, VoiceRenderStatus, VoiceSlotState,
@@ -49,6 +52,18 @@ impl PluginDescriptor {
             email: "",
             version: env!("CARGO_PKG_VERSION"),
             category: PluginCategory::Instrument,
+            class_id,
+        }
+    }
+
+    pub const fn effect(name: &'static str, class_id: [u8; 16]) -> Self {
+        Self {
+            name,
+            vendor: "Ahara",
+            url: "https://ahara.io",
+            email: "",
+            version: env!("CARGO_PKG_VERSION"),
+            category: PluginCategory::Effect,
             class_id,
         }
     }

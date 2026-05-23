@@ -3,7 +3,7 @@
 **Name etymology:** Sindarin, *singer* / *song-bearer*. From *glir-* (to sing, song) + *-dir* (masculine agentive: man, one-who), with the same morphology as Lindir, the Rivendell minstrel. The suffix descends from earlier *-ndir*, related to Sindarin *dîr* (man, adult), and is distinct from *-dil* (friend/devotee, as in Eärendil) and *-dan* (wright, as in Círdan).
 **Project umbrella:** Lindelion (Cargo workspace, GitHub repo).
 **Target:** macOS (Apple Silicon primary), VST3.
-**Status:** Planned product directory; no Cargo package exists yet.
+**Status:** Core Rust crate implemented. Capture state, analysis/segmentation, shared SwiftF0 pitch detection, shared onset detection, MIDI quantization/export DTOs, TOML patch state, and a simple audition engine exist. VST3 adapter, editor surface, drag-out integration, worker-thread scheduling, and FLAC scratchpad storage are pending.
 
 ---
 
@@ -62,6 +62,19 @@ flowchart LR
 
 The pipeline is split into **capture** (one-time, triggered by transport) and **analysis** (re-runs whenever settings change). Audio buffer is preserved across analysis runs; only the derived MIDI is recomputed.
 
+### Current implementation boundary
+
+The current crate implements the non-UI core in focused modules:
+
+| Module | Role |
+| ---- | ---- |
+| `capture.rs` | Audio-input capture state machine using shared `ProcessContext` input and transport data. Capture completion is finalized off the audio thread. |
+| `analysis.rs` | SwiftF0 pitch contour integration, pitch-track fed hybrid onset detection, note segmentation, and MIDI clip derivation. |
+| `parameters.rs` | Host parameter metadata and patch application policy. |
+| `patch.rs` / `patch_io.rs` | Serializable patch schema and shared `TomlPatchFormat` adapters. |
+| `audition.rs` | Simple sine audition renderer using shared MIDI clip DTOs and DSP smoothing. |
+| `plugin.rs` | `AudioPlugin` implementation around the shared shell boundary. |
+
 ---
 
 ## 3. Audio Capture
@@ -110,7 +123,7 @@ Count-in begins after the sync-mode trigger condition is met, immediately preced
 
 ### 3.5 Buffer persistence
 
-- Captured audio persists with patch state (encoded as FLAC mono 48kHz inside the postcard-serialized state blob). 16-bar capture at 60bpm encodes to roughly 3-4MB FLAC.
+- Current core state stores captured audio as `ScratchpadAudio` in the TOML-backed patch state. The VST3 persistence target is still FLAC-encoded mono audio in the plugin state blob so large captures do not bloat project files.
 - **Clear Scratchpad** button drops the buffer.
 - Closing the plugin or DAW session preserves the scratchpad — it returns on session reload.
 - **Save to Library** button — separately ingests the current scratchpad audio into the shared `lindelion-sample-library` as a regular sample (useful when a take is worth keeping as source material for Linnod or Lamath).
@@ -123,7 +136,7 @@ Runs on the captured audio. Re-runs in two tiers: capture-time analysis (pitch c
 
 ### 4.1 Frame parameters
 
-- Sample rate for analysis: **16 kHz** (SwiftF0's native rate). Captured audio at 48 kHz is resampled to 16 kHz on entry to the analysis pipeline via `rubato`. Original 48 kHz buffer is preserved for audition and patch state.
+- Sample rate for analysis: **16 kHz** (SwiftF0's native rate). Captured audio is resampled to 16 kHz on entry to the analysis pipeline via shared `lindelion-dsp-utils` interpolation. Original capture-rate audio is preserved for audition and patch state.
 - Hop size: **256 samples at 16 kHz** = 16 ms per frame. This is SwiftF0's native hop.
 - STFT window size: handled internally by the SwiftF0 model.
 
@@ -385,9 +398,9 @@ Key UI behaviors:
 
 ## 11. State & Presets
 
-- Patches stored as TOML in `Patches/Glirdir/`.
-- Patch contains: capture settings (bars, sync mode, count-in), analysis settings (confidence threshold, onset sensitivity, min note), quantization settings (key, scale, snap mode, grid, strength, velocity amount), and the encoded captured audio (FLAC mono 48kHz inside the patch state).
-- DAW state via `IComponent::getState`/`setState`, postcard-serialized.
+- Patches are versioned through shared `TomlPatchFormat<GlirdirPatch>`.
+- Current patch state contains capture settings (bars, sync mode, count-in), analysis settings (confidence threshold, onset sensitivity, min note), quantization settings (key, scale, snap mode, grid, strength, velocity amount), audition settings, and optional `ScratchpadAudio`.
+- VST3 state integration is pending. The target remains compressed scratchpad storage plus settings restore through `IComponent::getState`/`setState`.
 
 ---
 
@@ -399,18 +412,18 @@ Same Lindelion stack as siblings, with additions:
 | ---------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
 | Plugin shell     | `lindelion-plugin-shell` (shared)                     |                                                                |
 | UI               | `lindelion-ui` + Vizia direct                         | Piano-roll widget new to this plugin.                          |
-| Pitch detect     | `lindelion-pitch-detect` (NEW shared crate)           | SwiftF0 ONNX model + post-processing.                          |
+| Pitch detect     | `lindelion-pitch-detect`                              | SwiftF0 ONNX model + post-processing.                          |
 | ONNX runtime     | `tract` (pure Rust)                                   | Inside `lindelion-pitch-detect`. No native dylib dependency.   |
 | Onset detect     | `lindelion-onset-detect` (shared with Linnod)         | SuperFlux + pitch-stability used here.                         |
-| Resampling       | `rubato` (shared)                                     | 48 kHz capture → 16 kHz for SwiftF0 analysis.                  |
-| MIDI             | `lindelion-midi` (NEW shared crate)                   | Quantization, key/scale logic, SMF emission via `midly`.       |
-| FLAC             | `claxon` (shared)                                     | Encoding scratchpad audio into patch state.                    |
+| Resampling       | `lindelion-dsp-utils` interpolation                   | Capture-rate audio → 16 kHz for SwiftF0 analysis.              |
+| MIDI             | `lindelion-midi`                                      | Quantization, key/scale logic, SMF emission via `midly`.       |
+| FLAC             | Pending                                               | Target encoding for large scratchpad audio in VST3 state.      |
 | Drag-out         | `objc2` + direct NSDragging interop                   | Plugin-local code; not a reusable crate.                       |
 | Audition synth   | Inline module (no separate crate)                     | ~100 LOC.                                                      |
 
 ### 12.1 Workspace structure update
 
-The previously-planned `lindelion-pitch-detect` crate switches its core algorithm from pYIN to SwiftF0. The crate's public API stays effectively the same — frame-by-frame `(f0_hz, confidence)` output plus a streaming wrapper — only the implementation underneath changes. Includes the SwiftF0 ONNX model embedded via `include_bytes!` (~400 KB).
+The `lindelion-pitch-detect` crate uses SwiftF0. It exposes frame-by-frame `(f0_hz, confidence)` output and lets callers supply analysis-specific confidence/range configuration. The SwiftF0 ONNX model is embedded via `include_bytes!` (~400 KB); the embedded graph includes a tract compatibility shim that inserts the singleton STFT input axis expected by tract's ONNX importer.
 
 Updated workspace:
 
@@ -425,7 +438,7 @@ lindelion/                                  # GitHub repo root
 │   ├── lindelion-onset-detect/             # SuperFlux, ComplexFlux, etc.
 │   ├── lindelion-pitch-detect/             # SwiftF0 ONNX inference + post-processing
 │   ├── lindelion-psola/                    # PSOLA only; epoch detection self-contained (peak-picking on per-period autocorrelation, not pYIN)
-│   └── lindelion-midi/                     # Quantization + SMF (NEW)
+│   └── lindelion-midi/                     # Quantization + SMF
 └── plugins/
     ├── lamath/                             # Breath-excited resonator
     ├── linnod/                             # Melodic sample slicer
@@ -553,7 +566,7 @@ This is the highest-risk piece. Validate it before building anything else, so th
 ### Step 3 — SwiftF0 integration + visualization
 
 - `lindelion-pitch-detect` crate with SwiftF0 ONNX model embedded, `tract` inference path, and a frame-iterator API.
-- Resampling pipeline: 48 kHz captured audio → 16 kHz for analysis via `rubato`.
+- Resampling pipeline: captured audio → 16 kHz for analysis via shared interpolation.
 - Run SwiftF0 over captured audio, overlay pitch contour and confidence band on the waveform display.
 
 **Acceptance:** capture audio, see a smooth pitch line drawn over the waveform with low-confidence regions visually distinguished. Confirm no denormal/NaN artifacts in pathological inputs (silence, clipped audio, pure noise).
@@ -601,7 +614,7 @@ This is the highest-risk piece. Validate it before building anything else, so th
 
 ### Step 9 — State persistence
 
-- Patch save/load with embedded FLAC-encoded scratchpad audio.
+- Patch save/load with scratchpad audio, moving large VST3 state toward FLAC-encoded storage.
 - DAW state save/restore (close project, reopen, scratchpad and settings restored).
 - "Save to Library" action ingests scratchpad into shared `lindelion-sample-library`.
 

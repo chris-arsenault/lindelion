@@ -1,13 +1,13 @@
 use std::{
     cell::{Cell, RefCell},
     mem::MaybeUninit,
-    ptr, slice,
+    ptr,
 };
 
 use lindelion_plugin_shell::{
-    AudioBuffer, AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
+    AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
     ProcessContext as ShellProcessContext, ProcessMode, ProcessSetup as ShellProcessSetup,
-    vst3::copy_wstring,
+    vst3::{clear_vst_outputs, copy_wstring, stereo_output_buffers_from_vst_process_data},
 };
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
@@ -331,28 +331,27 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
         self.apply_parameter_changes(data.inputParameterChanges);
 
         if data.symbolicSampleSize as SymbolicSampleSizes != SymbolicSampleSizes_::kSample32 {
-            clear_outputs(data);
+            clear_vst_outputs(data);
             return kResultOk;
         }
 
         let input_events = data.inputEvents;
-        let Some((left, right)) = stereo_output_buffers(data) else {
-            clear_outputs(data);
+        let Some(mut buffer) = stereo_output_buffers_from_vst_process_data(data) else {
+            clear_vst_outputs(data);
             return kResultOk;
         };
         let mut events = [empty_midi_event(); MAX_BLOCK_EVENTS];
         let event_count = self.process_events(input_events, &mut events);
 
         let Ok(mut synth) = self.synth.try_borrow_mut() else {
-            left.fill(0.0);
-            right.fill(0.0);
+            buffer.clear();
             return kResultFalse;
         };
-        synth.process(ShellProcessContext {
-            setup: self.setup.get(),
-            buffer: AudioBuffer { left, right },
-            events: &events[..event_count],
-        });
+        synth.process(ShellProcessContext::new(
+            self.setup.get(),
+            buffer,
+            &events[..event_count],
+        ));
 
         kResultOk
     }
@@ -409,54 +408,4 @@ fn fill_bus_info(
     copy_wstring(name, &mut bus.name);
     bus.busType = BusTypes_::kMain as BusType;
     bus.flags = BusInfo_::BusFlags_::kDefaultActive;
-}
-
-unsafe fn stereo_output_buffers(data: &mut ProcessData) -> Option<(&mut [f32], &mut [f32])> {
-    if data.numSamples <= 0 || data.numOutputs != 1 || data.outputs.is_null() {
-        return None;
-    }
-    let outputs = slice::from_raw_parts_mut(data.outputs, data.numOutputs as usize);
-    if outputs[0].numChannels != 2 {
-        return None;
-    }
-
-    let channel_buffers = outputs[0].__field0.channelBuffers32;
-    if channel_buffers.is_null() {
-        return None;
-    }
-    let channels = slice::from_raw_parts_mut(channel_buffers, 2);
-    if channels[0].is_null() || channels[1].is_null() {
-        return None;
-    }
-
-    let sample_count = data.numSamples as usize;
-    Some((
-        slice::from_raw_parts_mut(channels[0], sample_count),
-        slice::from_raw_parts_mut(channels[1], sample_count),
-    ))
-}
-
-unsafe fn clear_outputs(data: &mut ProcessData) {
-    if data.numSamples <= 0 || data.numOutputs <= 0 || data.outputs.is_null() {
-        return;
-    }
-    let outputs = slice::from_raw_parts_mut(data.outputs, data.numOutputs as usize);
-    for output in outputs {
-        clear_output_bus(output, data.numSamples as usize);
-    }
-}
-
-unsafe fn clear_output_bus(output: &mut AudioBusBuffers, sample_count: usize) {
-    if output.numChannels <= 0 || output.__field0.channelBuffers32.is_null() {
-        return;
-    }
-    let channels = slice::from_raw_parts_mut(
-        output.__field0.channelBuffers32,
-        output.numChannels as usize,
-    );
-    for channel in channels {
-        if !channel.is_null() {
-            slice::from_raw_parts_mut(*channel, sample_count).fill(0.0);
-        }
-    }
 }

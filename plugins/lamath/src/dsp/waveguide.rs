@@ -176,7 +176,7 @@ fn loop_filter_coefficients(
     loop_filter_cutoff: f32,
     loop_filter_resonance: f32,
 ) -> BiquadCoefficients {
-    let q = WAVEGUIDE_LOOP_FILTER_Q.from_resonance(loop_filter_resonance);
+    let q = WAVEGUIDE_LOOP_FILTER_Q.q_for_resonance(loop_filter_resonance);
     BiquadCoefficients::lowpass(sample_rate, loop_filter_cutoff, q)
 }
 

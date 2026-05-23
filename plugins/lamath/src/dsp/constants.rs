@@ -30,7 +30,7 @@ impl ResonanceQ {
         Self { base, scale }
     }
 
-    pub(crate) fn from_resonance(self, resonance: f32) -> f32 {
+    pub(crate) fn q_for_resonance(self, resonance: f32) -> f32 {
         self.base + FILTER_RESONANCE.clamp(resonance) * self.scale
     }
 }
@@ -93,6 +93,7 @@ pub(crate) struct SeriesConditionerParams {
 }
 
 impl SeriesConditionerParams {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         highpass_cutoff_hz: f32,
         highpass_q: f32,

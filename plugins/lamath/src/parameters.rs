@@ -689,6 +689,7 @@ pub(crate) struct ParameterBinding {
 }
 
 impl ParameterBinding {
+    #[allow(clippy::too_many_arguments)]
     const fn new(
         info: ParameterInfo,
         path: ParameterPath,
@@ -793,6 +794,7 @@ impl EditorParameterBinding {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn binary(
         slot: EditorSurfaceSlot,
         group: EditorSurfaceGroup,
@@ -1825,13 +1827,13 @@ mod tests {
             assert_eq!(parameter_binding_index(parameter.id.0), Some(index));
         }
 
-        for left in 0..PARAMETER_BINDINGS.len() {
-            for right in left + 1..PARAMETER_BINDINGS.len() {
+        for (left, left_binding) in PARAMETER_BINDINGS.iter().enumerate() {
+            for right_binding in PARAMETER_BINDINGS.iter().skip(left + 1) {
                 assert_ne!(
-                    PARAMETER_BINDINGS[left].id(),
-                    PARAMETER_BINDINGS[right].id(),
+                    left_binding.id(),
+                    right_binding.id(),
                     "duplicate parameter id {}",
-                    PARAMETER_BINDINGS[left].id().0
+                    left_binding.id().0
                 );
             }
         }
@@ -1951,38 +1953,49 @@ mod tests {
         let mut count = 0;
         for binding in editor_parameter_bindings() {
             count += 1;
-            let editor = binding
-                .editor()
-                .expect("visible binding should have editor metadata");
-            assert_eq!(
-                editor_parameter_binding(editor.slot())
-                    .expect("surface slot should map back to a binding")
-                    .id(),
-                binding.id()
-            );
-            assert_eq!(
-                parameter_binding(binding.id().0)
-                    .expect("editor binding should be real")
-                    .id(),
-                binding.id()
-            );
-            assert!(!editor.label().is_empty());
-            match editor.control() {
-                EditorControlKind::Knob | EditorControlKind::Slider => {}
-                EditorControlKind::Binary {
-                    left_label,
-                    right_label,
-                    width,
-                } => {
-                    assert!(!left_label.is_empty());
-                    assert!(!right_label.is_empty());
-                    assert!(width > 0.0);
-                }
-            }
+            assert_editor_binding_roundtrips(binding);
+            assert_editor_metadata_valid(binding);
         }
 
         assert_eq!(count, EditorSurfaceSlot::ALL.len());
         assert_eq!(PARAMETER_BINDING_COUNT, PARAMETER_BINDINGS.len());
+    }
+
+    fn assert_editor_binding_roundtrips(binding: &ParameterBinding) {
+        let editor = binding
+            .editor()
+            .expect("visible binding should have editor metadata");
+        assert_eq!(
+            editor_parameter_binding(editor.slot())
+                .expect("surface slot should map back to a binding")
+                .id(),
+            binding.id()
+        );
+        assert_eq!(
+            parameter_binding(binding.id().0)
+                .expect("editor binding should be real")
+                .id(),
+            binding.id()
+        );
+    }
+
+    fn assert_editor_metadata_valid(binding: &ParameterBinding) {
+        let editor = binding
+            .editor()
+            .expect("visible binding should have editor metadata");
+        assert!(!editor.label().is_empty());
+        match editor.control() {
+            EditorControlKind::Knob | EditorControlKind::Slider => {}
+            EditorControlKind::Binary {
+                left_label,
+                right_label,
+                width,
+            } => {
+                assert!(!left_label.is_empty());
+                assert!(!right_label.is_empty());
+                assert!(width > 0.0);
+            }
+        }
     }
 
     #[test]

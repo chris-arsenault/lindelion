@@ -2,11 +2,14 @@
 resolver = "3"
 members = [
     "crates/lindelion-dsp-utils",
+    "crates/lindelion-midi",
     "crates/lindelion-onset-detect",
+    "crates/lindelion-pitch-detect",
     "crates/lindelion-plugin-shell",
     "crates/lindelion-psola",
     "crates/lindelion-sample-library",
     "crates/lindelion-ui",
+    "plugins/glirdir",
     "plugins/lamath",
     "plugins/linnod",
     "xtask",
@@ -20,12 +23,17 @@ authors = ["Ahara"]
 
 [workspace.dependencies]
 lindelion-dsp-utils = { path = "crates/lindelion-dsp-utils" }
+lindelion-midi = { path = "crates/lindelion-midi" }
 lindelion-onset-detect = { path = "crates/lindelion-onset-detect" }
+lindelion-pitch-detect = { path = "crates/lindelion-pitch-detect" }
 lindelion-plugin-shell = { path = "crates/lindelion-plugin-shell" }
 lindelion-psola = { path = "crates/lindelion-psola" }
 lindelion-sample-library = { path = "crates/lindelion-sample-library", default-features = false }
 lindelion-ui = { path = "crates/lindelion-ui" }
+midly = "0.5.3"
+realfft = "3.5.0"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.8"
+tract-onnx = "0.23.0-dev.5"
 vizia = { git = "https://github.com/vizia/vizia.git", rev = "cb3346008ece56c09c39344ed1289357dba96ce1", default-features = false, features = ["baseview"] }
 vst3 = "0.3.0"

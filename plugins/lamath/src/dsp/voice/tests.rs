@@ -292,13 +292,14 @@ fn live_parameter_changes_are_smoothed_per_sample() {
 fn output_stage_updates_filter_and_gain_targets() {
     let sample_rate = 48_000.0;
     let mut output = OutputStage::new(sample_rate);
-    let mut config = OutputConfig::default();
-    config.filter_mode = FilterMode::HighPass;
-    config.filter_cutoff = 400.0;
-    config.filter_resonance = 0.7;
-    config.master_gain_db = -18.0;
-    config.saturation_drive = 0.6;
-    config.master_pan = 0.5;
+    let config = OutputConfig {
+        filter_mode: FilterMode::HighPass,
+        filter_cutoff: 400.0,
+        filter_resonance: 0.7,
+        master_gain_db: -18.0,
+        saturation_drive: 0.6,
+        master_pan: 0.5,
+    };
 
     output.set_config(config);
 

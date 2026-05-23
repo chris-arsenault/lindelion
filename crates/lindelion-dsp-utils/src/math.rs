@@ -10,6 +10,14 @@ pub fn midi_note_to_hz(note: f32) -> f32 {
     A4_HZ * semitones_to_ratio(note - A4_MIDI_NOTE)
 }
 
+pub fn hz_to_midi_note(hz: f32) -> Option<f32> {
+    if hz > 0.0 && hz.is_finite() {
+        Some(A4_MIDI_NOTE + 12.0 * (hz / A4_HZ).log2())
+    } else {
+        None
+    }
+}
+
 pub fn snap_to_zero(value: f32) -> f32 {
     if !value.is_finite() || value.abs() < DENORMAL_THRESHOLD {
         0.0
@@ -37,6 +45,12 @@ mod tests {
     #[test]
     fn midi_note_69_is_a4() {
         assert!((midi_note_to_hz(69.0) - 440.0).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn hz_to_midi_note_69_is_a4() {
+        assert!((hz_to_midi_note(440.0).unwrap() - 69.0).abs() < 0.000_01);
+        assert_eq!(hz_to_midi_note(0.0), None);
     }
 
     #[test]

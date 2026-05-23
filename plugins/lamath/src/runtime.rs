@@ -460,78 +460,68 @@ mod tests {
             processor.process(&controls, &mut left, &mut right);
         });
 
-        let mut pressure_processor = ResonatorProcessor::with_builtin_excitation(
-            48_000.0,
+        assert_live_control_path_does_not_allocate(
+            "processor process live pressure resonator damping",
             aftertouch_resonator_damping_patch(),
+            ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 0.85,
+            },
+            &events,
+            &mut left,
+            &mut right,
         );
-        pressure_processor.process(&events, &mut left, &mut right);
-        assert_no_allocations("processor process live pressure resonator damping", || {
-            pressure_processor.process(
-                &[MidiEvent::Control(ControlEvent::ChannelPressure {
-                    channel: 0,
-                    value: 0.85,
-                })],
-                &mut left,
-                &mut right,
-            );
-        });
-
-        let mut wheel_processor = ResonatorProcessor::with_builtin_excitation(
-            48_000.0,
+        assert_live_control_path_does_not_allocate(
+            "processor process live mod wheel resonator damping",
             mod_wheel_resonator_damping_patch(),
+            ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 1,
+                value: 0.85,
+            },
+            &events,
+            &mut left,
+            &mut right,
         );
-        wheel_processor.process(&events, &mut left, &mut right);
-        assert_no_allocations("processor process live mod wheel resonator damping", || {
-            wheel_processor.process(
-                &[MidiEvent::Control(ControlEvent::ContinuousController {
-                    channel: 0,
-                    controller: 1,
-                    value: 0.85,
-                })],
-                &mut left,
-                &mut right,
-            );
-        });
-
-        let mut brightness_processor = ResonatorProcessor::with_builtin_excitation(
-            48_000.0,
-            brightness_resonator_damping_patch(),
-        );
-        brightness_processor.process(&events, &mut left, &mut right);
-        assert_no_allocations(
+        assert_live_control_path_does_not_allocate(
             "processor process live brightness resonator damping",
-            || {
-                brightness_processor.process(
-                    &[MidiEvent::Control(ControlEvent::ContinuousController {
-                        channel: 0,
-                        controller: 74,
-                        value: 0.85,
-                    })],
-                    &mut left,
-                    &mut right,
-                );
+            brightness_resonator_damping_patch(),
+            ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 74,
+                value: 0.85,
             },
+            &events,
+            &mut left,
+            &mut right,
         );
-
-        let mut poly_processor = ResonatorProcessor::with_builtin_excitation(
-            48_000.0,
-            poly_pressure_resonator_damping_patch(),
-        );
-        poly_processor.process(&events, &mut left, &mut right);
-        assert_no_allocations(
+        assert_live_control_path_does_not_allocate(
             "processor process live poly pressure resonator damping",
-            || {
-                poly_processor.process(
-                    &[MidiEvent::Control(ControlEvent::PolyPressure {
-                        channel: 0,
-                        note: 60,
-                        value: 0.85,
-                    })],
-                    &mut left,
-                    &mut right,
-                );
+            poly_pressure_resonator_damping_patch(),
+            ControlEvent::PolyPressure {
+                channel: 0,
+                note: 60,
+                value: 0.85,
             },
+            &events,
+            &mut left,
+            &mut right,
         );
+    }
+
+    fn assert_live_control_path_does_not_allocate(
+        label: &str,
+        patch: ResonatorSynthPatch,
+        control: ControlEvent,
+        note_events: &[MidiEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) {
+        let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+        processor.process(note_events, left, right);
+        assert_no_allocations(label, || {
+            processor.process(&[MidiEvent::Control(control)], left, right);
+        });
     }
 
     #[test]
