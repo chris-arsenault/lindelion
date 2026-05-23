@@ -16,6 +16,7 @@ Agent guide for Codex sessions in the Lindelion repository.
 ## Critical Rules
 
 - Never run destructive git commands such as `git reset --hard`, `git checkout --`, or force-push without explicit user approval.
+- Work on `main` by default. Do not create, switch to, or continue work on a non-main branch unless the user explicitly instructs you to use one.
 - Never commit secrets, `.env` files, credentials, DAW license files, or private SDK payloads.
 - Run `make ci` before committing unless the user explicitly asks for a checkpoint commit.
 - Keep the realtime DSP path allocation-free. New audio-thread behavior needs focused no-allocation tests.
