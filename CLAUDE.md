@@ -16,7 +16,7 @@ Primary working guide for agents operating in the Lindelion repository.
 
 Lindelion is a Rust workspace for Ahara audio plugins. The current implemented plugin is `resonator-synth`, a polyphonic physical-modeling instrument that feeds sample excitations into modal and waveguide resonators and exposes a framework-light VST3 entry point.
 
-UI is intentionally outside the current slice. The plugin should still load in a DAW as a VST3 and render audio from MIDI input.
+The plugin should load in a DAW as a VST3, render audio from MIDI input, and expose the native macOS editor surface from the VST3 edit controller.
 
 ## Code Layout
 
@@ -49,7 +49,7 @@ UI is intentionally outside the current slice. The plugin should still load in a
 | `make ci` | Run the local Ahara-standard check path. |
 | `cargo run -p xtask -- check` | Run rustfmt, release clippy with cognitive complexity, and all workspace tests. |
 | `cargo check -p resonator-synth --target aarch64-apple-darwin` | Type-check the macOS VST3 target from any host with the Rust target installed. |
-| `cargo run -p xtask -- bundle resonator-synth --target aarch64-apple-darwin` | Build and bundle the VST3 on macOS. |
+| `make build` | Build the VST3 on macOS using `~/.lindelion-cache/target` for Cargo artifacts and install the published bundle under `/Library/Audio/Plug-Ins/VST3/Ahara`. |
 | `cargo build -p resonator-synth --release` | Build the local platform cdylib/rlib. |
 
 ## Verification Notes
@@ -57,4 +57,4 @@ UI is intentionally outside the current slice. The plugin should still load in a
 - Baseline before commit: `make ci`.
 - For VST3 ABI changes, also run `cargo check -p resonator-synth --target aarch64-apple-darwin`.
 - For actual DAW-loadable macOS artifacts, build on macOS or in the macOS GitHub Action; Linux lacks the Apple linker and SDK.
-- Run Steinberg `validator` against `target/bundles/Ahara Resonator Synth.vst3` when the SDK is available.
+- Run Steinberg `validator` against `/Library/Audio/Plug-Ins/VST3/Ahara/Ahara Resonator Synth.vst3` when the SDK is available.

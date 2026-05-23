@@ -1,12 +1,18 @@
-use ahara_plugin_shell::{ControlEvent, MidiEvent, NoteEvent, ParameterId};
+use ahara_plugin_shell::{
+    ControlEvent, ExpressionSource, MIDI_CHANNEL_COUNT, MidiEvent, MidiExpressionSource,
+    MidiExpressionUpdate, MidiVoiceExpression, NoteEvent, ParameterId,
+};
 
 use crate::{
     ExcitationSlot, ResonatorSynthPatch,
     dsp::{
         ExcitationSelector, MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations,
-        SynthEngine, VoiceTrigger,
+        SynthEngine, VoiceExpression, VoiceTrigger,
     },
 };
+
+const MIDI_EXPRESSION_VOICES: usize = MIDI_CHANNEL_COUNT;
+const GLOBAL_EXPRESSION_CHANNEL: u8 = 0;
 
 pub const BUILTIN_EXCITATION_SAMPLE_RATE: f32 = 48_000.0;
 pub static BUILTIN_EXCITATION: [f32; 64] = [
@@ -116,7 +122,7 @@ pub struct ResonatorProcessor<'a> {
     runtime_patch: RuntimePatch<'a>,
     engine: SynthEngine<'a>,
     selector: ExcitationSelector,
-    controls: RealtimeControls,
+    expression_source: MidiExpressionSource<MIDI_EXPRESSION_VOICES>,
 }
 
 impl ResonatorProcessor<'static> {
@@ -133,7 +139,7 @@ impl<'a> ResonatorProcessor<'a> {
             runtime_patch,
             engine: SynthEngine::new(sample_rate, polyphony),
             selector: ExcitationSelector::default(),
-            controls: RealtimeControls::default(),
+            expression_source: MidiExpressionSource::default(),
         }
     }
 
@@ -145,6 +151,26 @@ impl<'a> ResonatorProcessor<'a> {
             self.handle_event(*event);
         }
 
+        self.engine
+            .sync_expression_source(&mut self.expression_source);
+        self.engine.render_add(left, right);
+    }
+
+    pub fn process_with_expression_source(
+        &mut self,
+        source: &mut impl ExpressionSource,
+        events: &[MidiEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) {
+        left.fill(0.0);
+        right.fill(0.0);
+
+        for event in events {
+            self.handle_event(*event);
+        }
+
+        self.engine.sync_expression_source(source);
         self.engine.render_add(left, right);
     }
 
@@ -156,69 +182,76 @@ impl<'a> ResonatorProcessor<'a> {
         &self.runtime_patch.patch
     }
 
+    pub fn replace_patch_config(&mut self, patch: ResonatorSynthPatch) {
+        self.runtime_patch.patch = patch;
+    }
+
     pub fn set_parameter_plain(&mut self, parameter: ParameterId, value: f32) {
-        match parameter.0 {
-            1 => self.set_master_gain_db(value),
-            2 => self.set_loop_gain(value),
-            3 => self.set_filter_cutoff(value),
-            _ => {}
+        let Some(binding) = crate::parameter_binding(parameter.0) else {
+            return;
+        };
+        let target = binding.runtime_target();
+        if !target.is_active() {
+            return;
         }
+
+        binding.apply_plain(&mut self.runtime_patch.patch, value);
+        match target {
+            crate::RuntimeParameterTarget::None => {}
+            crate::RuntimeParameterTarget::Output => self
+                .engine
+                .set_output_config(self.runtime_patch.patch.output),
+            crate::RuntimeParameterTarget::Routing => {
+                self.engine.set_routing(self.runtime_patch.patch.routing);
+            }
+        }
+    }
+
+    pub fn set_pitch_bend_normalized(&mut self, normalized: f32) {
+        let range = self.pitch_bend_range();
+        self.set_pitch_bend_semitones((normalized.clamp(0.0, 1.0) * 2.0 - 1.0) * range);
     }
 
     fn handle_event(&mut self, event: MidiEvent) {
         match event {
             MidiEvent::Note(NoteEvent::On {
+                channel,
                 note,
                 velocity,
-                channel: _,
-            }) if velocity > 0.0 => self.note_on(note, velocity),
+            }) if velocity > 0.0 => self.note_on(channel, note, velocity),
             MidiEvent::Note(NoteEvent::On {
+                channel,
                 note,
                 velocity: _,
-                channel: _,
             })
             | MidiEvent::Note(NoteEvent::Off {
+                channel,
                 note,
                 velocity: _,
-                channel: _,
-            }) => self.engine.note_off(note),
+            }) => self.note_off(channel, note),
             MidiEvent::Control(control) => self.handle_control(control),
         }
     }
 
     fn handle_control(&mut self, control: ControlEvent) {
         match control {
-            ControlEvent::PitchBend {
-                semitones,
-                channel: _,
-            } => {
-                let range = self
-                    .runtime_patch
-                    .patch
-                    .modulation
-                    .pitch_bend_range_semitones
-                    .abs()
-                    .max(0.0);
-                self.controls.pitch_bend_semitones = semitones.clamp(-range, range);
-                self.engine
-                    .set_pitch_bend(self.controls.pitch_bend_semitones);
-            }
-            ControlEvent::ChannelPressure { value, channel: _ } => {
-                self.controls.aftertouch = value.clamp(0.0, 1.0);
-            }
-            ControlEvent::ContinuousController {
-                controller,
+            ControlEvent::PolyPressure {
+                channel,
+                note,
                 value,
-                channel: _,
-            } => match controller {
-                1 => self.controls.mod_wheel = value.clamp(0.0, 1.0),
-                74 => self.controls.brightness = value.clamp(0.0, 1.0),
-                _ => {}
-            },
+            } => self.engine.set_poly_pressure(channel, note, value),
+            _ => {
+                if let Some(update) = self
+                    .expression_source
+                    .apply_control(control, self.pitch_bend_range())
+                {
+                    self.sync_expression_update_to_engine(update);
+                }
+            }
         }
     }
 
-    fn note_on(&mut self, note: u8, velocity: f32) {
+    fn note_on(&mut self, channel: u8, note: u8, velocity: f32) {
         let selected = self.selector.select(&self.runtime_patch.slots, velocity);
         let excitations = if selected.is_empty() {
             SelectedExcitations::from_single(&BUILTIN_EXCITATION, BUILTIN_EXCITATION_SAMPLE_RATE)
@@ -228,30 +261,67 @@ impl<'a> ResonatorProcessor<'a> {
         let modulation = self.runtime_patch.patch.modulation;
         let mut trigger =
             VoiceTrigger::with_excitations(note, velocity, excitations, &self.runtime_patch.patch);
-        trigger.pitch_bend_semitones = self.controls.pitch_bend_semitones;
-        trigger.aftertouch = self.controls.aftertouch;
-        trigger.mod_wheel = self.controls.mod_wheel;
-        trigger.brightness = self.controls.brightness;
+        trigger.channel = channel;
+        trigger.expression = self
+            .expression_source
+            .note_expression(channel, velocity)
+            .into();
         trigger.modulation = modulation;
-        self.engine.note_on(trigger);
+        let slot = self.engine.note_on(trigger);
+        self.expression_source
+            .begin_voice(slot as u32, channel, velocity);
     }
 
-    fn set_master_gain_db(&mut self, gain_db: f32) {
-        self.runtime_patch.patch.output.master_gain_db = gain_db.clamp(-60.0, 12.0);
-        self.engine
-            .set_output_config(self.runtime_patch.patch.output);
+    fn note_off(&mut self, channel: u8, note: u8) {
+        let channel = sanitize_channel(channel);
+        for index in 0..self.engine.polyphony() {
+            if self.engine.slot_channel(index) == Some(channel)
+                && self.engine.slot_note(index) == Some(note)
+            {
+                self.expression_source.set_voice_gate(index as u32, false);
+            }
+        }
+        self.engine.note_off_for_channel(channel, note);
     }
 
-    fn set_loop_gain(&mut self, loop_gain: f32) {
-        let loop_gain = loop_gain.clamp(0.0, 0.999);
-        set_patch_loop_gain(&mut self.runtime_patch.patch, loop_gain);
-        self.engine.set_waveguide_loop_gain(loop_gain);
+    fn set_pitch_bend_semitones(&mut self, semitones: f32) {
+        self.set_channel_pitch_bend(GLOBAL_EXPRESSION_CHANNEL, semitones);
     }
 
-    fn set_filter_cutoff(&mut self, cutoff_hz: f32) {
-        self.runtime_patch.patch.output.filter_cutoff = cutoff_hz.clamp(20.0, 20_000.0);
-        self.engine
-            .set_output_config(self.runtime_patch.patch.output);
+    fn set_channel_pitch_bend(&mut self, channel: u8, semitones: f32) {
+        let update =
+            self.expression_source
+                .set_pitch_bend(channel, semitones, self.pitch_bend_range());
+        self.sync_expression_update_to_engine(update);
+    }
+
+    fn sync_expression_update_to_engine(&mut self, update: MidiExpressionUpdate) {
+        let expression = VoiceExpression::from(update.expression);
+        if update.channel == GLOBAL_EXPRESSION_CHANNEL {
+            self.engine.set_expression_controls(
+                expression.stream.pitch_bend,
+                expression.stream.pressure,
+                expression.stream.brightness,
+                expression.mod_wheel,
+            );
+        } else {
+            self.engine.set_expression_controls_for_channel(
+                update.channel,
+                expression.stream.pitch_bend,
+                expression.stream.pressure,
+                expression.stream.brightness,
+                expression.mod_wheel,
+            );
+        }
+    }
+
+    fn pitch_bend_range(&self) -> f32 {
+        self.runtime_patch
+            .patch
+            .modulation
+            .pitch_bend_range_semitones
+            .abs()
+            .max(0.0)
     }
 
     pub const fn sample_rate(&self) -> f32 {
@@ -259,12 +329,18 @@ impl<'a> ResonatorProcessor<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct RealtimeControls {
-    pitch_bend_semitones: f32,
-    aftertouch: f32,
-    mod_wheel: f32,
-    brightness: f32,
+impl From<MidiVoiceExpression> for VoiceExpression {
+    fn from(expression: MidiVoiceExpression) -> Self {
+        Self {
+            stream: expression.stream,
+            mod_wheel: expression.mod_wheel,
+        }
+        .sanitized()
+    }
+}
+
+fn sanitize_channel(channel: u8) -> u8 {
+    channel.min((MIDI_CHANNEL_COUNT - 1) as u8)
 }
 
 pub fn runtime_slot_from_config<'a>(
@@ -286,25 +362,18 @@ pub fn runtime_slot_from_config<'a>(
     }
 }
 
-fn set_patch_loop_gain(patch: &mut ResonatorSynthPatch, loop_gain: f32) {
-    if let crate::ResonatorConfig::Waveguide(mut config) = patch.resonator_a {
-        config.loop_gain = loop_gain;
-        patch.resonator_a = crate::ResonatorConfig::Waveguide(config);
-    }
-    if let crate::ResonatorConfig::Waveguide(mut config) = patch.resonator_b {
-        config.loop_gain = loop_gain;
-        patch.resonator_b = crate::ResonatorConfig::Waveguide(config);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        FilterMode, ModalConfig, ModalPreset, OutputConfig, ResonatorConfig, ResonatorRouting,
-        assert_no_allocations,
+        FilterMode, ModalConfig, ModalPreset, ModulationDestination, ModulationSlot,
+        ModulationSource, OutputConfig, ResonatorConfig, ResonatorRouting, assert_no_allocations,
     };
-    use ahara_dsp_utils::analysis::{assert_all_finite, rms};
+    use ahara_dsp_utils::{
+        analysis::{assert_all_finite, dft_magnitude_at, peak_abs, rms},
+        math::midi_note_to_hz,
+    };
+    use ahara_plugin_shell::{ExpressionStream, ManualExpressionSource};
 
     #[test]
     fn processor_handles_note_events_and_renders_audio() {
@@ -354,15 +423,851 @@ mod tests {
                 channel: 0,
                 value: 0.75,
             }),
+            MidiEvent::Control(ControlEvent::PolyPressure {
+                channel: 0,
+                note: 60,
+                value: 0.65,
+            }),
             MidiEvent::Control(ControlEvent::ContinuousController {
                 channel: 0,
                 controller: 1,
                 value: 0.5,
             }),
+            MidiEvent::Control(ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 74,
+                value: 0.25,
+            }),
         ];
         assert_no_allocations("processor process controls", || {
             processor.process(&controls, &mut left, &mut right);
         });
+
+        let mut pressure_processor = ResonatorProcessor::with_builtin_excitation(
+            48_000.0,
+            aftertouch_resonator_damping_patch(),
+        );
+        pressure_processor.process(&events, &mut left, &mut right);
+        assert_no_allocations("processor process live pressure resonator damping", || {
+            pressure_processor.process(
+                &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                    channel: 0,
+                    value: 0.85,
+                })],
+                &mut left,
+                &mut right,
+            );
+        });
+
+        let mut wheel_processor = ResonatorProcessor::with_builtin_excitation(
+            48_000.0,
+            mod_wheel_resonator_damping_patch(),
+        );
+        wheel_processor.process(&events, &mut left, &mut right);
+        assert_no_allocations("processor process live mod wheel resonator damping", || {
+            wheel_processor.process(
+                &[MidiEvent::Control(ControlEvent::ContinuousController {
+                    channel: 0,
+                    controller: 1,
+                    value: 0.85,
+                })],
+                &mut left,
+                &mut right,
+            );
+        });
+
+        let mut brightness_processor = ResonatorProcessor::with_builtin_excitation(
+            48_000.0,
+            brightness_resonator_damping_patch(),
+        );
+        brightness_processor.process(&events, &mut left, &mut right);
+        assert_no_allocations(
+            "processor process live brightness resonator damping",
+            || {
+                brightness_processor.process(
+                    &[MidiEvent::Control(ControlEvent::ContinuousController {
+                        channel: 0,
+                        controller: 74,
+                        value: 0.85,
+                    })],
+                    &mut left,
+                    &mut right,
+                );
+            },
+        );
+
+        let mut poly_processor = ResonatorProcessor::with_builtin_excitation(
+            48_000.0,
+            poly_pressure_resonator_damping_patch(),
+        );
+        poly_processor.process(&events, &mut left, &mut right);
+        assert_no_allocations(
+            "processor process live poly pressure resonator damping",
+            || {
+                poly_processor.process(
+                    &[MidiEvent::Control(ControlEvent::PolyPressure {
+                        channel: 0,
+                        note: 60,
+                        value: 0.85,
+                    })],
+                    &mut left,
+                    &mut right,
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn held_voice_consumes_expression_stream_updates_each_block() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor =
+            ResonatorProcessor::with_builtin_excitation(sample_rate, expression_filter_patch());
+        let mut pressed_processor =
+            ResonatorProcessor::with_builtin_excitation(sample_rate, expression_filter_patch());
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 256];
+        let mut warmup_right = vec![0.0; 256];
+        neutral_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        pressed_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 4096];
+        let mut neutral_right = vec![0.0; 4096];
+        let mut pressed_left = vec![0.0; 4096];
+        let mut pressed_right = vec![0.0; 4096];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        pressed_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 1.0,
+            })],
+            &mut pressed_left,
+            &mut pressed_right,
+        );
+
+        assert_eq!(neutral_processor.active_voice_count(), 1);
+        assert_eq!(pressed_processor.active_voice_count(), 1);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&neutral_right);
+        assert_all_finite(&pressed_left);
+        assert_all_finite(&pressed_right);
+        assert!(rms(&neutral_left) > 0.000_001);
+        assert!(
+            mean_abs_difference(&neutral_left, &pressed_left) > rms(&neutral_left) * 0.05,
+            "neutral_rms={}, pressed_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&pressed_left),
+            mean_abs_difference(&neutral_left, &pressed_left)
+        );
+    }
+
+    #[test]
+    fn non_midi_expression_source_drives_pressure_and_brightness_without_midi_events() {
+        let sample_rate = 48_000.0;
+        let patch = external_expression_filter_patch();
+        let mut neutral_processor =
+            ResonatorProcessor::with_builtin_excitation(sample_rate, patch.clone());
+        let mut driven_processor = ResonatorProcessor::with_builtin_excitation(sample_rate, patch);
+        let mut neutral_source = ManualExpressionSource::<MIDI_EXPRESSION_VOICES>::default();
+        let mut driven_source = ManualExpressionSource::<MIDI_EXPRESSION_VOICES>::default();
+        let neutral_stream = ExpressionStream {
+            velocity: 1.0,
+            gate: true,
+            ..ExpressionStream::default()
+        };
+        let driven_stream = ExpressionStream {
+            pressure: 0.75,
+            brightness: 0.85,
+            ..neutral_stream
+        };
+        assert!(neutral_source.set_voice_stream(0, neutral_stream));
+        assert!(driven_source.set_voice_stream(0, driven_stream));
+
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process_with_expression_source(
+            &mut neutral_source,
+            &note_on,
+            &mut warmup_left,
+            &mut warmup_right,
+        );
+        driven_processor.process_with_expression_source(
+            &mut driven_source,
+            &note_on,
+            &mut warmup_left,
+            &mut warmup_right,
+        );
+
+        let mut neutral_left = vec![0.0; 4096];
+        let mut neutral_right = vec![0.0; 4096];
+        let mut driven_left = vec![0.0; 4096];
+        let mut driven_right = vec![0.0; 4096];
+        neutral_processor.process_with_expression_source(
+            &mut neutral_source,
+            &[],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        driven_processor.process_with_expression_source(
+            &mut driven_source,
+            &[],
+            &mut driven_left,
+            &mut driven_right,
+        );
+
+        let neutral = expression_for_slot(&neutral_processor, 0, 60);
+        let driven = expression_for_slot(&driven_processor, 0, 60);
+        assert_eq!(neutral.stream.pressure, 0.0);
+        assert_eq!(neutral.stream.brightness, 0.0);
+        assert_eq!(driven.stream.pressure, 0.75);
+        assert_eq!(driven.stream.brightness, 0.85);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&driven_left);
+        assert!(
+            mean_abs_difference(&neutral_left, &driven_left) > rms(&neutral_left) * 0.05,
+            "neutral_rms={}, driven_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&driven_left),
+            mean_abs_difference(&neutral_left, &driven_left)
+        );
+    }
+
+    #[test]
+    fn channel_pressure_modulates_resonator_damping_for_held_voice() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            aftertouch_resonator_damping_patch(),
+        );
+        let mut pressed_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            aftertouch_resonator_damping_patch(),
+        );
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 48,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        pressed_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 8192];
+        let mut neutral_right = vec![0.0; 8192];
+        let mut pressed_left = vec![0.0; 8192];
+        let mut pressed_right = vec![0.0; 8192];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        pressed_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 1.0,
+            })],
+            &mut pressed_left,
+            &mut pressed_right,
+        );
+
+        assert_eq!(neutral_processor.active_voice_count(), 1);
+        assert_eq!(pressed_processor.active_voice_count(), 1);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&neutral_right);
+        assert_all_finite(&pressed_left);
+        assert_all_finite(&pressed_right);
+        assert!(rms(&neutral_left) > 0.000_001);
+        assert!(
+            rms(&pressed_left) > rms(&neutral_left) * 1.25,
+            "neutral_rms={}, pressed_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&pressed_left),
+            mean_abs_difference(&neutral_left, &pressed_left)
+        );
+    }
+
+    #[test]
+    fn poly_pressure_modulates_only_target_note_for_held_voices() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let mut pressed_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let notes = [
+            MidiEvent::Note(NoteEvent::On {
+                channel: 0,
+                note: 48,
+                velocity: 1.0,
+            }),
+            MidiEvent::Note(NoteEvent::On {
+                channel: 0,
+                note: 60,
+                velocity: 1.0,
+            }),
+        ];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+        pressed_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 8192];
+        let mut neutral_right = vec![0.0; 8192];
+        let mut pressed_left = vec![0.0; 8192];
+        let mut pressed_right = vec![0.0; 8192];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::PolyPressure {
+                channel: 0,
+                note: 48,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        pressed_processor.process(
+            &[MidiEvent::Control(ControlEvent::PolyPressure {
+                channel: 0,
+                note: 48,
+                value: 1.0,
+            })],
+            &mut pressed_left,
+            &mut pressed_right,
+        );
+
+        assert_eq!(neutral_processor.active_voice_count(), 2);
+        assert_eq!(pressed_processor.active_voice_count(), 2);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&neutral_right);
+        assert_all_finite(&pressed_left);
+        assert_all_finite(&pressed_right);
+        assert!(rms(&neutral_left) > 0.000_001);
+        assert!(
+            mean_abs_difference(&neutral_left, &pressed_left) > rms(&neutral_left) * 0.05,
+            "neutral_rms={}, pressed_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&pressed_left),
+            mean_abs_difference(&neutral_left, &pressed_left)
+        );
+    }
+
+    #[test]
+    fn member_channel_pressure_modulates_only_owned_voices() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let mut wrong_channel_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let mut matching_channel_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let notes = [
+            MidiEvent::Note(NoteEvent::On {
+                channel: 1,
+                note: 48,
+                velocity: 1.0,
+            }),
+            MidiEvent::Note(NoteEvent::On {
+                channel: 2,
+                note: 60,
+                velocity: 1.0,
+            }),
+        ];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+        wrong_channel_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+        matching_channel_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 8192];
+        let mut neutral_right = vec![0.0; 8192];
+        let mut wrong_left = vec![0.0; 8192];
+        let mut wrong_right = vec![0.0; 8192];
+        let mut matching_left = vec![0.0; 8192];
+        let mut matching_right = vec![0.0; 8192];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 3,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        wrong_channel_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 3,
+                value: 1.0,
+            })],
+            &mut wrong_left,
+            &mut wrong_right,
+        );
+        matching_channel_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 1,
+                value: 1.0,
+            })],
+            &mut matching_left,
+            &mut matching_right,
+        );
+
+        assert_eq!(neutral_processor.active_voice_count(), 2);
+        assert_eq!(wrong_channel_processor.active_voice_count(), 2);
+        assert_eq!(matching_channel_processor.active_voice_count(), 2);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&wrong_left);
+        assert_all_finite(&matching_left);
+        assert!(rms(&neutral_left) > 0.000_001);
+        assert!(
+            mean_abs_difference(&neutral_left, &wrong_left) < 1.0e-7,
+            "neutral/wrong diff={}",
+            mean_abs_difference(&neutral_left, &wrong_left)
+        );
+        assert!(
+            mean_abs_difference(&neutral_left, &matching_left) > rms(&neutral_left) * 0.05,
+            "neutral_rms={}, matching_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&matching_left),
+            mean_abs_difference(&neutral_left, &matching_left)
+        );
+    }
+
+    #[test]
+    fn channel_zero_pressure_remains_global_for_ordinary_midi() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let mut global_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            poly_pressure_resonator_damping_patch(),
+        );
+        let notes = [
+            MidiEvent::Note(NoteEvent::On {
+                channel: 1,
+                note: 48,
+                velocity: 1.0,
+            }),
+            MidiEvent::Note(NoteEvent::On {
+                channel: 2,
+                note: 60,
+                velocity: 1.0,
+            }),
+        ];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+        global_processor.process(&notes, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 8192];
+        let mut neutral_right = vec![0.0; 8192];
+        let mut global_left = vec![0.0; 8192];
+        let mut global_right = vec![0.0; 8192];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        global_processor.process(
+            &[MidiEvent::Control(ControlEvent::ChannelPressure {
+                channel: 0,
+                value: 1.0,
+            })],
+            &mut global_left,
+            &mut global_right,
+        );
+
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&global_left);
+        assert!(
+            rms(&global_left) > rms(&neutral_left) * 1.25,
+            "neutral_rms={}, global_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&global_left),
+            mean_abs_difference(&neutral_left, &global_left)
+        );
+    }
+
+    #[test]
+    fn midi_controllers_keep_independent_member_channel_state() {
+        let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, test_patch());
+        let mut left = vec![0.0; 128];
+        let mut right = vec![0.0; 128];
+
+        processor.process(
+            &[
+                MidiEvent::Control(ControlEvent::PitchBend {
+                    channel: 2,
+                    semitones: 1.5,
+                }),
+                MidiEvent::Control(ControlEvent::ChannelPressure {
+                    channel: 2,
+                    value: 0.6,
+                }),
+                MidiEvent::Control(ControlEvent::ContinuousController {
+                    channel: 2,
+                    controller: 1,
+                    value: 0.7,
+                }),
+                MidiEvent::Control(ControlEvent::ContinuousController {
+                    channel: 2,
+                    controller: 74,
+                    value: 0.8,
+                }),
+            ],
+            &mut left,
+            &mut right,
+        );
+
+        let untouched = processor.expression_source.channel_expression(1);
+        let updated = processor.expression_source.channel_expression(2);
+        assert_eq!(untouched.stream.pitch_bend, 0.0);
+        assert_eq!(untouched.stream.pressure, 0.0);
+        assert_eq!(untouched.mod_wheel, 0.0);
+        assert_eq!(untouched.stream.brightness, 0.0);
+        assert_eq!(updated.stream.pitch_bend, 1.5);
+        assert_eq!(updated.stream.pressure, 0.6);
+        assert_eq!(updated.mod_wheel, 0.7);
+        assert_eq!(updated.stream.brightness, 0.8);
+    }
+
+    #[test]
+    fn mod_wheel_modulates_resonator_damping_for_held_voice() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            mod_wheel_resonator_damping_patch(),
+        );
+        let mut pushed_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            mod_wheel_resonator_damping_patch(),
+        );
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 48,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        pushed_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 8192];
+        let mut neutral_right = vec![0.0; 8192];
+        let mut pushed_left = vec![0.0; 8192];
+        let mut pushed_right = vec![0.0; 8192];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 1,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        pushed_processor.process(
+            &[MidiEvent::Control(ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 1,
+                value: 1.0,
+            })],
+            &mut pushed_left,
+            &mut pushed_right,
+        );
+
+        assert_eq!(neutral_processor.active_voice_count(), 1);
+        assert_eq!(pushed_processor.active_voice_count(), 1);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&neutral_right);
+        assert_all_finite(&pushed_left);
+        assert_all_finite(&pushed_right);
+        assert!(rms(&neutral_left) > 0.000_001);
+        assert!(
+            rms(&pushed_left) > rms(&neutral_left) * 1.25,
+            "neutral_rms={}, pushed_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&pushed_left),
+            mean_abs_difference(&neutral_left, &pushed_left)
+        );
+    }
+
+    #[test]
+    fn brightness_modulates_resonator_damping_for_held_voice() {
+        let sample_rate = 48_000.0;
+        let mut neutral_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            brightness_resonator_damping_patch(),
+        );
+        let mut bright_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            brightness_resonator_damping_patch(),
+        );
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 48,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 512];
+        let mut warmup_right = vec![0.0; 512];
+        neutral_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        bright_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+
+        let mut neutral_left = vec![0.0; 8192];
+        let mut neutral_right = vec![0.0; 8192];
+        let mut bright_left = vec![0.0; 8192];
+        let mut bright_right = vec![0.0; 8192];
+        neutral_processor.process(
+            &[MidiEvent::Control(ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 74,
+                value: 0.0,
+            })],
+            &mut neutral_left,
+            &mut neutral_right,
+        );
+        bright_processor.process(
+            &[MidiEvent::Control(ControlEvent::ContinuousController {
+                channel: 0,
+                controller: 74,
+                value: 1.0,
+            })],
+            &mut bright_left,
+            &mut bright_right,
+        );
+
+        assert_eq!(neutral_processor.active_voice_count(), 1);
+        assert_eq!(bright_processor.active_voice_count(), 1);
+        assert_all_finite(&neutral_left);
+        assert_all_finite(&neutral_right);
+        assert_all_finite(&bright_left);
+        assert_all_finite(&bright_right);
+        assert!(rms(&neutral_left) > 0.000_001);
+        assert!(
+            rms(&bright_left) > rms(&neutral_left) * 1.25,
+            "neutral_rms={}, bright_rms={}, diff={}",
+            rms(&neutral_left),
+            rms(&bright_left),
+            mean_abs_difference(&neutral_left, &bright_left)
+        );
+    }
+
+    #[test]
+    fn pitch_bend_parameter_retunes_active_voice() {
+        let sample_rate = 48_000.0;
+        let mut center_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_waveguide_patch(),
+        );
+        let mut bent_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_waveguide_patch(),
+        );
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 128];
+        let mut warmup_right = vec![0.0; 128];
+
+        center_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        bent_processor.process(
+            &[MidiEvent::Note(NoteEvent::On {
+                channel: 0,
+                note: 60,
+                velocity: 1.0,
+            })],
+            &mut warmup_left,
+            &mut warmup_right,
+        );
+        bent_processor.set_pitch_bend_normalized(1.0);
+
+        let mut center_left = vec![0.0; 8192];
+        let mut center_right = vec![0.0; 8192];
+        let mut bent_left = vec![0.0; 8192];
+        let mut bent_right = vec![0.0; 8192];
+        center_processor.process(&[], &mut center_left, &mut center_right);
+        bent_processor.process(&[], &mut bent_left, &mut bent_right);
+
+        assert_all_finite(&center_left);
+        assert_all_finite(&bent_left);
+        assert!(peak_abs(&center_left) > 0.000_001);
+        assert!(peak_abs(&bent_left) > 0.000_001);
+
+        let center_frequency = midi_note_to_hz(60.0);
+        let bent_frequency = midi_note_to_hz(62.0);
+        assert!(
+            dft_magnitude_at(&center_left, sample_rate, center_frequency)
+                > dft_magnitude_at(&center_left, sample_rate, bent_frequency)
+        );
+        assert!(
+            dft_magnitude_at(&bent_left, sample_rate, bent_frequency)
+                > dft_magnitude_at(&bent_left, sample_rate, center_frequency)
+        );
+    }
+
+    #[test]
+    fn member_channel_pitch_bend_updates_only_owned_held_voice_expression() {
+        let sample_rate = 48_000.0;
+        let mut processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_polyphonic_waveguide_patch(),
+        );
+        let mut left = vec![0.0; 512];
+        let mut right = vec![0.0; 512];
+
+        processor.process(&two_member_channel_notes(), &mut left, &mut right);
+        processor.process(
+            &[MidiEvent::Control(ControlEvent::PitchBend {
+                channel: 1,
+                semitones: 2.0,
+            })],
+            &mut left,
+            &mut right,
+        );
+
+        let bent = expression_for_slot(&processor, 1, 48);
+        let untouched = expression_for_slot(&processor, 2, 60);
+        assert_eq!(bent.stream.pitch_bend, 2.0);
+        assert_eq!(untouched.stream.pitch_bend, 0.0);
+    }
+
+    #[test]
+    fn channel_zero_pitch_bend_updates_all_held_voice_expressions() {
+        let sample_rate = 48_000.0;
+        let mut processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_polyphonic_waveguide_patch(),
+        );
+        let mut left = vec![0.0; 512];
+        let mut right = vec![0.0; 512];
+
+        processor.process(&two_member_channel_notes(), &mut left, &mut right);
+        processor.process(
+            &[MidiEvent::Control(ControlEvent::PitchBend {
+                channel: 0,
+                semitones: 2.0,
+            })],
+            &mut left,
+            &mut right,
+        );
+
+        assert_eq!(
+            expression_for_slot(&processor, 1, 48).stream.pitch_bend,
+            2.0
+        );
+        assert_eq!(
+            expression_for_slot(&processor, 2, 60).stream.pitch_bend,
+            2.0
+        );
+    }
+
+    #[test]
+    fn member_channel_pitch_bend_retunes_owned_voice_render() {
+        let sample_rate = 48_000.0;
+        let mut center_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_waveguide_patch(),
+        );
+        let mut bent_processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_waveguide_patch(),
+        );
+        let note_on = [MidiEvent::Note(NoteEvent::On {
+            channel: 1,
+            note: 60,
+            velocity: 1.0,
+        })];
+        let mut warmup_left = vec![0.0; 128];
+        let mut warmup_right = vec![0.0; 128];
+
+        center_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        bent_processor.process(&note_on, &mut warmup_left, &mut warmup_right);
+        bent_processor.process(
+            &[MidiEvent::Control(ControlEvent::PitchBend {
+                channel: 1,
+                semitones: 2.0,
+            })],
+            &mut warmup_left,
+            &mut warmup_right,
+        );
+
+        let mut center_left = vec![0.0; 8192];
+        let mut center_right = vec![0.0; 8192];
+        let mut bent_left = vec![0.0; 8192];
+        let mut bent_right = vec![0.0; 8192];
+        center_processor.process(&[], &mut center_left, &mut center_right);
+        bent_processor.process(&[], &mut bent_left, &mut bent_right);
+
+        assert_all_finite(&center_left);
+        assert_all_finite(&bent_left);
+        assert_frequency_dominates(&center_left, sample_rate, 60.0, 62.0);
+        assert_frequency_dominates(&bent_left, sample_rate, 62.0, 60.0);
+    }
+
+    #[test]
+    fn runtime_note_off_events_route_gate_through_owned_expression_streams() {
+        let sample_rate = 48_000.0;
+        let mut processor = ResonatorProcessor::with_builtin_excitation(
+            sample_rate,
+            pitch_tracking_polyphonic_waveguide_patch(),
+        );
+        let mut left = vec![0.0; 128];
+        let mut right = vec![0.0; 128];
+
+        processor.process(&two_member_channel_notes(), &mut left, &mut right);
+        processor.process(
+            &[MidiEvent::Note(NoteEvent::Off {
+                channel: 2,
+                note: 60,
+                velocity: 0.0,
+            })],
+            &mut left,
+            &mut right,
+        );
+        assert_slot_expression_gate(&processor, 1, 48, true);
+        assert_slot_expression_gate(&processor, 2, 60, false);
+
+        processor.process(
+            &[MidiEvent::Note(NoteEvent::On {
+                channel: 1,
+                note: 48,
+                velocity: 0.0,
+            })],
+            &mut left,
+            &mut right,
+        );
+        assert_slot_expression_gate(&processor, 1, 48, false);
+        assert_slot_expression_gate(&processor, 2, 60, false);
     }
 
     #[test]
@@ -402,5 +1307,167 @@ mod tests {
             },
             ..ResonatorSynthPatch::default()
         }
+    }
+
+    fn pitch_tracking_waveguide_patch() -> ResonatorSynthPatch {
+        ResonatorSynthPatch {
+            name: "Pitch Tracking".to_string(),
+            polyphony: 1,
+            resonator_a: ResonatorConfig::Waveguide(crate::WaveguideConfig {
+                loop_gain: 0.99,
+                loop_filter_cutoff: 12_000.0,
+                ..crate::WaveguideConfig::default()
+            }),
+            routing: ResonatorRouting::Parallel {
+                mix_a: 1.0,
+                mix_b: 0.0,
+            },
+            output: OutputConfig {
+                filter_cutoff: 20_000.0,
+                master_gain_db: 0.0,
+                ..OutputConfig::default()
+            },
+            ..ResonatorSynthPatch::default()
+        }
+    }
+
+    fn pitch_tracking_polyphonic_waveguide_patch() -> ResonatorSynthPatch {
+        let mut patch = pitch_tracking_waveguide_patch();
+        patch.polyphony = 2;
+        patch
+    }
+
+    fn two_member_channel_notes() -> [MidiEvent; 2] {
+        [
+            MidiEvent::Note(NoteEvent::On {
+                channel: 1,
+                note: 48,
+                velocity: 1.0,
+            }),
+            MidiEvent::Note(NoteEvent::On {
+                channel: 2,
+                note: 60,
+                velocity: 1.0,
+            }),
+        ]
+    }
+
+    fn expression_for_slot(
+        processor: &ResonatorProcessor<'_>,
+        channel: u8,
+        note: u8,
+    ) -> VoiceExpression {
+        (0..processor.engine.polyphony())
+            .find(|index| {
+                processor.engine.slot_channel(*index) == Some(channel)
+                    && processor.engine.slot_note(*index) == Some(note)
+            })
+            .and_then(|index| processor.engine.slot_expression(index))
+            .unwrap()
+    }
+
+    fn assert_slot_expression_gate(
+        processor: &ResonatorProcessor<'_>,
+        channel: u8,
+        note: u8,
+        gate: bool,
+    ) {
+        assert_eq!(
+            expression_for_slot(processor, channel, note).stream.gate,
+            gate
+        );
+    }
+
+    fn assert_frequency_dominates(
+        samples: &[f32],
+        sample_rate: f32,
+        high_note: f32,
+        low_note: f32,
+    ) {
+        let high = dft_magnitude_at(samples, sample_rate, midi_note_to_hz(high_note));
+        let low = dft_magnitude_at(samples, sample_rate, midi_note_to_hz(low_note));
+        assert!(
+            high > low,
+            "note {high_note} magnitude {high} should exceed note {low_note} magnitude {low}"
+        );
+    }
+
+    fn expression_filter_patch() -> ResonatorSynthPatch {
+        let mut patch = test_patch();
+        patch.output.filter_mode = FilterMode::LowPass;
+        patch.output.filter_cutoff = 300.0;
+        patch.output.filter_resonance = 0.0;
+        patch.output.master_gain_db = 0.0;
+        patch.modulation.slots[0] = ModulationSlot {
+            enabled: true,
+            source: ModulationSource::Aftertouch,
+            destination: ModulationDestination::FilterCutoff,
+            amount: 1.0,
+        };
+        patch
+    }
+
+    fn external_expression_filter_patch() -> ResonatorSynthPatch {
+        let mut patch = expression_filter_patch();
+        patch.polyphony = 1;
+        patch.modulation.slots[0].amount = 0.5;
+        patch.modulation.slots[1] = ModulationSlot {
+            enabled: true,
+            source: ModulationSource::Brightness,
+            destination: ModulationDestination::FilterCutoff,
+            amount: 0.5,
+        };
+        patch
+    }
+
+    fn aftertouch_resonator_damping_patch() -> ResonatorSynthPatch {
+        resonator_damping_patch(ModulationSource::Aftertouch)
+    }
+
+    fn poly_pressure_resonator_damping_patch() -> ResonatorSynthPatch {
+        let mut patch = resonator_damping_patch(ModulationSource::Aftertouch);
+        patch.polyphony = 2;
+        patch
+    }
+
+    fn mod_wheel_resonator_damping_patch() -> ResonatorSynthPatch {
+        resonator_damping_patch(ModulationSource::ModWheel)
+    }
+
+    fn brightness_resonator_damping_patch() -> ResonatorSynthPatch {
+        resonator_damping_patch(ModulationSource::Brightness)
+    }
+
+    fn resonator_damping_patch(source: ModulationSource) -> ResonatorSynthPatch {
+        let mut patch = test_patch();
+        patch.polyphony = 1;
+        patch.resonator_a = ResonatorConfig::Waveguide(crate::WaveguideConfig {
+            loop_gain: 0.62,
+            loop_filter_cutoff: 12_000.0,
+            ..crate::WaveguideConfig::default()
+        });
+        patch.routing = ResonatorRouting::Parallel {
+            mix_a: 1.0,
+            mix_b: 0.0,
+        };
+        patch.output.filter_mode = FilterMode::LowPass;
+        patch.output.filter_cutoff = 20_000.0;
+        patch.output.master_gain_db = 0.0;
+        patch.modulation.slots[0] = ModulationSlot {
+            enabled: true,
+            source,
+            destination: ModulationDestination::ResonatorADamping,
+            amount: 1.0,
+        };
+        patch
+    }
+
+    fn mean_abs_difference(left: &[f32], right: &[f32]) -> f32 {
+        let len = left.len().min(right.len()).max(1);
+        left.iter()
+            .zip(right.iter())
+            .map(|(left, right)| (left - right).abs())
+            .sum::<f32>()
+            / len as f32
     }
 }

@@ -1,7 +1,8 @@
 use ahara_dsp_utils::{analysis::peak_abs, math::snap_to_zero};
+use ahara_plugin_shell::ExpressionSource;
 
-use super::voice::{Voice, VoiceTrigger};
-use crate::OutputConfig;
+use super::voice::{Voice, VoiceExpression, VoiceTrigger};
+use crate::{OutputConfig, ResonatorRouting};
 
 const IDLE_LEVEL_THRESHOLD: f32 = 1.0e-6;
 
@@ -48,33 +49,60 @@ impl<'a> SynthEngine<'a> {
         self.slots.get(index).and_then(|slot| slot.note)
     }
 
+    pub fn slot_channel(&self, index: usize) -> Option<u8> {
+        self.slots.get(index).and_then(|slot| slot.channel)
+    }
+
     pub fn slot_last_level(&self, index: usize) -> Option<f32> {
         self.slots.get(index).map(|slot| slot.last_level)
     }
 
+    #[cfg(test)]
+    pub fn slot_expression(&self, index: usize) -> Option<VoiceExpression> {
+        self.slots.get(index).map(|slot| slot.expression)
+    }
+
     pub fn note_on(&mut self, trigger: VoiceTrigger<'a, '_>) -> usize {
         self.clock = self.clock.wrapping_add(1);
-        let slot_index = self.choose_voice_slot();
+        let channel = sanitize_channel(trigger.channel);
+        let slot_index = self.choose_voice_slot(
+            channel,
+            trigger.midi_note,
+            trigger.patch.retrigger_resonators,
+        );
         let slot = &mut self.slots[slot_index];
 
         slot.voice.trigger(trigger);
+        slot.channel = Some(channel);
         slot.note = Some(trigger.midi_note);
+        slot.per_note_pressure = None;
+        slot.expression = trigger.expression.sanitized();
         slot.state = VoiceSlotState::Active;
         slot.started_at = self.clock;
         slot.released_at = None;
-        slot.last_level = trigger.velocity.clamp(0.0, 1.0);
+        slot.last_level = slot.expression.stream.velocity;
 
         slot_index
     }
 
     pub fn note_off(&mut self, note: u8) {
+        self.release_matching(|slot| slot.note == Some(note));
+    }
+
+    pub fn note_off_for_channel(&mut self, channel: u8, note: u8) {
+        let channel = sanitize_channel(channel);
+        self.release_matching(|slot| slot.channel == Some(channel) && slot.note == Some(note));
+    }
+
+    fn release_matching(&mut self, matches: impl Fn(&VoiceSlot<'a>) -> bool) {
         self.clock = self.clock.wrapping_add(1);
 
         for slot in &mut self.slots {
-            if slot.state == VoiceSlotState::Active && slot.note == Some(note) {
+            if slot.state == VoiceSlotState::Active && matches(slot) {
                 slot.state = VoiceSlotState::Released;
                 slot.released_at = Some(self.clock);
-                slot.voice.note_off();
+                slot.expression = slot.expression.with_gate(false);
+                slot.voice.set_expression(slot.expression);
             }
         }
     }
@@ -86,7 +114,8 @@ impl<'a> SynthEngine<'a> {
             if slot.state == VoiceSlotState::Active {
                 slot.state = VoiceSlotState::Released;
                 slot.released_at = Some(self.clock);
-                slot.voice.note_off();
+                slot.expression = slot.expression.with_gate(false);
+                slot.voice.set_expression(slot.expression);
             }
         }
     }
@@ -94,8 +123,107 @@ impl<'a> SynthEngine<'a> {
     pub fn set_pitch_bend(&mut self, semitones: f32) {
         for slot in &mut self.slots {
             if slot.state != VoiceSlotState::Idle {
-                slot.voice.set_pitch_bend(semitones);
+                slot.expression.stream.pitch_bend = semitones;
+                slot.expression = slot.expression.sanitized();
+                slot.voice.set_expression(slot.expression);
             }
+        }
+    }
+
+    pub fn set_expression_controls(
+        &mut self,
+        pitch_bend: f32,
+        pressure: f32,
+        brightness: f32,
+        mod_wheel: f32,
+    ) {
+        self.set_expression_controls_matching(
+            |_| true,
+            pitch_bend,
+            pressure,
+            brightness,
+            mod_wheel,
+        );
+    }
+
+    pub fn set_expression_controls_for_channel(
+        &mut self,
+        channel: u8,
+        pitch_bend: f32,
+        pressure: f32,
+        brightness: f32,
+        mod_wheel: f32,
+    ) {
+        let channel = sanitize_channel(channel);
+        self.set_expression_controls_matching(
+            |slot| slot.channel == Some(channel),
+            pitch_bend,
+            pressure,
+            brightness,
+            mod_wheel,
+        );
+    }
+
+    fn set_expression_controls_matching(
+        &mut self,
+        matches: impl Fn(&VoiceSlot<'a>) -> bool,
+        pitch_bend: f32,
+        pressure: f32,
+        brightness: f32,
+        mod_wheel: f32,
+    ) {
+        for slot in &mut self.slots {
+            if slot.state == VoiceSlotState::Idle || !matches(slot) {
+                continue;
+            }
+            slot.expression.stream.pitch_bend = pitch_bend;
+            slot.expression.stream.pressure = slot.per_note_pressure.unwrap_or(pressure);
+            slot.expression.stream.brightness = brightness;
+            slot.expression.mod_wheel = mod_wheel;
+            slot.expression = slot.expression.sanitized();
+            slot.voice.set_expression(slot.expression);
+        }
+    }
+
+    pub fn set_poly_pressure(&mut self, channel: u8, note: u8, value: f32) {
+        let channel = sanitize_channel(channel);
+        let pressure = sanitize_unit(value);
+        for slot in &mut self.slots {
+            if slot.state == VoiceSlotState::Idle {
+                continue;
+            }
+            if slot.channel == Some(channel) && slot.note == Some(note) {
+                slot.per_note_pressure = Some(pressure);
+                slot.expression.stream.pressure = pressure;
+                slot.expression = slot.expression.sanitized();
+                slot.voice.set_expression(slot.expression);
+            }
+        }
+    }
+
+    pub fn sync_expression_source(&mut self, source: &mut impl ExpressionSource) {
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            if slot.state == VoiceSlotState::Idle {
+                continue;
+            }
+
+            let was_active = slot.state == VoiceSlotState::Active;
+            let mut stream = source.next_block(index as u32).sanitized();
+            if slot.state == VoiceSlotState::Released {
+                stream.gate = false;
+            }
+            if let Some(pressure) = slot.per_note_pressure {
+                stream.pressure = pressure;
+            }
+            if was_active && !stream.gate {
+                self.clock = self.clock.wrapping_add(1);
+                slot.state = VoiceSlotState::Released;
+                slot.released_at = Some(self.clock);
+            }
+
+            slot.expression.stream = stream;
+            slot.expression = slot.expression.sanitized();
+            slot.voice.set_expression(slot.expression);
         }
     }
 
@@ -115,6 +243,14 @@ impl<'a> SynthEngine<'a> {
         }
     }
 
+    pub fn set_routing(&mut self, routing: ResonatorRouting) {
+        for slot in &mut self.slots {
+            if slot.state != VoiceSlotState::Idle {
+                slot.voice.set_routing(routing);
+            }
+        }
+    }
+
     pub fn render_add(&mut self, left: &mut [f32], right: &mut [f32]) {
         let len = left.len().min(right.len());
 
@@ -122,6 +258,7 @@ impl<'a> SynthEngine<'a> {
             if slot.state == VoiceSlotState::Idle {
                 continue;
             }
+            slot.voice.set_expression(slot.expression);
 
             let mut block_peak = 0.0_f32;
             for index in 0..len {
@@ -147,7 +284,17 @@ impl<'a> SynthEngine<'a> {
         self.render_add(left, right);
     }
 
-    fn choose_voice_slot(&self) -> usize {
+    fn choose_voice_slot(&self, channel: u8, note: u8, retrigger_resonators: bool) -> usize {
+        if !retrigger_resonators
+            && let Some(index) = self.slots.iter().position(|slot| {
+                slot.state == VoiceSlotState::Released
+                    && slot.channel == Some(channel)
+                    && slot.note == Some(note)
+            })
+        {
+            return index;
+        }
+
         if let Some(index) = self
             .slots
             .iter()
@@ -183,7 +330,10 @@ impl<'a> SynthEngine<'a> {
 struct VoiceSlot<'a> {
     voice: Voice<'a>,
     state: VoiceSlotState,
+    channel: Option<u8>,
     note: Option<u8>,
+    per_note_pressure: Option<f32>,
+    expression: VoiceExpression,
     started_at: u64,
     released_at: Option<u64>,
     last_level: f32,
@@ -194,7 +344,10 @@ impl<'a> VoiceSlot<'a> {
         Self {
             voice: Voice::new(sample_rate),
             state: VoiceSlotState::Idle,
+            channel: None,
             note: None,
+            per_note_pressure: None,
+            expression: VoiceExpression::default(),
             started_at: 0,
             released_at: None,
             last_level: 0.0,
@@ -204,7 +357,10 @@ impl<'a> VoiceSlot<'a> {
     fn clear(&mut self) {
         self.voice.clear();
         self.state = VoiceSlotState::Idle;
+        self.channel = None;
         self.note = None;
+        self.per_note_pressure = None;
+        self.expression = VoiceExpression::default();
         self.released_at = None;
         self.last_level = 0.0;
     }
@@ -212,6 +368,18 @@ impl<'a> VoiceSlot<'a> {
 
 pub fn stereo_peak(left: &[f32], right: &[f32]) -> f32 {
     peak_abs(left).max(peak_abs(right))
+}
+
+fn sanitize_channel(channel: u8) -> u8 {
+    channel.min(15)
+}
+
+fn sanitize_unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +436,39 @@ mod tests {
     }
 
     #[test]
+    fn released_same_note_voice_is_reused_when_retrigger_is_off() {
+        let sample_rate = 48_000.0;
+        let mut patch = test_patch();
+        patch.retrigger_resonators = false;
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 3);
+
+        engine.note_on(trigger(60, &excitation, sample_rate, &patch));
+        engine.note_off(60);
+        let reused = engine.note_on(trigger(60, &excitation, sample_rate, &patch));
+
+        assert_eq!(reused, 0);
+        assert_eq!(engine.slot_state(0), Some(VoiceSlotState::Active));
+        assert_eq!(engine.active_voice_count(), 1);
+    }
+
+    #[test]
+    fn retrigger_on_uses_fresh_slot_for_repeated_released_note() {
+        let sample_rate = 48_000.0;
+        let mut patch = test_patch();
+        patch.retrigger_resonators = true;
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 3);
+
+        engine.note_on(trigger(60, &excitation, sample_rate, &patch));
+        engine.note_off(60);
+        let fresh = engine.note_on(trigger(60, &excitation, sample_rate, &patch));
+
+        assert_eq!(fresh, 1);
+        assert_eq!(engine.active_voice_count(), 2);
+    }
+
+    #[test]
     fn oldest_active_voice_is_stolen_when_pool_is_full() {
         let sample_rate = 48_000.0;
         let patch = test_patch();
@@ -303,6 +504,142 @@ mod tests {
         assert!(rms(&right) > 0.000_1);
         assert!(stereo_peak(&left, &right) < 4.0);
         assert!(engine.slot_last_level(0).unwrap() > 0.0);
+    }
+
+    #[test]
+    fn aggressive_series_dense_chord_stays_finite_and_bounded() {
+        let sample_rate = 48_000.0;
+        let mut patch = test_patch();
+        patch.polyphony = 8;
+        patch.resonator_a = ResonatorConfig::Waveguide(WaveguideConfig {
+            loop_gain: 0.995,
+            loop_filter_cutoff: 18_000.0,
+            loop_filter_resonance: 0.85,
+            loop_nonlinearity: 0.4,
+            ..WaveguideConfig::default()
+        });
+        patch.resonator_b = ResonatorConfig::Waveguide(WaveguideConfig {
+            loop_gain: 0.995,
+            loop_filter_cutoff: 18_000.0,
+            loop_filter_resonance: 0.95,
+            loop_nonlinearity: 0.5,
+            ..WaveguideConfig::default()
+        });
+        patch.routing = ResonatorRouting::Series {
+            mix_a: 1.0,
+            mix_b: 1.0,
+        };
+        patch.output.master_gain_db = -9.0;
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 8);
+        let mut left = vec![0.0; 32_768];
+        let mut right = vec![0.0; 32_768];
+
+        for note in [36, 40, 43, 47, 50, 55, 59, 64] {
+            engine.note_on(trigger(note, &excitation, sample_rate, &patch));
+        }
+        engine.render_replace(&mut left, &mut right);
+
+        assert_all_finite(&left);
+        assert_all_finite(&right);
+        assert!(stereo_peak(&left, &right) < 8.0);
+        assert!(rms(&left) > 0.000_001);
+    }
+
+    #[test]
+    fn voice_slots_own_expression_stream_state() {
+        let sample_rate = 48_000.0;
+        let patch = test_patch();
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 2);
+        let mut trigger = trigger(60, &excitation, sample_rate, &patch);
+        trigger.expression = VoiceExpression::with_controls(0.75, 0.5, 0.25, 0.4, 0.5);
+
+        let slot_index = engine.note_on(trigger);
+        assert_eq!(engine.slots[slot_index].expression, trigger.expression);
+
+        engine.set_expression_controls(-1.0, 0.8, 0.6, 0.4);
+        let live_expression = VoiceExpression::with_controls(0.75, -1.0, 0.8, 0.6, 0.4);
+        let slot = &engine.slots[slot_index];
+        assert_eq!(slot.expression, live_expression);
+
+        engine.note_off(60);
+        let slot = &engine.slots[slot_index];
+        assert_eq!(slot.state, VoiceSlotState::Released);
+        assert_eq!(slot.expression, live_expression.with_gate(false));
+    }
+
+    #[test]
+    fn note_off_for_channel_routes_gate_only_to_owned_voice_slot() {
+        let sample_rate = 48_000.0;
+        let patch = test_patch();
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 2);
+        let slot_a = engine.note_on(channel_trigger(1, 60, &excitation, sample_rate, &patch));
+        let slot_b = engine.note_on(channel_trigger(2, 60, &excitation, sample_rate, &patch));
+
+        engine.note_off_for_channel(2, 60);
+
+        assert_slot_gate(&engine, slot_a, VoiceSlotState::Active, true);
+        assert_slot_gate(&engine, slot_b, VoiceSlotState::Released, false);
+    }
+
+    #[test]
+    fn all_notes_off_routes_gate_to_every_active_voice_slot() {
+        let sample_rate = 48_000.0;
+        let patch = test_patch();
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 2);
+        let slot_a = engine.note_on(channel_trigger(1, 48, &excitation, sample_rate, &patch));
+        let slot_b = engine.note_on(channel_trigger(2, 60, &excitation, sample_rate, &patch));
+
+        engine.all_notes_off();
+
+        assert_slot_gate(&engine, slot_a, VoiceSlotState::Released, false);
+        assert_slot_gate(&engine, slot_b, VoiceSlotState::Released, false);
+    }
+
+    #[test]
+    fn poly_pressure_updates_only_matching_voice_slot() {
+        let sample_rate = 48_000.0;
+        let patch = test_patch();
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 3);
+        let slot_a = engine.note_on(channel_trigger(0, 60, &excitation, sample_rate, &patch));
+        let slot_b = engine.note_on(channel_trigger(1, 64, &excitation, sample_rate, &patch));
+
+        engine.set_expression_controls(0.0, 0.2, 0.0, 0.0);
+        engine.set_poly_pressure(1, 64, 0.9);
+
+        assert_eq!(engine.slots[slot_a].expression.stream.pressure, 0.2);
+        assert_eq!(engine.slots[slot_b].expression.stream.pressure, 0.9);
+
+        engine.set_expression_controls(0.0, 0.4, 0.0, 0.0);
+        assert_eq!(engine.slots[slot_a].expression.stream.pressure, 0.4);
+        assert_eq!(engine.slots[slot_b].expression.stream.pressure, 0.9);
+
+        engine.set_poly_pressure(0, 64, 0.1);
+        assert_eq!(engine.slots[slot_b].expression.stream.pressure, 0.9);
+    }
+
+    #[test]
+    fn channel_expression_controls_update_only_owned_voice_slots() {
+        let sample_rate = 48_000.0;
+        let patch = test_patch();
+        let excitation = impulse();
+        let mut engine = SynthEngine::new(sample_rate, 3);
+        let slot_a = engine.note_on(channel_trigger(1, 60, &excitation, sample_rate, &patch));
+        let slot_b = engine.note_on(channel_trigger(2, 64, &excitation, sample_rate, &patch));
+
+        engine.set_expression_controls_for_channel(2, 1.25, 0.5, 0.6, 0.7);
+
+        assert_expression_controls(engine.slots[slot_a].expression, 0.0, 0.0, 0.0, 0.0);
+        assert_expression_controls(engine.slots[slot_b].expression, 1.25, 0.5, 0.6, 0.7);
+
+        engine.set_expression_controls(0.25, 0.2, 0.3, 0.4);
+
+        assert_expression_controls(engine.slots[slot_a].expression, 0.25, 0.2, 0.3, 0.4);
+        assert_expression_controls(engine.slots[slot_b].expression, 0.25, 0.2, 0.3, 0.4);
     }
 
     #[test]
@@ -377,6 +714,36 @@ mod tests {
         patch: &'a ResonatorSynthPatch,
     ) -> VoiceTrigger<'a, 'a> {
         VoiceTrigger::new(note, 1.0, excitation, sample_rate, patch)
+    }
+
+    fn channel_trigger<'a>(
+        channel: u8,
+        note: u8,
+        excitation: &'a [f32],
+        sample_rate: f32,
+        patch: &'a ResonatorSynthPatch,
+    ) -> VoiceTrigger<'a, 'a> {
+        let mut trigger = trigger(note, excitation, sample_rate, patch);
+        trigger.channel = channel;
+        trigger
+    }
+
+    fn assert_expression_controls(
+        expression: VoiceExpression,
+        pitch_bend: f32,
+        pressure: f32,
+        brightness: f32,
+        mod_wheel: f32,
+    ) {
+        assert_eq!(expression.stream.pitch_bend, pitch_bend);
+        assert_eq!(expression.stream.pressure, pressure);
+        assert_eq!(expression.stream.brightness, brightness);
+        assert_eq!(expression.mod_wheel, mod_wheel);
+    }
+
+    fn assert_slot_gate(engine: &SynthEngine<'_>, slot: usize, state: VoiceSlotState, gate: bool) {
+        assert_eq!(engine.slots[slot].state, state);
+        assert_eq!(engine.slots[slot].expression.stream.gate, gate);
     }
 
     fn impulse() -> Vec<f32> {

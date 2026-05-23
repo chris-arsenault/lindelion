@@ -23,8 +23,9 @@ ahara-dsp-utils = { path = "crates/ahara-dsp-utils" }
 ahara-onset-detect = { path = "crates/ahara-onset-detect" }
 ahara-plugin-shell = { path = "crates/ahara-plugin-shell" }
 ahara-psola = { path = "crates/ahara-psola" }
-ahara-sample-library = { path = "crates/ahara-sample-library" }
+ahara-sample-library = { path = "crates/ahara-sample-library", default-features = false }
 ahara-ui = { path = "crates/ahara-ui" }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.8"
+vizia = { git = "https://github.com/vizia/vizia.git", rev = "cb3346008ece56c09c39344ed1289357dba96ce1", default-features = false, features = ["baseview"] }
 vst3 = "0.3.0"

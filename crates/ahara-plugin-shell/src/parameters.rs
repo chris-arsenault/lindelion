@@ -20,10 +20,20 @@ impl ParameterRange {
             return 0.0;
         }
 
+        let value = if value.is_finite() {
+            value
+        } else {
+            self.default
+        };
         ((value - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
     }
 
     pub fn denormalize(self, normalized: f32) -> f32 {
+        let normalized = if normalized.is_finite() {
+            normalized
+        } else {
+            self.normalize(self.default)
+        };
         self.min + normalized.clamp(0.0, 1.0) * (self.max - self.min)
     }
 }
@@ -72,6 +82,23 @@ impl ParameterInfo {
             flags: ParameterFlags::AUTOMATABLE,
         }
     }
+
+    pub const fn stepped(
+        id: u32,
+        name: &'static str,
+        units: &'static str,
+        range: ParameterRange,
+        step_count: u32,
+    ) -> Self {
+        Self {
+            id: ParameterId(id),
+            name,
+            units,
+            range,
+            step_count: Some(step_count),
+            flags: ParameterFlags::AUTOMATABLE,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -111,5 +138,14 @@ mod tests {
         let range = ParameterRange::linear(-12.0, 12.0, 0.0);
         assert_eq!(range.normalize(0.0), 0.5);
         assert_eq!(range.denormalize(0.5), 0.0);
+    }
+
+    #[test]
+    fn non_finite_values_fall_back_to_default() {
+        let range = ParameterRange::linear(20.0, 20_000.0, 20_000.0);
+
+        assert_eq!(range.normalize(f32::NAN), 1.0);
+        assert_eq!(range.denormalize(f32::NAN), 20_000.0);
+        assert_eq!(range.denormalize(f32::INFINITY), 20_000.0);
     }
 }

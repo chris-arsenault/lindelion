@@ -29,6 +29,26 @@ impl DelayLine {
         self.write_index = (self.write_index + 1) % self.buffer.len();
     }
 
+    pub fn add_at(&mut self, delay_samples: f32, sample: f32) {
+        if sample == 0.0 {
+            return;
+        }
+
+        let max_delay = (self.buffer.len() - 2) as f32;
+        let delay_samples = delay_samples.clamp(0.0, max_delay);
+        let write_position = self.write_index as f32 - 1.0 - delay_samples;
+        let index_floor = write_position.floor();
+        let fraction = write_position - index_floor;
+        let index_a = index_floor as isize;
+        let index_b = index_a + 1;
+        let len = self.buffer.len() as isize;
+        let wrapped_a = index_a.rem_euclid(len) as usize;
+        let wrapped_b = index_b.rem_euclid(len) as usize;
+
+        self.buffer[wrapped_a] += sample * (1.0 - fraction);
+        self.buffer[wrapped_b] += sample * fraction;
+    }
+
     pub fn read(&self, delay_samples: f32) -> f32 {
         let max_delay = (self.buffer.len() - 2) as f32;
         let delay_samples = delay_samples.clamp(0.0, max_delay);
@@ -94,6 +114,17 @@ mod tests {
         delay.push(1.0);
 
         assert!((delay.read(0.5) - 0.5).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn add_at_injects_fractional_tap_energy() {
+        let mut delay = DelayLine::new(8);
+        delay.push(0.0);
+        delay.push(0.0);
+        delay.add_at(0.5, 1.0);
+
+        assert!((delay.read(0.0) - 0.5).abs() < 0.000_01);
+        assert!((delay.read(1.0) - 0.5).abs() < 0.000_01);
     }
 
     #[test]

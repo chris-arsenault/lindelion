@@ -2,7 +2,7 @@
 
 Lindelion is a Rust workspace for Ahara audio plugins. The current implemented plugin is **Ahara Resonator Synth**, a polyphonic physical-modeling instrument that feeds sample excitations into modal and waveguide resonators and exposes a DAW-loadable VST3 entry point.
 
-UI is intentionally out of scope for the current slice. The runtime path, DSP tests, state roundtrip, VST3 shell, and macOS bundle automation are in place.
+The runtime path, DSP tests, state roundtrip, VST3 shell, native macOS editor, and macOS bundle automation are in place.
 
 ## Contents
 
@@ -39,22 +39,16 @@ cargo build -p resonator-synth --release
 On macOS:
 
 ```bash
-rustup target add aarch64-apple-darwin
-cargo run -p xtask -- bundle resonator-synth --target aarch64-apple-darwin
+make build
 ```
 
-The bundle is written to:
+`make build` creates `~/.lindelion-cache`, uses `~/.lindelion-cache/target` as Cargo's local build directory with incremental compilation enabled, stages the bundle under `~/.lindelion-cache/bundles`, and installs the final VST3 into the system VST3 folder:
 
 ```text
-target/bundles/Ahara Resonator Synth.vst3
+/Library/Audio/Plug-Ins/VST3/Ahara/Ahara Resonator Synth.vst3
 ```
 
-Install it for local DAW scanning:
-
-```bash
-mkdir -p "$HOME/Library/Audio/Plug-Ins/VST3"
-cp -R "target/bundles/Ahara Resonator Synth.vst3" "$HOME/Library/Audio/Plug-Ins/VST3/"
-```
+Enable Ableton's VST3 system folders, then restart or rescan Ableton after rebuilding.
 
 Linux can type-check the macOS target, but it cannot produce the final macOS dylib without an Apple SDK and Darwin linker.
 
@@ -65,7 +59,7 @@ The project keeps host ABI code separate from plugin/DSP logic:
 - `ahara-plugin-shell` defines the shared process, event, parameter, and state boundary.
 - `resonator-synth` owns patch serialization, realtime processor state, voices, resonators, modulation, and VST3 adaptation.
 - `vst3_entry.rs` contains the VST3 COM factory, processor, controller, state stream, MIDI event input, and stereo output binding.
-- `xtask` owns repeatable checks and macOS `.vst3` bundle layout/signing automation.
+- `xtask` owns repeatable checks and macOS `.vst3` bundle layout, `moduleinfo.json`, and signing automation.
 
 The main audio-thread contract is no heap allocation during note handling and rendering. See [docs/performance.md](docs/performance.md).
 

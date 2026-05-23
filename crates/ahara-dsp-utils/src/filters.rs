@@ -1,5 +1,19 @@
 use crate::math;
 
+fn usable_sample_rate(sample_rate: f32) -> f32 {
+    if sample_rate.is_finite() && sample_rate >= 1_000.0 {
+        sample_rate
+    } else {
+        48_000.0
+    }
+}
+
+fn cutoff_for_sample_rate(cutoff_hz: f32, sample_rate: f32, fallback: f32) -> f32 {
+    let sample_rate = usable_sample_rate(sample_rate);
+    let max = sample_rate * 0.45;
+    math::finite_clamp(cutoff_hz, 20.0, max, fallback.clamp(20.0, max))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OnePoleLowpass {
     z1: f32,
@@ -23,12 +37,15 @@ impl OnePoleLowpass {
     }
 
     pub fn set_cutoff(&mut self, cutoff_hz: f32, sample_rate: f32) {
-        let cutoff_hz = cutoff_hz.clamp(20.0, sample_rate * 0.45);
+        let sample_rate = usable_sample_rate(sample_rate);
+        let cutoff_hz = cutoff_for_sample_rate(cutoff_hz, sample_rate, self.coefficient);
         let x = (-2.0 * std::f32::consts::PI * cutoff_hz / sample_rate).exp();
         self.coefficient = 1.0 - x;
     }
 
     pub fn process(&mut self, input: f32) -> f32 {
+        let input = math::snap_to_zero(input);
+        self.z1 = math::snap_to_zero(self.z1);
         self.z1 += self.coefficient * (input - self.z1);
         self.z1 = math::snap_to_zero(self.z1);
         self.z1
@@ -70,8 +87,9 @@ enum BiquadKind {
 }
 
 fn rbj(sample_rate: f32, cutoff_hz: f32, q: f32, kind: BiquadKind) -> BiquadCoefficients {
-    let cutoff_hz = cutoff_hz.clamp(20.0, sample_rate * 0.45);
-    let q = q.max(0.05);
+    let sample_rate = usable_sample_rate(sample_rate);
+    let cutoff_hz = cutoff_for_sample_rate(cutoff_hz, sample_rate, 1_000.0);
+    let q = math::finite_or(q, 0.707).max(0.05);
     let omega = std::f32::consts::TAU * cutoff_hz / sample_rate;
     let sin = omega.sin();
     let cos = omega.cos();
@@ -121,6 +139,11 @@ impl Biquad {
     }
 
     pub fn process(&mut self, input: f32) -> f32 {
+        let input = math::snap_to_zero(input);
+        self.x1 = math::snap_to_zero(self.x1);
+        self.x2 = math::snap_to_zero(self.x2);
+        self.y1 = math::snap_to_zero(self.y1);
+        self.y2 = math::snap_to_zero(self.y2);
         let c = self.coefficients;
         let output =
             c.b0 * input + c.b1 * self.x1 + c.b2 * self.x2 - c.a1 * self.y1 - c.a2 * self.y2;
@@ -159,6 +182,7 @@ pub struct Svf {
 
 impl Svf {
     pub fn new(sample_rate: f32) -> Self {
+        let sample_rate = usable_sample_rate(sample_rate);
         Self {
             sample_rate,
             cutoff_hz: 20_000.0,
@@ -170,13 +194,16 @@ impl Svf {
     }
 
     pub fn set_params(&mut self, cutoff_hz: f32, resonance: f32, mode: SvfMode) {
-        self.cutoff_hz = cutoff_hz;
-        self.resonance = resonance.clamp(0.0, 0.999);
+        self.cutoff_hz = cutoff_for_sample_rate(cutoff_hz, self.sample_rate, self.cutoff_hz);
+        self.resonance = math::finite_clamp(resonance, 0.0, 0.999, self.resonance);
         self.mode = mode;
     }
 
     pub fn process(&mut self, input: f32) -> f32 {
-        let cutoff_hz = self.cutoff_hz.clamp(20.0, self.sample_rate * 0.45);
+        let input = math::snap_to_zero(input);
+        self.ic1eq = math::snap_to_zero(self.ic1eq);
+        self.ic2eq = math::snap_to_zero(self.ic2eq);
+        let cutoff_hz = cutoff_for_sample_rate(self.cutoff_hz, self.sample_rate, 20_000.0);
         let g = (std::f32::consts::PI * cutoff_hz / self.sample_rate).tan();
         let damping = 2.0 - 1.9 * self.resonance;
         let h = 1.0 / (1.0 + damping * g + g * g);
@@ -188,11 +215,11 @@ impl Svf {
         self.ic1eq = math::snap_to_zero(g * high + band);
         self.ic2eq = math::snap_to_zero(g * band + low);
 
-        match self.mode {
+        math::snap_to_zero(match self.mode {
             SvfMode::Lowpass => low,
             SvfMode::Bandpass => band,
             SvfMode::Highpass => high,
-        }
+        })
     }
 
     pub fn reset(&mut self) {
@@ -261,5 +288,24 @@ mod tests {
 
         assert_all_finite(&output);
         assert!(peak_abs(&output) < 4.0);
+    }
+
+    #[test]
+    fn svf_recovers_from_non_finite_parameters_and_input() {
+        let mut svf = Svf::new(48_000.0);
+        let mut output = Vec::new();
+
+        for (cutoff, resonance, input) in [
+            (0.0, 0.0, 1.0),
+            (f32::NAN, f32::NAN, f32::NAN),
+            (f32::INFINITY, f32::INFINITY, f32::INFINITY),
+            (-100.0, -1.0, -1.0),
+            (20_000.0, 0.0, 0.25),
+        ] {
+            svf.set_params(cutoff, resonance, SvfMode::Lowpass);
+            output.push(svf.process(input));
+        }
+
+        assert_all_finite(&output);
     }
 }

@@ -11,11 +11,19 @@ pub fn midi_note_to_hz(note: f32) -> f32 {
 }
 
 pub fn snap_to_zero(value: f32) -> f32 {
-    if value.abs() < DENORMAL_THRESHOLD {
+    if !value.is_finite() || value.abs() < DENORMAL_THRESHOLD {
         0.0
     } else {
         value
     }
+}
+
+pub fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
+}
+
+pub fn finite_clamp(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
+    finite_or(value, fallback).clamp(min, max)
 }
 
 pub fn is_finite_normalized(value: f32) -> bool {
@@ -41,5 +49,12 @@ mod tests {
         assert_eq!(snap_to_zero(1.0e-30), 0.0);
         assert_eq!(snap_to_zero(-1.0e-30), 0.0);
         assert_eq!(snap_to_zero(1.0e-10), 1.0e-10);
+    }
+
+    #[test]
+    fn non_finite_values_snap_to_zero() {
+        assert_eq!(snap_to_zero(f32::NAN), 0.0);
+        assert_eq!(snap_to_zero(f32::INFINITY), 0.0);
+        assert_eq!(snap_to_zero(f32::NEG_INFINITY), 0.0);
     }
 }

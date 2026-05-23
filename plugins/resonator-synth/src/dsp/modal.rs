@@ -101,6 +101,36 @@ impl ModalBank {
         };
     }
 
+    pub fn retune(&mut self, params: ModalBankParams) {
+        let mode_count = params.mode_count.clamp(1, 256);
+        let nyquist = self.sample_rate * 0.5;
+        let brightness = params.brightness.clamp(0.0, 1.0);
+        let position = params.position_of_strike.clamp(0.001, 0.999);
+        let template = template_for(params.preset);
+
+        for (index, mode) in self.modes.iter_mut().enumerate() {
+            let base = template.mode(index);
+            let stretch = 1.0 + params.inharmonicity * (index as f32 / mode_count as f32).powi(2);
+            let frequency_hz =
+                (params.fundamental_hz * base.ratio * stretch.max(0.05)).min(nyquist * 0.95);
+            let normalized_index = if mode_count == 1 {
+                0.0
+            } else {
+                index as f32 / (mode_count - 1) as f32
+            };
+            let strike_gain = (std::f32::consts::PI * (index as f32 + 1.0) * position)
+                .sin()
+                .abs();
+            let brightness_gain = 10.0_f32.powf((brightness - 0.5) * normalized_index * 2.0);
+            let decay_tilt = 1.0 - params.decay_tilt.clamp(0.0, 1.0) * normalized_index * 0.75;
+            let decay_seconds =
+                base.decay_seconds * params.decay_global.max(0.01) * decay_tilt.max(0.05);
+            let gain = base.gain * strike_gain * brightness_gain;
+
+            mode.retune(self.sample_rate, frequency_hz, decay_seconds, gain);
+        }
+    }
+
     pub fn process_sample(&mut self, input: f32) -> f32 {
         let sum = self
             .modes
@@ -149,6 +179,19 @@ impl ModalMode {
             y1: 0.0,
             y2: 0.0,
         }
+    }
+
+    pub fn retune(&mut self, sample_rate: f32, frequency_hz: f32, decay_seconds: f32, gain: f32) {
+        let frequency_hz = frequency_hz.clamp(1.0, sample_rate * 0.49);
+        let decay_seconds = decay_seconds.max(0.001);
+        let radius = (-1.0 / (decay_seconds * sample_rate)).exp();
+        let omega = std::f32::consts::TAU * frequency_hz / sample_rate;
+
+        self.frequency_hz = frequency_hz;
+        self.radius = radius;
+        self.coefficient = 2.0 * radius * omega.cos();
+        self.radius_squared = radius * radius;
+        self.gain = gain;
     }
 
     pub const fn frequency_hz(&self) -> f32 {

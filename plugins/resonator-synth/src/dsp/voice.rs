@@ -2,10 +2,13 @@ use ahara_dsp_utils::{
     db_to_gain,
     envelope::{Adsr, AdsrState, EnvelopePhase},
     equal_power_pan,
-    filters::{Biquad, BiquadCoefficients, Svf, SvfMode},
-    math::{midi_note_to_hz, semitones_to_ratio, snap_to_zero},
+    filters::{Biquad, BiquadCoefficients},
+    math::{finite_clamp, midi_note_to_hz, semitones_to_ratio, snap_to_zero},
+    params::{StructuralChangePolicy, StructuralParam},
+    smoothing::{SmoothedParam, SmoothedParamSpec},
     soft_saturate,
 };
+use ahara_plugin_shell::ExpressionStream;
 
 use super::{
     excitation::{SelectedExcitations, VoiceExcitation},
@@ -17,17 +20,79 @@ use crate::{
     OutputConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,
 };
 
+const INTERNAL_HEADROOM_DB: f32 = -12.0;
+const PARAMETER_SMOOTH_MS: f32 = 20.0;
+const PITCH_BEND_SMOOTH_MS: f32 = 8.0;
+const PARAMETER_EPSILON: f32 = 0.000_001;
+const FILTER_CUTOFF_EPSILON: f32 = 0.001;
+const PARALLEL_MIX_EPSILON: f32 = 0.000_001;
+const PITCH_BEND_EPSILON: f32 = 0.000_1;
+const STRUCTURAL_RAMP_MS: f32 = 1.0;
+
 #[derive(Debug, Clone, Copy)]
 pub struct VoiceTrigger<'a, 'p> {
+    pub channel: u8,
     pub midi_note: u8,
-    pub pitch_bend_semitones: f32,
-    pub velocity: f32,
-    pub aftertouch: f32,
-    pub mod_wheel: f32,
-    pub brightness: f32,
+    pub expression: VoiceExpression,
     pub modulation: ModulationConfig,
     pub excitations: SelectedExcitations<'a>,
     pub patch: &'p ResonatorSynthPatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoiceExpression {
+    pub stream: ExpressionStream,
+    pub mod_wheel: f32,
+}
+
+impl VoiceExpression {
+    pub fn note_on(velocity: f32) -> Self {
+        Self {
+            stream: ExpressionStream::note_on(velocity),
+            mod_wheel: 0.0,
+        }
+    }
+
+    pub fn with_controls(
+        velocity: f32,
+        pitch_bend: f32,
+        pressure: f32,
+        brightness: f32,
+        mod_wheel: f32,
+    ) -> Self {
+        Self {
+            stream: ExpressionStream {
+                pitch_bend,
+                pressure,
+                brightness,
+                velocity,
+                gate: true,
+            },
+            mod_wheel,
+        }
+        .sanitized()
+    }
+
+    pub fn sanitized(self) -> Self {
+        Self {
+            stream: self.stream.sanitized(),
+            mod_wheel: sanitize_unit(self.mod_wheel),
+        }
+    }
+
+    pub fn with_gate(mut self, gate: bool) -> Self {
+        self.stream.gate = gate;
+        self
+    }
+}
+
+impl Default for VoiceExpression {
+    fn default() -> Self {
+        Self {
+            stream: ExpressionStream::default(),
+            mod_wheel: 0.0,
+        }
+    }
 }
 
 impl<'a, 'p> VoiceTrigger<'a, 'p> {
@@ -39,12 +104,9 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
         patch: &'p ResonatorSynthPatch,
     ) -> Self {
         Self {
+            channel: 0,
             midi_note,
-            pitch_bend_semitones: 0.0,
-            velocity,
-            aftertouch: 0.0,
-            mod_wheel: 0.0,
-            brightness: 0.0,
+            expression: VoiceExpression::note_on(velocity),
             modulation: patch.modulation,
             excitations: SelectedExcitations::from_single(
                 excitation_samples,
@@ -61,12 +123,9 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
         patch: &'p ResonatorSynthPatch,
     ) -> Self {
         Self {
+            channel: 0,
             midi_note,
-            pitch_bend_semitones: 0.0,
-            velocity,
-            aftertouch: 0.0,
-            mod_wheel: 0.0,
-            brightness: 0.0,
+            expression: VoiceExpression::note_on(velocity),
             modulation: patch.modulation,
             excitations,
             patch,
@@ -81,12 +140,16 @@ pub struct Voice<'a> {
     excitation_gain: f32,
     resonator_a: ResonatorEngine,
     resonator_b: ResonatorEngine,
-    routing: ResonatorRouting,
+    routing: StructuralParam<ResonatorRouting>,
     output: OutputConfig,
     modulation: ModulationConfig,
+    resonator_modulation_active: bool,
     midi_note: u8,
+    base_resonator_a_config: ResonatorConfig,
+    base_resonator_b_config: ResonatorConfig,
     resonator_a_config: ResonatorConfig,
     resonator_b_config: ResonatorConfig,
+    expression: VoiceExpression,
     velocity: f32,
     aftertouch: f32,
     mod_wheel: f32,
@@ -97,47 +160,95 @@ pub struct Voice<'a> {
     secondary_state: AdsrState,
     lfo_phase: f32,
     lfo_hold: f32,
-    output_filter: Svf,
+    output_filter: Biquad,
+    output_filter_mode: StructuralParam<FilterMode>,
+    output_filter_cutoff: SmoothedParam,
+    output_filter_resonance: SmoothedParam,
+    master_gain: SmoothedParam,
+    saturation_drive: SmoothedParam,
+    master_pan: SmoothedParam,
+    parallel_mix_a: SmoothedParam,
+    parallel_mix_b: SmoothedParam,
+    pitch_bend_semitones: SmoothedParam,
+    applied_pitch_bend_semitones: f32,
+    waveguide_loop_gain: SmoothedParam,
+    applied_waveguide_loop_gain: f32,
     series_conditioner: SeriesConditioner,
 }
 
 impl<'a> Voice<'a> {
     pub fn new(sample_rate: f32) -> Self {
+        let output = OutputConfig::default();
+        let modulation = ModulationConfig::default();
+        let routing = ResonatorRouting::Parallel {
+            mix_a: 1.0,
+            mix_b: 0.0,
+        };
+
         Self {
             sample_rate,
             excitation: VoiceExcitation::default(),
             excitation_gain: 0.0,
             resonator_a: ResonatorEngine::new(sample_rate),
             resonator_b: ResonatorEngine::new(sample_rate),
-            routing: ResonatorRouting::Parallel {
-                mix_a: 1.0,
-                mix_b: 0.0,
-            },
-            output: OutputConfig::default(),
-            modulation: ModulationConfig::default(),
+            routing: StructuralParam::with_ramp_samples(
+                routing,
+                StructuralChangePolicy::LiveMuteRamp,
+                structural_ramp_samples(sample_rate),
+            ),
+            output,
+            modulation,
+            resonator_modulation_active: false,
             midi_note: 60,
+            base_resonator_a_config: ResonatorConfig::Modal(ModalConfig::default()),
+            base_resonator_b_config: ResonatorConfig::Waveguide(WaveguideConfig::default()),
             resonator_a_config: ResonatorConfig::Modal(ModalConfig::default()),
             resonator_b_config: ResonatorConfig::Waveguide(WaveguideConfig::default()),
+            expression: VoiceExpression::default(),
             velocity: 0.0,
             aftertouch: 0.0,
             mod_wheel: 0.0,
             brightness: 0.0,
-            amp_envelope: ModulationConfig::default().amp_envelope.into(),
+            amp_envelope: modulation.amp_envelope.into(),
             amp_state: AdsrState::default(),
-            secondary_envelope: ModulationConfig::default().secondary_envelope.into(),
+            secondary_envelope: modulation.secondary_envelope.into(),
             secondary_state: AdsrState::default(),
             lfo_phase: 0.0,
             lfo_hold: 0.0,
-            output_filter: Svf::new(sample_rate),
+            output_filter: Biquad::new(output_filter_coefficients(
+                sample_rate,
+                output.filter_cutoff,
+                output.filter_resonance,
+                output.filter_mode,
+            )),
+            output_filter_mode: StructuralParam::with_ramp_samples(
+                output.filter_mode,
+                StructuralChangePolicy::LiveMuteRamp,
+                structural_ramp_samples(sample_rate),
+            ),
+            output_filter_cutoff: output_filter_cutoff_param(sample_rate, output.filter_cutoff),
+            output_filter_resonance: output_filter_resonance_param(
+                sample_rate,
+                output.filter_resonance,
+            ),
+            master_gain: master_gain_param(sample_rate, output.master_gain_db),
+            saturation_drive: saturation_drive_param(sample_rate, output.saturation_drive),
+            master_pan: master_pan_param(sample_rate, output.master_pan),
+            parallel_mix_a: parallel_mix_param(sample_rate, parallel_mix_a(routing)),
+            parallel_mix_b: parallel_mix_param(sample_rate, parallel_mix_b(routing)),
+            pitch_bend_semitones: pitch_bend_param(sample_rate, 0.0),
+            applied_pitch_bend_semitones: 0.0,
+            waveguide_loop_gain: waveguide_loop_gain_param(sample_rate, 0.92),
+            applied_waveguide_loop_gain: 0.92,
             series_conditioner: SeriesConditioner::new(sample_rate),
         }
     }
 
     pub fn trigger(&mut self, trigger: VoiceTrigger<'a, '_>) {
-        let base_frequency =
-            midi_note_to_hz(trigger.midi_note as f32 + trigger.pitch_bend_semitones);
+        let expression = trigger.expression.sanitized();
+        let trigger_pitch_bend = pitch_bend_spec().sanitize(expression.stream.pitch_bend);
         let excitation_pitch_ratio =
-            semitones_to_ratio(trigger.midi_note as f32 - 60.0 + trigger.pitch_bend_semitones);
+            semitones_to_ratio(trigger.midi_note as f32 - 60.0 + trigger_pitch_bend);
 
         self.excitation.trigger(
             trigger.excitations,
@@ -145,55 +256,41 @@ impl<'a> Voice<'a> {
             excitation_pitch_ratio,
         );
         self.excitation_gain = velocity_to_gain(
-            trigger.velocity,
+            expression.stream.velocity,
             trigger.modulation.velocity_to_excitation_depth,
         );
+        self.midi_note = trigger.midi_note;
+        self.base_resonator_a_config = trigger.patch.resonator_a;
+        self.base_resonator_b_config = trigger.patch.resonator_b;
+        self.modulation = trigger.modulation;
+        self.resonator_modulation_active = modulation_targets_resonators(trigger.modulation);
+        self.expression = expression;
+        self.velocity = expression.stream.velocity;
+        self.aftertouch = expression.stream.pressure;
+        self.mod_wheel = expression.mod_wheel;
+        self.brightness = expression.stream.brightness;
+        self.pitch_bend_semitones.reset(trigger_pitch_bend);
+        self.applied_pitch_bend_semitones = trigger_pitch_bend;
+
         let static_sources = ModulationSources {
             amp_envelope: 1.0,
             secondary_envelope: 0.0,
             lfo: 0.0,
-            velocity: trigger.velocity.clamp(0.0, 1.0),
-            aftertouch: trigger.aftertouch.clamp(0.0, 1.0),
-            mod_wheel: trigger.mod_wheel.clamp(0.0, 1.0),
+            velocity: expression.stream.velocity,
+            aftertouch: expression.stream.pressure,
+            mod_wheel: expression.mod_wheel,
+            brightness: expression.stream.brightness,
         };
-        let resonator_a = modulated_resonator_config(
-            trigger.patch.resonator_a,
-            modulation_sum_from(
-                trigger.modulation,
-                ModulationDestination::ResonatorADamping,
-                static_sources,
-            ),
-            modulation_sum_from(
-                trigger.modulation,
-                ModulationDestination::ResonatorAPosition,
-                static_sources,
-            ),
+        self.configure_modulated_resonators(
+            static_sources,
+            trigger.patch.retrigger_resonators,
+            true,
         );
-        let resonator_b = modulated_resonator_config(
-            trigger.patch.resonator_b,
-            modulation_sum_from(
-                trigger.modulation,
-                ModulationDestination::ResonatorBDamping,
-                static_sources,
-            ),
-            modulation_sum_from(
-                trigger.modulation,
-                ModulationDestination::ResonatorBPosition,
-                static_sources,
-            ),
-        );
-        self.resonator_a.configure(&resonator_a, base_frequency);
-        self.resonator_b.configure(&resonator_b, base_frequency);
-        self.midi_note = trigger.midi_note;
-        self.resonator_a_config = resonator_a;
-        self.resonator_b_config = resonator_b;
-        self.routing = trigger.patch.routing;
+        let routing = sanitize_routing(trigger.patch.routing);
+        self.routing.reset(routing);
+        self.parallel_mix_a.reset(parallel_mix_a(routing));
+        self.parallel_mix_b.reset(parallel_mix_b(routing));
         self.output = trigger.patch.output;
-        self.modulation = trigger.modulation;
-        self.velocity = trigger.velocity.clamp(0.0, 1.0);
-        self.aftertouch = trigger.aftertouch.clamp(0.0, 1.0);
-        self.mod_wheel = trigger.mod_wheel.clamp(0.0, 1.0);
-        self.brightness = trigger.brightness.clamp(0.0, 1.0);
         self.amp_envelope = trigger.modulation.amp_envelope.into();
         self.secondary_envelope = trigger.modulation.secondary_envelope.into();
         self.amp_state.reset();
@@ -203,6 +300,18 @@ impl<'a> Voice<'a> {
         self.lfo_phase = 0.0;
         self.lfo_hold = sample_and_hold_value(trigger.midi_note);
         self.output_filter.reset();
+        self.output_filter_mode.reset(self.output.filter_mode);
+        self.output_filter_cutoff.reset(self.output.filter_cutoff);
+        self.output_filter_resonance
+            .reset(self.output.filter_resonance);
+        self.master_gain
+            .reset(output_gain(self.output.master_gain_db));
+        self.saturation_drive.reset(self.output.saturation_drive);
+        self.master_pan.reset(self.output.master_pan);
+        self.applied_waveguide_loop_gain =
+            loop_gain_from_configs(self.resonator_a_config, self.resonator_b_config);
+        self.waveguide_loop_gain
+            .reset(self.applied_waveguide_loop_gain);
         self.series_conditioner.reset(self.sample_rate);
     }
 
@@ -218,7 +327,7 @@ impl<'a> Voice<'a> {
 
     pub fn process_stereo_sample(&mut self) -> (f32, f32) {
         let sample = self.process_sample();
-        equal_power_pan(sample, self.output.master_pan)
+        equal_power_pan(sample, self.master_pan.next_sample())
     }
 
     pub fn is_excitation_finished(&self) -> bool {
@@ -226,61 +335,125 @@ impl<'a> Voice<'a> {
     }
 
     pub fn note_off(&mut self) {
-        self.amp_state.note_off();
-        self.secondary_state.note_off();
+        self.set_expression(self.expression.with_gate(false));
     }
 
     pub fn set_pitch_bend(&mut self, pitch_bend_semitones: f32) {
-        let base_frequency = midi_note_to_hz(self.midi_note as f32 + pitch_bend_semitones);
-        self.resonator_a
-            .configure(&self.resonator_a_config, base_frequency);
-        self.resonator_b
-            .configure(&self.resonator_b_config, base_frequency);
+        let mut expression = self.expression;
+        expression.stream.pitch_bend = pitch_bend_semitones;
+        self.set_expression(expression);
+    }
+
+    pub fn set_expression(&mut self, expression: VoiceExpression) {
+        let expression = expression.sanitized();
+        if self.expression.stream.gate && !expression.stream.gate {
+            self.amp_state.note_off();
+            self.secondary_state.note_off();
+        }
+        self.pitch_bend_semitones
+            .set_target(expression.stream.pitch_bend);
+        self.velocity = expression.stream.velocity;
+        self.aftertouch = expression.stream.pressure;
+        self.mod_wheel = expression.mod_wheel;
+        self.brightness = expression.stream.brightness;
+        self.expression = expression;
     }
 
     pub fn set_output_config(&mut self, output: OutputConfig) {
+        self.output_filter_mode.set_target(output.filter_mode);
+        self.output_filter_cutoff.set_target(output.filter_cutoff);
+        self.output_filter_resonance
+            .set_target(output.filter_resonance);
+        self.master_gain
+            .set_target(output_gain(output.master_gain_db));
+        self.saturation_drive.set_target(output.saturation_drive);
+        self.master_pan.set_target(output.master_pan);
         self.output = output;
     }
 
     pub fn set_waveguide_loop_gain(&mut self, loop_gain: f32) {
-        let loop_gain = loop_gain.clamp(0.0, 0.999);
-        if let ResonatorConfig::Waveguide(mut config) = self.resonator_a_config {
+        let loop_gain = finite_clamp(loop_gain, 0.0, 0.999, 0.92);
+        if let ResonatorConfig::Waveguide(mut config) = self.base_resonator_a_config {
             config.loop_gain = loop_gain;
-            self.resonator_a_config = ResonatorConfig::Waveguide(config);
-            self.resonator_a.set_waveguide_loop_gain(loop_gain);
+            self.base_resonator_a_config = ResonatorConfig::Waveguide(config);
         }
-        if let ResonatorConfig::Waveguide(mut config) = self.resonator_b_config {
+        if let ResonatorConfig::Waveguide(mut config) = self.base_resonator_b_config {
             config.loop_gain = loop_gain;
-            self.resonator_b_config = ResonatorConfig::Waveguide(config);
-            self.resonator_b.set_waveguide_loop_gain(loop_gain);
+            self.base_resonator_b_config = ResonatorConfig::Waveguide(config);
         }
+        self.waveguide_loop_gain.set_target(loop_gain);
+    }
+
+    pub fn set_routing(&mut self, routing: ResonatorRouting) {
+        let routing = sanitize_routing(routing);
+        if routing_plain(self.routing.current()) != routing_plain(routing) {
+            self.routing.set_target(routing);
+        } else {
+            self.routing.apply_immediate(routing);
+        }
+        self.parallel_mix_a.set_target(parallel_mix_a(routing));
+        self.parallel_mix_b.set_target(parallel_mix_b(routing));
     }
 
     pub fn clear(&mut self) {
         self.excitation.clear();
         self.excitation_gain = 0.0;
+        self.expression = VoiceExpression::default();
+        self.velocity = 0.0;
+        self.aftertouch = 0.0;
+        self.mod_wheel = 0.0;
+        self.brightness = 0.0;
+        self.resonator_modulation_active = false;
+        self.base_resonator_a_config = ResonatorConfig::Modal(ModalConfig::default());
+        self.base_resonator_b_config = ResonatorConfig::Waveguide(WaveguideConfig::default());
+        self.resonator_a_config = self.base_resonator_a_config;
+        self.resonator_b_config = self.base_resonator_b_config;
         self.resonator_a.clear();
         self.resonator_b.clear();
         self.amp_state.reset();
         self.secondary_state.reset();
         self.output_filter.reset();
+        self.output_filter_mode.reset(self.output.filter_mode);
+        self.output_filter_cutoff.reset(self.output.filter_cutoff);
+        self.output_filter_resonance
+            .reset(self.output.filter_resonance);
+        self.master_gain
+            .reset(output_gain(self.output.master_gain_db));
+        self.saturation_drive.reset(self.output.saturation_drive);
+        self.master_pan.reset(self.output.master_pan);
+        self.pitch_bend_semitones.reset(0.0);
+        self.applied_pitch_bend_semitones = 0.0;
+        self.applied_waveguide_loop_gain =
+            loop_gain_from_configs(self.resonator_a_config, self.resonator_b_config);
+        self.waveguide_loop_gain
+            .reset(self.applied_waveguide_loop_gain);
+        let routing = self.routing.current();
+        self.parallel_mix_a.reset(parallel_mix_a(routing));
+        self.parallel_mix_b.reset(parallel_mix_b(routing));
         self.series_conditioner.reset(self.sample_rate);
     }
 
     pub fn process_sample(&mut self) -> f32 {
+        let structural_gain = self.apply_structural_transitions();
+        self.apply_smoothed_pitch_bend();
+        self.apply_smoothed_waveguide_loop_gain();
+
         let sources = self.next_modulation_sources();
+        self.apply_live_resonator_modulation(sources);
         let excitation_mod = self.modulation_sum(ModulationDestination::ExcitationGain, sources);
         let excitation = self.excitation.next_sample()
             * self.excitation_gain
             * (1.0 + excitation_mod).clamp(0.0, 2.0);
 
-        let resonator_output = match self.routing {
-            ResonatorRouting::Parallel { mix_a, mix_b } => {
+        let mix_a = self.parallel_mix_a.next_sample();
+        let mix_b = self.parallel_mix_b.next_sample();
+        let resonator_output = match self.routing.current() {
+            ResonatorRouting::Parallel { .. } => {
                 let a = self.resonator_a.process_sample(excitation);
                 let b = self.resonator_b.process_sample(excitation);
                 a * mix_a + b * mix_b
             }
-            ResonatorRouting::Series => {
+            ResonatorRouting::Series { .. } => {
                 let a = self.resonator_a.process_sample(excitation);
                 let conditioned = self.series_conditioner.process_sample(a);
                 self.resonator_b.process_sample(conditioned)
@@ -288,30 +461,108 @@ impl<'a> Voice<'a> {
         };
 
         let cutoff_mod = self.modulation_sum(ModulationDestination::FilterCutoff, sources);
-        let filter_cutoff =
-            (self.output.filter_cutoff * 2.0_f32.powf(cutoff_mod * 4.0)).clamp(20.0, 20_000.0);
-        let filtered = if self.output_filter_is_bypassed() {
-            resonator_output
-        } else {
-            self.output_filter.set_params(
+        let base_cutoff = self.output_filter_cutoff.next_sample();
+        let filter_resonance = self.output_filter_resonance.next_sample();
+        let filter_cutoff = finite_clamp(
+            base_cutoff * 2.0_f32.powf(cutoff_mod * 4.0),
+            20.0,
+            20_000.0,
+            base_cutoff,
+        );
+        self.output_filter
+            .set_coefficients(output_filter_coefficients(
+                self.sample_rate,
                 filter_cutoff,
-                self.output.filter_resonance,
-                svf_mode(self.output.filter_mode),
-            );
-            self.output_filter.process(resonator_output)
-        };
-        let saturated = soft_saturate(filtered, self.output.saturation_drive);
+                filter_resonance,
+                self.output_filter_mode.current(),
+            ));
+        let filtered = self.output_filter.process(resonator_output);
+        let staged = filtered * db_to_gain(INTERNAL_HEADROOM_DB);
+        let saturated = soft_saturate(staged, self.saturation_drive.next_sample());
         let amp = sources.amp_envelope;
 
-        snap_to_zero(saturated * amp * db_to_gain(self.output.master_gain_db))
+        snap_to_zero(saturated * amp * self.master_gain.next_sample() * structural_gain)
     }
 
-    fn output_filter_is_bypassed(&self) -> bool {
-        matches!(self.output.filter_mode, FilterMode::LowPass)
-            && self.output.filter_cutoff >= self.sample_rate * 0.415
+    fn apply_structural_transitions(&mut self) -> f32 {
+        let routing_sample = self.routing.next_sample();
+        if routing_sample.change.is_some() {
+            self.series_conditioner.reset(self.sample_rate);
+        }
+
+        let filter_sample = self.output_filter_mode.next_sample();
+        if filter_sample.change.is_some() {
+            self.output_filter.reset();
+        }
+
+        routing_sample.gain.min(filter_sample.gain)
+    }
+
+    fn apply_smoothed_pitch_bend(&mut self) {
+        let pitch_bend = self.pitch_bend_semitones.next_sample();
+        if (pitch_bend - self.applied_pitch_bend_semitones).abs() <= PITCH_BEND_EPSILON {
+            return;
+        }
+
+        self.applied_pitch_bend_semitones = pitch_bend;
+        let base_frequency = midi_note_to_hz(self.midi_note as f32 + pitch_bend);
+        self.resonator_a
+            .retune(&self.resonator_a_config, base_frequency);
+        self.resonator_b
+            .retune(&self.resonator_b_config, base_frequency);
+    }
+
+    fn apply_smoothed_waveguide_loop_gain(&mut self) {
+        let loop_gain = self.waveguide_loop_gain.next_sample();
+        if (loop_gain - self.applied_waveguide_loop_gain).abs() <= PARAMETER_EPSILON {
+            return;
+        }
+
+        self.applied_waveguide_loop_gain = loop_gain;
+        self.resonator_a.set_waveguide_loop_gain(loop_gain);
+        self.resonator_b.set_waveguide_loop_gain(loop_gain);
+    }
+
+    fn apply_live_resonator_modulation(&mut self, sources: ModulationSources) {
+        if self.resonator_modulation_active {
+            self.configure_modulated_resonators(sources, false, false);
+        }
+    }
+
+    fn configure_modulated_resonators(
+        &mut self,
+        sources: ModulationSources,
+        reset_state: bool,
+        force: bool,
+    ) {
+        let resonator_a_config = modulated_resonator_config(
+            self.base_resonator_a_config,
+            self.modulation_sum(ModulationDestination::ResonatorADamping, sources),
+            self.modulation_sum(ModulationDestination::ResonatorAPosition, sources),
+        );
+        let resonator_b_config = modulated_resonator_config(
+            self.base_resonator_b_config,
+            self.modulation_sum(ModulationDestination::ResonatorBDamping, sources),
+            self.modulation_sum(ModulationDestination::ResonatorBPosition, sources),
+        );
+        let base_frequency =
+            midi_note_to_hz(self.midi_note as f32 + self.applied_pitch_bend_semitones);
+
+        if force || resonator_a_config != self.resonator_a_config {
+            self.resonator_a
+                .configure(&resonator_a_config, base_frequency, reset_state);
+            self.resonator_a_config = resonator_a_config;
+        }
+
+        if force || resonator_b_config != self.resonator_b_config {
+            self.resonator_b
+                .configure(&resonator_b_config, base_frequency, reset_state);
+            self.resonator_b_config = resonator_b_config;
+        }
     }
 
     fn next_modulation_sources(&mut self) -> ModulationSources {
+        self.apply_expression_values();
         let amp_envelope = self
             .amp_state
             .next_sample(self.amp_envelope, self.sample_rate);
@@ -327,10 +578,12 @@ impl<'a> Voice<'a> {
             velocity: self.velocity,
             aftertouch: self.aftertouch,
             mod_wheel: self.mod_wheel,
+            brightness: self.brightness,
         }
     }
 
     fn next_lfo_sample(&mut self) -> f32 {
+        self.apply_expression_values();
         let lfo_rate_mod = self.modulation_sum(
             ModulationDestination::LfoRate,
             ModulationSources {
@@ -340,6 +593,7 @@ impl<'a> Voice<'a> {
                 velocity: self.velocity,
                 aftertouch: self.aftertouch,
                 mod_wheel: self.mod_wheel,
+                brightness: self.brightness,
             },
         );
         let rate_hz = (self.modulation.lfo.rate_hz * (1.0 + lfo_rate_mod).clamp(0.01, 16.0))
@@ -368,6 +622,15 @@ impl<'a> Voice<'a> {
     ) -> f32 {
         modulation_sum_from(self.modulation, destination, sources)
     }
+
+    fn apply_expression_values(&mut self) {
+        let expression = self.expression.sanitized();
+        self.velocity = expression.stream.velocity;
+        self.aftertouch = expression.stream.pressure;
+        self.mod_wheel = expression.mod_wheel;
+        self.brightness = expression.stream.brightness;
+        self.expression = expression;
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -378,6 +641,7 @@ struct ModulationSources {
     velocity: f32,
     aftertouch: f32,
     mod_wheel: f32,
+    brightness: f32,
 }
 
 fn source_value(source: ModulationSource, values: ModulationSources) -> f32 {
@@ -387,6 +651,7 @@ fn source_value(source: ModulationSource, values: ModulationSources) -> f32 {
         ModulationSource::Velocity => values.velocity,
         ModulationSource::Aftertouch => values.aftertouch,
         ModulationSource::ModWheel => values.mod_wheel,
+        ModulationSource::Brightness => values.brightness,
     }
 }
 
@@ -412,10 +677,149 @@ fn modulation_sum_from(
         .clamp(-1.0, 1.0)
 }
 
+fn modulation_targets_resonators(modulation: ModulationConfig) -> bool {
+    modulation.slots.iter().any(|slot| {
+        slot.enabled
+            && matches!(
+                slot.destination,
+                ModulationDestination::ResonatorADamping
+                    | ModulationDestination::ResonatorBDamping
+                    | ModulationDestination::ResonatorAPosition
+                    | ModulationDestination::ResonatorBPosition
+            )
+    })
+}
+
 fn velocity_to_gain(velocity: f32, depth: f32) -> f32 {
     let velocity = velocity.clamp(0.0, 1.0);
     let depth = depth.clamp(0.0, 1.0);
     (1.0 - depth) + velocity * depth
+}
+
+fn sanitize_unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn sanitize_output_filter_cutoff(cutoff_hz: f32) -> f32 {
+    finite_clamp(cutoff_hz, 20.0, 20_000.0, 20_000.0)
+}
+
+fn output_gain(gain_db: f32) -> f32 {
+    db_to_gain(finite_clamp(gain_db, -60.0, 12.0, 0.0))
+}
+
+fn output_filter_cutoff_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(
+        20.0,
+        20_000.0,
+        20_000.0,
+        PARAMETER_SMOOTH_MS,
+        FILTER_CUTOFF_EPSILON,
+    )
+}
+
+fn output_filter_resonance_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(0.0, 0.999, 0.0, PARAMETER_SMOOTH_MS, PARAMETER_EPSILON)
+}
+
+fn master_gain_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(
+        db_to_gain(-60.0),
+        db_to_gain(12.0),
+        1.0,
+        PARAMETER_SMOOTH_MS,
+        PARAMETER_EPSILON,
+    )
+}
+
+fn saturation_drive_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(0.0, 1.0, 0.0, PARAMETER_SMOOTH_MS, PARAMETER_EPSILON)
+}
+
+fn master_pan_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(-1.0, 1.0, 0.0, PARAMETER_SMOOTH_MS, PARAMETER_EPSILON)
+}
+
+fn parallel_mix_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(0.0, 1.0, 0.5, PARAMETER_SMOOTH_MS, PARALLEL_MIX_EPSILON)
+}
+
+fn pitch_bend_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(-96.0, 96.0, 0.0, PITCH_BEND_SMOOTH_MS, PITCH_BEND_EPSILON)
+}
+
+fn waveguide_loop_gain_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(0.0, 0.999, 0.92, PARAMETER_SMOOTH_MS, PARAMETER_EPSILON)
+}
+
+fn output_filter_cutoff_param(sample_rate: f32, cutoff_hz: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(output_filter_cutoff_spec(), sample_rate, cutoff_hz)
+}
+
+fn output_filter_resonance_param(sample_rate: f32, resonance: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(output_filter_resonance_spec(), sample_rate, resonance)
+}
+
+fn master_gain_param(sample_rate: f32, gain_db: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(master_gain_spec(), sample_rate, output_gain(gain_db))
+}
+
+fn saturation_drive_param(sample_rate: f32, drive: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(saturation_drive_spec(), sample_rate, drive)
+}
+
+fn master_pan_param(sample_rate: f32, pan: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(master_pan_spec(), sample_rate, pan)
+}
+
+fn parallel_mix_param(sample_rate: f32, mix: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(parallel_mix_spec(), sample_rate, mix)
+}
+
+fn pitch_bend_param(sample_rate: f32, semitones: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(pitch_bend_spec(), sample_rate, semitones)
+}
+
+fn waveguide_loop_gain_param(sample_rate: f32, loop_gain: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(waveguide_loop_gain_spec(), sample_rate, loop_gain)
+}
+
+fn structural_ramp_samples(sample_rate: f32) -> usize {
+    let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
+        sample_rate
+    } else {
+        48_000.0
+    };
+    (sample_rate * STRUCTURAL_RAMP_MS * 0.001)
+        .round()
+        .clamp(8.0, 256.0) as usize
+}
+
+fn loop_gain_from_configs(resonator_a: ResonatorConfig, resonator_b: ResonatorConfig) -> f32 {
+    match (resonator_a, resonator_b) {
+        (ResonatorConfig::Waveguide(config), _) => finite_clamp(config.loop_gain, 0.0, 0.999, 0.92),
+        (_, ResonatorConfig::Waveguide(config)) => finite_clamp(config.loop_gain, 0.0, 0.999, 0.92),
+        _ => 0.92,
+    }
+}
+
+fn output_filter_coefficients(
+    sample_rate: f32,
+    cutoff_hz: f32,
+    resonance: f32,
+    mode: FilterMode,
+) -> BiquadCoefficients {
+    let cutoff_hz = sanitize_output_filter_cutoff(cutoff_hz);
+    let q = 0.707 + finite_clamp(resonance, 0.0, 0.999, 0.0) * 8.0;
+    match mode {
+        FilterMode::LowPass => BiquadCoefficients::lowpass(sample_rate, cutoff_hz, q),
+        FilterMode::BandPass => BiquadCoefficients::bandpass(sample_rate, cutoff_hz, q),
+        FilterMode::HighPass => BiquadCoefficients::highpass(sample_rate, cutoff_hz, q),
+    }
 }
 
 fn modulated_resonator_config(
@@ -465,7 +869,11 @@ impl ResonatorEngine {
         }
     }
 
-    fn configure(&mut self, config: &ResonatorConfig, base_frequency: f32) {
+    fn configure(&mut self, config: &ResonatorConfig, base_frequency: f32, reset_state: bool) {
+        if !reset_state && self.try_configure_preserving_state(config, base_frequency) {
+            return;
+        }
+
         match config {
             ResonatorConfig::Modal(config) => {
                 self.kind = ResonatorKind::Modal;
@@ -478,6 +886,42 @@ impl ResonatorEngine {
                 self.waveguide_params = waveguide_params_from_config(config, base_frequency);
                 self.waveguide.reset();
             }
+        }
+    }
+
+    fn try_configure_preserving_state(
+        &mut self,
+        config: &ResonatorConfig,
+        base_frequency: f32,
+    ) -> bool {
+        match (self.kind, config) {
+            (ResonatorKind::Modal, ResonatorConfig::Modal(config)) => {
+                let params = modal_params_from_config(config, base_frequency);
+                if self.modal.modes().len() == params.mode_count {
+                    self.modal.retune(params);
+                    true
+                } else {
+                    false
+                }
+            }
+            (ResonatorKind::Waveguide, ResonatorConfig::Waveguide(config)) => {
+                self.waveguide_params = waveguide_params_from_config(config, base_frequency);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn retune(&mut self, config: &ResonatorConfig, base_frequency: f32) {
+        match (self.kind, config) {
+            (ResonatorKind::Modal, ResonatorConfig::Modal(config)) => {
+                self.modal
+                    .retune(modal_params_from_config(config, base_frequency));
+            }
+            (ResonatorKind::Waveguide, ResonatorConfig::Waveguide(config)) => {
+                self.waveguide_params = waveguide_params_from_config(config, base_frequency);
+            }
+            _ => self.configure(config, base_frequency, true),
         }
     }
 
@@ -530,12 +974,12 @@ impl SeriesConditioner {
         let highpassed = self.highpass.process(input);
         let magnitude = highpassed.abs();
 
-        self.fast_env += 0.15 * (magnitude - self.fast_env);
-        self.slow_env += 0.002 * (magnitude - self.slow_env);
+        self.fast_env += 0.01 * (magnitude - self.fast_env);
+        self.slow_env += 0.000_2 * (magnitude - self.slow_env);
 
         let transient_bias =
             ((self.fast_env - self.slow_env) / (self.fast_env + 1.0e-6)).clamp(0.0, 1.0);
-        highpassed * (0.08 + transient_bias * 0.92)
+        highpassed * (0.04 + transient_bias * 0.96)
     }
 }
 
@@ -554,11 +998,14 @@ fn modal_params_from_config(config: &ModalConfig, base_frequency: f32) -> ModalB
 
 fn waveguide_params_from_config(config: &WaveguideConfig, base_frequency: f32) -> WaveguideParams {
     WaveguideParams {
+        style: config.style,
         frequency_hz: tuned_frequency(base_frequency, config.semitone_offset, config.cent_offset),
         loop_filter_cutoff: config.loop_filter_cutoff,
+        loop_filter_resonance: config.loop_filter_resonance,
         loop_gain: config.loop_gain,
         loop_nonlinearity: config.loop_nonlinearity,
         position_of_strike: config.position_of_strike,
+        boundary_reflection: config.boundary_reflection,
     }
 }
 
@@ -566,11 +1013,37 @@ fn tuned_frequency(base_frequency: f32, semitone_offset: i8, cent_offset: f32) -
     base_frequency * semitones_to_ratio(semitone_offset as f32 + cent_offset / 100.0)
 }
 
-fn svf_mode(mode: FilterMode) -> SvfMode {
-    match mode {
-        FilterMode::LowPass => SvfMode::Lowpass,
-        FilterMode::BandPass => SvfMode::Bandpass,
-        FilterMode::HighPass => SvfMode::Highpass,
+fn sanitize_routing(routing: ResonatorRouting) -> ResonatorRouting {
+    match routing {
+        ResonatorRouting::Parallel { mix_a, mix_b } => ResonatorRouting::Parallel {
+            mix_a: finite_clamp(mix_a, 0.0, 1.0, 0.5),
+            mix_b: finite_clamp(mix_b, 0.0, 1.0, 0.5),
+        },
+        ResonatorRouting::Series { mix_a, mix_b } => ResonatorRouting::Series {
+            mix_a: finite_clamp(mix_a, 0.0, 1.0, 0.5),
+            mix_b: finite_clamp(mix_b, 0.0, 1.0, 0.5),
+        },
+    }
+}
+
+fn routing_plain(routing: ResonatorRouting) -> u8 {
+    match routing {
+        ResonatorRouting::Parallel { .. } => 0,
+        ResonatorRouting::Series { .. } => 1,
+    }
+}
+
+fn parallel_mix_a(routing: ResonatorRouting) -> f32 {
+    match routing {
+        ResonatorRouting::Parallel { mix_a, .. } => mix_a,
+        ResonatorRouting::Series { mix_a, .. } => mix_a,
+    }
+}
+
+fn parallel_mix_b(routing: ResonatorRouting) -> f32 {
+    match routing {
+        ResonatorRouting::Parallel { mix_b, .. } => mix_b,
+        ResonatorRouting::Series { mix_b, .. } => mix_b,
     }
 }
 
@@ -705,7 +1178,10 @@ mod tests {
     #[test]
     fn series_voice_stays_finite_and_bounded() {
         let sample_rate = 48_000.0;
-        let mut patch = test_patch(ResonatorRouting::Series);
+        let mut patch = test_patch(ResonatorRouting::Series {
+            mix_a: 0.5,
+            mix_b: 0.5,
+        });
         patch.resonator_b = ResonatorConfig::Waveguide(WaveguideConfig {
             loop_gain: 0.995,
             loop_filter_cutoff: 18_000.0,
@@ -718,6 +1194,172 @@ mod tests {
         assert_all_finite(&rendered);
         assert!(peak_abs(&rendered) < 4.0);
         assert!(rms(&rendered) > 0.000_001);
+    }
+
+    #[test]
+    fn series_conditioner_deemphasizes_steady_state_after_onset() {
+        let sample_rate = 48_000.0;
+        let mut conditioner = SeriesConditioner::new(sample_rate);
+        let mut output = Vec::with_capacity(24_000);
+
+        for index in 0..24_000 {
+            let input = (std::f32::consts::TAU * 220.0 * index as f32 / sample_rate).sin();
+            output.push(conditioner.process_sample(input));
+        }
+
+        let onset_rms = rms(&output[64..1_088]);
+        let steady_rms = rms(&output[20_000..23_000]);
+        assert!(
+            steady_rms < onset_rms * 0.35,
+            "onset_rms={onset_rms}, steady_rms={steady_rms}"
+        );
+    }
+
+    #[test]
+    fn retrigger_off_preserves_resonator_state_for_reused_voice() {
+        let sample_rate = 48_000.0;
+        let preserved = render_silent_retrigger_after_impulse(sample_rate, false);
+        let reset = render_silent_retrigger_after_impulse(sample_rate, true);
+
+        assert!(preserved > 0.000_01, "preserved={preserved}");
+        assert!(
+            reset < preserved * 0.05,
+            "reset={reset}, preserved={preserved}"
+        );
+    }
+
+    #[test]
+    fn held_voice_accepts_live_routing_changes() {
+        let sample_rate = 48_000.0;
+        let patch = test_patch(ResonatorRouting::Parallel {
+            mix_a: 0.8,
+            mix_b: 0.2,
+        });
+        let excitation = impulse(64);
+        let mut voice = Voice::new(sample_rate);
+
+        voice.trigger(VoiceTrigger::new(60, 1.0, &excitation, sample_rate, &patch));
+        assert_voice_routing_kind(&voice, 0);
+        assert_eq!(voice.routing.policy(), StructuralChangePolicy::LiveMuteRamp);
+
+        voice.set_routing(ResonatorRouting::Series {
+            mix_a: 0.8,
+            mix_b: 0.2,
+        });
+        assert_voice_routing_kind(&voice, 0);
+        assert!(voice.routing.has_pending());
+        drain_structural_transitions(&mut voice);
+        assert_voice_routing_kind(&voice, 1);
+
+        voice.set_routing(ResonatorRouting::Parallel {
+            mix_a: 0.1,
+            mix_b: 0.9,
+        });
+        assert_voice_routing_kind(&voice, 1);
+        drain_structural_transitions(&mut voice);
+        assert_voice_routing_kind(&voice, 0);
+        assert_parallel_mix_targets(&voice, 0.1, 0.9);
+        assert_parallel_mix_is_smoothing(&voice);
+    }
+
+    #[test]
+    fn filter_mode_is_structural_and_applies_with_mute_ramp() {
+        let sample_rate = 48_000.0;
+        let excitation = impulse(64);
+        let patch = test_patch(ResonatorRouting::Parallel {
+            mix_a: 1.0,
+            mix_b: 0.0,
+        });
+        let mut voice = Voice::new(sample_rate);
+        voice.trigger(VoiceTrigger::new(60, 1.0, &excitation, sample_rate, &patch));
+
+        let mut output = patch.output;
+        output.filter_mode = FilterMode::HighPass;
+        voice.set_output_config(output);
+
+        assert_eq!(
+            voice.output_filter_mode.policy(),
+            StructuralChangePolicy::LiveMuteRamp
+        );
+        assert_eq!(voice.output_filter_mode.current(), FilterMode::LowPass);
+        assert!(voice.output_filter_mode.has_pending());
+        drain_structural_transitions(&mut voice);
+        assert_eq!(voice.output_filter_mode.current(), FilterMode::HighPass);
+        assert!(!voice.output_filter_mode.has_pending());
+    }
+
+    #[test]
+    fn live_parameter_changes_are_smoothed_per_sample() {
+        let sample_rate = 48_000.0;
+        let excitation = impulse(64);
+        let mut patch = test_patch(ResonatorRouting::Parallel {
+            mix_a: 0.0,
+            mix_b: 1.0,
+        });
+        patch.resonator_b = ResonatorConfig::Waveguide(WaveguideConfig {
+            loop_gain: 0.92,
+            ..WaveguideConfig::default()
+        });
+        let mut voice = Voice::new(sample_rate);
+        voice.trigger(VoiceTrigger::new(60, 1.0, &excitation, sample_rate, &patch));
+
+        let mut output = patch.output;
+        output.master_gain_db = -60.0;
+        output.saturation_drive = 1.0;
+        output.master_pan = 1.0;
+        output.filter_cutoff = 200.0;
+        output.filter_resonance = 0.8;
+        voice.set_output_config(output);
+        voice.set_routing(ResonatorRouting::Parallel {
+            mix_a: 1.0,
+            mix_b: 0.0,
+        });
+        voice.set_waveguide_loop_gain(0.1);
+        voice.set_pitch_bend(2.0);
+
+        assert_output_params_are_smoothing(&voice);
+        assert_parallel_mix_is_smoothing(&voice);
+        assert_resonator_controls_are_smoothing(&voice);
+        assert_master_gain_is_ramping_down(&mut voice);
+    }
+
+    fn assert_voice_routing_kind(voice: &Voice<'_>, expected: u8) {
+        assert_eq!(routing_plain(voice.routing.current()), expected);
+    }
+
+    fn assert_parallel_mix_targets(voice: &Voice<'_>, mix_a: f32, mix_b: f32) {
+        assert_eq!(voice.parallel_mix_a.target(), mix_a);
+        assert_eq!(voice.parallel_mix_b.target(), mix_b);
+    }
+
+    fn assert_parallel_mix_is_smoothing(voice: &Voice<'_>) {
+        assert!(voice.parallel_mix_a.is_smoothing());
+        assert!(voice.parallel_mix_b.is_smoothing());
+    }
+
+    fn assert_output_params_are_smoothing(voice: &Voice<'_>) {
+        assert!(voice.master_gain.is_smoothing());
+        assert!(voice.saturation_drive.is_smoothing());
+        assert!(voice.master_pan.is_smoothing());
+        assert!(voice.output_filter_cutoff.is_smoothing());
+        assert!(voice.output_filter_resonance.is_smoothing());
+    }
+
+    fn assert_resonator_controls_are_smoothing(voice: &Voice<'_>) {
+        assert!(voice.waveguide_loop_gain.is_smoothing());
+        assert!(voice.pitch_bend_semitones.is_smoothing());
+    }
+
+    fn assert_master_gain_is_ramping_down(voice: &mut Voice<'_>) {
+        let first_gain = voice.master_gain.next_sample();
+        assert!(first_gain < output_gain(0.0));
+        assert!(first_gain > output_gain(-60.0));
+    }
+
+    fn drain_structural_transitions(voice: &mut Voice<'_>) {
+        for _ in 0..(structural_ramp_samples(voice.sample_rate) * 2 + 1) {
+            voice.apply_structural_transitions();
+        }
     }
 
     fn render_mono_energy(
@@ -736,6 +1378,40 @@ mod tests {
         voice.trigger(VoiceTrigger::new(60, 1.0, excitation, sample_rate, patch));
         voice.render_add(&mut left, &mut right);
         left
+    }
+
+    fn render_silent_retrigger_after_impulse(sample_rate: f32, retrigger_resonators: bool) -> f32 {
+        let mut patch = test_patch(ResonatorRouting::Parallel {
+            mix_a: 1.0,
+            mix_b: 0.0,
+        });
+        patch.retrigger_resonators = retrigger_resonators;
+        patch.resonator_a = ResonatorConfig::Waveguide(WaveguideConfig {
+            loop_gain: 0.985,
+            loop_filter_cutoff: 12_000.0,
+            ..WaveguideConfig::default()
+        });
+        let excitation = impulse(64);
+        let mut voice = Voice::new(sample_rate);
+        voice.trigger(VoiceTrigger::new(60, 1.0, &excitation, sample_rate, &patch));
+
+        for _ in 0..512 {
+            voice.process_sample();
+        }
+
+        voice.trigger(VoiceTrigger::with_excitations(
+            60,
+            1.0,
+            SelectedExcitations::default(),
+            &patch,
+        ));
+
+        let mut output = Vec::with_capacity(1024);
+        for _ in 0..1024 {
+            output.push(voice.process_sample());
+        }
+
+        rms(&output)
     }
 
     fn impulse(len: usize) -> Vec<f32> {

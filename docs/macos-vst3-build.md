@@ -13,37 +13,39 @@ For Intel DAWs, also install `x86_64-apple-darwin` and pass that target instead.
 ## Build
 
 ```bash
-cargo run -p xtask -- check
-cargo run -p xtask -- bundle resonator-synth --target aarch64-apple-darwin
+make build
 ```
 
-The bundle is written to:
+The Makefile creates `~/.lindelion-cache`, uses `~/.lindelion-cache/target` as the local Cargo target directory, enables incremental compilation for the build, stages the bundle under `~/.lindelion-cache/bundles`, and installs the final VST3 into the system VST3 folder:
 
 ```text
-target/bundles/Ahara Resonator Synth.vst3
+/Library/Audio/Plug-Ins/VST3/Ahara/Ahara Resonator Synth.vst3
 ```
 
-The `xtask` bundle command creates the macOS VST3 bundle layout, copies the release `cdylib` into `Contents/MacOS`, writes `Info.plist` and `PkgInfo`, and runs ad-hoc `codesign` when available.
+The `xtask` bundle command creates the macOS VST3 bundle layout, copies the release `cdylib` into `Contents/MacOS`, writes `Info.plist`, `PkgInfo`, and `Contents/Resources/moduleinfo.json`, and runs ad-hoc `codesign` when available. `make build` sets `LINDELION_BUNDLE_DIR` to the cache staging folder, then uses `sudo ditto` for the final install into `/Library/Audio/Plug-Ins/VST3/Ahara`.
 
 ## Install Locally
 
-```bash
-mkdir -p "$HOME/Library/Audio/Plug-Ins/VST3"
-rm -rf "$HOME/Library/Audio/Plug-Ins/VST3/Ahara Resonator Synth.vst3"
-cp -R "target/bundles/Ahara Resonator Synth.vst3" "$HOME/Library/Audio/Plug-Ins/VST3/"
-```
+Enable Ableton's VST3 system folders. A custom VST3 folder is not required for this build path.
 
-Then rescan VST3 plugins in the DAW. If using a downloaded CI artifact, clear quarantine before scanning:
+Then restart Ableton or rescan VST3 plugins after each rebuild. If using a downloaded CI artifact, clear quarantine before scanning:
 
 ```bash
-xattr -dr com.apple.quarantine "$HOME/Library/Audio/Plug-Ins/VST3/Ahara Resonator Synth.vst3"
+sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Ahara Resonator Synth.vst3"
 ```
 
 ## Validate
 
+Before running a host or validator, inspect the installed bundle:
+
+```bash
+make inspect-vst3
+```
+
+This prints the installed bundle path, the `CFBundleExecutable`, the Mach-O architecture, the exported VST3 entry symbols, and the code signature verification result. The export list should include `GetPluginFactory`, `bundleEntry`, and `bundleExit`.
+
 When the Steinberg VST3 SDK validator is installed:
 
 ```bash
-validator "target/bundles/Ahara Resonator Synth.vst3"
+validator "/Library/Audio/Plug-Ins/VST3/Ahara/Ahara Resonator Synth.vst3"
 ```
-

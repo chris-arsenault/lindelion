@@ -10,5 +10,5 @@ pub use excitation::{
     RuntimeExcitationSlot, SelectedExcitations, VoiceExcitation,
 };
 pub use modal::{ModalBank, ModalBankParams, ModalMode};
-pub use voice::{Voice, VoiceTrigger};
-pub use waveguide::{WaveguideParams, WaveguideResonator};
+pub use voice::{Voice, VoiceExpression, VoiceTrigger};
+pub use waveguide::{WaveguideParams, WaveguideResonator, WaveguideStyle};

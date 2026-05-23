@@ -126,13 +126,15 @@ Karplus-Strong-extended single-delay-line waveguide for plucked-string and tube-
 **Parameters (per-resonator):**
 
 - `fundamental_tune` — MIDI-tracked, semitone + cent offset
+- `waveguide_style` — `String` or `Tube`; string is the default single-delay-line plucked/struck behavior, tube adds boundary reflection behavior for bore-like resonances
 - `loop_filter_cutoff` — controls high-frequency damping in the feedback loop (brightness)
 - `loop_filter_resonance` — controls Q of the loop filter
 - `loop_gain` — feedback gain (sustain length)
 - `loop_nonlinearity` — soft-clip strength inside the loop (adds bow-like character)
 - `position_of_strike` — 0–1; selects the tap point along the delay line where excitation is injected
+- `boundary_reflection` — -1–1; tube style reflection coefficient, where negative values invert the boundary reflection and positive values preserve polarity
 
-**DSP:** delay line of length `sr / freq` samples (with first-order all-pass for sub-sample fractional tuning), one-pole or biquad lowpass in the loop, soft-clip stage.
+**DSP:** delay line of length `sr / freq` samples (with first-order all-pass for sub-sample fractional tuning), one-pole or biquad lowpass in the loop, soft-clip stage. `String` style uses ordinary same-polarity feedback; `Tube` style applies the boundary reflection coefficient inside the loop so polarity and reflection amount become part of the resonator response.
 
 **Deferred to v2:** bidirectional/two-port waveguide for proper tube modeling (closed-end reflection, clarinet-like behavior). v1 single-line is sufficient for the plucked/struck character.
 

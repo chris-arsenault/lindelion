@@ -3,7 +3,10 @@ pub mod parameters;
 pub mod process;
 pub mod state;
 
-pub use events::{ControlEvent, ExpressionStream, MidiEvent, NoteEvent};
+pub use events::{
+    ControlEvent, ExpressionSource, ExpressionStream, MIDI_CHANNEL_COUNT, ManualExpressionSource,
+    MidiEvent, MidiExpressionSource, MidiExpressionUpdate, MidiVoiceExpression, NoteEvent,
+};
 pub use parameters::{AtomicParameter, ParameterFlags, ParameterId, ParameterInfo, ParameterRange};
 pub use process::{AudioBuffer, AudioPlugin, ProcessContext, ProcessMode, ProcessSetup};
 pub use state::{PluginState, StateError};
@@ -30,7 +33,7 @@ impl PluginDescriptor {
         Self {
             name,
             vendor: "Ahara",
-            url: "https://ahara.invalid",
+            url: "https://ahara.io",
             email: "",
             version: env!("CARGO_PKG_VERSION"),
             category: PluginCategory::Instrument,
