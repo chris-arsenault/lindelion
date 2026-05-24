@@ -4,8 +4,8 @@ use crate::{
     ModulationDestination, ModulationSlot, ModulationSource, OutputConfig, ResonatorConfig,
     ResonatorRouting, assert_no_allocations,
     test_support::{
-        audio_note_detection_patch, configure_audio_note_detection, sidechain_sine_hz,
-        sidechain_sine_note,
+        audio_note_detection_patch, configure_audio_note_detection, first_sample_above,
+        sidechain_sine_hz, sidechain_sine_note, sidechain_sine_note_after_silence,
     },
 };
 use lindelion_dsp_utils::{

@@ -1100,8 +1100,11 @@ fn latest_confident_pitch(frames: &[PitchFrame], min_confidence: f32) -> Option<
 }
 
 fn block_offset(position_samples: usize, block_start: usize, block_len: usize) -> Option<usize> {
-    if position_samples < block_start {
+    if block_len == 0 {
         return None;
+    }
+    if position_samples < block_start {
+        return Some(0);
     }
     let offset = position_samples - block_start;
     (offset < block_len).then_some(offset)
@@ -1373,6 +1376,32 @@ mod tests {
     }
 
     #[test]
+    fn streaming_audio_note_detector_emits_late_onset_from_framed_detector() {
+        let audio = sine_wave(440.0, 0.4, 128);
+        let mut detector = StreamingAudioNoteDetector::new(
+            FixedPitchTracker::new(440.0),
+            LateOnsetDetector::new(128, 4),
+            RmsCentroidLoudnessTracker::default(),
+            SAMPLE_RATE,
+        );
+
+        for _ in 0..4 {
+            assert!(
+                detector
+                    .next_block(&audio, AudioNoteDetectionConfig::default())
+                    .is_empty()
+            );
+        }
+        let events = detector.next_block(&audio, AudioNoteDetectionConfig::default());
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].offset, 0);
+        assert_eq!(events[0].note, 69);
+        assert!(events[0].gate);
+        assert_eq!(detector.active_note().unwrap().note, 69);
+    }
+
+    #[test]
     fn streaming_audio_note_detector_emits_note_off_after_release_floor() {
         let audio = sine_wave(440.0, 0.4, 1_024);
         let silence = vec![0.0; 1_024];
@@ -1524,6 +1553,44 @@ mod tests {
 
         fn reset(&mut self) {
             self.emitted = false;
+            self.markers.clear();
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct LateOnsetDetector {
+        marker_position: usize,
+        emit_on_call: usize,
+        calls: usize,
+        markers: Vec<SliceMarker>,
+    }
+
+    impl LateOnsetDetector {
+        fn new(marker_position: usize, emit_on_call: usize) -> Self {
+            Self {
+                marker_position,
+                emit_on_call,
+                calls: 0,
+                markers: Vec::new(),
+            }
+        }
+    }
+
+    impl StreamingOnsetDetector for LateOnsetDetector {
+        fn next_block(&mut self, _audio: &[f32]) -> &[SliceMarker] {
+            self.markers.clear();
+            if self.calls == self.emit_on_call {
+                self.markers.push(SliceMarker {
+                    position_samples: self.marker_position,
+                    kind: MarkerKind::Auto,
+                });
+            }
+            self.calls += 1;
+            &self.markers
+        }
+
+        fn reset(&mut self) {
+            self.calls = 0;
             self.markers.clear();
         }
     }

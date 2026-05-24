@@ -6,7 +6,7 @@ Current documentation for the Lindelion audio-plugin workspace.
 
 | Plugin | Status | Docs |
 | ---- | ---- | ---- |
-| Lamath | Implemented VST3 instrument | [Plugin design](plugins/lamath.md), [plugin README](../plugins/lamath/README.md) |
+| Lamath | Implemented VST3 resonator instrument with optional sidechain note/excitation path; DAW validation pending | [Plugin design](plugins/lamath.md), [plugin README](../plugins/lamath/README.md) |
 | Linnod | Cargo scaffold and patch model | [Plugin design](plugins/linnod.md), [plugin README](../plugins/linnod/README.md) |
 | Glirdir | Sing-to-MIDI scratchpad with VST3 adapter, editor, drag/export, sample-library save, and bundle support; DAW validation pending | [Plugin design](plugins/glirdir.md), [plugin README](../plugins/glirdir/README.md) |
 

@@ -363,6 +363,46 @@ fn sidechain_audio_creates_note_and_empty_input_releases_it() {
 }
 
 #[test]
+fn sidechain_note_on_latency_is_bounded_with_small_host_blocks() {
+    const BLOCK_SIZE: usize = 128;
+    const SILENCE_BLOCKS: usize = 24;
+    const TONE_BLOCKS: usize = 24;
+    const ONSET_SAMPLE: usize = BLOCK_SIZE * SILENCE_BLOCKS;
+    const MAX_LATENCY_SAMPLES: usize = 512;
+
+    let mut patch = test_patch();
+    patch.audio_input.mode = AudioInputMode::AudioCreatesNotes;
+    let mut processor = ResonatorProcessor::with_builtin_excitation_and_realtime_capacity(
+        48_000.0,
+        patch,
+        BLOCK_SIZE,
+    );
+    let sidechain =
+        sidechain_sine_note_after_silence(84.0, 0.8, ONSET_SAMPLE, BLOCK_SIZE * TONE_BLOCKS);
+    let mut rendered = Vec::with_capacity(sidechain.len());
+    let mut left = vec![0.0; BLOCK_SIZE];
+    let mut right = vec![0.0; BLOCK_SIZE];
+
+    for block in sidechain.chunks_exact(BLOCK_SIZE) {
+        processor.process_with_runtime_input(
+            ResonatorRuntimeInput::new(&[]).with_sidechain(block),
+            &mut left,
+            &mut right,
+        );
+        rendered.extend_from_slice(&left);
+    }
+
+    let latency_samples = first_sample_above(&rendered[ONSET_SAMPLE..], 0.000_001)
+        .expect("audio-created note should become audible after sidechain onset");
+    assert!(
+        latency_samples <= MAX_LATENCY_SAMPLES,
+        "sidechain note-on latency should stay within {MAX_LATENCY_SAMPLES} samples, got {latency_samples}"
+    );
+    assert!(processor.audio_note_state.active.is_some());
+    assert_all_finite(&rendered);
+}
+
+#[test]
 fn audio_expression_pitch_drift_updates_audio_owned_voice_without_retriggering_note() {
     let mut patch = test_patch();
     configure_audio_note_detection(&mut patch, AudioInputMode::AudioCreatesNotes);

@@ -1,5 +1,8 @@
 use super::*;
-use crate::test_support::{audio_note_detection_patch, sidechain_sine_note};
+use crate::test_support::{
+    audio_note_detection_patch, first_sample_above, sidechain_sine_note,
+    sidechain_sine_note_after_silence,
+};
 use lindelion_dsp_utils::{
     analysis::{assert_all_finite, dft_magnitude_at, peak_abs, rms},
     db_to_gain,
@@ -21,6 +24,7 @@ use std::{
 include!("plugin_tests/render_tests.rs");
 include!("plugin_tests/parameter_tests.rs");
 include!("plugin_tests/runtime_tests.rs");
+include!("plugin_tests/performance_tests.rs");
 include!("plugin_tests/render_helpers.rs");
 include!("plugin_tests/expression_helpers.rs");
 include!("plugin_tests/sample_helpers.rs");

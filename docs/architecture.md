@@ -11,7 +11,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `crates/lindelion-test-allocator` | Shared counting allocator and no-allocation assertion helper for realtime-path tests. |
 | `crates/lindelion-capture` | Host-synced audio capture state, scratchpad audio/metadata, capture settings, sync modes, and capture timing constants. |
 | `crates/lindelion-sample-library` | Sample references, loaded-audio ownership, hashing, file-library ingest, preview generation, and moved-file recovery by content hash. |
-| `crates/lindelion-audio-expression` | Audio-analysis-to-expression bridge that maps pitch, onset, loudness, and brightness into plugin-shell expression streams. |
+| `crates/lindelion-audio-expression` | Host-neutral streaming audio-note and audio-expression bridge that maps pitch, onset, loudness, and brightness into plugin-shell note/expression surfaces. |
 | `crates/lindelion-onset-detect` | Batch and streaming onset detection interfaces, detector configuration, and pitch-aware onset input DTOs used by pitch-aware products. |
 | `crates/lindelion-pitch-detect` | SwiftF0 ONNX pitch detection, streaming pitch tracking, confidence filtering, resampling, and shared pitch-contour DTOs. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics, and phrase-analysis results shared by captured-phrase workflows. |
@@ -31,7 +31,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 - `TomlPatchFormat<T>` owns versioned TOML patch envelopes, typed decode errors, migrations, atomic file writes, and `PluginState` roundtrips.
 - `MidiEventNormalizer` converts host MIDI into internal `MidiEvent` values with plugin-provided controller routes and pitch-bend range.
 - `VoiceManager` owns allocation, stealing, retrigger reuse, active/released/idle transitions, and per-channel/per-note expression routing.
-- Pitch, onset, phrase analysis, audio expression, capture, and MIDI derivation live in shared crates. Product plugins compose those crates and own product-specific policy, UI, message payloads, and host integration.
+- Pitch, onset, phrase analysis, audio-note detection, audio expression, capture, and MIDI derivation live in shared crates. Product plugins compose those crates and own product-specific policy, UI, message payloads, and host integration.
 - Shared capture and scratchpad audio live in `lindelion-capture`; product plugins own parameter stepping, naming, MIDI context projection, and other product semantics layered on top.
 - `lindelion-ui` owns reusable editor commands, editor services, and product editor surfaces while the workspace remains small.
 
@@ -88,7 +88,7 @@ These principles came out of the Glirdir/Lamath reuse remediation work and apply
 - `PitchFrame` is the canonical pitch-analysis frame. Do not introduce adapter frame types for subsets of the same data unless a dependency boundary makes the adapter unavoidable.
 - Onset detectors should express required context in input types. A detector must not return sentinel empty results only because the trait did not provide required pitch context.
 - Streaming pitch, onset, and loudness analysis are first-class surfaces. Batch analysis may buffer or wrap streaming implementations, but it should not create a second semantic model for the same detector.
-- Audio-expression mapping from pitch, onset, loudness, and brightness belongs in `lindelion-audio-expression` and should be configured through mapping parameters rather than product-specific branches.
+- Audio-note detection and audio-expression mapping from pitch, onset, loudness, and brightness belong in `lindelion-audio-expression` when they are host-neutral. Products own what those note/expression events mean: voice allocation, source-mode policy, ownership/release rules, sidechain bus policy, excitation routing, and UI/status payloads.
 - Capture completion and scratchpad finalization must keep allocation-heavy ownership changes off the realtime path; shared capture state should make that boundary explicit.
 - Audio-thread code must not allocate, block, perform file or database I/O, log, call host/UI services, or loop without hard bounds. See [performance.md](performance.md).
 

@@ -35,3 +35,21 @@ pub(crate) fn sidechain_sine_hz(frequency_hz: f32, amplitude: f32, len: usize) -
         })
         .collect()
 }
+
+pub(crate) fn sidechain_sine_note_after_silence(
+    note: f32,
+    amplitude: f32,
+    silence_len: usize,
+    sine_len: usize,
+) -> Vec<f32> {
+    let mut audio = vec![0.0; silence_len];
+    audio.extend(sidechain_sine_note(note, amplitude, sine_len));
+    audio
+}
+
+pub(crate) fn first_sample_above(samples: &[f32], threshold: f32) -> Option<usize> {
+    let threshold = threshold.abs();
+    samples
+        .iter()
+        .position(|sample| sample.is_finite() && sample.abs() > threshold)
+}

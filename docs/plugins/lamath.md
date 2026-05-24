@@ -3,7 +3,7 @@
 **Name:** Lamath
 **Name etymology:** Sindarin, "echo" or "ringing of voices." Six letters, pronounced LAH-math; paired phonetically with Glirdir.
 **Target:** macOS (Apple Silicon primary, Intel best-effort), VST3
-**Status:** Implemented VST3 instrument. This document preserves current behavior plus the v2 sidechain note/excitation plan.
+**Status:** Implemented VST3 instrument with the v2 optional sidechain note/excitation path in code. Linux validation is complete; macOS validator and Ableton scan/load remain external host-validation work.
 
 ---
 
@@ -23,7 +23,7 @@ A polyphonic physical-modeling synth where the **excitation source** is a user-l
 - Not a sampler. Excitations are short transients (typically <500ms), not melodic/looped content.
 - Not a granular synth.
 - Not an FX plugin. v2 adds an optional sidechain input bus to the existing instrument; it does not create a separate effect variant or host/emulate reverb, delay, distortion-as-effect, etc.
-- Not cross-DAW polished — Ableton on Mac is the only test target for v1.
+- Not cross-DAW polished — Ableton on Mac is the primary host-validation target.
 
 ---
 
@@ -193,7 +193,7 @@ Per-voice, after resonator mix:
 - Per-voice gain (governed by amp envelope)
 - Voice-mix sum to stereo
 - Master gain control, master pan
-- No per-voice stereo placement in v1 (deferred to v2)
+- No per-voice stereo placement yet; this remains a later extension.
 
 ---
 
@@ -413,7 +413,7 @@ No plugin framework (no nih-plug, no JUCE, no iPlug2). The VST3 ABI grunt work (
 
 Rationale for going framework-less:
 - The new MIT-licensed `vst3` crate (Oct 2025) removed the GPL-contamination tax that previously made framework-less unattractive.
-- Plugin's architectural needs (multi-source `ExpressionStream`, future live-input excitation seam, custom sample-slot routing) don't fit cleanly into nih-plug's idioms.
+- Plugin's architectural needs (multi-source `ExpressionStream`, live-input excitation, custom sample-slot routing) don't fit cleanly into nih-plug's idioms.
 - Plumbing surface for this plugin is modest (one stereo out, MIDI in, ~30 parameters, one editor window). Once written, it's owned and never breaks on a framework upgrade.
 - Matches the approach used successfully for the C# VST host project.
 
@@ -437,14 +437,15 @@ Rationale for going framework-less:
 
 ### 12.2 Plugin shell boundary
 
-The workspace owns framework-less VST3 integration through shared shell crates plus thin product adapters. v2 work should extend the shared shell when the behavior is host protocol mechanics, and keep Lamath-only policy in Lamath.
+The workspace owns framework-less VST3 integration through shared shell crates plus thin product adapters. Shared shell crates carry host protocol mechanics and host-neutral analysis contracts; Lamath keeps sidechain source policy, audio-created voice ownership, and excitation routing local.
 
 Shared shell responsibilities:
 
 - **Factory and component helpers.** VST3 factory registration, bus metadata helpers, state stream helpers, fixed-size view behavior, and typed message wrappers.
-- **Process context.** `ProcessContext` carries setup, output buffers, optional audio input, MIDI events, and transport. v2 sidechain audio must enter through this shared input field.
+- **Process context.** `ProcessContext` carries setup, output buffers, optional audio input, MIDI events, and transport. Sidechain audio enters Lamath through this shared input field.
 - **Parameter registry.** Stable IDs, normalized/plain conversion, formatting, smoothing metadata, editor metadata, and apply dispatch live behind the shared registry model.
 - **MIDI and expression contracts.** Host MIDI normalizes to shared `MidiEvent`; MIDI and audio-driven control both feed `ExpressionSource` / `ExpressionStream`.
+- **Audio analysis contracts.** Streaming pitch/onset/loudness analysis, audio-note events, and audio-expression mapping live in `lindelion-audio-expression` and its detector dependencies. Lamath consumes those shared events and owns how they allocate voices or excite resonators.
 - **Patch/state helpers.** Versioned TOML patch envelopes and `PluginState` roundtrips use shared patch I/O helpers.
 
 Lamath-local responsibilities:
@@ -473,14 +474,32 @@ Steinberg's `validator` tool runs ~300 conformance tests against the bundle. The
 
 8 voices × 340 ops/sample × 48000 samples/sec ≈ 130 MOps/sec. Comfortable on M-series silicon with room to spare; should idle well under 5% single-core CPU at moderate polyphony.
 
-### 13.2 Mode count tradeoffs
+### 13.2 v2 sidechain note latency and CPU
+
+Measured with `audio_plugin_v2_all_enabled_cpu_probe` in a release build on the current Linux x86_64 runner (`rustc 1.95.0`, 48 kHz, 128-sample realtime blocks). The probe enables the v2 path end to end: `MidiPlusAudioCreatesNotes`, audio expression, continuous plus note-latched live excitation, the optional sidechain input, default note-detection settings, and default latch settings.
+
+- Effective sidechain note-on latency from audio onset to first audible output: **407 samples / 8.479 ms**.
+- The latency measurement includes detector windowing and the host-block projection needed when a framed onset detector reports a marker after the marker's source block has already passed.
+- CPU sanity result: **10.000 s** rendered in **942.925 ms**, realtime ratio **0.09429** on the measured x86_64 host.
+- This is not the Apple Silicon signoff. The macOS host-validation pass must record M-series numbers from the same probe plus Steinberg validator/Ableton runs.
+
+The realtime note-creation path intentionally uses the shared `realtime_audio_analysis_note_detector`, which is backed by zero-crossing pitch and a bounded energy-transient detector. The higher-quality SwiftF0 path remains behind the shared streaming detector trait for offline/high-quality use; it is not the realtime note-creation default because its frame/model buffering is a poor fit for immediate instrument triggering. If later Apple Silicon measurements show the realtime tracker is the quality bottleneck, swap the pitch tracker behind the shared trait rather than adding Lamath-local detection.
+
+Default v2 settings that keep the live path bounded and playable:
+
+- Note detector: onset sensitivity `0.5`, release floor `0.01` RMS, minimum note length `60 ms`, pitch confidence `0.65`, velocity amount `1.0`.
+- Realtime detector frame: `512` samples at 48 kHz, with late onset markers projected into the current process block instead of being dropped.
+- Live latch: `120 ms` window, `20 ms` pre-roll, `5 ms` fade. The latch window and pre-roll are structural settings because they size preallocated buffers.
+- Live excitation defaults to `Off`; when enabled, the continuous and latched paths remain bounded, finite, and allocation-free in the audio thread.
+
+### 13.3 Mode count tradeoffs
 
 - 32 modes: kalimba/woodblock convincing, bells thin
 - 64 modes: sweet spot for v1 default
 - 128 modes: bells, glass, gongs reach their full character; 2× CPU
 - 256+ modes: diminishing returns for real-time; useful for offline render
 
-### 13.3 Offline render mode
+### 13.4 Offline render mode
 
 Detect via VST3's `ProcessSetup::processMode` — VST3 reports `kOffline` for bounce/render contexts. When offline:
 
@@ -490,7 +509,7 @@ Detect via VST3's `ProcessSetup::processMode` — VST3 reports `kOffline` for bo
 
 Patches store both a "live" mode count and an "offline" mode count. Live for performance, offline for bouncing the final track.
 
-### 13.4 SIMD plan
+### 13.5 SIMD plan
 
 The modal bank is the main SIMD target. Each mode is a 2nd-order biquad with shared input/output structure. Batch modes in groups of 4 (NEON) or 8 (AVX2): vectorize the per-sample update across modes. Expect ~3× throughput vs scalar.
 
@@ -498,9 +517,9 @@ Worth doing from the start because the architecture (mode parameter layout in me
 
 ---
 
-## 14. V1 Scope vs V2 Extensions
+## 14. Current Scope And Later Extensions
 
-### V1 (ships)
+### Core instrument
 
 - Polyphonic (8 voices, configurable to 16)
 - Resonator A + B, each Modal or Waveguide
@@ -511,7 +530,7 @@ Worth doing from the start because the architecture (mode parameter layout in me
 - Sample library: SQLite-indexed, drag-drop ingest, hash-based patch references
 - VST3, Mac primary
 
-### V2 committed scope
+### Sidechain v2 scope
 
 - **Optional sidechain input bus on the existing instrument** — Lamath remains the same VST3 instrument and adds an optional audio input bus. Empty, inactive, or unrouted input preserves v1 MIDI-only behavior.
 - **Sidechain audio creates notes** — audio onsets create voices through the existing voice manager. Stable pitch at onset chooses the MIDI note; later pitch drift becomes expression pitch bend.
@@ -543,15 +562,16 @@ Lamath is the current bundleable Lindelion VST3 instrument. The core audio path,
 - Smoothed live output, loop-gain, filter, pitch-bend, saturation, and routing controls.
 - Structural resonator and modulation changes update future voices without killing active notes.
 - DSP render, automation stress, sample-rate/buffer-size, offline, and no-allocation tests for the audio path.
+- v2 sidechain note creation, MIDI/audio ownership, audio expression, continuous and note-latched live excitation, no-allocation coverage, and latency/CPU probe coverage.
 - TOML patch save/load and DAW state roundtrip.
 - File-backed sample library with ingest, hashing, indexing, preview generation, moved-file recovery, and missing-sample reporting.
 - Native editor command services for patch save/load/export, sample ingest/assignment/clear, and telemetry requests.
 - macOS VST3 bundle layout, moduleinfo generation, ad-hoc signing, staging, and install automation.
-- Shared audio-expression types are available through `lindelion-audio-expression`; v2 still needs product integration for the optional sidechain bus, audio-created voice allocation, and live excitation routing.
+- Shared audio-expression types are used through `lindelion-audio-expression`; Lamath owns the optional sidechain bus, audio-created voice allocation, MIDI/audio source policy, and live excitation routing.
 
 ### External Validation
 
-- Steinberg validator and Ableton scan checks still need to be run on macOS after bundle-affecting changes. Linux target checks do not replace this.
+- Steinberg validator and Ableton scan/load checks still need to be run on macOS after bundle-affecting changes. Linux target checks do not replace this.
 
 ## 16. Future Design Decisions
 
