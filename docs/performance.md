@@ -24,6 +24,12 @@ In Rust, that rule is meaningful: ordinary stack values, slices, fixed-size arra
 - `lindelion-dsp-utils` and `lamath` tests assert finite output, bounded peaks, frequency behavior, filter behavior, and sweep stability.
 - `make ci` runs the canonical workspace formatting, lint, file-size, and test checks.
 
+## Benchmarks
+
+- `docs/perf/lindelion-dsp-utils.md` records the first host-free Criterion numbers for shared DSP utilities.
+- `make bench-smoke` compiles all workspace benches without running Criterion measurements.
+- `make bench` runs the full workspace Criterion suite. Use pinned-core Linux runs for numbers that will be cited in realtime contracts.
+
 ## Allowed Allocation Zones
 
 - Plugin construction and process setup.

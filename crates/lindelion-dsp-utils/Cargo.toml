@@ -6,3 +6,24 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+criterion.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+
+[[bench]]
+name = "filters"
+harness = false
+
+[[bench]]
+name = "analysis"
+harness = false
+
+[[bench]]
+name = "envelope"
+harness = false
+
+[[bench]]
+name = "delay"
+harness = false

@@ -93,7 +93,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
+            flags: BusInfo_::BusFlags_::kDefaultActive,
         }
     }
 
@@ -115,7 +115,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
+            flags: BusInfo_::BusFlags_::kDefaultActive,
         }
     }
 
@@ -126,7 +126,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
+            flags: BusInfo_::BusFlags_::kDefaultActive,
         }
     }
 
@@ -137,7 +137,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
+            flags: BusInfo_::BusFlags_::kDefaultActive,
         }
     }
 }

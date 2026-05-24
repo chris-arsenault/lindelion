@@ -77,19 +77,10 @@ pub enum AudioInputMode {
     MidiPlusAudioCreatesNotes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct AudioExpressionConfig {
     pub enabled: bool,
     pub mapping: AudioExpressionMapping,
-}
-
-impl Default for AudioExpressionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            mapping: AudioExpressionMapping::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

@@ -23,4 +23,11 @@ toml.workspace = true
 vst3.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 lindelion-test-allocator.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+
+[[bench]]
+name = "analysis"
+harness = false

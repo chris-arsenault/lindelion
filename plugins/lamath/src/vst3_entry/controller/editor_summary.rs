@@ -45,6 +45,7 @@ pub(super) fn encode_telemetry(telemetry: ResonatorTelemetry) -> String {
     )
 }
 
+#[allow(clippy::cognitive_complexity)]
 pub(super) fn decode_telemetry(payload: &[u8]) -> Option<EditorTelemetry> {
     let text = std::str::from_utf8(payload).ok()?;
     let mut parts = text.split(',');

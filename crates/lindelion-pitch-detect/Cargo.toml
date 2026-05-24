@@ -9,3 +9,12 @@ authors.workspace = true
 lindelion-dsp-utils.workspace = true
 serde.workspace = true
 tract-onnx.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+
+[[bench]]
+name = "pitch"
+harness = false

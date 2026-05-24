@@ -167,6 +167,7 @@ pub struct LiveExcitationLatchCapture<'a> {
 }
 
 impl<'a> LiveExcitationLatchCapture<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pre_roll: &'a LiveExcitationPreRoll,
         block: &'a [f32],

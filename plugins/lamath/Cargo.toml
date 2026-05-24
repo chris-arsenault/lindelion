@@ -19,7 +19,22 @@ toml.workspace = true
 vst3.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 lindelion-test-allocator.workspace = true
 lindelion-midi.workspace = true
 lindelion-phrase-analysis.workspace = true
 lindelion-pitch-detect.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+
+[[bench]]
+name = "modal"
+harness = false
+
+[[bench]]
+name = "waveguide"
+harness = false
+
+[[bench]]
+name = "engine"
+harness = false

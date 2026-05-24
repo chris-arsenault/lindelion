@@ -199,6 +199,7 @@ fn modulation_source_parameter_shape(id: u32) -> (Option<u32>, f32) {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)]
 fn structural_parameters_have_explicit_apply_policies() {
     let mut patch = ResonatorSynthPatch::default();
 
@@ -445,6 +446,7 @@ fn assert_expanded_modulation_parameters(patch: &ResonatorSynthPatch) {
     assert!((patch.modulation.slots[0].amount + 0.33).abs() < 0.001);
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn assert_expanded_v2_parameters(patch: &ResonatorSynthPatch) {
     assert_eq!(
         patch.audio_input.mode,

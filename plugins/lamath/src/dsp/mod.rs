@@ -1,14 +1,16 @@
 pub(crate) mod constants;
-mod engine;
+pub(crate) mod engine;
 mod excitation;
-mod modal;
+pub(crate) mod modal;
 mod voice;
-mod waveguide;
+pub(crate) mod waveguide;
 
-pub(crate) use engine::SynthEngine;
+pub use engine::SynthEngine;
+pub use excitation::SelectedExcitations;
 pub(crate) use excitation::{
     ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
-    MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations,
+    MAX_EXCITATION_LAYERS, RuntimeExcitationSlot,
 };
-pub(crate) use voice::{VoiceExpression, VoiceTrigger};
+pub(crate) use voice::VoiceExpression;
+pub use voice::VoiceTrigger;
 pub use waveguide::WaveguideStyle;

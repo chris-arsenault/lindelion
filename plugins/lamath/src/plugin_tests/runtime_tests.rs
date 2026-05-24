@@ -591,6 +591,7 @@ fn realtime_process_setup(block_size: usize) -> ProcessSetup {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assert_audio_plugin_process_block_does_not_allocate(
     label: &str,
     synth: &mut ResonatorSynth,

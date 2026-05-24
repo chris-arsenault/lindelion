@@ -190,6 +190,7 @@ mod tests {
         patch
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn assert_v2_surface_matches(patch: &ResonatorSynthPatch) {
         assert_eq!(
             patch.audio_input.mode,

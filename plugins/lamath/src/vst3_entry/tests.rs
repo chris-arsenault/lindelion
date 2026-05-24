@@ -1,3 +1,5 @@
+#![allow(clippy::cognitive_complexity)]
+
 use std::ptr;
 
 use super::*;
@@ -53,10 +55,7 @@ fn processor_exposes_optional_sidechain_audio_bus_and_midi_input() {
     assert_eq!(sidechain.channelCount, 2);
     assert_eq!(wide_string(&sidechain.name), "Sidechain Input");
     assert_eq!(sidechain.busType, BusTypes_::kAux as BusType);
-    assert_eq!(
-        sidechain.flags & BusInfo_::BusFlags_::kDefaultActive as u32,
-        0
-    );
+    assert_eq!(sidechain.flags & BusInfo_::BusFlags_::kDefaultActive, 0);
 
     let mut output_bus = unsafe { std::mem::zeroed::<BusInfo>() };
     assert_eq!(
@@ -66,7 +65,7 @@ fn processor_exposes_optional_sidechain_audio_bus_and_midi_input() {
     assert_eq!(output_bus.channelCount, 2);
     assert_eq!(wide_string(&output_bus.name), "Output");
     assert_eq!(output_bus.busType, BusTypes_::kMain as BusType);
-    assert_eq!(output_bus.flags, BusInfo_::BusFlags_::kDefaultActive as u32);
+    assert_eq!(output_bus.flags, BusInfo_::BusFlags_::kDefaultActive);
 
     let mut midi_bus = unsafe { std::mem::zeroed::<BusInfo>() };
     assert_eq!(

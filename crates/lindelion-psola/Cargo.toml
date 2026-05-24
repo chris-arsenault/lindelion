@@ -6,3 +6,12 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+criterion.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+
+[[bench]]
+name = "psola"
+harness = false

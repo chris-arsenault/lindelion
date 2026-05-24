@@ -484,6 +484,7 @@ impl<'a> ResonatorProcessor<'a> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_audio_note_event_in_runtime(
         event: AudioNoteEvent,
         runtime_patch: &RuntimePatch<'a>,
@@ -522,6 +523,7 @@ impl<'a> ResonatorProcessor<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn audio_note_on_in_runtime(
         event: AudioNoteEvent,
         runtime_patch: &RuntimePatch<'a>,
@@ -620,6 +622,7 @@ impl<'a> ResonatorProcessor<'a> {
         slot
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn note_on_with_latch_capture(
         &mut self,
         channel: u8,
@@ -669,6 +672,7 @@ impl<'a> ResonatorProcessor<'a> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_voice_in_runtime(
         runtime_patch: &RuntimePatch<'a>,
         selector: &mut ExcitationSelector,

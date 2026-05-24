@@ -13,9 +13,9 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test check macos-check build bundle-macos inspect-vst3 cache-dir
+.PHONY: ci fmt fmt-check clippy test check bench bench-smoke macos-check build bundle-macos inspect-vst3 cache-dir
 
-ci: check
+ci: check bench-smoke
 
 cache-dir:
 	@mkdir -p "$(CACHE_DIR)" "$(LINDELION_CARGO_TARGET_DIR)" "$(VST3_STAGING_DIR)"
@@ -34,6 +34,12 @@ clippy:
 
 test:
 	cargo test --workspace
+
+bench:
+	cargo bench --workspace --no-fail-fast
+
+bench-smoke:
+	cargo bench --workspace --no-run
 
 macos-check:
 	cargo check -p lamath --target aarch64-apple-darwin

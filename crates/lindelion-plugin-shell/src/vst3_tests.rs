@@ -102,31 +102,17 @@ fn bus_info_defaults_existing_constructors_to_main_active_buses() {
         Vst3BusInfo::event_input(1, "MIDI Input"),
     ];
 
-    let mut audio_input = unsafe { std::mem::zeroed::<BusInfo>() };
-    assert_eq!(
-        unsafe { fill_vst3_bus_info(&buses, audio(), input(), 0, &mut audio_input) },
-        kResultOk
-    );
+    let audio_input = filled_bus_info(&buses, audio(), input(), 0);
     assert_eq!(audio_input.channelCount, 2);
     assert_eq!(wide_string(&audio_input.name), "Input");
     assert_eq!(audio_input.busType, BusTypes_::kMain as BusType);
-    assert_eq!(
-        audio_input.flags,
-        BusInfo_::BusFlags_::kDefaultActive as u32
-    );
+    assert_eq!(audio_input.flags, BusInfo_::BusFlags_::kDefaultActive);
 
-    let mut event_input = unsafe { std::mem::zeroed::<BusInfo>() };
-    assert_eq!(
-        unsafe { fill_vst3_bus_info(&buses, event(), input(), 0, &mut event_input) },
-        kResultOk
-    );
+    let event_input = filled_bus_info(&buses, event(), input(), 0);
     assert_eq!(event_input.channelCount, 1);
     assert_eq!(wide_string(&event_input.name), "MIDI Input");
     assert_eq!(event_input.busType, BusTypes_::kMain as BusType);
-    assert_eq!(
-        event_input.flags,
-        BusInfo_::BusFlags_::kDefaultActive as u32
-    );
+    assert_eq!(event_input.flags, BusInfo_::BusFlags_::kDefaultActive);
 }
 
 #[test]
@@ -139,26 +125,29 @@ fn bus_info_supports_optional_aux_audio_input() {
     assert_eq!(vst3_bus_count(&buses, audio(), input()), 1);
     assert_eq!(vst3_bus_count(&buses, audio(), output()), 1);
 
-    let mut sidechain = unsafe { std::mem::zeroed::<BusInfo>() };
-    assert_eq!(
-        unsafe { fill_vst3_bus_info(&buses, audio(), input(), 0, &mut sidechain) },
-        kResultOk
-    );
+    let sidechain = filled_bus_info(&buses, audio(), input(), 0);
     assert_eq!(sidechain.channelCount, 2);
     assert_eq!(wide_string(&sidechain.name), "Sidechain Input");
     assert_eq!(sidechain.busType, BusTypes_::kAux as BusType);
-    assert_eq!(
-        sidechain.flags & BusInfo_::BusFlags_::kDefaultActive as u32,
-        0
-    );
+    assert_eq!(sidechain.flags & BusInfo_::BusFlags_::kDefaultActive, 0);
 
-    let mut output_bus = unsafe { std::mem::zeroed::<BusInfo>() };
+    let output_bus = filled_bus_info(&buses, audio(), output(), 0);
+    assert_eq!(output_bus.busType, BusTypes_::kMain as BusType);
+    assert_eq!(output_bus.flags, BusInfo_::BusFlags_::kDefaultActive);
+}
+
+fn filled_bus_info(
+    buses: &[Vst3BusInfo],
+    media_type: MediaType,
+    direction: BusDirection,
+    index: i32,
+) -> BusInfo {
+    let mut bus = unsafe { std::mem::zeroed::<BusInfo>() };
     assert_eq!(
-        unsafe { fill_vst3_bus_info(&buses, audio(), output(), 0, &mut output_bus) },
+        unsafe { fill_vst3_bus_info(buses, media_type, direction, index, &mut bus) },
         kResultOk
     );
-    assert_eq!(output_bus.busType, BusTypes_::kMain as BusType);
-    assert_eq!(output_bus.flags, BusInfo_::BusFlags_::kDefaultActive as u32);
+    bus
 }
 
 #[test]

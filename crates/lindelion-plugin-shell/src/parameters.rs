@@ -211,6 +211,7 @@ pub struct ParameterBinding<Path, ApplyKind, RuntimeTarget, Smoothing, Formatter
 impl<Path, ApplyKind, RuntimeTarget, Smoothing, Formatter, Editor>
     ParameterBinding<Path, ApplyKind, RuntimeTarget, Smoothing, Formatter, Editor>
 {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         info: ParameterInfo,
         path: Path,
@@ -848,6 +849,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn parameter_registry_finds_bindings_and_applies_patch_paths() {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum TestApply {

@@ -107,11 +107,7 @@ mod tests {
     #[test]
     fn assert_no_allocations_panics_on_allocation() {
         let result = std::panic::catch_unwind(|| {
-            assert_no_allocations("vec allocation", || {
-                let mut values = Vec::new();
-                values.push(1);
-                values
-            });
+            assert_no_allocations("vec allocation", || vec![1]);
         });
 
         assert!(result.is_err());

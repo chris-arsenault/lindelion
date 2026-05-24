@@ -38,6 +38,16 @@ pub use plugin::{
     SampleLoadError, SampleLoadReport,
 };
 
+#[doc(hidden)]
+pub use dsp::{
+    SelectedExcitations as BenchSelectedExcitations, SynthEngine as BenchSynthEngine,
+    VoiceTrigger as BenchVoiceTrigger,
+    modal::{ModalBank as BenchModalBank, ModalBankParams as BenchModalBankParams},
+    waveguide::{
+        WaveguideParams as BenchWaveguideParams, WaveguideResonator as BenchWaveguideResonator,
+    },
+};
+
 #[cfg(test)]
 pub(crate) use lindelion_test_allocator::assert_no_allocations;
 

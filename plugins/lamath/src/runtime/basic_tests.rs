@@ -21,6 +21,7 @@ fn processor_handles_note_events_and_renders_audio() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn processor_audio_path_does_not_allocate() {
     let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, test_patch());
     let mut left = vec![0.0; 512];
@@ -128,6 +129,7 @@ fn processor_audio_path_does_not_allocate() {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)]
 fn audio_note_events_use_voice_manager_and_release_by_owned_slot() {
     let mut patch = test_patch();
     patch.audio_input.mode = AudioInputMode::MidiPlusAudioCreatesNotes;

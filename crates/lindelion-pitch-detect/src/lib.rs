@@ -647,8 +647,8 @@ fn zero_crossing_pitch_hz(audio: &[f32], sample_rate: u32) -> Option<f32> {
     let mut last_crossing = 0.0;
     let mut crossing_count = 0usize;
 
-    for index in 1..audio.len() {
-        let current = finite_or(audio[index], 0.0);
+    for (index, sample) in audio.iter().copied().enumerate().skip(1) {
+        let current = finite_or(sample, 0.0);
         if previous <= 0.0 && current > 0.0 {
             let denominator = current - previous;
             let fraction = if denominator.abs() > f32::EPSILON {

@@ -21,21 +21,11 @@ pub const DEFAULT_ARTICULATION_SEARCH_MS: f32 = 45.0;
 pub const DEFAULT_ARTICULATION_GAP_RATIO: f32 = 0.35;
 pub const DEFAULT_RMS_CHUNK_SAMPLES: usize = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct PhraseAnalysisConfig {
     pub pitch_detection: PitchDetectionConfig,
     pub onset_detection: DetectionConfig,
     pub note_segmentation: NoteSegmentationConfig,
-}
-
-impl Default for PhraseAnalysisConfig {
-    fn default() -> Self {
-        Self {
-            pitch_detection: PitchDetectionConfig::default(),
-            onset_detection: DetectionConfig::default(),
-            note_segmentation: NoteSegmentationConfig::default(),
-        }
-    }
 }
 
 impl PhraseAnalysisConfig {

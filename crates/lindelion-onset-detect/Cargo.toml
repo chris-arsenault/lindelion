@@ -10,3 +10,12 @@ lindelion-dsp-utils.workspace = true
 lindelion-pitch-detect.workspace = true
 realfft.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+
+[[bench]]
+name = "onset"
+harness = false
