@@ -50,6 +50,7 @@ impl VoiceExpression {
         }
     }
 
+    #[cfg(test)]
     pub fn with_controls(
         velocity: f32,
         pitch_bend: f32,
@@ -76,11 +77,6 @@ impl VoiceExpression {
             mod_wheel: sanitize_unit(self.mod_wheel),
         }
     }
-
-    pub fn with_gate(mut self, gate: bool) -> Self {
-        self.stream.gate = gate;
-        self
-    }
 }
 
 impl Default for VoiceExpression {
@@ -93,6 +89,7 @@ impl Default for VoiceExpression {
 }
 
 impl<'a, 'p> VoiceTrigger<'a, 'p> {
+    #[cfg(test)]
     pub fn new(
         midi_note: u8,
         velocity: f32,
@@ -194,6 +191,7 @@ impl<'a> Voice<'a> {
         self.resonators.reset_series_conditioner(self.sample_rate);
     }
 
+    #[cfg(test)]
     pub fn render_add(&mut self, left: &mut [f32], right: &mut [f32]) {
         let len = left.len().min(right.len());
 
@@ -213,10 +211,7 @@ impl<'a> Voice<'a> {
         self.excitation.is_finished() && self.modulation.is_amp_idle()
     }
 
-    pub fn note_off(&mut self) {
-        self.modulation.note_off();
-    }
-
+    #[cfg(test)]
     pub fn set_pitch_bend(&mut self, pitch_bend_semitones: f32) {
         self.modulation.set_pitch_bend(pitch_bend_semitones);
     }
@@ -229,6 +224,7 @@ impl<'a> Voice<'a> {
         self.output.set_config(output);
     }
 
+    #[cfg(test)]
     pub fn set_waveguide_loop_gain(&mut self, loop_gain: f32) {
         self.resonators.set_base_waveguide_loop_gain(loop_gain);
         self.modulation.set_waveguide_loop_gain(loop_gain);

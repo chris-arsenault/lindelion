@@ -1,35 +1,73 @@
 pub(crate) fn parameter_binding(id: u32) -> Option<&'static ParameterBinding> {
-    PARAMETER_BINDINGS
-        .iter()
-        .find(|binding| binding.id() == ParameterId(id))
+    PARAMETER_REGISTRY.binding(id)
 }
 
 pub(crate) fn parameter_binding_by_index(index: usize) -> Option<&'static ParameterBinding> {
-    PARAMETER_BINDINGS.get(index)
+    PARAMETER_REGISTRY.binding_by_index(index)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const PARAMETER_BINDING_COUNT: usize = PARAMETER_BINDINGS.len();
+pub(crate) const PARAMETER_BINDING_COUNT: usize = PARAMETER_REGISTRY.len();
 
 pub(crate) fn parameter_binding_index(id: u32) -> Option<usize> {
-    PARAMETER_BINDINGS
-        .iter()
-        .position(|binding| binding.id() == ParameterId(id))
+    PARAMETER_REGISTRY.binding_index(id)
+}
+
+pub(crate) fn parameter_info(id: u32) -> Option<ParameterInfo> {
+    PARAMETER_REGISTRY.info(id)
+}
+
+pub(crate) fn parameter_default_normalized_value_by_index(index: usize) -> Option<f32> {
+    PARAMETER_REGISTRY.default_normalized_value_by_index(index)
+}
+
+pub(crate) fn normalized_parameter_value(id: u32, plain: f32) -> Option<f32> {
+    PARAMETER_REGISTRY.normalized_value(id, plain)
+}
+
+pub(crate) fn dispatch_parameter_normalized<Dispatcher>(
+    patch: &mut ResonatorSynthPatch,
+    id: u32,
+    normalized: f32,
+    dispatcher: &mut Dispatcher,
+) -> ParameterApplyKind
+where
+    Dispatcher:
+        ParameterApplyDispatcher<ResonatorSynthPatch, ParameterApplyKind, RuntimeParameterTarget>,
+{
+    PARAMETER_REGISTRY
+        .dispatch_normalized(patch, id, normalized, dispatcher)
+        .map(|outcome| outcome.apply_kind)
+        .unwrap_or(ParameterApplyKind::Ignored)
+}
+
+pub(crate) fn apply_parameter_normalized_for_controller(
+    patch: &mut ResonatorSynthPatch,
+    id: u32,
+    normalized: f32,
+) -> bool {
+    PARAMETER_REGISTRY
+        .apply_normalized(patch, id, normalized)
+        .is_some_and(|outcome| !matches!(outcome.apply_kind, ParameterApplyKind::Ignored))
 }
 
 #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 pub(crate) fn editor_parameter_bindings() -> impl Iterator<Item = &'static ParameterBinding> {
-    PARAMETER_BINDINGS
-        .iter()
-        .filter(|binding| binding.editor().is_some())
+    PARAMETER_REGISTRY.editor_bindings()
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn resonator_editor_parameter_bindings(
+) -> impl Iterator<Item = lindelion_ui::resonator_vizia::ResonatorEditorParameterBinding> {
+    PARAMETER_REGISTRY.projected_editor_bindings()
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn editor_parameter_binding(
     slot: EditorSurfaceSlot,
 ) -> Option<&'static ParameterBinding> {
-    PARAMETER_BINDINGS
-        .iter()
+    PARAMETER_REGISTRY
+        .editor_bindings()
         .find(|binding| binding.editor().is_some_and(|editor| editor.slot() == slot))
 }
 
@@ -44,8 +82,20 @@ pub(crate) fn editor_parameter_bindings_for_group(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn patch_parameter_plain_value(patch: &ResonatorSynthPatch, id: u32) -> Option<f32> {
-    parameter_binding(id).map(|binding| binding.plain_value(patch))
+    PARAMETER_REGISTRY.patch_plain_value(patch, id)
+}
+
+pub(crate) fn patch_parameter_normalized_value(
+    patch: &ResonatorSynthPatch,
+    id: u32,
+) -> Option<f32> {
+    PARAMETER_REGISTRY.normalized_patch_value(patch, id)
+}
+
+pub(crate) fn format_parameter_plain_value(id: u32, value: f32) -> String {
+    PARAMETER_REGISTRY.formatted_plain_value(id, value)
 }
 
 pub(crate) fn smoothed_runtime_parameter(
@@ -53,35 +103,18 @@ pub(crate) fn smoothed_runtime_parameter(
     sample_rate: f32,
     initial_plain: f32,
 ) -> Option<SmoothedAtomicParam> {
-    let binding = parameter_binding(id)?;
-    let spec = binding.smoothed_atomic_spec()?;
-    Some(SmoothedAtomicParam::with_initial_plain(
-        spec,
-        sample_rate,
-        initial_plain,
-    ))
+    PARAMETER_REGISTRY.smoothed_atomic_param(id, sample_rate, initial_plain)
 }
 
+#[cfg(test)]
 pub(crate) fn apply_parameter_plain(
     patch: &mut ResonatorSynthPatch,
     id: u32,
     value: f32,
 ) -> ParameterApplyKind {
-    let Some(binding) = parameter_binding(id) else {
-        return ParameterApplyKind::Ignored;
-    };
-    binding.apply_plain(patch, value)
-}
-
-pub(crate) fn apply_parameter_plain_for_controller(
-    patch: &mut ResonatorSynthPatch,
-    id: u32,
-    value: f32,
-) -> bool {
-    !matches!(
-        apply_parameter_plain(patch, id, value),
-        ParameterApplyKind::Ignored
-    )
+    PARAMETER_REGISTRY
+        .apply_plain(patch, id, value)
+        .unwrap_or(ParameterApplyKind::Ignored)
 }
 
 pub(crate) fn finite_value(value: f32, min: f32, max: f32, default: f32) -> f32 {
@@ -155,20 +188,6 @@ fn bool_plain(value: bool) -> f32 {
     if value { 1.0 } else { 0.0 }
 }
 
-fn stepped_index(value: f32, max: u32) -> u32 {
-    finite_value(value, 0.0, max as f32, 0.0).round() as u32
-}
-
-fn format_plain_value(value: f32) -> String {
-    if value.abs() >= 100.0 {
-        format!("{value:.0}")
-    } else if value.abs() >= 10.0 {
-        format!("{value:.1}")
-    } else {
-        format!("{value:.2}")
-    }
-}
-
 fn filter_mode_label_from_plain(value: f32) -> &'static str {
     FilterMode::label_from_plain(value)
 }
@@ -220,4 +239,3 @@ fn tempo_sync_label_from_plain(value: f32) -> &'static str {
 fn enabled_label_from_plain(value: f32) -> &'static str {
     if bool_from_plain(value) { "On" } else { "Off" }
 }
-

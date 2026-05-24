@@ -3,7 +3,7 @@ pub(super) struct ResonatorVst3Controller {
     pub(super) handler: Cell<*mut IComponentHandler>,
     pub(super) editor_summary: RefCell<EditorPatchSummary>,
     pub(super) patch: RefCell<ResonatorSynthPatch>,
-    peer: Cell<*mut IConnectionPoint>,
+    peer: Vst3PeerConnection,
     telemetry: Cell<EditorTelemetry>,
     library_samples: RefCell<Vec<SampleMetadata>>,
 }
@@ -23,7 +23,7 @@ impl ResonatorVst3Controller {
                 &crate::ResonatorSynthPatch::default(),
             )),
             patch: RefCell::new(ResonatorSynthPatch::default()),
-            peer: Cell::new(ptr::null_mut()),
+            peer: Vst3PeerConnection::new(),
             telemetry: Cell::new(EditorTelemetry::default()),
             library_samples: RefCell::new(Vec::new()),
         }
@@ -41,10 +41,12 @@ impl ResonatorVst3Controller {
         };
         self.values.set(values);
         if id != PITCH_BEND_PARAMETER_ID
-            && let Some(parameter) = parameter_by_id(id)
+            && crate::apply_parameter_normalized_for_controller(
+                &mut self.patch.borrow_mut(),
+                id,
+                values[index] as f32,
+            )
         {
-            let plain = parameter.range.denormalize(values[index] as f32);
-            crate::apply_parameter_plain_for_controller(&mut self.patch.borrow_mut(), id, plain);
             self.editor_summary
                 .replace(EditorPatchSummary::from_patch_and_library(
                     &self.patch.borrow(),
@@ -82,30 +84,18 @@ impl ResonatorVst3Controller {
     }
 
     fn send_patch_to_processor(&self) -> tresult {
-        let Some(peer) = (unsafe { ComRef::from_raw(self.peer.get()) }) else {
-            return kResultFalse;
-        };
         let payload_patch = processor_patch_from_controller_patch(&self.patch.borrow());
         let Ok(payload) = patch_io::to_toml_string(&payload_patch) else {
             return kResultFalse;
         };
-        let message = ResonatorPluginMessage::patch_update(payload.into_bytes()).into_com_message();
-        let Some(message) = message.to_com_ptr::<IMessage>() else {
-            return kResultFalse;
-        };
-        unsafe { peer.notify(message.as_ptr()) }
+        self.peer
+            .notify(ResonatorPluginMessage::patch_update(payload.into_bytes()).into_com_message())
     }
 
     pub(super) fn request_telemetry(&self) {
-        let Some(peer) = (unsafe { ComRef::from_raw(self.peer.get()) }) else {
-            return;
-        };
-        let message = ResonatorPluginMessage::telemetry_request().into_com_message();
-        if let Some(message) = message.to_com_ptr::<IMessage>() {
-            unsafe {
-                peer.notify(message.as_ptr());
-            }
-        }
+        let _ = self
+            .peer
+            .notify(ResonatorPluginMessage::telemetry_request().into_com_message());
     }
 
     pub(super) fn save_patch_to_path(&self, path: &Path) -> Result<(), patch_io::PatchIoError> {
@@ -189,15 +179,11 @@ impl ResonatorVst3Controller {
 
 impl IConnectionPointTrait for ResonatorVst3Controller {
     unsafe fn connect(&self, other: *mut IConnectionPoint) -> tresult {
-        self.peer.set(other);
-        kResultOk
+        self.peer.connect(other)
     }
 
     unsafe fn disconnect(&self, other: *mut IConnectionPoint) -> tresult {
-        if self.peer.get() == other {
-            self.peer.set(ptr::null_mut());
-        }
-        kResultOk
+        self.peer.disconnect(other)
     }
 
     unsafe fn notify(&self, message: *mut IMessage) -> tresult {

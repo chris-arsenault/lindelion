@@ -373,7 +373,10 @@ impl EditorParameterControl {
                 right_label,
                 width,
             } => Some((left_label, right_label, width)),
-            ResonatorEditorControlKind::Knob | ResonatorEditorControlKind::Slider => None,
+            ResonatorEditorControlKind::Knob
+            | ResonatorEditorControlKind::Slider { .. }
+            | ResonatorEditorControlKind::Segmented { .. }
+            | ResonatorEditorControlKind::Selector { .. } => None,
         }
     }
 }

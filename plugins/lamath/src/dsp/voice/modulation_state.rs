@@ -124,10 +124,7 @@ impl ModulationState {
         }
     }
 
-    pub(super) fn note_off(&mut self) {
-        self.set_expression(self.expression.with_gate(false));
-    }
-
+    #[cfg(test)]
     pub(super) fn set_pitch_bend(&mut self, pitch_bend_semitones: f32) {
         let mut expression = self.expression;
         expression.stream.pitch_bend = pitch_bend_semitones;
@@ -149,6 +146,7 @@ impl ModulationState {
         self.expression = expression;
     }
 
+    #[cfg(test)]
     pub(super) fn set_waveguide_loop_gain(&mut self, loop_gain: f32) {
         self.waveguide_loop_gain
             .set_target(WAVEGUIDE_LOOP_GAIN.clamp(loop_gain));

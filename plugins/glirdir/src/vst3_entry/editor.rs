@@ -137,9 +137,9 @@ unsafe fn parameter_value_text(_context: usize, parameter_id: u32, normalized: f
         .range
         .denormalize(normalized.clamp(0.0, 1.0) as f32);
     if parameter.units.is_empty() {
-        format!("{plain:.2}")
+        binding.format_plain_value(plain)
     } else {
-        format!("{plain:.2} {}", parameter.units)
+        format!("{} {}", binding.format_plain_value(plain), parameter.units)
     }
 }
 

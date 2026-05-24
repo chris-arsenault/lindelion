@@ -1,7 +1,8 @@
+use lindelion_plugin_shell::ExpressionSource;
 use lindelion_plugin_shell::{
-    ControlEvent, ExpressionSource, MIDI_CHANNEL_COUNT, MidiEvent, MidiExpressionControl,
-    MidiExpressionControlRoute, MidiExpressionMapping, MidiExpressionSource, MidiExpressionUpdate,
-    MidiVoiceExpression, NoteEvent, ParameterId,
+    ControlEvent, MIDI_CHANNEL_COUNT, MidiEvent, MidiExpressionControl, MidiExpressionControlRoute,
+    MidiExpressionMapping, MidiExpressionSource, MidiExpressionUpdate, MidiVoiceExpression,
+    NoteEvent, ParameterId,
 };
 
 use crate::{
@@ -99,13 +100,13 @@ pub static BUILTIN_EXCITATION: [f32; 64] = [
 ];
 
 #[derive(Debug, Clone)]
-pub struct RuntimePatch<'a> {
-    pub patch: ResonatorSynthPatch,
-    pub slots: [Option<RuntimeExcitationSlot<'a>>; MAX_EXCITATION_LAYERS],
+pub(crate) struct RuntimePatch<'a> {
+    patch: ResonatorSynthPatch,
+    slots: [Option<RuntimeExcitationSlot<'a>>; MAX_EXCITATION_LAYERS],
 }
 
 impl RuntimePatch<'static> {
-    pub fn with_builtin_excitation(patch: ResonatorSynthPatch) -> Self {
+    pub(crate) fn with_builtin_excitation(patch: ResonatorSynthPatch) -> Self {
         let slot_config = patch.excitation_slots.first().cloned().unwrap_or_default();
         Self {
             patch,
@@ -124,7 +125,7 @@ impl RuntimePatch<'static> {
 }
 
 impl<'a> RuntimePatch<'a> {
-    pub fn new(
+    pub(crate) fn new(
         patch: ResonatorSynthPatch,
         slots: [Option<RuntimeExcitationSlot<'a>>; MAX_EXCITATION_LAYERS],
     ) -> Self {
@@ -133,8 +134,7 @@ impl<'a> RuntimePatch<'a> {
 }
 
 #[derive(Debug)]
-pub struct ResonatorProcessor<'a> {
-    sample_rate: f32,
+pub(crate) struct ResonatorProcessor<'a> {
     runtime_patch: RuntimePatch<'a>,
     engine: SynthEngine<'a>,
     selector: ExcitationSelector,
@@ -142,16 +142,15 @@ pub struct ResonatorProcessor<'a> {
 }
 
 impl ResonatorProcessor<'static> {
-    pub fn with_builtin_excitation(sample_rate: f32, patch: ResonatorSynthPatch) -> Self {
+    pub(crate) fn with_builtin_excitation(sample_rate: f32, patch: ResonatorSynthPatch) -> Self {
         Self::new(sample_rate, RuntimePatch::with_builtin_excitation(patch))
     }
 }
 
 impl<'a> ResonatorProcessor<'a> {
-    pub fn new(sample_rate: f32, runtime_patch: RuntimePatch<'a>) -> Self {
+    pub(crate) fn new(sample_rate: f32, runtime_patch: RuntimePatch<'a>) -> Self {
         let polyphony = runtime_patch.patch.polyphony.clamp(1, 16) as usize;
         Self {
-            sample_rate,
             runtime_patch,
             engine: SynthEngine::new(sample_rate, polyphony),
             selector: ExcitationSelector::default(),
@@ -159,7 +158,7 @@ impl<'a> ResonatorProcessor<'a> {
         }
     }
 
-    pub fn process(&mut self, events: &[MidiEvent], left: &mut [f32], right: &mut [f32]) {
+    pub(crate) fn process(&mut self, events: &[MidiEvent], left: &mut [f32], right: &mut [f32]) {
         left.fill(0.0);
         right.fill(0.0);
 
@@ -172,7 +171,9 @@ impl<'a> ResonatorProcessor<'a> {
         self.engine.render_add(left, right);
     }
 
-    pub fn process_with_expression_source(
+    // Kept as the source-agnostic expression path; the current plugin process uses MIDI expression.
+    #[allow(dead_code)]
+    pub(crate) fn process_with_expression_source(
         &mut self,
         source: &mut impl ExpressionSource,
         events: &[MidiEvent],
@@ -183,26 +184,22 @@ impl<'a> ResonatorProcessor<'a> {
         right.fill(0.0);
 
         for event in events {
-            self.handle_event(*event);
+            self.handle_event_with_expression_source(*event, source);
         }
 
         self.engine.sync_expression_source(source);
         self.engine.render_add(left, right);
     }
 
-    pub fn active_voice_count(&self) -> usize {
+    pub(crate) fn active_voice_count(&self) -> usize {
         self.engine.active_voice_count()
     }
 
-    pub fn patch(&self) -> &ResonatorSynthPatch {
-        &self.runtime_patch.patch
-    }
-
-    pub fn replace_patch_config(&mut self, patch: ResonatorSynthPatch) {
+    pub(crate) fn replace_patch_config(&mut self, patch: ResonatorSynthPatch) {
         self.runtime_patch.patch = patch;
     }
 
-    pub fn set_parameter_plain(&mut self, parameter: ParameterId, value: f32) {
+    pub(crate) fn set_parameter_plain(&mut self, parameter: ParameterId, value: f32) {
         let Some(binding) = crate::parameter_binding(parameter.0) else {
             return;
         };
@@ -223,7 +220,7 @@ impl<'a> ResonatorProcessor<'a> {
         }
     }
 
-    pub fn set_pitch_bend_normalized(&mut self, normalized: f32) {
+    pub(crate) fn set_pitch_bend_normalized(&mut self, normalized: f32) {
         let range = self.pitch_bend_range();
         self.set_pitch_bend_semitones((normalized.clamp(0.0, 1.0) * 2.0 - 1.0) * range);
     }
@@ -234,7 +231,9 @@ impl<'a> ResonatorProcessor<'a> {
                 channel,
                 note,
                 velocity,
-            }) if velocity > 0.0 => self.note_on(channel, note, velocity),
+            }) if velocity > 0.0 => {
+                self.note_on(channel, note, velocity);
+            }
             MidiEvent::Note(NoteEvent::On {
                 channel,
                 note,
@@ -245,6 +244,34 @@ impl<'a> ResonatorProcessor<'a> {
                 note,
                 velocity: _,
             }) => self.note_off(channel, note),
+            MidiEvent::Control(control) => self.handle_control(control),
+        }
+    }
+
+    fn handle_event_with_expression_source(
+        &mut self,
+        event: MidiEvent,
+        source: &mut impl ExpressionSource,
+    ) {
+        match event {
+            MidiEvent::Note(NoteEvent::On {
+                channel,
+                note,
+                velocity,
+            }) if velocity > 0.0 => {
+                let slot = self.note_on(channel, note, velocity);
+                source.voice_started(slot as u32, channel, note, velocity);
+            }
+            MidiEvent::Note(NoteEvent::On {
+                channel,
+                note,
+                velocity: _,
+            })
+            | MidiEvent::Note(NoteEvent::Off {
+                channel,
+                note,
+                velocity: _,
+            }) => self.note_off_with_expression_source(channel, note, source),
             MidiEvent::Control(control) => self.handle_control(control),
         }
     }
@@ -268,7 +295,7 @@ impl<'a> ResonatorProcessor<'a> {
         }
     }
 
-    fn note_on(&mut self, channel: u8, note: u8, velocity: f32) {
+    fn note_on(&mut self, channel: u8, note: u8, velocity: f32) -> usize {
         let selected = self.selector.select(&self.runtime_patch.slots, velocity);
         let excitations = if selected.is_empty() {
             SelectedExcitations::from_single(&BUILTIN_EXCITATION, BUILTIN_EXCITATION_SAMPLE_RATE)
@@ -287,6 +314,7 @@ impl<'a> ResonatorProcessor<'a> {
         let slot = self.engine.note_on(trigger);
         self.expression_source
             .begin_voice(slot as u32, channel, velocity);
+        slot
     }
 
     fn note_off(&mut self, channel: u8, note: u8) {
@@ -296,6 +324,24 @@ impl<'a> ResonatorProcessor<'a> {
                 && self.engine.slot_note(index) == Some(note)
             {
                 self.expression_source.set_voice_gate(index as u32, false);
+            }
+        }
+        self.engine.note_off_for_channel(channel, note);
+    }
+
+    fn note_off_with_expression_source(
+        &mut self,
+        channel: u8,
+        note: u8,
+        source: &mut impl ExpressionSource,
+    ) {
+        let channel = sanitize_channel(channel);
+        for index in 0..self.engine.polyphony() {
+            if self.engine.slot_channel(index) == Some(channel)
+                && self.engine.slot_note(index) == Some(note)
+            {
+                self.expression_source.set_voice_gate(index as u32, false);
+                source.voice_released(index as u32);
             }
         }
         self.engine.note_off_for_channel(channel, note);
@@ -340,10 +386,6 @@ impl<'a> ResonatorProcessor<'a> {
             .abs()
             .max(0.0)
     }
-
-    pub const fn sample_rate(&self) -> f32 {
-        self.sample_rate
-    }
 }
 
 impl From<MidiVoiceExpression> for VoiceExpression {
@@ -360,7 +402,7 @@ fn sanitize_channel(channel: u8) -> u8 {
     channel.min((MIDI_CHANNEL_COUNT - 1) as u8)
 }
 
-pub fn runtime_slot_from_config<'a>(
+pub(crate) fn runtime_slot_from_config<'a>(
     config: &ExcitationSlot,
     samples: &'a [f32],
     sample_rate: f32,

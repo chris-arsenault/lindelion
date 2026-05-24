@@ -37,6 +37,7 @@ pub struct ModalBank {
 }
 
 impl ModalBank {
+    #[cfg(test)]
     pub fn new(sample_rate: f32, params: ModalBankParams) -> Self {
         Self::with_capacity(sample_rate, params.mode_count.clamp(1, 256), params)
     }
@@ -192,10 +193,6 @@ impl ModalMode {
         self.coefficient = 2.0 * radius * omega.cos();
         self.radius_squared = radius * radius;
         self.gain = gain;
-    }
-
-    pub const fn frequency_hz(&self) -> f32 {
-        self.frequency_hz
     }
 
     pub fn process_sample(&mut self, input: f32) -> f32 {

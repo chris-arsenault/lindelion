@@ -13,8 +13,11 @@ pub use events::{
     MidiExpressionUpdate, MidiVoiceExpression, NoteEvent,
 };
 pub use parameters::{
-    AtomicParameter, ParameterFlags, ParameterId, ParameterInfo, ParameterRange,
-    PlainToSmoothedValue, SmoothedAtomicParam, SmoothedAtomicParamSpec,
+    AtomicParameter, ParameterApplyDispatcher, ParameterApplyOutcome, ParameterBinding,
+    ParameterBindingMetadata, ParameterCodec, ParameterEditorBindingProjection, ParameterFlags,
+    ParameterFormatter, ParameterId, ParameterInfo, ParameterPatchPath, ParameterRange,
+    ParameterRegistry, ParameterSmoothingSpec, ParameterValueFormatter, PlainToSmoothedValue,
+    SmoothedAtomicParam, SmoothedAtomicParamSpec, format_plain_value, stepped_parameter_index,
 };
 pub use patch_io::{NoPatchMigration, TomlPatchError, TomlPatchFormat, TomlPatchMigration};
 pub use process::{

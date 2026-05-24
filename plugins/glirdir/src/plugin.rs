@@ -1,18 +1,18 @@
 use lindelion_plugin_shell::{
-    AudioPlugin, ParameterId, ParameterInfo, PluginDescriptor, PluginState, ProcessContext,
-    ProcessSetup,
+    AudioPlugin, ParameterApplyDispatcher, ParameterApplyOutcome, ParameterId, ParameterInfo,
+    PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
 };
 
 use crate::{
+    CaptureEngine, CaptureEvent,
     analysis::AnalysisResult,
     analysis_job::{
         AnalysisJob, AnalysisJobResult, AnalysisResultCache, AnalysisSequence, AnalysisStatus,
         RequantizeJob,
     },
     audition::AuditionEngine,
-    capture::{CaptureEngine, CaptureEvent},
-    parameters::{PARAMETERS, ParameterApplyKind, apply_parameter_plain, parameter_binding},
-    patch::{CaptureState, GlirdirPatch},
+    parameters::{PARAMETERS, ParameterApplyKind, dispatch_parameter_normalized},
+    patch::{CaptureState, GlirdirPatch, apply_scratchpad_midi_context},
     patch_io,
 };
 
@@ -40,6 +40,80 @@ impl Default for Glirdir {
             audition: AuditionEngine::new(setup.sample_rate as f32),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParameterDispatchMode {
+    Immediate,
+    Deferred,
+}
+
+struct GlirdirParameterApplyDispatcher<'a> {
+    analysis_cache: &'a mut AnalysisResultCache,
+    next_analysis_sequence: &'a mut AnalysisSequence,
+    audition: &'a mut AuditionEngine,
+    mode: ParameterDispatchMode,
+}
+
+impl GlirdirParameterApplyDispatcher<'_> {
+    fn requantize(&mut self, patch: &mut GlirdirPatch) {
+        refresh_quantize_context(patch);
+        self.analysis_cache.requantize_current(&patch.quantize);
+        if patch.audition.live_edit {
+            self.audition.resume();
+        }
+    }
+}
+
+impl ParameterApplyDispatcher<GlirdirPatch, ParameterApplyKind, ()>
+    for GlirdirParameterApplyDispatcher<'_>
+{
+    fn handle_parameter_apply(
+        &mut self,
+        patch: &mut GlirdirPatch,
+        outcome: ParameterApplyOutcome<ParameterApplyKind, ()>,
+    ) {
+        match (self.mode, outcome.apply_kind) {
+            (_, ParameterApplyKind::Analysis) => mark_scratchpad_pending_or_idle(
+                self.analysis_cache,
+                self.next_analysis_sequence,
+                patch,
+            ),
+            (ParameterDispatchMode::Immediate, ParameterApplyKind::Quantize) => {
+                self.requantize(patch);
+            }
+            (ParameterDispatchMode::Deferred, ParameterApplyKind::Quantize) => {
+                refresh_quantize_context(patch);
+            }
+            (_, ParameterApplyKind::Audition) => self.audition.set_settings(patch.audition),
+            (_, ParameterApplyKind::Capture | ParameterApplyKind::Ignored) => {}
+        }
+    }
+}
+
+fn refresh_quantize_context(patch: &mut GlirdirPatch) {
+    if let Some(scratchpad) = patch.scratchpad.as_ref() {
+        apply_scratchpad_midi_context(scratchpad, &mut patch.quantize);
+    }
+}
+
+fn mark_scratchpad_pending_or_idle(
+    analysis_cache: &mut AnalysisResultCache,
+    next_analysis_sequence: &mut AnalysisSequence,
+    patch: &mut GlirdirPatch,
+) {
+    let sequence = advance_analysis_sequence(next_analysis_sequence);
+    if let Some(scratchpad) = patch.scratchpad.as_ref() {
+        apply_scratchpad_midi_context(scratchpad, &mut patch.quantize);
+        analysis_cache.mark_captured_pending_analysis(sequence);
+    } else {
+        analysis_cache.mark_idle(sequence);
+    }
+}
+
+fn advance_analysis_sequence(next_analysis_sequence: &mut AnalysisSequence) -> AnalysisSequence {
+    *next_analysis_sequence = (*next_analysis_sequence).saturating_add(1);
+    *next_analysis_sequence
 }
 
 impl Glirdir {
@@ -101,7 +175,7 @@ impl Glirdir {
 
     pub fn request_analysis_job(&mut self) -> Option<AnalysisJob> {
         let scratchpad = self.patch.scratchpad.as_ref()?.clone();
-        scratchpad.apply_midi_context(&mut self.patch.quantize);
+        apply_scratchpad_midi_context(&scratchpad, &mut self.patch.quantize);
         let sequence = self.advance_analysis_sequence();
         let job = AnalysisJob::new(
             sequence,
@@ -125,8 +199,7 @@ impl Glirdir {
     }
 
     pub fn set_parameter_normalized(&mut self, id: ParameterId, normalized: f32) {
-        let apply = self.apply_parameter_normalized(id, normalized);
-        self.handle_parameter_apply(apply);
+        self.dispatch_parameter_normalized(id, normalized, ParameterDispatchMode::Immediate);
     }
 
     pub(crate) fn set_parameter_normalized_deferred(
@@ -134,9 +207,7 @@ impl Glirdir {
         id: ParameterId,
         normalized: f32,
     ) -> ParameterApplyKind {
-        let apply = self.apply_parameter_normalized(id, normalized);
-        self.handle_deferred_parameter_apply(apply);
-        apply
+        self.dispatch_parameter_normalized(id, normalized, ParameterDispatchMode::Deferred)
     }
 
     pub(crate) fn request_requantize_job(&mut self) -> Option<RequantizeJob> {
@@ -148,7 +219,7 @@ impl Glirdir {
             .map(|scratchpad| scratchpad.sample_rate)
             .unwrap_or(result.pitch_contour.source_sample_rate);
         let sequence = self.advance_analysis_sequence();
-        self.refresh_quantize_context();
+        refresh_quantize_context(&mut self.patch);
         let job = RequantizeJob::new(sequence, result, self.patch.quantize.clone(), sample_rate);
         self.analysis_cache.mark_requantizing(sequence);
         Some(job)
@@ -158,61 +229,26 @@ impl Glirdir {
         self.patch = patch;
         self.capture.clear();
         self.audition.set_settings(self.patch.audition);
-        self.mark_scratchpad_pending_or_idle();
+        mark_scratchpad_pending_or_idle(
+            &mut self.analysis_cache,
+            &mut self.next_analysis_sequence,
+            &mut self.patch,
+        );
     }
 
-    fn apply_parameter_normalized(
+    fn dispatch_parameter_normalized(
         &mut self,
         id: ParameterId,
         normalized: f32,
+        mode: ParameterDispatchMode,
     ) -> ParameterApplyKind {
-        let Some(binding) = parameter_binding(id.0) else {
-            return ParameterApplyKind::Ignored;
+        let mut dispatcher = GlirdirParameterApplyDispatcher {
+            analysis_cache: &mut self.analysis_cache,
+            next_analysis_sequence: &mut self.next_analysis_sequence,
+            audition: &mut self.audition,
+            mode,
         };
-        let plain = binding.info().range.denormalize(normalized);
-        apply_parameter_plain(&mut self.patch, id.0, plain)
-    }
-
-    fn handle_parameter_apply(&mut self, apply: ParameterApplyKind) {
-        match apply {
-            ParameterApplyKind::Analysis => self.mark_scratchpad_pending_or_idle(),
-            ParameterApplyKind::Quantize => self.requantize(),
-            ParameterApplyKind::Audition => self.audition.set_settings(self.patch.audition),
-            ParameterApplyKind::Capture | ParameterApplyKind::Ignored => {}
-        }
-    }
-
-    fn handle_deferred_parameter_apply(&mut self, apply: ParameterApplyKind) {
-        match apply {
-            ParameterApplyKind::Analysis => self.mark_scratchpad_pending_or_idle(),
-            ParameterApplyKind::Quantize => self.refresh_quantize_context(),
-            ParameterApplyKind::Audition => self.audition.set_settings(self.patch.audition),
-            ParameterApplyKind::Capture | ParameterApplyKind::Ignored => {}
-        }
-    }
-
-    fn mark_scratchpad_pending_or_idle(&mut self) {
-        let sequence = self.advance_analysis_sequence();
-        if let Some(scratchpad) = self.patch.scratchpad.as_ref() {
-            scratchpad.apply_midi_context(&mut self.patch.quantize);
-            self.analysis_cache.mark_captured_pending_analysis(sequence);
-        } else {
-            self.analysis_cache.mark_idle(sequence);
-        }
-    }
-
-    fn requantize(&mut self) {
-        self.refresh_quantize_context();
-        self.analysis_cache.requantize_current(&self.patch.quantize);
-        if self.patch.audition.live_edit {
-            self.audition.resume();
-        }
-    }
-
-    fn refresh_quantize_context(&mut self) {
-        if let Some(scratchpad) = self.patch.scratchpad.as_ref() {
-            scratchpad.apply_midi_context(&mut self.patch.quantize);
-        }
+        dispatch_parameter_normalized(&mut self.patch, id.0, normalized, &mut dispatcher)
     }
 
     fn advance_analysis_sequence(&mut self) -> AnalysisSequence {

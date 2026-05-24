@@ -338,7 +338,7 @@ fn guard_state_payload_len(bytes: usize) -> Result<(), PatchIoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CaptureBars, ScratchpadAudio, ScratchpadMetadata};
+    use crate::{ScratchpadAudio, ScratchpadMetadata};
 
     #[test]
     fn patch_toml_roundtrips_through_shared_format() {
@@ -359,7 +359,7 @@ mod tests {
     fn plugin_state_roundtrips() {
         let patch = GlirdirPatch {
             capture: crate::CaptureSettings {
-                bars: CaptureBars::Sixteen,
+                bars: 16,
                 ..crate::CaptureSettings::default()
             },
             scratchpad: Some(ScratchpadAudio::with_metadata(
@@ -373,7 +373,7 @@ mod tests {
         let state = to_plugin_state(&patch).unwrap();
         let restored = from_plugin_state(state).unwrap();
 
-        assert_eq!(restored.capture.bars, CaptureBars::Sixteen);
+        assert_eq!(restored.capture.bars, 16);
         let scratchpad = restored.scratchpad.expect("scratchpad should roundtrip");
         assert_eq!(scratchpad.sample_rate, 44_100);
         assert_eq!(scratchpad.metadata.bpm, 135);
@@ -408,10 +408,10 @@ mod tests {
         let state = to_plugin_state(&patch).unwrap();
         let (patch_toml, scratchpad_payload) = state_payload_parts(&state.payload).unwrap();
         let patch_toml = std::str::from_utf8(patch_toml).unwrap();
+        let patch_value = toml::from_str::<toml::Value>(patch_toml).unwrap();
 
         assert_eq!(state.format_version, PLUGIN_STATE_FORMAT_VERSION);
-        assert!(!patch_toml.contains("scratchpad"));
-        assert!(!patch_toml.contains("samples"));
+        assert!(patch_value.get("scratchpad").is_none());
         assert!(!scratchpad_payload.is_empty());
     }
 

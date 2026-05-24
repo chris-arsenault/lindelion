@@ -1,18 +1,17 @@
-use std::{
-    cell::{Cell, RefCell},
-    ptr,
-};
+use std::cell::{Cell, RefCell};
 
 use lindelion_plugin_shell::{
-    AudioPlugin, ParameterId, ProcessContext as ShellProcessContext, ProcessMode,
+    AudioPlugin, ParameterId, ProcessContext as ShellProcessContext,
     ProcessSetup as ShellProcessSetup,
     vst3::{
-        audio_input_buffer_from_vst_process_data, clear_vst_outputs, copy_wstring,
-        read_plugin_state_from_stream, stereo_output_buffers_from_vst_process_data,
-        transport_context_from_vst_process_context, write_plugin_state_to_stream,
+        Vst3BusInfo, Vst3PeerConnection, audio_input_buffer_from_vst_process_data,
+        can_process_32_bit_sample_size, clear_vst_outputs, fill_vst3_bus_info,
+        for_each_vst3_parameter_change, process_setup_from_vst, read_plugin_state_from_stream,
+        stereo_output_buffers_from_vst_process_data, transport_context_from_vst_process_context,
+        vst3_bus_count, write_plugin_state_to_stream,
     },
 };
-use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
+use vst3::{Class, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{
     AnalysisStatus, Glirdir, GlirdirWorker, GlirdirWorkerQueue, GlirdirWorkerResult,
@@ -23,13 +22,18 @@ use crate::{
 
 use super::{GlirdirPluginMessage, GlirdirStatusPayload, GlirdirVst3Controller};
 
+const GLIRDIR_BUSES: [Vst3BusInfo; 2] = [
+    Vst3BusInfo::audio_input(2, "Input"),
+    Vst3BusInfo::audio_output(2, "Output"),
+];
+
 pub(super) struct GlirdirVst3Processor {
     pub(super) plugin: RefCell<Glirdir>,
     worker: RefCell<Box<dyn GlirdirWorkerQueue>>,
     pending_requantize: Cell<bool>,
     setup: Cell<ShellProcessSetup>,
     input_arrangement: Cell<SpeakerArrangement>,
-    peer: Cell<*mut IConnectionPoint>,
+    peer: Vst3PeerConnection,
 }
 
 impl Class for GlirdirVst3Processor {
@@ -58,37 +62,23 @@ impl GlirdirVst3Processor {
             pending_requantize: Cell::new(false),
             setup: Cell::new(setup),
             input_arrangement: Cell::new(SpeakerArr::kStereo),
-            peer: Cell::new(ptr::null_mut()),
+            peer: Vst3PeerConnection::new(),
         }
     }
 
     fn apply_parameter_changes(&self, changes: *mut IParameterChanges) {
-        let Some(changes) = (unsafe { ComRef::from_raw(changes) }) else {
-            return;
-        };
-
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
             return;
         };
 
-        for index in 0..unsafe { changes.getParameterCount() } {
-            let Some(queue) = (unsafe { ComRef::from_raw(changes.getParameterData(index)) }) else {
-                continue;
-            };
-            let point_count = unsafe { queue.getPointCount() };
-            if point_count <= 0 {
-                continue;
-            }
-
-            let mut sample_offset = 0;
-            let mut value = 0.0;
-            let result = unsafe { queue.getPoint(point_count - 1, &mut sample_offset, &mut value) };
-            if result == kResultTrue {
-                let parameter_id = unsafe { queue.getParameterId() };
-                let apply = plugin
-                    .set_parameter_normalized_deferred(ParameterId(parameter_id), value as f32);
+        unsafe {
+            for_each_vst3_parameter_change(changes, |change| {
+                let apply = plugin.set_parameter_normalized_deferred(
+                    ParameterId(change.id),
+                    change.normalized_value as f32,
+                );
                 self.track_deferred_parameter_apply(apply);
-            }
+            });
         }
     }
 
@@ -188,11 +178,7 @@ impl IComponentTrait for GlirdirVst3Processor {
     }
 
     unsafe fn getBusCount(&self, media_type: MediaType, dir: BusDirection) -> i32 {
-        match (media_type as MediaTypes, dir as BusDirections) {
-            (MediaTypes_::kAudio, BusDirections_::kInput) => 1,
-            (MediaTypes_::kAudio, BusDirections_::kOutput) => 1,
-            _ => 0,
-        }
+        vst3_bus_count(&GLIRDIR_BUSES, media_type, dir)
     }
 
     unsafe fn getBusInfo(
@@ -202,21 +188,7 @@ impl IComponentTrait for GlirdirVst3Processor {
         index: i32,
         bus: *mut BusInfo,
     ) -> tresult {
-        if bus.is_null() || index != 0 {
-            return kInvalidArgument;
-        }
-
-        match (media_type as MediaTypes, dir as BusDirections) {
-            (MediaTypes_::kAudio, BusDirections_::kInput) => {
-                fill_bus_info(&mut *bus, media_type, dir, 2, "Input");
-                kResultOk
-            }
-            (MediaTypes_::kAudio, BusDirections_::kOutput) => {
-                fill_bus_info(&mut *bus, media_type, dir, 2, "Output");
-                kResultOk
-            }
-            _ => kInvalidArgument,
-        }
+        fill_vst3_bus_info(&GLIRDIR_BUSES, media_type, dir, index, bus)
     }
 
     unsafe fn getRoutingInfo(
@@ -303,11 +275,7 @@ impl IAudioProcessorTrait for GlirdirVst3Processor {
     }
 
     unsafe fn canProcessSampleSize(&self, symbolic_sample_size: i32) -> tresult {
-        match symbolic_sample_size as SymbolicSampleSizes {
-            SymbolicSampleSizes_::kSample32 => kResultOk,
-            SymbolicSampleSizes_::kSample64 => kNotImplemented,
-            _ => kInvalidArgument,
-        }
+        can_process_32_bit_sample_size(symbolic_sample_size)
     }
 
     unsafe fn getLatencySamples(&self) -> u32 {
@@ -319,17 +287,7 @@ impl IAudioProcessorTrait for GlirdirVst3Processor {
             return kInvalidArgument;
         }
 
-        let setup = &*setup;
-        let mode = if setup.processMode as ProcessModes == ProcessModes_::kOffline {
-            ProcessMode::Offline
-        } else {
-            ProcessMode::Realtime
-        };
-        let shell_setup = ShellProcessSetup {
-            sample_rate: setup.sampleRate,
-            max_block_size: setup.maxSamplesPerBlock.max(1) as usize,
-            mode,
-        };
+        let shell_setup = process_setup_from_vst(&*setup);
         self.setup.set(shell_setup);
 
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
@@ -394,15 +352,11 @@ impl IProcessContextRequirementsTrait for GlirdirVst3Processor {
 
 impl IConnectionPointTrait for GlirdirVst3Processor {
     unsafe fn connect(&self, other: *mut IConnectionPoint) -> tresult {
-        self.peer.set(other);
-        kResultOk
+        self.peer.connect(other)
     }
 
     unsafe fn disconnect(&self, other: *mut IConnectionPoint) -> tresult {
-        if self.peer.get() == other {
-            self.peer.set(ptr::null_mut());
-        }
-        kResultOk
+        self.peer.disconnect(other)
     }
 
     unsafe fn notify(&self, message: *mut IMessage) -> tresult {
@@ -453,19 +407,4 @@ impl IConnectionPointTrait for GlirdirVst3Processor {
 
 fn input_arrangement_supported(arrangement: SpeakerArrangement) -> bool {
     matches!(arrangement, SpeakerArr::kMono | SpeakerArr::kStereo)
-}
-
-fn fill_bus_info(
-    bus: &mut BusInfo,
-    media_type: MediaType,
-    direction: BusDirection,
-    channel_count: i32,
-    name: &str,
-) {
-    bus.mediaType = media_type;
-    bus.direction = direction;
-    bus.channelCount = channel_count;
-    copy_wstring(name, &mut bus.name);
-    bus.busType = BusTypes_::kMain as BusType;
-    bus.flags = BusInfo_::BusFlags_::kDefaultActive;
 }

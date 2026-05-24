@@ -20,29 +20,6 @@ pub enum WaveguideStyle {
 
 impl WaveguideStyle {
     pub const ALL: [Self; 2] = [Self::String, Self::Tube];
-
-    pub fn from_plain(value: f32) -> Self {
-        let index = if value.is_finite() {
-            value.round().clamp(0.0, (Self::ALL.len() - 1) as f32) as usize
-        } else {
-            0
-        };
-        Self::ALL[index]
-    }
-
-    pub const fn plain(self) -> f32 {
-        match self {
-            Self::String => 0.0,
-            Self::Tube => 1.0,
-        }
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::String => "String",
-            Self::Tube => "Tube",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

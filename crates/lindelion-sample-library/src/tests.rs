@@ -7,6 +7,61 @@ use std::{
 };
 
 #[test]
+fn owned_mono_audio_buffer_sanitizes_samples_and_rate() {
+    let buffer = OwnedMonoAudioBuffer::new(vec![0.25, f32::NAN, f32::INFINITY], f32::NAN);
+
+    assert_eq!(buffer.sample_rate, DEFAULT_AUDIO_SAMPLE_RATE_HZ);
+    assert_eq!(buffer.samples, vec![0.25, 0.0, 0.0]);
+    assert_eq!(
+        OwnedMonoAudioBuffer::new(vec![0.0], 768_000.0).runtime_sample_rate(),
+        MAX_RUNTIME_AUDIO_SAMPLE_RATE_HZ
+    );
+}
+
+#[test]
+fn referenced_sample_loader_resolves_slots_and_reports_missing_samples() {
+    struct StaticLibrary {
+        found_path: PathBuf,
+    }
+
+    impl SampleLibrary for StaticLibrary {
+        type Error = ();
+
+        fn resolve(&self, reference: &SampleReference) -> Result<SampleResolution, Self::Error> {
+            Ok(if reference.blake3_hash.0 == "found" {
+                SampleResolution::Found(self.found_path.clone())
+            } else {
+                SampleResolution::Missing(reference.clone())
+            })
+        }
+
+        fn ingest(&mut self, _path: PathBuf) -> Result<SampleMetadata, Self::Error> {
+            unimplemented!("test library only resolves samples")
+        }
+    }
+
+    let root = temp_root("referenced-loader");
+    let sample_path = root.join("source.wav");
+    write_test_wav(&sample_path, &[0.0, 0.5, -0.5]);
+    let found = SampleReference::new("found", &sample_path);
+    let missing = SampleReference::new("missing", root.join("missing.wav"));
+    let library = StaticLibrary {
+        found_path: sample_path,
+    };
+
+    let (buffers, report) =
+        load_referenced_mono_audio_from_library::<4, _, _>([(1, &found), (3, &missing)], &library)
+            .unwrap();
+
+    assert!(buffers[0].is_none());
+    assert_eq!(buffers[1].as_ref().unwrap().sample_rate, 48_000);
+    assert_eq!(buffers[1].as_ref().unwrap().samples.len(), 3);
+    assert!(buffers[3].is_none());
+    assert_eq!(report.loaded_slots, 1);
+    assert_eq!(report.missing_samples, vec![missing]);
+}
+
+#[test]
 fn file_library_ingests_hashes_indexes_and_previews_wav_samples() {
     let root = temp_root("ingest");
     let source = root.join("source.wav");

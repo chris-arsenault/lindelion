@@ -48,7 +48,7 @@ impl RuntimeSmoothing {
         }
     }
 
-    pub(crate) fn spec(self, info: ParameterInfo) -> SmoothedAtomicParamSpec {
+    fn spec(self, info: ParameterInfo) -> SmoothedAtomicParamSpec {
         match self {
             Self::Identity {
                 smoothing_ms,
@@ -62,76 +62,9 @@ impl RuntimeSmoothing {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ParameterBinding {
-    info: ParameterInfo,
-    path: ParameterPath,
-    apply_kind: ParameterApplyKind,
-    runtime_target: RuntimeParameterTarget,
-    smoothing: Option<RuntimeSmoothing>,
-    formatter: ParameterFormatter,
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
-    editor: Option<EditorParameterBinding>,
-}
-
-impl ParameterBinding {
-    #[allow(clippy::too_many_arguments)]
-    const fn new(
-        info: ParameterInfo,
-        path: ParameterPath,
-        apply_kind: ParameterApplyKind,
-        runtime_target: RuntimeParameterTarget,
-        smoothing: Option<RuntimeSmoothing>,
-        formatter: ParameterFormatter,
-        editor: Option<EditorParameterBinding>,
-    ) -> Self {
-        Self {
-            info,
-            path,
-            apply_kind,
-            runtime_target,
-            smoothing,
-            formatter,
-            editor,
-        }
-    }
-
-    pub(crate) const fn info(self) -> ParameterInfo {
-        self.info
-    }
-
-    pub(crate) const fn id(self) -> ParameterId {
-        self.info.id
-    }
-
-    pub(crate) const fn runtime_target(self) -> RuntimeParameterTarget {
-        self.runtime_target
-    }
-
-    pub(crate) fn smoothed_atomic_spec(self) -> Option<SmoothedAtomicParamSpec> {
-        self.smoothing.map(|smoothing| smoothing.spec(self.info))
-    }
-
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
-    pub(crate) const fn editor(self) -> Option<EditorParameterBinding> {
-        self.editor
-    }
-
-    pub(crate) fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
-        self.path.plain_value(patch)
-    }
-
-    pub(crate) fn apply_plain(
-        self,
-        patch: &mut ResonatorSynthPatch,
-        value: f32,
-    ) -> ParameterApplyKind {
-        self.path.apply_plain(patch, value);
-        self.apply_kind
-    }
-
-    pub(crate) fn format_plain_value(self, value: f32) -> String {
-        self.formatter.format(value)
+impl ParameterSmoothingSpec for RuntimeSmoothing {
+    fn smoothed_atomic_spec(self, info: ParameterInfo) -> SmoothedAtomicParamSpec {
+        self.spec(info)
     }
 }
 
@@ -176,7 +109,7 @@ impl EditorParameterBinding {
             group,
             order,
             label,
-            control: EditorControlKind::Slider,
+            control: EditorControlKind::slider(),
         }
     }
 
@@ -229,6 +162,24 @@ impl EditorParameterBinding {
     }
 }
 
+impl
+    ParameterEditorBindingProjection<
+        lindelion_ui::resonator_vizia::ResonatorEditorParameterBinding,
+    > for EditorParameterBinding
+{
+    fn project_editor_binding(
+        self,
+        id: ParameterId,
+    ) -> lindelion_ui::resonator_vizia::ResonatorEditorParameterBinding {
+        lindelion_ui::resonator_vizia::ResonatorEditorParameterBinding::new(
+            id.0,
+            self.slot,
+            self.label,
+            self.control,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditorSurfaceGroup {
     ResonatorHeader,
@@ -257,19 +208,4 @@ impl EditorSurfaceGroup {
         Self::OutputEnvelope,
         Self::OutputModulation,
     ];
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ParameterFormatter {
-    Plain,
-    Label(fn(f32) -> &'static str),
-}
-
-impl ParameterFormatter {
-    fn format(self, value: f32) -> String {
-        match self {
-            Self::Plain => format_plain_value(value),
-            Self::Label(label) => label(value).to_string(),
-        }
-    }
 }

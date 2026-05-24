@@ -9,19 +9,20 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use lindelion_midi::{Scale, SnapMode, TimingGrid};
 use lindelion_plugin_shell::vst3::{
-    copy_wstring, len_wstring, read_plugin_state_from_stream, write_plugin_state_to_stream,
+    Vst3PeerConnection, copy_wstring, len_wstring, read_plugin_state_from_stream,
+    write_plugin_state_to_stream,
 };
 use lindelion_ui::glirdir_vizia::GlirdirEditorMidiDrag;
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{
-    GlirdirPatch, PARAMETERS, apply_parameter_plain,
+    GlirdirPatch, PARAMETER_BINDING_COUNT, apply_parameter_normalized,
+    denormalized_parameter_value, format_parameter_plain_value,
     midi_export::{MidiExportPayload, empty_midi_export},
-    parameter_binding,
-    patch::SyncMode,
-    patch_io,
+    normalized_parameter_value as registry_normalized_parameter_value, parameter_binding_by_index,
+    parameter_binding_index, parameter_default_normalized_value_by_index, parameter_info, patch_io,
+    patch_parameter_normalized_value,
     sample_library::{SampleLibrarySavePayload, SampleLibrarySaveStatus},
 };
 
@@ -38,7 +39,7 @@ pub(super) struct GlirdirVst3Controller {
     pub(super) last_midi_export: RefCell<Option<MidiExportPayload>>,
     pub(super) midi_drag_files: RefCell<VecDeque<PathBuf>>,
     handler: Cell<*mut IComponentHandler>,
-    peer: Cell<*mut IConnectionPoint>,
+    peer: Vst3PeerConnection,
 }
 
 impl Class for GlirdirVst3Controller {
@@ -57,7 +58,7 @@ impl GlirdirVst3Controller {
             last_midi_export: RefCell::new(None),
             midi_drag_files: RefCell::new(VecDeque::new()),
             handler: Cell::new(ptr::null_mut()),
-            peer: Cell::new(ptr::null_mut()),
+            peer: Vst3PeerConnection::new(),
         }
     }
 
@@ -69,9 +70,10 @@ impl GlirdirVst3Controller {
         values[index] = sanitize_normalized(normalized, default_parameter_values()[index]);
         self.values.set(values);
 
-        if let Some(parameter) = parameter_by_id(id) {
-            let plain = parameter.range.denormalize(values[index] as f32);
-            apply_parameter_plain(&mut self.patch.borrow_mut(), id, plain);
+        if !matches!(
+            apply_parameter_normalized(&mut self.patch.borrow_mut(), id, values[index] as f32),
+            crate::ParameterApplyKind::Ignored
+        ) {
             self.clear_midi_export_cache();
         }
         kResultOk
@@ -175,14 +177,7 @@ impl GlirdirVst3Controller {
     }
 
     fn notify_peer(&self, message: GlirdirPluginMessage) -> tresult {
-        let Some(peer) = (unsafe { ComRef::from_raw(self.peer.get()) }) else {
-            return kResultFalse;
-        };
-        let message = message.into_com_message();
-        let Some(message) = message.to_com_ptr::<IMessage>() else {
-            return kResultFalse;
-        };
-        unsafe { peer.notify(message.as_ptr()) }
+        self.peer.notify(message.into_com_message())
     }
 
     fn midi_export_for_drag(&self) -> Option<MidiExportPayload> {
@@ -238,15 +233,11 @@ impl Drop for GlirdirVst3Controller {
 
 impl IConnectionPointTrait for GlirdirVst3Controller {
     unsafe fn connect(&self, other: *mut IConnectionPoint) -> tresult {
-        self.peer.set(other);
-        kResultOk
+        self.peer.connect(other)
     }
 
     unsafe fn disconnect(&self, other: *mut IConnectionPoint) -> tresult {
-        if self.peer.get() == other {
-            self.peer.set(ptr::null_mut());
-        }
-        kResultOk
+        self.peer.disconnect(other)
     }
 
     unsafe fn notify(&self, message: *mut IMessage) -> tresult {
@@ -360,9 +351,10 @@ impl IEditControllerTrait for GlirdirVst3Controller {
         if info.is_null() || param_index < 0 {
             return kInvalidArgument;
         }
-        let Some(parameter) = PARAMETERS.get(param_index as usize) else {
+        let Some(binding) = parameter_binding_by_index(param_index as usize) else {
             return kInvalidArgument;
         };
+        let parameter = binding.info();
 
         let info = &mut *info;
         info.id = parameter.id.0;
@@ -385,11 +377,11 @@ impl IEditControllerTrait for GlirdirVst3Controller {
         if string.is_null() {
             return kInvalidArgument;
         }
-        let Some(parameter) = parameter_by_id(id) else {
+        let Some(parameter) = parameter_info(id) else {
             return kInvalidArgument;
         };
         let plain = parameter.range.denormalize(value_normalized as f32);
-        copy_wstring(&format_plain_value(plain), &mut *string);
+        copy_wstring(&format_parameter_plain_value(id, plain), &mut *string);
         kResultOk
     }
 
@@ -402,9 +394,6 @@ impl IEditControllerTrait for GlirdirVst3Controller {
         if string.is_null() || value_normalized.is_null() {
             return kInvalidArgument;
         }
-        let Some(parameter) = parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
         let len = len_wstring(string as *const TChar);
         let Ok(text) = String::from_utf16(slice::from_raw_parts(string as *const u16, len)) else {
             return kInvalidArgument;
@@ -412,13 +401,16 @@ impl IEditControllerTrait for GlirdirVst3Controller {
         let Ok(value) = text.trim().parse::<f32>() else {
             return kInvalidArgument;
         };
-        *value_normalized = parameter.range.normalize(value) as f64;
+        let Some(normalized) = registry_normalized_parameter_value(id, value) else {
+            return kInvalidArgument;
+        };
+        *value_normalized = normalized as f64;
         kResultOk
     }
 
     unsafe fn normalizedParamToPlain(&self, id: u32, value_normalized: f64) -> f64 {
-        parameter_by_id(id)
-            .map(|parameter| parameter.range.denormalize(value_normalized as f32) as f64)
+        denormalized_parameter_value(id, value_normalized as f32)
+            .map(f64::from)
             .unwrap_or(0.0)
     }
 
@@ -448,55 +440,39 @@ impl IEditControllerTrait for GlirdirVst3Controller {
 
 pub(super) fn default_parameter_values() -> [f64; VST3_PARAMETER_COUNT] {
     let mut values = [0.0; VST3_PARAMETER_COUNT];
-    for (index, parameter) in PARAMETERS.iter().enumerate() {
-        values[index] = parameter.range.normalize(parameter.range.default) as f64;
+    for (index, binding) in (0..PARAMETER_BINDING_COUNT)
+        .filter_map(parameter_binding_by_index)
+        .enumerate()
+    {
+        values[index] = parameter_default_normalized_value_by_index(index).unwrap_or_else(|| {
+            let parameter = binding.info();
+            parameter.range.normalize(parameter.range.default)
+        }) as f64;
     }
     values
 }
 
 pub(super) fn parameter_values_from_patch(patch: &GlirdirPatch) -> [f64; VST3_PARAMETER_COUNT] {
     let mut values = default_parameter_values();
-    for parameter in PARAMETERS {
-        if let Some(plain) = patch_parameter_plain_value(patch, parameter.id.0)
+    for binding in (0..PARAMETER_BINDING_COUNT).filter_map(parameter_binding_by_index) {
+        let parameter = binding.info();
+        if let Some(normalized) = patch_parameter_normalized_value(patch, parameter.id.0)
             && let Some(index) = parameter_index(parameter.id.0)
         {
-            values[index] = parameter.range.normalize(plain) as f64;
+            values[index] = normalized as f64;
         }
     }
     values
 }
 
 pub(super) fn parameter_index(id: u32) -> Option<usize> {
-    PARAMETERS.iter().position(|parameter| parameter.id.0 == id)
+    parameter_binding_index(id)
 }
 
 pub(super) fn normalized_parameter_value(id: u32, plain: f32) -> f64 {
-    parameter_by_id(id)
-        .map(|parameter| parameter.range.normalize(plain) as f64)
+    registry_normalized_parameter_value(id, plain)
+        .map(f64::from)
         .unwrap_or(0.0)
-}
-
-fn parameter_by_id(id: u32) -> Option<lindelion_plugin_shell::ParameterInfo> {
-    parameter_binding(id).map(|binding| binding.info())
-}
-
-fn patch_parameter_plain_value(patch: &GlirdirPatch, id: u32) -> Option<f32> {
-    Some(match id {
-        crate::CAPTURE_BARS_PARAMETER_ID => patch.capture.bars.bars() as f32,
-        crate::SYNC_MODE_PARAMETER_ID => sync_mode_plain(patch.capture.sync_mode),
-        crate::COUNT_IN_PARAMETER_ID => f32::from(patch.capture.count_in_bars),
-        crate::CONFIDENCE_PARAMETER_ID => patch.analysis.confidence_threshold,
-        crate::ONSET_SENSITIVITY_PARAMETER_ID => patch.analysis.onset_sensitivity,
-        crate::MIN_NOTE_PARAMETER_ID => patch.analysis.min_note_ms,
-        crate::ROOT_PARAMETER_ID => patch.quantize.root.pitch_class() as f32,
-        crate::SCALE_PARAMETER_ID => scale_plain(&patch.quantize.scale),
-        crate::SNAP_PARAMETER_ID => snap_plain(patch.quantize.snap_mode),
-        crate::GRID_PARAMETER_ID => grid_plain(patch.quantize.grid),
-        crate::TIMING_STRENGTH_PARAMETER_ID => patch.quantize.timing_strength,
-        crate::VELOCITY_AMOUNT_PARAMETER_ID => patch.quantize.velocity_amount,
-        crate::AUDITION_VOLUME_PARAMETER_ID => patch.audition.volume,
-        _ => return None,
-    })
 }
 
 fn sanitize_normalized(value: f64, fallback: f64) -> f64 {
@@ -504,58 +480,5 @@ fn sanitize_normalized(value: f64, fallback: f64) -> f64 {
         value.clamp(0.0, 1.0)
     } else {
         fallback
-    }
-}
-
-fn sync_mode_plain(value: SyncMode) -> f32 {
-    match value {
-        SyncMode::Immediate => 0.0,
-        SyncMode::PhraseBoundary => 1.0,
-        SyncMode::NextDownbeat => 2.0,
-    }
-}
-
-fn scale_plain(value: &Scale) -> f32 {
-    match value {
-        Scale::Chromatic => 0.0,
-        Scale::Major => 1.0,
-        Scale::NaturalMinor => 2.0,
-        Scale::HarmonicMinor => 3.0,
-        Scale::MelodicMinor => 4.0,
-        Scale::PentatonicMajor => 5.0,
-        Scale::PentatonicMinor => 6.0,
-        Scale::Blues => 7.0,
-        Scale::Dorian => 8.0,
-        Scale::Mixolydian | Scale::Custom(_) => 9.0,
-    }
-}
-
-fn snap_plain(value: SnapMode) -> f32 {
-    match value {
-        SnapMode::Hard => 0.0,
-        SnapMode::Soft => 1.0,
-        SnapMode::None => 2.0,
-    }
-}
-
-fn grid_plain(value: TimingGrid) -> f32 {
-    match value {
-        TimingGrid::Quarter => 0.0,
-        TimingGrid::Eighth => 1.0,
-        TimingGrid::Sixteenth => 2.0,
-        TimingGrid::ThirtySecond => 3.0,
-        TimingGrid::QuarterTriplet => 4.0,
-        TimingGrid::EighthTriplet => 5.0,
-        TimingGrid::SixteenthTriplet => 6.0,
-    }
-}
-
-fn format_plain_value(value: f32) -> String {
-    if value.abs() >= 100.0 {
-        format!("{value:.0}")
-    } else if value.abs() >= 10.0 {
-        format!("{value:.1}")
-    } else {
-        format!("{value:.2}")
     }
 }

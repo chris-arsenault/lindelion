@@ -81,7 +81,9 @@ impl IEditControllerTrait for ResonatorVst3Controller {
         }
         if id == PITCH_BEND_PARAMETER_ID {
             copy_wstring(
-                &format_plain_value(pitch_bend_plain_from_normalized(value_normalized) as f32),
+                &lindelion_plugin_shell::format_plain_value(
+                    pitch_bend_plain_from_normalized(value_normalized) as f32,
+                ),
                 &mut *string,
             );
             return kResultOk;

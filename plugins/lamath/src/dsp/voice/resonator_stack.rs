@@ -141,6 +141,7 @@ impl ResonatorStack {
             .set_plain_target(parallel_mix_b(routing));
     }
 
+    #[cfg(test)]
     pub(super) fn set_base_waveguide_loop_gain(&mut self, loop_gain: f32) {
         let loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(loop_gain);
         if let ResonatorConfig::Waveguide(mut config) = self.base_resonator_a_config {

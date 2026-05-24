@@ -1,13 +1,16 @@
 use std::{
     cell::{Cell, RefCell},
     mem::MaybeUninit,
-    ptr,
 };
 
 use lindelion_plugin_shell::{
     AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
-    ProcessContext as ShellProcessContext, ProcessMode, ProcessSetup as ShellProcessSetup,
-    vst3::{clear_vst_outputs, copy_wstring, stereo_output_buffers_from_vst_process_data},
+    ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
+    vst3::{
+        Vst3BusInfo, Vst3PeerConnection, can_process_32_bit_sample_size, clear_vst_outputs,
+        fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst,
+        stereo_output_buffers_from_vst_process_data, vst3_bus_count,
+    },
 };
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
@@ -20,10 +23,15 @@ use super::{
     write_plugin_state_to_stream,
 };
 
+const RESONATOR_BUSES: [Vst3BusInfo; 2] = [
+    Vst3BusInfo::audio_output(2, "Output"),
+    Vst3BusInfo::event_input(1, "MIDI Input"),
+];
+
 pub(super) struct ResonatorVst3Processor {
     pub(super) synth: RefCell<ResonatorSynth>,
     setup: Cell<ShellProcessSetup>,
-    peer: Cell<*mut IConnectionPoint>,
+    peer: Vst3PeerConnection,
 }
 
 impl Class for ResonatorVst3Processor {
@@ -45,7 +53,7 @@ impl ResonatorVst3Processor {
         Self {
             synth: RefCell::new(synth),
             setup: Cell::new(setup),
-            peer: Cell::new(ptr::null_mut()),
+            peer: Vst3PeerConnection::new(),
         }
     }
 
@@ -82,34 +90,21 @@ impl ResonatorVst3Processor {
     }
 
     fn apply_parameter_changes(&self, changes: *mut IParameterChanges) {
-        let Some(changes) = (unsafe { ComRef::from_raw(changes) }) else {
-            return;
-        };
-
         let Ok(mut synth) = self.synth.try_borrow_mut() else {
             return;
         };
 
-        for index in 0..unsafe { changes.getParameterCount() } {
-            let Some(queue) = (unsafe { ComRef::from_raw(changes.getParameterData(index)) }) else {
-                continue;
-            };
-            let point_count = unsafe { queue.getPointCount() };
-            if point_count <= 0 {
-                continue;
-            }
-
-            let mut sample_offset = 0;
-            let mut value = 0.0;
-            let result = unsafe { queue.getPoint(point_count - 1, &mut sample_offset, &mut value) };
-            if result == kResultTrue {
-                let parameter_id = unsafe { queue.getParameterId() };
-                if parameter_id == PITCH_BEND_PARAMETER_ID {
-                    synth.set_pitch_bend_normalized(value as f32);
+        unsafe {
+            for_each_vst3_parameter_change(changes, |change| {
+                if change.id == PITCH_BEND_PARAMETER_ID {
+                    synth.set_pitch_bend_normalized(change.normalized_value as f32);
                 } else {
-                    synth.set_parameter_normalized(ParameterId(parameter_id), value as f32);
+                    synth.set_parameter_normalized(
+                        ParameterId(change.id),
+                        change.normalized_value as f32,
+                    );
                 }
-            }
+            });
         }
     }
 
@@ -128,18 +123,12 @@ impl ResonatorVst3Processor {
     }
 
     fn send_telemetry_response(&self) -> tresult {
-        let Some(peer) = (unsafe { ComRef::from_raw(self.peer.get()) }) else {
-            return kResultFalse;
-        };
         let Ok(synth) = self.synth.try_borrow() else {
             return kResultFalse;
         };
         let payload = encode_telemetry(synth.telemetry()).into_bytes();
-        let message = ResonatorPluginMessage::telemetry_response(payload).into_com_message();
-        let Some(message) = message.to_com_ptr::<IMessage>() else {
-            return kResultFalse;
-        };
-        unsafe { peer.notify(message.as_ptr()) }
+        self.peer
+            .notify(ResonatorPluginMessage::telemetry_response(payload).into_com_message())
     }
 }
 
@@ -167,13 +156,7 @@ impl IComponentTrait for ResonatorVst3Processor {
     }
 
     unsafe fn getBusCount(&self, media_type: MediaType, dir: BusDirection) -> i32 {
-        match (media_type as MediaTypes, dir as BusDirections) {
-            (MediaTypes_::kAudio, BusDirections_::kInput) => 0,
-            (MediaTypes_::kAudio, BusDirections_::kOutput) => 1,
-            (MediaTypes_::kEvent, BusDirections_::kInput) => 1,
-            (MediaTypes_::kEvent, BusDirections_::kOutput) => 0,
-            _ => 0,
-        }
+        vst3_bus_count(&RESONATOR_BUSES, media_type, dir)
     }
 
     unsafe fn getBusInfo(
@@ -183,21 +166,7 @@ impl IComponentTrait for ResonatorVst3Processor {
         index: i32,
         bus: *mut BusInfo,
     ) -> tresult {
-        if bus.is_null() || index != 0 {
-            return kInvalidArgument;
-        }
-
-        match (media_type as MediaTypes, dir as BusDirections) {
-            (MediaTypes_::kAudio, BusDirections_::kOutput) => {
-                fill_bus_info(&mut *bus, media_type, dir, 2, "Output");
-                kResultOk
-            }
-            (MediaTypes_::kEvent, BusDirections_::kInput) => {
-                fill_bus_info(&mut *bus, media_type, dir, 1, "MIDI Input");
-                kResultOk
-            }
-            _ => kInvalidArgument,
-        }
+        fill_vst3_bus_info(&RESONATOR_BUSES, media_type, dir, index, bus)
     }
 
     unsafe fn getRoutingInfo(
@@ -283,11 +252,7 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
     }
 
     unsafe fn canProcessSampleSize(&self, symbolic_sample_size: i32) -> tresult {
-        match symbolic_sample_size as SymbolicSampleSizes {
-            SymbolicSampleSizes_::kSample32 => kResultOk,
-            SymbolicSampleSizes_::kSample64 => kNotImplemented,
-            _ => kInvalidArgument,
-        }
+        can_process_32_bit_sample_size(symbolic_sample_size)
     }
 
     unsafe fn getLatencySamples(&self) -> u32 {
@@ -299,17 +264,7 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
             return kInvalidArgument;
         }
 
-        let setup = &*setup;
-        let mode = if setup.processMode as ProcessModes == ProcessModes_::kOffline {
-            ProcessMode::Offline
-        } else {
-            ProcessMode::Realtime
-        };
-        let shell_setup = ShellProcessSetup {
-            sample_rate: setup.sampleRate,
-            max_block_size: setup.maxSamplesPerBlock.max(1) as usize,
-            mode,
-        };
+        let shell_setup = process_setup_from_vst(&*setup);
         self.setup.set(shell_setup);
 
         let Ok(mut synth) = self.synth.try_borrow_mut() else {
@@ -369,15 +324,11 @@ impl IProcessContextRequirementsTrait for ResonatorVst3Processor {
 
 impl IConnectionPointTrait for ResonatorVst3Processor {
     unsafe fn connect(&self, other: *mut IConnectionPoint) -> tresult {
-        self.peer.set(other);
-        kResultOk
+        self.peer.connect(other)
     }
 
     unsafe fn disconnect(&self, other: *mut IConnectionPoint) -> tresult {
-        if self.peer.get() == other {
-            self.peer.set(ptr::null_mut());
-        }
-        kResultOk
+        self.peer.disconnect(other)
     }
 
     unsafe fn notify(&self, message: *mut IMessage) -> tresult {
@@ -393,19 +344,4 @@ impl IConnectionPointTrait for ResonatorVst3Processor {
             ResonatorPluginMessage::TelemetryResponse(_) => kNotImplemented,
         }
     }
-}
-
-fn fill_bus_info(
-    bus: &mut BusInfo,
-    media_type: MediaType,
-    direction: BusDirection,
-    channel_count: i32,
-    name: &str,
-) {
-    bus.mediaType = media_type;
-    bus.direction = direction;
-    bus.channelCount = channel_count;
-    copy_wstring(name, &mut bus.name);
-    bus.busType = BusTypes_::kMain as BusType;
-    bus.flags = BusInfo_::BusFlags_::kDefaultActive;
 }

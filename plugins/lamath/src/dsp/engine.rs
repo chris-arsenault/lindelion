@@ -1,4 +1,6 @@
-use lindelion_dsp_utils::{analysis::peak_abs, math::snap_to_zero};
+#[cfg(test)]
+use lindelion_dsp_utils::analysis::peak_abs;
+use lindelion_dsp_utils::math::snap_to_zero;
 use lindelion_plugin_shell::{
     ExpressionSource, ExpressionStream, ManagedVoiceExpression, VoiceLike, VoiceManager,
     VoiceRenderStatus,
@@ -7,7 +9,8 @@ use lindelion_plugin_shell::{
 use super::voice::{Voice, VoiceExpression, VoiceTrigger};
 use crate::{OutputConfig, ResonatorRouting};
 
-pub use lindelion_plugin_shell::VoiceSlotState;
+#[cfg(test)]
+use lindelion_plugin_shell::VoiceSlotState;
 
 const IDLE_LEVEL_THRESHOLD: f32 = 1.0e-6;
 const MAX_ENGINE_POLYPHONY: usize = 16;
@@ -32,6 +35,7 @@ impl<'a> SynthEngine<'a> {
         self.voices.active_voice_count()
     }
 
+    #[cfg(test)]
     pub fn slot_state(&self, index: usize) -> Option<VoiceSlotState> {
         self.voices.slot_state(index)
     }
@@ -44,6 +48,7 @@ impl<'a> SynthEngine<'a> {
         self.voices.slot_channel(index)
     }
 
+    #[cfg(test)]
     pub fn slot_last_level(&self, index: usize) -> Option<f32> {
         self.voices.slot_last_level(index)
     }
@@ -63,6 +68,7 @@ impl<'a> SynthEngine<'a> {
         )
     }
 
+    #[cfg(test)]
     pub fn note_off(&mut self, note: u8) {
         self.voices.release_note(note);
     }
@@ -71,12 +77,9 @@ impl<'a> SynthEngine<'a> {
         self.voices.release_note_for_channel(channel, note);
     }
 
+    #[cfg(test)]
     pub fn all_notes_off(&mut self) {
         self.voices.release_all();
-    }
-
-    pub fn set_pitch_bend(&mut self, semitones: f32) {
-        self.voices.set_pitch_bend(semitones);
     }
 
     pub fn set_expression_controls(
@@ -116,11 +119,6 @@ impl<'a> SynthEngine<'a> {
             .for_each_live_voice_mut(|voice| voice.set_output_config(output));
     }
 
-    pub fn set_waveguide_loop_gain(&mut self, loop_gain: f32) {
-        self.voices
-            .for_each_live_voice_mut(|voice| voice.set_waveguide_loop_gain(loop_gain));
-    }
-
     pub fn set_routing(&mut self, routing: ResonatorRouting) {
         self.voices
             .for_each_live_voice_mut(|voice| voice.set_routing(routing));
@@ -145,6 +143,7 @@ impl<'a> SynthEngine<'a> {
         });
     }
 
+    #[cfg(test)]
     pub fn render_replace(&mut self, left: &mut [f32], right: &mut [f32]) {
         left.fill(0.0);
         right.fill(0.0);
@@ -182,7 +181,8 @@ impl<'a> VoiceLike for Voice<'a> {
     }
 }
 
-pub fn stereo_peak(left: &[f32], right: &[f32]) -> f32 {
+#[cfg(test)]
+fn stereo_peak(left: &[f32], right: &[f32]) -> f32 {
     peak_abs(left).max(peak_abs(right))
 }
 
@@ -367,13 +367,15 @@ mod tests {
         assert_eq!(engine.slot_expression(slot_index), Some(live_expression));
 
         engine.note_off(60);
+        let mut released_expression = live_expression;
+        released_expression.stream.gate = false;
         assert_eq!(
             engine.slot_state(slot_index),
             Some(VoiceSlotState::Released)
         );
         assert_eq!(
             engine.slot_expression(slot_index),
-            Some(live_expression.with_gate(false))
+            Some(released_expression)
         );
     }
 

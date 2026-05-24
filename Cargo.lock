@@ -1105,12 +1105,15 @@ dependencies = [
 name = "glirdir"
 version = "0.3.0"
 dependencies = [
+ "lindelion-capture",
  "lindelion-dsp-utils",
  "lindelion-midi",
  "lindelion-onset-detect",
+ "lindelion-phrase-analysis",
  "lindelion-pitch-detect",
  "lindelion-plugin-shell",
  "lindelion-sample-library",
+ "lindelion-test-allocator",
  "lindelion-ui",
  "serde",
  "toml 0.9.12+spec-1.1.0",
@@ -1472,9 +1475,14 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 name = "lamath"
 version = "0.3.0"
 dependencies = [
+ "lindelion-audio-expression",
  "lindelion-dsp-utils",
+ "lindelion-midi",
+ "lindelion-phrase-analysis",
+ "lindelion-pitch-detect",
  "lindelion-plugin-shell",
  "lindelion-sample-library",
+ "lindelion-test-allocator",
  "lindelion-ui",
  "serde",
  "toml 0.9.12+spec-1.1.0",
@@ -1527,6 +1535,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "lindelion-audio-expression"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-midi",
+ "lindelion-onset-detect",
+ "lindelion-phrase-analysis",
+ "lindelion-pitch-detect",
+ "lindelion-plugin-shell",
+ "serde",
+]
+
+[[package]]
+name = "lindelion-capture"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-plugin-shell",
+ "lindelion-sample-library",
+ "lindelion-test-allocator",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "lindelion-dsp-utils"
 version = "0.3.0"
 
@@ -1544,7 +1577,19 @@ name = "lindelion-onset-detect"
 version = "0.3.0"
 dependencies = [
  "lindelion-dsp-utils",
+ "lindelion-pitch-detect",
  "realfft",
+ "serde",
+]
+
+[[package]]
+name = "lindelion-phrase-analysis"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-midi",
+ "lindelion-onset-detect",
+ "lindelion-pitch-detect",
  "serde",
 ]
 
@@ -1576,9 +1621,14 @@ name = "lindelion-sample-library"
 version = "0.3.0"
 dependencies = [
  "blake3",
+ "lindelion-dsp-utils",
  "rusqlite",
  "serde",
 ]
+
+[[package]]
+name = "lindelion-test-allocator"
+version = "0.3.0"
 
 [[package]]
 name = "lindelion-ui"

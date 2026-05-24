@@ -86,9 +86,8 @@ mod macos {
         EditorCommandContext, EditorCommandHandler, PadId, PatchIoService, SampleSlotService,
         resonator_vizia::{
             ResonatorEditorCallbacks, ResonatorEditorCommandRequest, ResonatorEditorDirectories,
-            ResonatorEditorHost, ResonatorEditorParameterBinding, ResonatorEditorPatchSummary,
-            ResonatorEditorSampleSummary, ResonatorEditorSlotSummary, ResonatorEditorTelemetry,
-            ResonatorEditorWaveformPoint,
+            ResonatorEditorHost, ResonatorEditorPatchSummary, ResonatorEditorSampleSummary,
+            ResonatorEditorSlotSummary, ResonatorEditorTelemetry, ResonatorEditorWaveformPoint,
         },
     };
     use vst3::{ComRef, Steinberg::Vst::IComponentHandlerTrait, Steinberg::*};
@@ -98,7 +97,7 @@ mod macos {
         EditorWaveformPoint, default_library_paths, parameter_index,
     };
     use super::ResonatorVst3Controller;
-    use crate::parameters::editor_parameter_bindings;
+    use crate::parameters::resonator_editor_parameter_bindings;
 
     pub(super) fn resonator_editor_host(
         controller: *const ResonatorVst3Controller,
@@ -120,20 +119,6 @@ mod macos {
             },
         )
         .expect("resonator editor parameter surface should be complete")
-    }
-
-    fn resonator_editor_parameter_bindings() -> Vec<ResonatorEditorParameterBinding> {
-        editor_parameter_bindings()
-            .filter_map(|binding| {
-                let editor = binding.editor()?;
-                Some(ResonatorEditorParameterBinding::new(
-                    binding.id().0,
-                    editor.slot(),
-                    editor.label(),
-                    editor.control(),
-                ))
-            })
-            .collect()
     }
 
     unsafe fn refresh_library(context: usize) {

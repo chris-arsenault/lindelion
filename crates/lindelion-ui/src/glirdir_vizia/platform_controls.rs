@@ -7,6 +7,9 @@ fn parameter_control(cx: &mut Context, parameter: EditorParameterControl) {
         GlirdirEditorControlKind::Selector { labels, width } => {
             selector_control(cx, parameter, labels, width)
         }
+        GlirdirEditorControlKind::Knob | GlirdirEditorControlKind::Binary { .. } => {
+            panic!("unsupported Glirdir editor control kind")
+        }
     }
 }
 

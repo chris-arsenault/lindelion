@@ -1,5 +1,6 @@
 use std::ops::RangeInclusive;
 
+use lindelion_dsp_utils::math::cents_between;
 use lindelion_midi::QuantizeSettings;
 use lindelion_pitch_detect::{PitchContour, PitchFrame};
 
@@ -134,6 +135,7 @@ fn analyze_fixture(
             confidence_threshold: 0.5,
             onset_sensitivity: 0.55,
             min_note_ms: 70.0,
+            ..AnalysisSettings::default()
         },
         &QuantizeSettings::default(),
         contour,
@@ -232,7 +234,7 @@ fn assert_has_onset_near(result: &AnalysisResult, expected: usize, tolerance: us
 }
 
 fn assert_close_cents(actual_hz: f32, expected_hz: f32, tolerance_cents: f32) {
-    let cents = 1200.0 * (actual_hz / expected_hz).log2().abs();
+    let cents = cents_between(expected_hz, actual_hz);
     assert!(
         cents <= tolerance_cents,
         "expected {actual_hz} Hz within {tolerance_cents} cents of {expected_hz} Hz, got {cents}"

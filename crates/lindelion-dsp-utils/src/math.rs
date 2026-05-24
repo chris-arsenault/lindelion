@@ -38,6 +38,21 @@ pub fn is_finite_normalized(value: f32) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
 }
 
+pub fn ms_to_samples(ms: f32, sample_rate: u32) -> usize {
+    ((ms.max(0.0) * 0.001) * sample_rate.max(1) as f32).round() as usize
+}
+
+pub fn seconds_to_samples(seconds: f64, sample_rate: u32) -> usize {
+    (seconds.max(0.0) * sample_rate.max(1) as f64).round() as usize
+}
+
+pub fn cents_between(left_hz: f32, right_hz: f32) -> f32 {
+    if left_hz <= 0.0 || right_hz <= 0.0 {
+        return f32::MAX;
+    }
+    1200.0 * (right_hz / left_hz).log2().abs()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +85,22 @@ mod tests {
         assert_eq!(snap_to_zero(f32::NAN), 0.0);
         assert_eq!(snap_to_zero(f32::INFINITY), 0.0);
         assert_eq!(snap_to_zero(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn time_helpers_round_to_sample_count() {
+        assert_eq!(ms_to_samples(50.0, 48_000), 2_400);
+        assert_eq!(ms_to_samples(-50.0, 48_000), 0);
+        assert_eq!(ms_to_samples(1.0, 0), 0);
+        assert_eq!(seconds_to_samples(1.5, 48_000), 72_000);
+        assert_eq!(seconds_to_samples(-1.5, 48_000), 0);
+        assert_eq!(seconds_to_samples(1.0, 0), 1);
+    }
+
+    #[test]
+    fn cents_between_reports_absolute_pitch_distance() {
+        assert!((cents_between(440.0, 880.0) - 1200.0).abs() < 0.000_1);
+        assert_eq!(cents_between(0.0, 440.0), f32::MAX);
+        assert_eq!(cents_between(440.0, -1.0), f32::MAX);
     }
 }

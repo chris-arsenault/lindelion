@@ -148,14 +148,7 @@ impl GlirdirVst3Processor {
     }
 
     fn send_to_peer(&self, message: GlirdirPluginMessage) -> tresult {
-        let Some(peer) = (unsafe { ComRef::from_raw(self.peer.get()) }) else {
-            return kResultOk;
-        };
-        let message = message.into_com_message();
-        let Some(message) = message.to_com_ptr::<IMessage>() else {
-            return kResultFalse;
-        };
-        unsafe { peer.notify(message.as_ptr()) }
+        self.peer.notify_if_connected(message.into_com_message())
     }
 }
 

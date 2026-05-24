@@ -1,5 +1,6 @@
 use std::path::Path;
 
+pub mod editor_surface;
 pub mod glirdir_vizia;
 pub mod resonator_vizia;
 

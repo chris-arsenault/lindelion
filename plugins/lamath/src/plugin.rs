@@ -1,15 +1,18 @@
 use lindelion_dsp_utils::params::StructuralChangePolicy;
 use lindelion_plugin_shell::{
-    AudioPlugin, ParameterInfo, PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
+    AudioPlugin, ParameterApplyDispatcher, ParameterApplyOutcome, ParameterId, ParameterInfo,
+    PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
 };
 use lindelion_sample_library::{
-    SampleDecodeError, SampleLibrary, SampleReference, SampleResolution, decode_wav_mono,
+    LoadedMonoAudioSlots, OwnedMonoAudioBuffer, ReferencedSampleLoadError,
+    ReferencedSampleLoadReport, RuntimeMonoAudioBuffer, SampleLibrary, SampleReference,
+    load_referenced_mono_audio_from_library, load_referenced_mono_audio_from_paths,
 };
 
 use crate::{
     DESCRIPTOR, PARAMETERS,
     dsp::{MAX_EXCITATION_LAYERS, RuntimeExcitationSlot},
-    parameters::{ParameterApplyKind, apply_parameter_plain, finite_value, parameter_binding},
+    parameters::{ParameterApplyKind, RuntimeParameterTarget, dispatch_parameter_normalized},
     patch::ResonatorSynthPatch,
     patch_io,
     runtime::{ResonatorProcessor, RuntimePatch, runtime_slot_from_config},
@@ -20,7 +23,7 @@ pub struct ResonatorSynth {
     setup: ProcessSetup,
     patch: ResonatorSynthPatch,
     processor: ResonatorProcessor<'static>,
-    loaded_buffers: [Option<RuntimeSampleBuffer>; MAX_EXCITATION_LAYERS],
+    loaded_buffers: [Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS],
     telemetry: ResonatorTelemetry,
 }
 
@@ -46,41 +49,48 @@ pub struct ResonatorTelemetry {
     pub active_voices: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LoadedExcitationBuffer {
-    pub samples: Vec<f32>,
-    pub sample_rate: f32,
+struct ResonatorParameterApplyDispatcher<'a> {
+    processor: &'a mut ResonatorProcessor<'static>,
 }
 
-impl LoadedExcitationBuffer {
-    pub fn new(samples: Vec<f32>, sample_rate: f32) -> Self {
-        Self {
-            samples,
-            sample_rate,
+impl ParameterApplyDispatcher<ResonatorSynthPatch, ParameterApplyKind, RuntimeParameterTarget>
+    for ResonatorParameterApplyDispatcher<'_>
+{
+    fn handle_parameter_apply(
+        &mut self,
+        patch: &mut ResonatorSynthPatch,
+        outcome: ParameterApplyOutcome<ParameterApplyKind, RuntimeParameterTarget>,
+    ) {
+        match outcome.apply_kind {
+            ParameterApplyKind::Live => {
+                if outcome.runtime_target.is_active() {
+                    self.processor
+                        .set_parameter_plain(outcome.id, outcome.plain);
+                }
+            }
+            ParameterApplyKind::Structural(StructuralChangePolicy::NoteBoundary) => {
+                self.processor.replace_patch_config(patch.clone());
+            }
+            ParameterApplyKind::Structural(
+                StructuralChangePolicy::ResetState
+                | StructuralChangePolicy::LiveCrossfade
+                | StructuralChangePolicy::LiveMuteRamp,
+            ) => {
+                if outcome.runtime_target.is_active() {
+                    self.processor
+                        .set_parameter_plain(outcome.id, outcome.plain);
+                } else {
+                    self.processor.replace_patch_config(patch.clone());
+                }
+            }
+            ParameterApplyKind::Ignored => {}
         }
     }
 }
 
-#[derive(Debug)]
-struct RuntimeSampleBuffer {
-    samples: Box<[f32]>,
-    sample_rate: f32,
-}
-
-impl RuntimeSampleBuffer {
-    fn from_loaded(buffer: LoadedExcitationBuffer) -> Self {
-        Self {
-            samples: buffer.samples.into_boxed_slice(),
-            sample_rate: finite_value(buffer.sample_rate, 1.0, 384_000.0, 48_000.0),
-        }
-    }
-
-    fn as_static_slice(&self) -> &'static [f32] {
-        // The processor is dropped before `loaded_buffers` and rebuilt before buffers are replaced.
-        // The heap allocation behind the box is stable when the owner Vec moves.
-        unsafe { std::slice::from_raw_parts(self.samples.as_ptr(), self.samples.len()) }
-    }
-}
+pub type LoadedExcitationBuffer = OwnedMonoAudioBuffer;
+pub type SampleLoadReport = ReferencedSampleLoadReport;
+pub type SampleLoadError<E> = ReferencedSampleLoadError<E>;
 
 impl ResonatorSynth {
     pub fn patch(&self) -> &ResonatorSynthPatch {
@@ -98,7 +108,7 @@ impl ResonatorSynth {
     ) {
         let mut buffers = buffers.into_iter();
         let runtime_buffers =
-            std::array::from_fn(|_| buffers.next().map(RuntimeSampleBuffer::from_loaded));
+            std::array::from_fn(|_| buffers.next().map(RuntimeMonoAudioBuffer::from_owned));
         self.set_patch_with_runtime_buffers(patch, runtime_buffers);
     }
 
@@ -107,7 +117,7 @@ impl ResonatorSynth {
         patch: ResonatorSynthPatch,
         buffers: [Option<LoadedExcitationBuffer>; MAX_EXCITATION_LAYERS],
     ) {
-        let runtime_buffers = buffers.map(|buffer| buffer.map(RuntimeSampleBuffer::from_loaded));
+        let runtime_buffers = buffers.map(|buffer| buffer.map(RuntimeMonoAudioBuffer::from_owned));
         self.set_patch_with_runtime_buffers(patch, runtime_buffers);
     }
 
@@ -133,7 +143,7 @@ impl ResonatorSynth {
     fn set_patch_with_runtime_buffers(
         &mut self,
         patch: ResonatorSynthPatch,
-        runtime_buffers: [Option<RuntimeSampleBuffer>; MAX_EXCITATION_LAYERS],
+        runtime_buffers: [Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS],
     ) {
         self.patch = patch;
         self.processor = processor_from_patch_and_buffers(
@@ -144,38 +154,11 @@ impl ResonatorSynth {
         self.loaded_buffers = runtime_buffers;
     }
 
-    pub fn set_parameter_normalized(
-        &mut self,
-        id: lindelion_plugin_shell::ParameterId,
-        value: f32,
-    ) {
-        let Some(binding) = parameter_binding(id.0) else {
-            return;
+    pub fn set_parameter_normalized(&mut self, id: ParameterId, value: f32) {
+        let mut dispatcher = ResonatorParameterApplyDispatcher {
+            processor: &mut self.processor,
         };
-        let plain = binding.info().range.denormalize(value);
-
-        match apply_parameter_plain(&mut self.patch, id.0, plain) {
-            ParameterApplyKind::Live => {
-                if binding.runtime_target().is_active() {
-                    self.processor.set_parameter_plain(id, plain);
-                }
-            }
-            ParameterApplyKind::Structural(StructuralChangePolicy::NoteBoundary) => {
-                self.processor.replace_patch_config(self.patch.clone());
-            }
-            ParameterApplyKind::Structural(
-                StructuralChangePolicy::ResetState
-                | StructuralChangePolicy::LiveCrossfade
-                | StructuralChangePolicy::LiveMuteRamp,
-            ) => {
-                if binding.runtime_target().is_active() {
-                    self.processor.set_parameter_plain(id, plain);
-                } else {
-                    self.processor.replace_patch_config(self.patch.clone());
-                }
-            }
-            ParameterApplyKind::Ignored => {}
-        }
+        dispatch_parameter_normalized(&mut self.patch, id.0, value, &mut dispatcher);
     }
 
     pub fn set_pitch_bend_normalized(&mut self, value: f32) {
@@ -197,28 +180,12 @@ impl ResonatorSynth {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SampleLoadReport {
-    pub loaded_slots: usize,
-    pub missing_samples: Vec<SampleReference>,
-}
-
-#[derive(Debug)]
-pub enum SampleLoadError<E> {
-    Library(E),
-    Decode {
-        reference: SampleReference,
-        path: std::path::PathBuf,
-        source: SampleDecodeError,
-    },
-}
-
-type LoadedExcitationSlots = [Option<LoadedExcitationBuffer>; MAX_EXCITATION_LAYERS];
+type LoadedExcitationSlots = LoadedMonoAudioSlots<MAX_EXCITATION_LAYERS>;
 
 fn processor_from_patch_and_buffers(
     sample_rate: f32,
     patch: ResonatorSynthPatch,
-    buffers: &[Option<RuntimeSampleBuffer>; MAX_EXCITATION_LAYERS],
+    buffers: &[Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS],
 ) -> ResonatorProcessor<'static> {
     if buffers.iter().all(Option::is_none) {
         return ResonatorProcessor::with_builtin_excitation(sample_rate, patch);
@@ -232,7 +199,7 @@ fn processor_from_patch_and_buffers(
 
 fn loaded_runtime_slots(
     patch: &ResonatorSynthPatch,
-    buffers: &[Option<RuntimeSampleBuffer>; MAX_EXCITATION_LAYERS],
+    buffers: &[Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS],
 ) -> [Option<RuntimeExcitationSlot<'static>>; MAX_EXCITATION_LAYERS] {
     let mut slots = [None; MAX_EXCITATION_LAYERS];
     for (index, buffer) in buffers.iter().enumerate() {
@@ -244,16 +211,20 @@ fn loaded_runtime_slots(
             .get(index)
             .cloned()
             .unwrap_or_default();
+        // The processor field is dropped before loaded_buffers and is rebuilt
+        // before loaded_buffers is replaced, so these stable boxed samples
+        // outlive every RuntimeExcitationSlot that borrows them.
+        let samples = unsafe { buffer.samples_with_static_lifetime() };
         slots[index] = Some(runtime_slot_from_config(
             &config,
-            buffer.as_static_slice(),
-            buffer.sample_rate,
+            samples,
+            buffer.sample_rate(),
         ));
     }
     slots
 }
 
-fn empty_runtime_buffers() -> [Option<RuntimeSampleBuffer>; MAX_EXCITATION_LAYERS] {
+fn empty_runtime_buffers() -> [Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS] {
     std::array::from_fn(|_| None)
 }
 
@@ -264,85 +235,24 @@ fn load_excitation_buffers_from_library<L>(
 where
     L: SampleLibrary,
 {
-    let mut buffers = std::array::from_fn(|_| None);
-    let mut missing_samples = Vec::new();
-    let mut loaded_slots = 0;
-
-    for (index, slot) in patch
-        .excitation_slots
-        .iter()
-        .take(MAX_EXCITATION_LAYERS)
-        .enumerate()
-    {
-        let Some(reference) = slot.sample.as_ref() else {
-            continue;
-        };
-
-        match library
-            .resolve(reference)
-            .map_err(SampleLoadError::Library)?
-        {
-            SampleResolution::Found(path) => {
-                let decoded = decode_wav_mono(&path).map_err(|source| SampleLoadError::Decode {
-                    reference: reference.clone(),
-                    path,
-                    source,
-                })?;
-                buffers[index] = Some(LoadedExcitationBuffer::new(
-                    decoded.samples,
-                    decoded.sample_rate as f32,
-                ));
-                loaded_slots += 1;
-            }
-            SampleResolution::Missing(reference) => missing_samples.push(reference),
-        }
-    }
-
-    Ok((
-        buffers,
-        SampleLoadReport {
-            loaded_slots,
-            missing_samples,
-        },
-    ))
+    load_referenced_mono_audio_from_library(excitation_sample_references(patch), library)
 }
 
 fn load_excitation_buffers_from_sample_paths(
     patch: &ResonatorSynthPatch,
 ) -> (LoadedExcitationSlots, SampleLoadReport) {
-    let mut buffers = std::array::from_fn(|_| None);
-    let mut missing_samples = Vec::new();
-    let mut loaded_slots = 0;
+    load_referenced_mono_audio_from_paths(excitation_sample_references(patch))
+}
 
-    for (index, slot) in patch
+fn excitation_sample_references(
+    patch: &ResonatorSynthPatch,
+) -> impl Iterator<Item = (usize, &SampleReference)> {
+    patch
         .excitation_slots
         .iter()
         .take(MAX_EXCITATION_LAYERS)
         .enumerate()
-    {
-        let Some(reference) = slot.sample.as_ref() else {
-            continue;
-        };
-
-        match decode_wav_mono(&reference.last_known_path) {
-            Ok(decoded) => {
-                buffers[index] = Some(LoadedExcitationBuffer::new(
-                    decoded.samples,
-                    decoded.sample_rate as f32,
-                ));
-                loaded_slots += 1;
-            }
-            Err(_) => missing_samples.push(reference.clone()),
-        }
-    }
-
-    (
-        buffers,
-        SampleLoadReport {
-            loaded_slots,
-            missing_samples,
-        },
-    )
+        .filter_map(|(index, slot)| slot.sample.as_ref().map(|reference| (index, reference)))
 }
 
 fn telemetry_from_audio(left: &[f32], right: &[f32], active_voices: usize) -> ResonatorTelemetry {

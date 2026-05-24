@@ -7,5 +7,6 @@ authors.workspace = true
 
 [dependencies]
 lindelion-dsp-utils.workspace = true
+lindelion-pitch-detect.workspace = true
 realfft.workspace = true
 serde.workspace = true

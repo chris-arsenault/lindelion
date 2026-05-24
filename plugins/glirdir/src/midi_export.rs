@@ -88,7 +88,7 @@ pub(crate) fn midi_file_name(patch: &GlirdirPatch, clip: &MidiClip) -> String {
         .map(|scratchpad| scratchpad.metadata)
         .unwrap_or_else(|| ScratchpadMetadata {
             bpm: clip.bpm,
-            capture_bars: patch.capture.bars.bars(),
+            capture_bars: patch.capture.bars,
             ..ScratchpadMetadata::default()
         });
     sanitize_midi_file_name(&format!(
@@ -156,13 +156,13 @@ mod tests {
     use lindelion_midi::{QuantizeSettings, RootNote, Scale};
 
     use super::*;
-    use crate::{CaptureBars, CaptureSettings, ScratchpadAudio};
+    use crate::{CaptureSettings, ScratchpadAudio};
 
     #[test]
     fn midi_file_name_is_deterministic_and_safe() {
         let patch = GlirdirPatch {
             capture: CaptureSettings {
-                bars: CaptureBars::Four,
+                bars: 4,
                 ..CaptureSettings::default()
             },
             quantize: QuantizeSettings {

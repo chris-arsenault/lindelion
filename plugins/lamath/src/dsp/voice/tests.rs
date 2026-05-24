@@ -10,7 +10,7 @@ use super::{
     resonator_stack::{ResonatorStack, SeriesConditioner, routing_plain},
     *,
 };
-use crate::dsp::{ExcitationLayer, SelectedExcitations};
+use crate::dsp::{SelectedExcitations, excitation::ExcitationLayer};
 use crate::{
     FilterMode, ModalConfig, ModalPreset, ModulationConfig, OutputConfig, ResonatorConfig,
     ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,

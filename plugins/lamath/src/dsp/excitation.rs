@@ -41,6 +41,7 @@ pub struct RuntimeExcitationSlot<'a> {
 }
 
 impl<'a> RuntimeExcitationSlot<'a> {
+    #[cfg(test)]
     pub fn new(samples: &'a [f32], sample_rate: f32) -> Self {
         Self {
             samples,
@@ -97,6 +98,7 @@ impl<'a> SelectedExcitations<'a> {
         &self.layers
     }
 
+    #[cfg(test)]
     pub const fn layer_count(&self) -> usize {
         self.layer_count
     }

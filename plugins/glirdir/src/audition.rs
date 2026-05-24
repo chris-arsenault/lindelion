@@ -7,7 +7,11 @@ use lindelion_plugin_shell::{AudioBuffer, ProcessSetup, TransportContext};
 
 use crate::patch::AuditionSettings;
 
-const AUDITION_VOLUME_SMOOTH_MS: f32 = 10.0;
+pub const DEFAULT_AUDITION_VOLUME: f32 = 0.35;
+pub const AUDITION_VOLUME_SMOOTH_MS: f32 = 10.0;
+pub const AUDITION_VOLUME_EPSILON: f32 = 0.000_1;
+pub const AUDITION_ATTACK_MS: f32 = 10.0;
+pub const AUDITION_RELEASE_MS: f32 = 200.0;
 const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 
 #[derive(Debug, Clone)]
@@ -30,7 +34,11 @@ impl AuditionEngine {
             playing: false,
             position_samples: 0,
             loop_enabled: true,
-            volume: SmoothedParam::with_initial(volume_spec(), sample_rate, 0.35),
+            volume: SmoothedParam::with_initial(
+                volume_spec(),
+                sample_rate,
+                DEFAULT_AUDITION_VOLUME,
+            ),
         }
     }
 
@@ -136,7 +144,13 @@ impl AuditionEngine {
 }
 
 fn volume_spec() -> SmoothedParamSpec {
-    SmoothedParamSpec::new(0.0, 1.0, 0.35, AUDITION_VOLUME_SMOOTH_MS, 0.000_1)
+    SmoothedParamSpec::new(
+        0.0,
+        1.0,
+        DEFAULT_AUDITION_VOLUME,
+        AUDITION_VOLUME_SMOOTH_MS,
+        AUDITION_VOLUME_EPSILON,
+    )
 }
 
 fn clip_end_samples(clip: &MidiClip, setup: ProcessSetup) -> usize {
@@ -176,8 +190,8 @@ fn ticks_to_samples(ticks: u32, clip: &MidiClip, setup: ProcessSetup) -> usize {
 }
 
 fn envelope(age_samples: usize, remaining_samples: usize, sample_rate: f32) -> f32 {
-    let attack_samples = (sample_rate * 0.010).round().max(1.0) as usize;
-    let release_samples = (sample_rate * 0.200).round().max(1.0) as usize;
+    let attack_samples = (sample_rate * AUDITION_ATTACK_MS * 0.001).round().max(1.0) as usize;
+    let release_samples = (sample_rate * AUDITION_RELEASE_MS * 0.001).round().max(1.0) as usize;
     let attack = age_samples as f32 / attack_samples as f32;
     let release = remaining_samples as f32 / release_samples as f32;
     attack.min(release).clamp(0.0, 1.0)

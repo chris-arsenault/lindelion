@@ -1,8 +1,17 @@
 use std::path::{Path, PathBuf};
 
+use crate::editor_surface::{
+    CompleteSurfaceHost, EditorControlKind, EditorParameterBinding, EditorSurfaceHostError,
+    EditorSurfaceSlot,
+};
+
 pub const RESONATOR_EDITOR_WIDTH: i32 = 960;
 pub const RESONATOR_EDITOR_HEIGHT: i32 = 640;
 pub const RESONATOR_EDITOR_PARAMETER_BINDING_COUNT: usize = ResonatorEditorSurfaceSlot::ALL.len();
+
+pub type ResonatorEditorControlKind = EditorControlKind;
+pub type ResonatorEditorParameterBinding = EditorParameterBinding<ResonatorEditorSurfaceSlot>;
+pub type ResonatorEditorHostError = EditorSurfaceHostError<ResonatorEditorSurfaceSlot>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResonatorEditorSurfaceSlot {
@@ -102,54 +111,11 @@ impl ResonatorEditorSurfaceSlot {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ResonatorEditorControlKind {
-    Knob,
-    Slider,
-    Binary {
-        left_label: &'static str,
-        right_label: &'static str,
-        width: f32,
-    },
-}
+impl EditorSurfaceSlot for ResonatorEditorSurfaceSlot {
+    const ALL: &'static [Self] = &ResonatorEditorSurfaceSlot::ALL;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ResonatorEditorParameterBinding {
-    id: u32,
-    slot: ResonatorEditorSurfaceSlot,
-    label: &'static str,
-    control: ResonatorEditorControlKind,
-}
-
-impl ResonatorEditorParameterBinding {
-    pub const fn new(
-        id: u32,
-        slot: ResonatorEditorSurfaceSlot,
-        label: &'static str,
-        control: ResonatorEditorControlKind,
-    ) -> Self {
-        Self {
-            id,
-            slot,
-            label,
-            control,
-        }
-    }
-
-    pub const fn id(self) -> u32 {
-        self.id
-    }
-
-    pub const fn slot(self) -> ResonatorEditorSurfaceSlot {
-        self.slot
-    }
-
-    pub const fn label(self) -> &'static str {
-        self.label
-    }
-
-    pub const fn control(self) -> ResonatorEditorControlKind {
-        self.control
+    fn index(self) -> usize {
+        ResonatorEditorSurfaceSlot::index(self)
     }
 }
 
@@ -255,17 +221,14 @@ pub struct ResonatorEditorCommandRequest<'a> {
     pub selected_library_sample: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResonatorEditorHostError {
-    DuplicateSlot(ResonatorEditorSurfaceSlot),
-    MissingSlot(ResonatorEditorSurfaceSlot),
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct ResonatorEditorHost {
     context: usize,
-    parameter_bindings:
-        [Option<ResonatorEditorParameterBinding>; RESONATOR_EDITOR_PARAMETER_BINDING_COUNT],
+    surface: CompleteSurfaceHost<
+        ResonatorEditorSurfaceSlot,
+        ResonatorEditorParameterBinding,
+        RESONATOR_EDITOR_PARAMETER_BINDING_COUNT,
+    >,
     callbacks: ResonatorEditorCallbacks,
 }
 
@@ -275,24 +238,9 @@ impl ResonatorEditorHost {
         bindings: impl IntoIterator<Item = ResonatorEditorParameterBinding>,
         callbacks: ResonatorEditorCallbacks,
     ) -> Result<Self, ResonatorEditorHostError> {
-        let mut parameter_bindings = [None; RESONATOR_EDITOR_PARAMETER_BINDING_COUNT];
-        for binding in bindings {
-            let index = binding.slot().index();
-            if parameter_bindings[index].is_some() {
-                return Err(ResonatorEditorHostError::DuplicateSlot(binding.slot()));
-            }
-            parameter_bindings[index] = Some(binding);
-        }
-
-        for slot in ResonatorEditorSurfaceSlot::ALL {
-            if parameter_bindings[slot.index()].is_none() {
-                return Err(ResonatorEditorHostError::MissingSlot(slot));
-            }
-        }
-
         Ok(Self {
             context,
-            parameter_bindings,
+            surface: CompleteSurfaceHost::new(bindings)?,
             callbacks,
         })
     }
@@ -300,7 +248,7 @@ impl ResonatorEditorHost {
     pub const fn parameter_bindings(
         self,
     ) -> [Option<ResonatorEditorParameterBinding>; RESONATOR_EDITOR_PARAMETER_BINDING_COUNT] {
-        self.parameter_bindings
+        self.surface.parameter_bindings()
     }
 
     /// # Safety

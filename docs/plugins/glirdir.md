@@ -68,10 +68,10 @@ The current crate implements the non-UI core in focused modules:
 
 | Module | Role |
 | ---- | ---- |
-| `capture.rs` | Audio-input capture state machine using shared `ProcessContext` input and transport data. Capture completion is finalized off the audio thread. |
-| `analysis.rs` | SwiftF0 pitch contour integration, pitch-track fed hybrid onset detection, note segmentation, and MIDI clip derivation. |
-| `parameters.rs` | Host parameter metadata and patch application policy. |
-| `patch.rs` / `patch_io.rs` | Serializable patch schema and shared `TomlPatchFormat` adapters. |
+| `lindelion-capture` | Shared audio-input capture state machine using `ProcessContext` input and transport data. Capture completion is finalized off the audio thread. |
+| `analysis.rs` / `analysis_job.rs` | Product orchestration around shared phrase analysis plus Glirdir MIDI clip derivation and analysis caching. |
+| `parameters.rs` | Host parameter registry, patch binding, typed codecs, and patch application policy. |
+| `patch.rs` / `patch_io.rs` | Serializable patch schema, Glirdir scratchpad context, and shared `TomlPatchFormat` adapters. |
 | `audition.rs` | Simple transport-aware sine audition renderer using shared MIDI clip DTOs and DSP smoothing. |
 | `plugin.rs` | `AudioPlugin` implementation around the shared shell boundary. |
 | `vst3_entry/` | VST3 processor/controller/messages/editor bridge with typed UI commands and status payloads. |

@@ -6,7 +6,8 @@ use std::{
 };
 
 use lindelion_dsp_utils::{
-    analysis, interpolation,
+    analysis::{self, append_sanitized_audio, sanitize_audio_to_vec},
+    interpolation,
     math::{finite_clamp, finite_or},
 };
 use serde::{Deserialize, Serialize};
@@ -90,6 +91,46 @@ impl PitchContour {
     pub fn len(&self) -> usize {
         self.frames.len()
     }
+
+    pub fn source_frame_hop_samples(&self) -> usize {
+        source_frame_hop_samples(self)
+    }
+
+    pub fn frames_in_range(&self, start: usize, end: usize) -> &[PitchFrame] {
+        frames_in_range(self, start, end)
+    }
+}
+
+pub fn source_frame_hop_samples(contour: &PitchContour) -> usize {
+    contour
+        .frames
+        .windows(2)
+        .find_map(|window| {
+            window[1]
+                .source_sample_position
+                .checked_sub(window[0].source_sample_position)
+                .filter(|hop| *hop > 0)
+        })
+        .unwrap_or_else(|| {
+            (contour.hop_size.max(1) as f32 * contour.source_sample_rate.max(1) as f32
+                / contour.analysis_sample_rate.max(1) as f32)
+                .round()
+                .max(1.0) as usize
+        })
+}
+
+pub fn frames_in_range(contour: &PitchContour, start: usize, end: usize) -> &[PitchFrame] {
+    let first = contour
+        .frames
+        .partition_point(|frame| frame.source_sample_position < start);
+    let last = contour
+        .frames
+        .partition_point(|frame| frame.source_sample_position < end);
+    &contour.frames[first..last]
+}
+
+pub fn median_voiced_pitch(frames: &[PitchFrame]) -> Option<f32> {
+    analysis::median_finite_positive(frames.iter().filter_map(|frame| frame.f0_hz))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +165,11 @@ pub trait PitchDetector {
     ) -> Result<PitchContour, PitchDetectionError> {
         self.detect(audio, sample_rate)
     }
+}
+
+pub trait StreamingPitchTracker {
+    fn next_block(&mut self, audio: &[f32]) -> Result<&[PitchFrame], PitchDetectionError>;
+    fn reset(&mut self);
 }
 
 #[derive(Debug, Clone)]
@@ -176,34 +222,10 @@ pub fn detect_pitch_contour(
         return Err(PitchDetectionError::InvalidSampleRate);
     }
 
-    let config = config.sanitized();
-    let analysis_audio = resample_to_swiftf0_rate(audio, sample_rate);
-    let (pitch_hz, confidence) = run_swiftf0(&analysis_audio)?;
-    let frames = pitch_hz
-        .iter()
-        .copied()
-        .zip(confidence.iter().copied())
-        .enumerate()
-        .map(|(frame_index, (raw_f0_hz, confidence))| {
-            let timestamp_seconds = swiftf0_timestamp_seconds(frame_index);
-            let source_sample_position = (timestamp_seconds * sample_rate as f32).round() as usize;
-            let rms = frame_rms(&analysis_audio, frame_index);
-            let raw_f0_hz = finite_or(raw_f0_hz, 0.0);
-            let confidence = finite_clamp(confidence, 0.0, 1.0, 0.0);
-            let voiced = confidence >= config.confidence_threshold
-                && (config.fmin_hz..=config.fmax_hz).contains(&raw_f0_hz);
-            PitchFrame {
-                frame_index,
-                source_sample_position,
-                timestamp_seconds,
-                f0_hz: voiced.then_some(raw_f0_hz),
-                raw_f0_hz,
-                confidence,
-                voiced,
-                rms,
-            }
-        })
-        .collect();
+    let mut tracker = SwiftF0StreamingPitchTracker::new(sample_rate, config);
+    let mut frames = Vec::new();
+    frames.extend_from_slice(tracker.next_block(audio)?);
+    frames.extend_from_slice(tracker.finish()?);
 
     Ok(PitchContour {
         source_sample_rate: sample_rate,
@@ -213,9 +235,247 @@ pub fn detect_pitch_contour(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct SwiftF0StreamingPitchTracker {
+    config: PitchDetectionConfig,
+    source_sample_rate: u32,
+    source_samples_seen: usize,
+    source_buffer_start: usize,
+    source_buffer: Vec<f32>,
+    analysis_buffer_start: usize,
+    analysis_buffer: Vec<f32>,
+    next_analysis_sample_index: usize,
+    next_frame_start: usize,
+    block_frames: Vec<PitchFrame>,
+    finished: bool,
+}
+
+impl SwiftF0StreamingPitchTracker {
+    pub fn new(source_sample_rate: u32, config: PitchDetectionConfig) -> Self {
+        Self {
+            config: config.sanitized(),
+            source_sample_rate: source_sample_rate.max(1),
+            source_samples_seen: 0,
+            source_buffer_start: 0,
+            source_buffer: Vec::new(),
+            analysis_buffer_start: 0,
+            analysis_buffer: Vec::new(),
+            next_analysis_sample_index: 0,
+            next_frame_start: 0,
+            block_frames: Vec::new(),
+            finished: false,
+        }
+    }
+
+    pub const fn config(&self) -> PitchDetectionConfig {
+        self.config
+    }
+
+    pub const fn source_sample_rate(&self) -> u32 {
+        self.source_sample_rate
+    }
+
+    pub fn finish(&mut self) -> Result<&[PitchFrame], PitchDetectionError> {
+        self.block_frames.clear();
+        if self.finished || self.source_samples_seen == 0 {
+            return Ok(&self.block_frames);
+        }
+
+        self.finished = true;
+        self.append_remaining_analysis_samples();
+        let flush_until = self.expected_analysis_sample_len();
+        self.process_available_frames(Some(flush_until))?;
+        Ok(&self.block_frames)
+    }
+
+    fn append_source_block(&mut self, audio: &[f32]) {
+        if audio.is_empty() {
+            return;
+        }
+
+        self.finished = false;
+        if self.source_sample_rate == SWIFTF0_TARGET_SAMPLE_RATE {
+            append_sanitized_audio(&mut self.analysis_buffer, audio);
+            self.source_samples_seen += audio.len();
+            self.next_analysis_sample_index = self.source_samples_seen;
+            return;
+        }
+
+        append_sanitized_audio(&mut self.source_buffer, audio);
+        self.source_samples_seen += audio.len();
+        self.append_available_analysis_samples();
+        self.drain_source_buffer();
+    }
+
+    fn append_available_analysis_samples(&mut self) {
+        if self.source_samples_seen == 0 {
+            return;
+        }
+
+        let last_source_position = self.source_samples_seen.saturating_sub(1) as f32;
+        while self.next_analysis_source_position() <= last_source_position {
+            self.push_next_analysis_sample();
+        }
+    }
+
+    fn append_remaining_analysis_samples(&mut self) {
+        let target_len = self.expected_analysis_sample_len();
+        while self.next_analysis_sample_index < target_len {
+            self.push_next_analysis_sample();
+        }
+    }
+
+    fn push_next_analysis_sample(&mut self) {
+        let sample = if self.source_sample_rate == SWIFTF0_TARGET_SAMPLE_RATE {
+            self.analysis_buffer.last().copied().unwrap_or(0.0)
+        } else {
+            let local_position =
+                self.next_analysis_source_position() - self.source_buffer_start as f32;
+            interpolation::linear(&self.source_buffer, local_position)
+        };
+        self.analysis_buffer.push(finite_or(sample, 0.0));
+        self.next_analysis_sample_index += 1;
+    }
+
+    fn process_available_frames(
+        &mut self,
+        flush_until: Option<usize>,
+    ) -> Result<(), PitchDetectionError> {
+        let available_end = self.analysis_buffer_start + self.analysis_buffer.len();
+        if self.analysis_buffer.is_empty() {
+            return Ok(());
+        }
+        if flush_until.is_none() && self.next_frame_start + SWIFTF0_FRAME_SIZE > available_end {
+            return Ok(());
+        }
+        if let Some(flush_until) = flush_until
+            && self.next_frame_start >= flush_until
+        {
+            return Ok(());
+        }
+
+        let (pitch_hz, confidence) = run_swiftf0(&self.analysis_buffer)?;
+        let mut last_emitted_start = None;
+        for (local_frame_index, (raw_f0_hz, confidence)) in pitch_hz
+            .iter()
+            .copied()
+            .zip(confidence.iter().copied())
+            .enumerate()
+        {
+            let frame_start = self.analysis_buffer_start + local_frame_index * SWIFTF0_HOP_SIZE;
+            if frame_start < self.next_frame_start {
+                continue;
+            }
+            if let Some(flush_until) = flush_until {
+                if frame_start >= flush_until {
+                    break;
+                }
+            } else if frame_start + SWIFTF0_FRAME_SIZE > available_end {
+                break;
+            }
+
+            let frame = self.pitch_frame_from_model_output(
+                frame_start,
+                local_frame_index,
+                raw_f0_hz,
+                confidence,
+            );
+            self.block_frames.push(frame);
+            last_emitted_start = Some(frame_start);
+        }
+
+        if let Some(last_emitted_start) = last_emitted_start {
+            self.next_frame_start = last_emitted_start + SWIFTF0_HOP_SIZE;
+            self.drain_analysis_buffer();
+        }
+        Ok(())
+    }
+
+    fn pitch_frame_from_model_output(
+        &self,
+        frame_start: usize,
+        local_frame_index: usize,
+        raw_f0_hz: f32,
+        confidence: f32,
+    ) -> PitchFrame {
+        let frame_index = frame_start / SWIFTF0_HOP_SIZE;
+        let timestamp_seconds = swiftf0_timestamp_seconds(frame_index);
+        let source_sample_position =
+            (timestamp_seconds * self.source_sample_rate as f32).round() as usize;
+        let rms = frame_rms(&self.analysis_buffer, local_frame_index);
+        let raw_f0_hz = finite_or(raw_f0_hz, 0.0);
+        let confidence = finite_clamp(confidence, 0.0, 1.0, 0.0);
+        let voiced = confidence >= self.config.confidence_threshold
+            && (self.config.fmin_hz..=self.config.fmax_hz).contains(&raw_f0_hz);
+        PitchFrame {
+            frame_index,
+            source_sample_position,
+            timestamp_seconds,
+            f0_hz: voiced.then_some(raw_f0_hz),
+            raw_f0_hz,
+            confidence,
+            voiced,
+            rms,
+        }
+    }
+
+    fn next_analysis_source_position(&self) -> f32 {
+        self.next_analysis_sample_index as f32 * self.source_sample_rate as f32
+            / SWIFTF0_TARGET_SAMPLE_RATE as f32
+    }
+
+    fn expected_analysis_sample_len(&self) -> usize {
+        ((self.source_samples_seen as f64 * SWIFTF0_TARGET_SAMPLE_RATE as f64)
+            / self.source_sample_rate as f64)
+            .ceil()
+            .max(1.0) as usize
+    }
+
+    fn drain_source_buffer(&mut self) {
+        if self.source_buffer.is_empty() {
+            return;
+        }
+
+        let retain_from = self.next_analysis_source_position().floor().max(1.0) as usize - 1;
+        let drain_len = retain_from
+            .saturating_sub(self.source_buffer_start)
+            .min(self.source_buffer.len());
+        if drain_len > 0 {
+            self.source_buffer.drain(0..drain_len);
+            self.source_buffer_start += drain_len;
+        }
+    }
+
+    fn drain_analysis_buffer(&mut self) {
+        let drain_len = self
+            .next_frame_start
+            .saturating_sub(self.analysis_buffer_start)
+            .min(self.analysis_buffer.len());
+        if drain_len > 0 {
+            self.analysis_buffer.drain(0..drain_len);
+            self.analysis_buffer_start += drain_len;
+        }
+    }
+}
+
+impl StreamingPitchTracker for SwiftF0StreamingPitchTracker {
+    fn next_block(&mut self, audio: &[f32]) -> Result<&[PitchFrame], PitchDetectionError> {
+        self.block_frames.clear();
+        self.append_source_block(audio);
+        self.process_available_frames(None)?;
+        Ok(&self.block_frames)
+    }
+
+    fn reset(&mut self) {
+        let config = self.config;
+        let source_sample_rate = self.source_sample_rate;
+        *self = Self::new(source_sample_rate, config);
+    }
+}
+
 pub fn resample_to_swiftf0_rate(audio: &[f32], source_sample_rate: u32) -> Vec<f32> {
     if source_sample_rate == SWIFTF0_TARGET_SAMPLE_RATE {
-        return sanitize_audio(audio);
+        return sanitize_audio_to_vec(audio);
     }
 
     let target_len = ((audio.len() as f64 * SWIFTF0_TARGET_SAMPLE_RATE as f64)
@@ -227,7 +487,7 @@ pub fn resample_to_swiftf0_rate(audio: &[f32], source_sample_rate: u32) -> Vec<f
     for index in 0..target_len {
         out.push(interpolation::linear(audio, index as f32 * source_step));
     }
-    sanitize_audio(&out)
+    sanitize_audio_to_vec(&out)
 }
 
 fn run_swiftf0(audio_16k: &[f32]) -> Result<(Vec<f32>, Vec<f32>), PitchDetectionError> {
@@ -285,7 +545,7 @@ fn tensor_to_vec(tensor: &TValue) -> Result<Vec<f32>, PitchDetectionError> {
 }
 
 fn padded_input(audio: &[f32]) -> Vec<f32> {
-    let mut input = sanitize_audio(audio);
+    let mut input = sanitize_audio_to_vec(audio);
     if input.len() < SWIFTF0_HOP_SIZE {
         input.resize(SWIFTF0_HOP_SIZE, 0.0);
     }
@@ -303,17 +563,10 @@ fn frame_rms(audio_16k: &[f32], frame_index: usize) -> f32 {
     analysis::rms(audio_16k.get(start..end).unwrap_or_default())
 }
 
-fn sanitize_audio(audio: &[f32]) -> Vec<f32> {
-    audio
-        .iter()
-        .copied()
-        .map(|sample| finite_or(sample, 0.0))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lindelion_dsp_utils::math::cents_between;
 
     #[test]
     fn swiftf0_model_bytes_are_embedded() {
@@ -380,6 +633,79 @@ mod tests {
         assert_close_cents(median(voiced), 440.0, 80.0);
     }
 
+    #[test]
+    fn contour_reports_source_hop_from_frame_positions() {
+        let contour = PitchContour {
+            source_sample_rate: 48_000,
+            analysis_sample_rate: 16_000,
+            hop_size: 256,
+            frames: vec![
+                pitch_frame(0, 1_000, Some(220.0)),
+                pitch_frame(1, 1_768, Some(220.0)),
+                pitch_frame(2, 2_536, Some(220.0)),
+            ],
+        };
+
+        assert_eq!(contour.source_frame_hop_samples(), 768);
+    }
+
+    #[test]
+    fn contour_hop_fallback_uses_contour_sample_rates() {
+        let contour = PitchContour {
+            source_sample_rate: 44_100,
+            analysis_sample_rate: 22_050,
+            hop_size: 128,
+            frames: vec![pitch_frame(0, 0, Some(220.0))],
+        };
+
+        assert_eq!(contour.source_frame_hop_samples(), 256);
+    }
+
+    #[test]
+    fn contour_frames_in_range_and_median_use_shared_pitch_frames() {
+        let contour = PitchContour {
+            source_sample_rate: 48_000,
+            analysis_sample_rate: 16_000,
+            hop_size: 256,
+            frames: vec![
+                pitch_frame(0, 0, Some(440.0)),
+                pitch_frame(1, 768, None),
+                pitch_frame(2, 1_536, Some(660.0)),
+                pitch_frame(3, 2_304, Some(550.0)),
+            ],
+        };
+
+        let frames = contour.frames_in_range(700, 2_400);
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!(median_voiced_pitch(frames), Some(660.0));
+    }
+
+    #[test]
+    fn streaming_pitch_tracker_emits_monotonic_frames_across_blocks() {
+        let audio = sine_wave(440.0, 16_000);
+        let mut tracker =
+            SwiftF0StreamingPitchTracker::new(16_000, PitchDetectionConfig::default());
+        let mut frames = Vec::new();
+
+        for block in audio.chunks(4_096) {
+            frames.extend_from_slice(tracker.next_block(block).unwrap());
+        }
+        frames.extend_from_slice(tracker.finish().unwrap());
+
+        assert!(frames.len() >= 4);
+        assert!(
+            frames
+                .windows(2)
+                .all(|pair| pair[0].source_sample_position < pair[1].source_sample_position)
+        );
+        let voiced = frames
+            .iter()
+            .filter_map(|frame| frame.f0_hz)
+            .collect::<Vec<_>>();
+        assert_close_cents(median(voiced), 440.0, 80.0);
+    }
+
     fn sine_wave(frequency_hz: f32, len: usize) -> Vec<f32> {
         (0..len)
             .map(|index| {
@@ -395,10 +721,27 @@ mod tests {
     }
 
     fn assert_close_cents(actual_hz: f32, expected_hz: f32, tolerance_cents: f32) {
-        let cents = 1200.0 * (actual_hz / expected_hz).log2().abs();
+        let cents = cents_between(expected_hz, actual_hz);
         assert!(
             cents <= tolerance_cents,
             "expected {actual_hz} Hz within {tolerance_cents} cents of {expected_hz} Hz, got {cents}"
         );
+    }
+
+    fn pitch_frame(
+        frame_index: usize,
+        source_sample_position: usize,
+        f0_hz: Option<f32>,
+    ) -> PitchFrame {
+        PitchFrame {
+            frame_index,
+            source_sample_position,
+            timestamp_seconds: source_sample_position as f32 / 48_000.0,
+            f0_hz,
+            raw_f0_hz: f0_hz.unwrap_or(0.0),
+            confidence: if f0_hz.is_some() { 0.95 } else { 0.1 },
+            voiced: f0_hz.is_some(),
+            rms: if f0_hz.is_some() { 0.2 } else { 0.0 },
+        }
     }
 }

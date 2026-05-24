@@ -1,4 +1,4 @@
-use lindelion_onset_detect::{AlgorithmParams, DetectionAlgorithm, DetectionConfig, SliceMarker};
+use lindelion_onset_detect::{DetectionConfig, SliceMarker};
 use lindelion_plugin_shell::{
     AudioPlugin, ParameterInfo, ParameterRange, PluginDescriptor, PluginState, ProcessContext,
     ProcessSetup,
@@ -49,15 +49,7 @@ impl Default for LinnodPatch {
         Self {
             name: "Default".to_string(),
             source_sample: None,
-            detection: DetectionConfig {
-                algorithm: DetectionAlgorithm::SuperFlux,
-                sensitivity: 0.5,
-                min_slice_ms: 50.0,
-                params: AlgorithmParams::SuperFlux {
-                    lookback_frames: 3,
-                    max_filter_radius: 3,
-                },
-            },
+            detection: DetectionConfig::default(),
             markers: Vec::new(),
             slices: (1..=16).map(SliceParams::default_for_index).collect(),
             tuning: TuningConfig::default(),

@@ -3,10 +3,229 @@ use std::path::PathBuf;
 #[cfg(any(feature = "file-library", feature = "wav-decoder"))]
 use std::{fmt, fs, io, path::Path};
 
+use lindelion_dsp_utils::analysis::sanitize_audio_in_place;
+
 #[cfg(feature = "file-library")]
 use rusqlite::{Connection, params};
 
 use serde::{Deserialize, Serialize};
+
+pub const DEFAULT_AUDIO_SAMPLE_RATE_HZ: u32 = 48_000;
+pub const MAX_RUNTIME_AUDIO_SAMPLE_RATE_HZ: f32 = 384_000.0;
+
+pub trait IntoAudioSampleRateHz {
+    fn into_audio_sample_rate_hz(self) -> u32;
+}
+
+impl IntoAudioSampleRateHz for u32 {
+    fn into_audio_sample_rate_hz(self) -> u32 {
+        self.max(1)
+    }
+}
+
+impl IntoAudioSampleRateHz for f32 {
+    fn into_audio_sample_rate_hz(self) -> u32 {
+        sanitize_runtime_audio_sample_rate(self).round() as u32
+    }
+}
+
+impl IntoAudioSampleRateHz for f64 {
+    fn into_audio_sample_rate_hz(self) -> u32 {
+        let value = if self.is_finite() {
+            self.round().clamp(1.0, f64::from(u32::MAX))
+        } else {
+            f64::from(DEFAULT_AUDIO_SAMPLE_RATE_HZ)
+        };
+        value as u32
+    }
+}
+
+pub fn sanitize_runtime_audio_sample_rate(sample_rate: f32) -> f32 {
+    if sample_rate.is_finite() {
+        sample_rate.clamp(1.0, MAX_RUNTIME_AUDIO_SAMPLE_RATE_HZ)
+    } else {
+        DEFAULT_AUDIO_SAMPLE_RATE_HZ as f32
+    }
+}
+
+pub fn sanitize_audio_samples_in_place(samples: &mut [f32]) {
+    sanitize_audio_in_place(samples);
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnedMonoAudioBuffer {
+    pub sample_rate: u32,
+    pub samples: Vec<f32>,
+}
+
+impl OwnedMonoAudioBuffer {
+    pub fn new(samples: Vec<f32>, sample_rate: impl IntoAudioSampleRateHz) -> Self {
+        let mut samples = samples;
+        sanitize_audio_samples_in_place(&mut samples);
+        Self {
+            sample_rate: sample_rate.into_audio_sample_rate_hz(),
+            samples,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    pub fn runtime_sample_rate(&self) -> f32 {
+        sanitize_runtime_audio_sample_rate(self.sample_rate as f32)
+    }
+}
+
+#[cfg(feature = "wav-decoder")]
+impl From<DecodedSample> for OwnedMonoAudioBuffer {
+    fn from(value: DecodedSample) -> Self {
+        Self::new(value.samples, value.sample_rate)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeMonoAudioBuffer {
+    samples: Box<[f32]>,
+    sample_rate: f32,
+}
+
+impl RuntimeMonoAudioBuffer {
+    pub fn from_owned(buffer: OwnedMonoAudioBuffer) -> Self {
+        Self {
+            sample_rate: buffer.runtime_sample_rate(),
+            samples: buffer.samples.into_boxed_slice(),
+        }
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
+    /// Extends the sample slice lifetime for hosts that keep the owning
+    /// `RuntimeMonoAudioBuffer` beside the runtime object that borrows it.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that every returned slice is discarded before
+    /// this buffer is moved, replaced, or dropped.
+    pub unsafe fn samples_with_static_lifetime(&self) -> &'static [f32] {
+        unsafe { std::slice::from_raw_parts(self.samples.as_ptr(), self.samples.len()) }
+    }
+}
+
+impl From<OwnedMonoAudioBuffer> for RuntimeMonoAudioBuffer {
+    fn from(value: OwnedMonoAudioBuffer) -> Self {
+        Self::from_owned(value)
+    }
+}
+
+pub type LoadedMonoAudioSlots<const N: usize> = [Option<OwnedMonoAudioBuffer>; N];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferencedSampleLoadReport {
+    pub loaded_slots: usize,
+    pub missing_samples: Vec<SampleReference>,
+}
+
+#[cfg(feature = "wav-decoder")]
+#[derive(Debug)]
+pub enum ReferencedSampleLoadError<E> {
+    Library(E),
+    Decode {
+        reference: SampleReference,
+        path: PathBuf,
+        source: SampleDecodeError,
+    },
+}
+
+#[cfg(feature = "wav-decoder")]
+pub fn load_referenced_mono_audio_from_library<'a, const N: usize, L, I>(
+    references: I,
+    library: &L,
+) -> Result<
+    (LoadedMonoAudioSlots<N>, ReferencedSampleLoadReport),
+    ReferencedSampleLoadError<L::Error>,
+>
+where
+    L: SampleLibrary,
+    I: IntoIterator<Item = (usize, &'a SampleReference)>,
+{
+    let mut buffers = empty_loaded_mono_audio_slots();
+    let mut missing_samples = Vec::new();
+    let mut loaded_slots = 0;
+
+    for (index, reference) in references {
+        if index >= N {
+            continue;
+        }
+        match library
+            .resolve(reference)
+            .map_err(ReferencedSampleLoadError::Library)?
+        {
+            SampleResolution::Found(path) => {
+                let decoded =
+                    decode_wav_mono(&path).map_err(|source| ReferencedSampleLoadError::Decode {
+                        reference: reference.clone(),
+                        path,
+                        source,
+                    })?;
+                buffers[index] = Some(OwnedMonoAudioBuffer::from(decoded));
+                loaded_slots += 1;
+            }
+            SampleResolution::Missing(reference) => missing_samples.push(reference),
+        }
+    }
+
+    Ok((
+        buffers,
+        ReferencedSampleLoadReport {
+            loaded_slots,
+            missing_samples,
+        },
+    ))
+}
+
+#[cfg(feature = "wav-decoder")]
+pub fn load_referenced_mono_audio_from_paths<'a, const N: usize, I>(
+    references: I,
+) -> (LoadedMonoAudioSlots<N>, ReferencedSampleLoadReport)
+where
+    I: IntoIterator<Item = (usize, &'a SampleReference)>,
+{
+    let mut buffers = empty_loaded_mono_audio_slots();
+    let mut missing_samples = Vec::new();
+    let mut loaded_slots = 0;
+
+    for (index, reference) in references {
+        if index >= N {
+            continue;
+        }
+        match decode_wav_mono(&reference.last_known_path) {
+            Ok(decoded) => {
+                buffers[index] = Some(OwnedMonoAudioBuffer::from(decoded));
+                loaded_slots += 1;
+            }
+            Err(_) => missing_samples.push(reference.clone()),
+        }
+    }
+
+    (
+        buffers,
+        ReferencedSampleLoadReport {
+            loaded_slots,
+            missing_samples,
+        },
+    )
+}
+
+pub fn empty_loaded_mono_audio_slots<const N: usize>() -> LoadedMonoAudioSlots<N> {
+    std::array::from_fn(|_| None)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SampleHash(pub String);

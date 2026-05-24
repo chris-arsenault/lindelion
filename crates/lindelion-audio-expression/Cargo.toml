@@ -1,0 +1,17 @@
+[package]
+name = "lindelion-audio-expression"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-onset-detect.workspace = true
+lindelion-phrase-analysis.workspace = true
+lindelion-pitch-detect.workspace = true
+lindelion-plugin-shell.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+lindelion-midi.workspace = true

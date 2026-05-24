@@ -2,8 +2,12 @@
 resolver = "3"
 members = [
     "crates/lindelion-dsp-utils",
+    "crates/lindelion-test-allocator",
+    "crates/lindelion-capture",
+    "crates/lindelion-audio-expression",
     "crates/lindelion-midi",
     "crates/lindelion-onset-detect",
+    "crates/lindelion-phrase-analysis",
     "crates/lindelion-pitch-detect",
     "crates/lindelion-plugin-shell",
     "crates/lindelion-psola",
@@ -23,8 +27,12 @@ authors = ["Ahara"]
 
 [workspace.dependencies]
 lindelion-dsp-utils = { path = "crates/lindelion-dsp-utils" }
+lindelion-test-allocator = { path = "crates/lindelion-test-allocator" }
+lindelion-capture = { path = "crates/lindelion-capture" }
+lindelion-audio-expression = { path = "crates/lindelion-audio-expression" }
 lindelion-midi = { path = "crates/lindelion-midi" }
 lindelion-onset-detect = { path = "crates/lindelion-onset-detect" }
+lindelion-phrase-analysis = { path = "crates/lindelion-phrase-analysis" }
 lindelion-pitch-detect = { path = "crates/lindelion-pitch-detect" }
 lindelion-plugin-shell = { path = "crates/lindelion-plugin-shell" }
 lindelion-psola = { path = "crates/lindelion-psola" }

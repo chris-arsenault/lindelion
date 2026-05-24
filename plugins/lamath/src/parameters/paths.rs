@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParameterPath {
+pub(crate) enum ParameterPath {
     Output(OutputParameter),
     RoutingMode,
     ParallelMixA,
@@ -24,7 +24,7 @@ enum ParameterPath {
     },
 }
 
-impl ParameterPath {
+impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
     fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
         match self {
             Self::Output(parameter) => parameter.plain_value(patch.output),
@@ -87,7 +87,7 @@ impl ParameterPath {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutputParameter {
+pub(crate) enum OutputParameter {
     MasterGain,
     FilterCutoff,
     Saturation,
@@ -125,7 +125,7 @@ impl OutputParameter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResonatorSlot {
+pub(crate) enum ResonatorSlot {
     A,
     B,
 }
@@ -147,7 +147,7 @@ impl ResonatorSlot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResonatorParameter {
+pub(crate) enum ResonatorParameter {
     Model,
     Modal(ModalParameter),
     Waveguide(WaveguideParameter),
@@ -172,7 +172,7 @@ impl ResonatorParameter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModalParameter {
+pub(crate) enum ModalParameter {
     Preset,
     ModeCount,
     Semitone,
@@ -241,7 +241,7 @@ impl ModalParameter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WaveguideParameter {
+pub(crate) enum WaveguideParameter {
     LoopFilter,
     LoopResonance,
     LoopGain,
@@ -293,7 +293,7 @@ impl WaveguideParameter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EnvelopeTarget {
+pub(crate) enum EnvelopeTarget {
     Amp,
     Secondary,
 }
@@ -315,7 +315,7 @@ impl EnvelopeTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EnvelopeParameter {
+pub(crate) enum EnvelopeParameter {
     Attack,
     Decay,
     Sustain,
@@ -343,7 +343,7 @@ impl EnvelopeParameter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModulationSlotParameter {
+pub(crate) enum ModulationSlotParameter {
     Enabled,
     Source,
     Destination,

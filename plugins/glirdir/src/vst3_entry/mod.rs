@@ -15,9 +15,9 @@ mod processor_tests;
 #[cfg(test)]
 mod tests;
 
-use crate::PARAMETERS;
+use crate::PARAMETER_BINDING_COUNT;
 
-const VST3_PARAMETER_COUNT: usize = PARAMETERS.len();
+const VST3_PARAMETER_COUNT: usize = PARAMETER_BINDING_COUNT;
 const SUBCATEGORY: &str = "Fx";
 
 use controller::GlirdirVst3Controller;

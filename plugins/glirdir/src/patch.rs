@@ -1,7 +1,25 @@
+use lindelion_dsp_utils::math::finite_clamp;
 use lindelion_midi::{QuantizeSettings, RootNote, Scale, SnapMode, TimingGrid};
-use lindelion_onset_detect::{AlgorithmParams, DetectionConfig};
+use lindelion_onset_detect::{DetectionConfig, OnsetDetectionProfile};
+use lindelion_phrase_analysis::{NoteSegmentationConfig, PhraseAnalysisConfig};
 use lindelion_pitch_detect::{PitchDetectionConfig, SWIFTF0_MODEL_FMAX_HZ, SWIFTF0_MODEL_FMIN_HZ};
 use serde::{Deserialize, Serialize};
+
+use crate::audition::DEFAULT_AUDITION_VOLUME;
+
+pub use lindelion_capture::{
+    CaptureSettings, CaptureState, ScratchpadAudio, ScratchpadMetadata, SyncMode,
+};
+
+pub const MIN_ANALYSIS_CONFIDENCE_THRESHOLD: f32 = 0.0;
+pub const MAX_ANALYSIS_CONFIDENCE_THRESHOLD: f32 = 1.0;
+pub const DEFAULT_ANALYSIS_CONFIDENCE_THRESHOLD: f32 = 0.5;
+pub const MIN_ONSET_SENSITIVITY: f32 = 0.0;
+pub const MAX_ONSET_SENSITIVITY: f32 = 1.0;
+pub const DEFAULT_ONSET_SENSITIVITY: f32 = 0.5;
+pub const MIN_ANALYSIS_NOTE_MS: f32 = 30.0;
+pub const MAX_ANALYSIS_NOTE_MS: f32 = 300.0;
+pub const DEFAULT_ANALYSIS_NOTE_MS: f32 = 80.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GlirdirPatch {
@@ -32,111 +50,57 @@ impl Default for GlirdirPatch {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CaptureBars {
-    Four,
-    Eight,
-    Sixteen,
-}
-
-impl CaptureBars {
-    pub const ALL: [Self; 3] = [Self::Four, Self::Eight, Self::Sixteen];
-
-    pub const fn bars(self) -> u8 {
-        match self {
-            Self::Four => 4,
-            Self::Eight => 8,
-            Self::Sixteen => 16,
-        }
-    }
-
-    pub fn from_plain(value: f32) -> Self {
-        match value.round() as i32 {
-            value if value <= 4 => Self::Four,
-            value if value <= 8 => Self::Eight,
-            _ => Self::Sixteen,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SyncMode {
-    Immediate,
-    PhraseBoundary,
-    NextDownbeat,
-}
-
-impl SyncMode {
-    pub const ALL: [Self; 3] = [Self::Immediate, Self::PhraseBoundary, Self::NextDownbeat];
-
-    pub fn from_plain(value: f32) -> Self {
-        match value.round() as i32 {
-            value if value <= 0 => Self::Immediate,
-            1 => Self::PhraseBoundary,
-            _ => Self::NextDownbeat,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CaptureState {
-    Idle,
-    Armed,
-    CountIn,
-    Capturing,
-    Captured,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CaptureSettings {
-    pub bars: CaptureBars,
-    pub sync_mode: SyncMode,
-    pub count_in_bars: u8,
-}
-
-impl Default for CaptureSettings {
-    fn default() -> Self {
-        Self {
-            bars: CaptureBars::Four,
-            sync_mode: SyncMode::Immediate,
-            count_in_bars: 0,
-        }
-    }
-}
-
-impl CaptureSettings {
-    pub fn sanitized(self) -> Self {
-        Self {
-            bars: self.bars,
-            sync_mode: self.sync_mode,
-            count_in_bars: self.count_in_bars.min(2),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AnalysisSettings {
     pub confidence_threshold: f32,
     pub onset_sensitivity: f32,
     pub min_note_ms: f32,
+    #[serde(default)]
+    pub note_segmentation: NoteSegmentationConfig,
+    #[serde(default)]
+    pub onset_profile: OnsetDetectionProfile,
 }
 
 impl Default for AnalysisSettings {
     fn default() -> Self {
         Self {
-            confidence_threshold: 0.5,
-            onset_sensitivity: 0.5,
-            min_note_ms: 80.0,
+            confidence_threshold: DEFAULT_ANALYSIS_CONFIDENCE_THRESHOLD,
+            onset_sensitivity: DEFAULT_ONSET_SENSITIVITY,
+            min_note_ms: DEFAULT_ANALYSIS_NOTE_MS,
+            note_segmentation: NoteSegmentationConfig::default(),
+            onset_profile: OnsetDetectionProfile::default(),
         }
     }
 }
 
 impl AnalysisSettings {
     pub fn sanitized(self) -> Self {
+        let confidence_threshold = finite_clamp(
+            self.confidence_threshold,
+            MIN_ANALYSIS_CONFIDENCE_THRESHOLD,
+            MAX_ANALYSIS_CONFIDENCE_THRESHOLD,
+            DEFAULT_ANALYSIS_CONFIDENCE_THRESHOLD,
+        );
+        let onset_sensitivity = finite_clamp(
+            self.onset_sensitivity,
+            MIN_ONSET_SENSITIVITY,
+            MAX_ONSET_SENSITIVITY,
+            DEFAULT_ONSET_SENSITIVITY,
+        );
+        let min_note_ms = finite_clamp(
+            self.min_note_ms,
+            MIN_ANALYSIS_NOTE_MS,
+            MAX_ANALYSIS_NOTE_MS,
+            DEFAULT_ANALYSIS_NOTE_MS,
+        );
+        let mut note_segmentation = self.note_segmentation.sanitized();
+        note_segmentation.min_note_ms = min_note_ms;
         Self {
-            confidence_threshold: sanitize_range(self.confidence_threshold, 0.0, 1.0, 0.5),
-            onset_sensitivity: sanitize_range(self.onset_sensitivity, 0.0, 1.0, 0.5),
-            min_note_ms: sanitize_range(self.min_note_ms, 30.0, 300.0, 80.0),
+            confidence_threshold,
+            onset_sensitivity,
+            min_note_ms,
+            note_segmentation,
+            onset_profile: self.onset_profile.sanitized(),
         }
     }
 
@@ -148,20 +112,30 @@ impl AnalysisSettings {
         }
         .sanitized()
     }
+
+    pub fn note_segmentation_config(self) -> NoteSegmentationConfig {
+        self.sanitized().note_segmentation
+    }
+
+    pub fn phrase_analysis_config(self) -> PhraseAnalysisConfig {
+        let value = self.sanitized();
+        PhraseAnalysisConfig {
+            pitch_detection: value.pitch_detection_config(),
+            onset_detection: DetectionConfig::from(value),
+            note_segmentation: value.note_segmentation,
+        }
+        .sanitized()
+    }
 }
 
 impl From<AnalysisSettings> for DetectionConfig {
     fn from(value: AnalysisSettings) -> Self {
         let value = value.sanitized();
-        Self {
-            sensitivity: value.onset_sensitivity,
-            min_slice_ms: value.min_note_ms,
-            params: AlgorithmParams::SuperFlux {
-                lookback_frames: 3,
-                max_filter_radius: 3,
-            },
-            ..DetectionConfig::default()
-        }
+        DetectionConfig::superflux(
+            value.onset_sensitivity,
+            value.min_note_ms,
+            value.onset_profile,
+        )
     }
 }
 
@@ -175,7 +149,7 @@ pub struct AuditionSettings {
 impl Default for AuditionSettings {
     fn default() -> Self {
         Self {
-            volume: 0.35,
+            volume: DEFAULT_AUDITION_VOLUME,
             loop_enabled: true,
             live_edit: true,
         }
@@ -185,117 +159,83 @@ impl Default for AuditionSettings {
 impl AuditionSettings {
     pub fn sanitized(self) -> Self {
         Self {
-            volume: sanitize_range(self.volume, 0.0, 1.0, 0.35),
+            volume: finite_clamp(self.volume, 0.0, 1.0, DEFAULT_AUDITION_VOLUME),
             loop_enabled: self.loop_enabled,
             live_edit: self.live_edit,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ScratchpadAudio {
-    pub sample_rate: u32,
-    #[serde(default)]
-    pub metadata: ScratchpadMetadata,
-    pub samples: Vec<f32>,
+pub fn apply_scratchpad_midi_context(
+    scratchpad: &ScratchpadAudio,
+    settings: &mut QuantizeSettings,
+) {
+    settings.sample_rate = scratchpad.sample_rate;
+    settings.bpm = f32::from(scratchpad.metadata.bpm);
+    settings.time_signature_numerator = scratchpad.metadata.time_signature_numerator;
+    settings.time_signature_denominator = scratchpad.metadata.time_signature_denominator;
 }
 
-impl ScratchpadAudio {
-    pub fn new(sample_rate: u32, samples: Vec<f32>) -> Self {
-        Self::with_metadata(sample_rate, ScratchpadMetadata::default(), samples)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lindelion_onset_detect::AlgorithmParams;
+
+    #[test]
+    fn analysis_settings_project_explicit_profiles_to_reusable_configs() {
+        let onset_profile = OnsetDetectionProfile {
+            lookback_frames: 7,
+            max_filter_radius: 5,
+            pitch_stability_threshold_cents: 90.0,
+            pitch_stability_duration_ms: 48.0,
+        };
+        let settings = AnalysisSettings {
+            confidence_threshold: 0.7,
+            onset_sensitivity: 0.6,
+            min_note_ms: 72.0,
+            note_segmentation: NoteSegmentationConfig {
+                min_note_ms: 999.0,
+                min_inherited_pitch_rms: 0.07,
+                same_pitch_merge_cents: 22.0,
+                articulation_search_ms: 33.0,
+                articulation_gap_ratio: 0.4,
+                rms_chunk_samples: 128,
+            },
+            onset_profile,
+        };
+
+        let segmentation = settings.note_segmentation_config();
+        assert_eq!(segmentation.min_note_ms, 72.0);
+        assert_eq!(segmentation.min_inherited_pitch_rms, 0.07);
+        assert_eq!(segmentation.same_pitch_merge_cents, 22.0);
+
+        let detection = DetectionConfig::from(settings);
+        assert_eq!(detection.profile, onset_profile);
+        assert_eq!(
+            detection.params,
+            AlgorithmParams::SuperFlux {
+                lookback_frames: 7,
+                max_filter_radius: 5
+            }
+        );
     }
 
-    pub fn with_metadata(
-        sample_rate: u32,
-        metadata: ScratchpadMetadata,
-        mut samples: Vec<f32>,
-    ) -> Self {
-        sanitize_samples(&mut samples);
-        Self {
-            sample_rate: sample_rate.max(1),
-            metadata,
-            samples,
-        }
-    }
+    #[test]
+    fn legacy_analysis_settings_deserialize_with_default_profiles() {
+        let settings: AnalysisSettings = toml::from_str(
+            r#"
+            confidence_threshold = 0.61
+            onset_sensitivity = 0.55
+            min_note_ms = 70.0
+            "#,
+        )
+        .unwrap();
 
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
-    }
-
-    pub fn apply_midi_context(&self, settings: &mut QuantizeSettings) {
-        settings.sample_rate = self.sample_rate;
-        settings.bpm = f32::from(self.metadata.bpm);
-        settings.time_signature_numerator = self.metadata.time_signature_numerator;
-        settings.time_signature_denominator = self.metadata.time_signature_denominator;
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScratchpadMetadata {
-    pub bpm: u16,
-    pub time_signature_numerator: u8,
-    pub time_signature_denominator: u8,
-    pub capture_bars: u8,
-}
-
-impl Default for ScratchpadMetadata {
-    fn default() -> Self {
-        Self {
-            bpm: 120,
-            time_signature_numerator: 4,
-            time_signature_denominator: 4,
-            capture_bars: 4,
-        }
-    }
-}
-
-impl ScratchpadMetadata {
-    pub fn new(
-        bpm: f64,
-        time_signature_numerator: u16,
-        time_signature_denominator: u16,
-        capture_bars: u8,
-    ) -> Self {
-        Self {
-            bpm: sanitize_bpm(bpm),
-            time_signature_numerator: sanitize_u8(time_signature_numerator, 1),
-            time_signature_denominator: sanitize_denominator(time_signature_denominator),
-            capture_bars: capture_bars.max(1),
-        }
-    }
-}
-
-fn sanitize_range(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(min, max)
-    } else {
-        fallback
-    }
-}
-
-fn sanitize_samples(samples: &mut [f32]) {
-    for sample in samples {
-        if !sample.is_finite() {
-            *sample = 0.0;
-        }
-    }
-}
-
-fn sanitize_bpm(value: f64) -> u16 {
-    if value.is_finite() {
-        value.round().clamp(1.0, 999.0) as u16
-    } else {
-        120
-    }
-}
-
-fn sanitize_u8(value: u16, fallback: u8) -> u8 {
-    u8::try_from(value).unwrap_or(fallback).max(1)
-}
-
-fn sanitize_denominator(value: u16) -> u8 {
-    match value {
-        1 | 2 | 4 | 8 | 16 | 32 => value as u8,
-        _ => 4,
+        assert_eq!(
+            settings.note_segmentation,
+            NoteSegmentationConfig::default()
+        );
+        assert_eq!(settings.onset_profile, OnsetDetectionProfile::default());
+        assert_eq!(settings.sanitized().note_segmentation.min_note_ms, 70.0);
     }
 }

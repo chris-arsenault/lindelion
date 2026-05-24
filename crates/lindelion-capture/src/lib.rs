@@ -1,11 +1,140 @@
+use std::ops::Deref;
+
+use lindelion_dsp_utils::math::seconds_to_samples;
 use lindelion_plugin_shell::{AudioInputBuffer, ProcessSetup, TransportContext};
+use lindelion_sample_library::{IntoAudioSampleRateHz, OwnedMonoAudioBuffer};
+use serde::{Deserialize, Serialize};
 
-use crate::patch::{CaptureSettings, CaptureState, ScratchpadAudio, ScratchpadMetadata, SyncMode};
+pub const MAX_CAPTURE_BARS: u8 = 16;
+pub const DEFAULT_CAPTURE_BARS: u8 = 4;
+pub const MAX_COUNT_IN_BARS: u8 = 2;
+pub const MIN_CAPTURE_BPM: f64 = 60.0;
+pub const DEFAULT_CAPTURE_BPM: f64 = 120.0;
+pub const DEFAULT_BEATS_PER_BAR: f64 = 4.0;
+pub const DOWNBEAT_EPSILON_BEATS: f64 = 0.02;
 
-const MAX_CAPTURE_BARS: u8 = 16;
-const MIN_CAPTURE_BPM: f64 = 60.0;
-const DEFAULT_BEATS_PER_BAR: f64 = 4.0;
-const DOWNBEAT_EPSILON_BEATS: f64 = 0.02;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SyncMode {
+    Immediate,
+    PhraseBoundary,
+    NextDownbeat,
+}
+
+impl SyncMode {
+    pub const ALL: [Self; 3] = [Self::Immediate, Self::PhraseBoundary, Self::NextDownbeat];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CaptureState {
+    Idle,
+    Armed,
+    CountIn,
+    Capturing,
+    Captured,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureSettings {
+    #[serde(
+        default = "default_capture_bars",
+        deserialize_with = "deserialize_capture_bars"
+    )]
+    pub bars: u8,
+    pub sync_mode: SyncMode,
+    pub count_in_bars: u8,
+}
+
+impl Default for CaptureSettings {
+    fn default() -> Self {
+        Self {
+            bars: DEFAULT_CAPTURE_BARS,
+            sync_mode: SyncMode::Immediate,
+            count_in_bars: 0,
+        }
+    }
+}
+
+impl CaptureSettings {
+    pub fn sanitized(self) -> Self {
+        Self {
+            bars: sanitize_capture_bars(self.bars),
+            sync_mode: self.sync_mode,
+            count_in_bars: self.count_in_bars.min(MAX_COUNT_IN_BARS),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScratchpadAudio {
+    #[serde(flatten)]
+    pub audio: OwnedMonoAudioBuffer,
+    #[serde(default)]
+    pub metadata: ScratchpadMetadata,
+}
+
+impl ScratchpadAudio {
+    pub fn new(sample_rate: u32, samples: Vec<f32>) -> Self {
+        Self::with_metadata(sample_rate, ScratchpadMetadata::default(), samples)
+    }
+
+    pub fn with_metadata(
+        sample_rate: u32,
+        metadata: ScratchpadMetadata,
+        samples: Vec<f32>,
+    ) -> Self {
+        Self {
+            audio: OwnedMonoAudioBuffer::new(samples, sample_rate),
+            metadata,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.audio.is_empty()
+    }
+}
+
+impl Deref for ScratchpadAudio {
+    type Target = OwnedMonoAudioBuffer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.audio
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScratchpadMetadata {
+    pub bpm: u16,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    pub capture_bars: u8,
+}
+
+impl Default for ScratchpadMetadata {
+    fn default() -> Self {
+        Self {
+            bpm: DEFAULT_CAPTURE_BPM as u16,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
+            capture_bars: DEFAULT_CAPTURE_BARS,
+        }
+    }
+}
+
+impl ScratchpadMetadata {
+    pub fn new(
+        bpm: f64,
+        time_signature_numerator: u16,
+        time_signature_denominator: u16,
+        capture_bars: u8,
+    ) -> Self {
+        Self {
+            bpm: sanitize_bpm(bpm),
+            time_signature_numerator: sanitize_u8(time_signature_numerator, 1),
+            time_signature_denominator: sanitize_denominator(time_signature_denominator),
+            capture_bars: sanitize_capture_bars(capture_bars),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaptureEvent {
@@ -41,7 +170,7 @@ impl Default for CaptureEngine {
 
 impl CaptureEngine {
     pub fn reset(&mut self, setup: ProcessSetup) {
-        self.sample_rate = setup.sample_rate.round().clamp(1.0, u32::MAX as f64) as u32;
+        self.sample_rate = setup.sample_rate.into_audio_sample_rate_hz();
         let max_samples = max_capture_samples(self.sample_rate);
         if self.buffer.len() != max_samples {
             self.buffer = vec![0.0; max_samples];
@@ -94,7 +223,7 @@ impl CaptureEngine {
         settings: CaptureSettings,
     ) -> CaptureEvent {
         let settings = settings.sanitized();
-        self.sample_rate = setup.sample_rate.round().clamp(1.0, u32::MAX as f64) as u32;
+        self.sample_rate = setup.sample_rate.into_audio_sample_rate_hz();
 
         match self.state {
             CaptureState::Idle | CaptureState::Captured => CaptureEvent::None,
@@ -145,7 +274,7 @@ impl CaptureEngine {
         }
 
         let beats = settings.count_in_bars as f64 * transport.beats_per_bar();
-        let seconds = beats * 60.0 / transport.tempo_bpm_or(120.0);
+        let seconds = beats * 60.0 / transport.tempo_bpm_or(DEFAULT_CAPTURE_BPM);
         self.count_in_remaining_samples = seconds_to_samples(seconds, self.sample_rate).max(1);
         self.state = CaptureState::CountIn;
     }
@@ -179,27 +308,28 @@ impl CaptureEngine {
     }
 }
 
-pub(crate) fn capture_samples(
+pub fn capture_samples(
     settings: CaptureSettings,
     transport: TransportContext,
     sample_rate: u32,
 ) -> usize {
     let settings = settings.sanitized();
-    let beats = settings.bars.bars() as f64 * transport.beats_per_bar();
-    let seconds = beats * 60.0 / transport.tempo_bpm_or(120.0);
+    let beats = settings.bars as f64 * transport.beats_per_bar();
+    let seconds = beats * 60.0 / transport.tempo_bpm_or(DEFAULT_CAPTURE_BPM);
     seconds_to_samples(seconds, sample_rate)
 }
 
-fn max_capture_samples(sample_rate: u32) -> usize {
+pub fn max_capture_samples(sample_rate: u32) -> usize {
     let beats = MAX_CAPTURE_BARS as f64 * DEFAULT_BEATS_PER_BAR;
     seconds_to_samples(beats * 60.0 / MIN_CAPTURE_BPM, sample_rate)
 }
 
-fn trigger_met(
+pub fn trigger_met(
     settings: CaptureSettings,
     transport: TransportContext,
     setup: ProcessSetup,
 ) -> bool {
+    let settings = settings.sanitized();
     match settings.sync_mode {
         SyncMode::Immediate => true,
         SyncMode::NextDownbeat | SyncMode::PhraseBoundary => {
@@ -212,7 +342,7 @@ fn trigger_met(
             let beats_per_bar = transport.beats_per_bar().max(1.0);
             let bars = bar_position / beats_per_bar;
             let block_beats = setup.max_block_size as f64 / setup.sample_rate.max(1.0)
-                * transport.tempo_bpm_or(120.0)
+                * transport.tempo_bpm_or(DEFAULT_CAPTURE_BPM)
                 / 60.0;
             let epsilon = DOWNBEAT_EPSILON_BEATS.max(block_beats);
             let downbeat_distance = bar_position.rem_euclid(beats_per_bar);
@@ -223,7 +353,7 @@ fn trigger_met(
                 return at_downbeat;
             }
 
-            let phrase = settings.bars.bars().max(1) as f64;
+            let phrase = settings.bars.max(1) as f64;
             let phrase_distance = bars.rem_euclid(phrase);
             at_downbeat && (phrase_distance <= epsilon || phrase - phrase_distance <= epsilon)
         }
@@ -237,16 +367,66 @@ fn capture_paused(settings: CaptureSettings, transport: TransportContext) -> boo
 fn capture_metadata(settings: CaptureSettings, transport: TransportContext) -> ScratchpadMetadata {
     let signature = transport.time_signature_or_default();
     ScratchpadMetadata::new(
-        transport.tempo_bpm_or(120.0),
+        transport.tempo_bpm_or(DEFAULT_CAPTURE_BPM),
         signature.numerator,
         signature.denominator,
-        settings.sanitized().bars.bars(),
+        settings.sanitized().bars,
     )
 }
 
-fn seconds_to_samples(seconds: f64, sample_rate: u32) -> usize {
-    (seconds.max(0.0) * sample_rate.max(1) as f64).round() as usize
+fn default_capture_bars() -> u8 {
+    DEFAULT_CAPTURE_BARS
 }
+
+fn sanitize_capture_bars(bars: u8) -> u8 {
+    bars.clamp(1, MAX_CAPTURE_BARS)
+}
+
+fn sanitize_bpm(value: f64) -> u16 {
+    if value.is_finite() {
+        value.round().clamp(1.0, 999.0) as u16
+    } else {
+        DEFAULT_CAPTURE_BPM as u16
+    }
+}
+
+fn sanitize_u8(value: u16, fallback: u8) -> u8 {
+    u8::try_from(value).unwrap_or(fallback).max(1)
+}
+
+fn sanitize_denominator(value: u16) -> u8 {
+    match value {
+        1 | 2 | 4 | 8 | 16 | 32 => value as u8,
+        _ => 4,
+    }
+}
+
+fn deserialize_capture_bars<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum CaptureBarsField {
+        Count(u8),
+        LegacyName(String),
+    }
+
+    match CaptureBarsField::deserialize(deserializer)? {
+        CaptureBarsField::Count(count) => Ok(sanitize_capture_bars(count)),
+        CaptureBarsField::LegacyName(name) => match name.as_str() {
+            "Four" | "four" | "4" => Ok(4),
+            "Eight" | "eight" | "8" => Ok(8),
+            "Sixteen" | "sixteen" | "16" => Ok(16),
+            _ => Err(serde::de::Error::custom(format!(
+                "unknown capture bars value {name:?}"
+            ))),
+        },
+    }
+}
+
+#[cfg(test)]
+lindelion_test_allocator::install_test_allocator!();
 
 #[cfg(test)]
 mod tests {
@@ -376,14 +556,15 @@ mod tests {
         engine.reset(setup);
         engine.arm();
 
-        let event = crate::assert_no_allocations("capture process completion", || {
-            engine.process(
-                AudioInputBuffer::mono(&input),
-                setup,
-                TransportContext::default(),
-                CaptureSettings::default(),
-            )
-        });
+        let event =
+            lindelion_test_allocator::assert_no_allocations("capture process completion", || {
+                engine.process(
+                    AudioInputBuffer::mono(&input),
+                    setup,
+                    TransportContext::default(),
+                    CaptureSettings::default(),
+                )
+            });
 
         assert_eq!(event, CaptureEvent::Completed);
         assert_eq!(engine.state(), CaptureState::Captured);
@@ -415,5 +596,47 @@ mod tests {
 
         assert!(!trigger_met(settings, off_boundary, setup));
         assert!(trigger_met(settings, on_boundary, setup));
+    }
+
+    #[test]
+    fn capture_settings_accept_legacy_named_bars() {
+        let settings: CaptureSettings = toml::from_str(
+            r#"
+            bars = "Sixteen"
+            sync_mode = "PhraseBoundary"
+            count_in_bars = 1
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(settings.bars, 16);
+        assert_eq!(settings.sync_mode, SyncMode::PhraseBoundary);
+        assert_eq!(settings.count_in_bars, 1);
+    }
+
+    #[test]
+    fn capture_settings_sanitize_generic_bar_count() {
+        assert_eq!(
+            CaptureSettings {
+                bars: 0,
+                count_in_bars: 99,
+                ..CaptureSettings::default()
+            }
+            .sanitized(),
+            CaptureSettings {
+                bars: 1,
+                count_in_bars: MAX_COUNT_IN_BARS,
+                ..CaptureSettings::default()
+            }
+        );
+        assert_eq!(
+            ScratchpadMetadata::new(f64::NAN, 0, 3, 99),
+            ScratchpadMetadata {
+                bpm: 120,
+                time_signature_numerator: 1,
+                time_signature_denominator: 4,
+                capture_bars: 16,
+            }
+        );
     }
 }

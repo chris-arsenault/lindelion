@@ -255,6 +255,10 @@ impl ExpressionStream {
 }
 
 pub trait ExpressionSource {
+    fn voice_started(&mut self, _voice_id: u32, _channel: u8, _note: u8, _velocity: f32) {}
+
+    fn voice_released(&mut self, _voice_id: u32) {}
+
     fn next_block(&mut self, voice_id: u32) -> ExpressionStream;
 }
 

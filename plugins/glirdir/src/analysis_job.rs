@@ -2,7 +2,7 @@ use lindelion_midi::QuantizeSettings;
 
 use crate::{
     analysis::{AnalysisError, AnalysisResult, GlirdirAnalyzer, requantize_result},
-    patch::{AnalysisSettings, ScratchpadAudio},
+    patch::{AnalysisSettings, ScratchpadAudio, apply_scratchpad_midi_context},
 };
 
 pub type AnalysisSequence = u64;
@@ -34,7 +34,7 @@ impl AnalysisJob {
         mut quantize_settings: QuantizeSettings,
     ) -> Self {
         let sample_rate = scratchpad.sample_rate;
-        scratchpad.apply_midi_context(&mut quantize_settings);
+        apply_scratchpad_midi_context(&scratchpad, &mut quantize_settings);
         Self {
             sequence,
             scratchpad,

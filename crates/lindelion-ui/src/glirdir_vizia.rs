@@ -1,10 +1,20 @@
 use std::path::PathBuf;
 
-use crate::WaveformPoint;
+use crate::{
+    WaveformPoint,
+    editor_surface::{
+        CompleteSurfaceHost, EditorControlKind, EditorParameterBinding, EditorSurfaceHostError,
+        EditorSurfaceSlot,
+    },
+};
 
 pub const GLIRDIR_EDITOR_WIDTH: i32 = 960;
 pub const GLIRDIR_EDITOR_HEIGHT: i32 = 640;
 pub const GLIRDIR_EDITOR_PARAMETER_BINDING_COUNT: usize = GlirdirEditorSurfaceSlot::ALL.len();
+
+pub type GlirdirEditorControlKind = EditorControlKind;
+pub type GlirdirEditorParameterBinding = EditorParameterBinding<GlirdirEditorSurfaceSlot>;
+pub type GlirdirEditorHostError = EditorSurfaceHostError<GlirdirEditorSurfaceSlot>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlirdirEditorSurfaceSlot {
@@ -59,58 +69,11 @@ impl GlirdirEditorSurfaceSlot {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum GlirdirEditorControlKind {
-    Segmented {
-        labels: &'static [&'static str],
-        width: f32,
-    },
-    Selector {
-        labels: &'static [&'static str],
-        width: f32,
-    },
-    Slider {
-        width: f32,
-    },
-}
+impl EditorSurfaceSlot for GlirdirEditorSurfaceSlot {
+    const ALL: &'static [Self] = &GlirdirEditorSurfaceSlot::ALL;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GlirdirEditorParameterBinding {
-    id: u32,
-    slot: GlirdirEditorSurfaceSlot,
-    label: &'static str,
-    control: GlirdirEditorControlKind,
-}
-
-impl GlirdirEditorParameterBinding {
-    pub const fn new(
-        id: u32,
-        slot: GlirdirEditorSurfaceSlot,
-        label: &'static str,
-        control: GlirdirEditorControlKind,
-    ) -> Self {
-        Self {
-            id,
-            slot,
-            label,
-            control,
-        }
-    }
-
-    pub const fn id(self) -> u32 {
-        self.id
-    }
-
-    pub const fn slot(self) -> GlirdirEditorSurfaceSlot {
-        self.slot
-    }
-
-    pub const fn label(self) -> &'static str {
-        self.label
-    }
-
-    pub const fn control(self) -> GlirdirEditorControlKind {
-        self.control
+    fn index(self) -> usize {
+        GlirdirEditorSurfaceSlot::index(self)
     }
 }
 
@@ -351,17 +314,14 @@ pub struct GlirdirEditorCallbacks {
     pub prepare_midi_drag: unsafe fn(usize) -> GlirdirEditorMidiDrag,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GlirdirEditorHostError {
-    DuplicateSlot(GlirdirEditorSurfaceSlot),
-    MissingSlot(GlirdirEditorSurfaceSlot),
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct GlirdirEditorHost {
     context: usize,
-    parameter_bindings:
-        [Option<GlirdirEditorParameterBinding>; GLIRDIR_EDITOR_PARAMETER_BINDING_COUNT],
+    surface: CompleteSurfaceHost<
+        GlirdirEditorSurfaceSlot,
+        GlirdirEditorParameterBinding,
+        GLIRDIR_EDITOR_PARAMETER_BINDING_COUNT,
+    >,
     callbacks: GlirdirEditorCallbacks,
 }
 
@@ -371,24 +331,9 @@ impl GlirdirEditorHost {
         bindings: impl IntoIterator<Item = GlirdirEditorParameterBinding>,
         callbacks: GlirdirEditorCallbacks,
     ) -> Result<Self, GlirdirEditorHostError> {
-        let mut parameter_bindings = [None; GLIRDIR_EDITOR_PARAMETER_BINDING_COUNT];
-        for binding in bindings {
-            let index = binding.slot().index();
-            if parameter_bindings[index].is_some() {
-                return Err(GlirdirEditorHostError::DuplicateSlot(binding.slot()));
-            }
-            parameter_bindings[index] = Some(binding);
-        }
-
-        for slot in GlirdirEditorSurfaceSlot::ALL {
-            if parameter_bindings[slot.index()].is_none() {
-                return Err(GlirdirEditorHostError::MissingSlot(slot));
-            }
-        }
-
         Ok(Self {
             context,
-            parameter_bindings,
+            surface: CompleteSurfaceHost::new(bindings)?,
             callbacks,
         })
     }
@@ -396,7 +341,7 @@ impl GlirdirEditorHost {
     pub const fn parameter_bindings(
         self,
     ) -> [Option<GlirdirEditorParameterBinding>; GLIRDIR_EDITOR_PARAMETER_BINDING_COUNT] {
-        self.parameter_bindings
+        self.surface.parameter_bindings()
     }
 
     /// # Safety

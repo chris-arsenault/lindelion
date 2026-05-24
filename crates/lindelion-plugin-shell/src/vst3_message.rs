@@ -13,6 +13,35 @@ pub trait PluginMessageType: Copy + Eq {
     fn from_id(id: &str) -> Option<Self>;
 }
 
+pub trait PluginMessagePayload: Sized {
+    fn into_payload(self) -> Vec<u8>;
+    fn from_payload(payload: Vec<u8>) -> Result<Self, PluginMessageDecodeError>;
+}
+
+impl PluginMessagePayload for Vec<u8> {
+    fn into_payload(self) -> Vec<u8> {
+        self
+    }
+
+    fn from_payload(payload: Vec<u8>) -> Result<Self, PluginMessageDecodeError> {
+        Ok(payload)
+    }
+}
+
+impl PluginMessagePayload for () {
+    fn into_payload(self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from_payload(payload: Vec<u8>) -> Result<Self, PluginMessageDecodeError> {
+        if payload.is_empty() {
+            Ok(())
+        } else {
+            Err(PluginMessageDecodeError::MalformedPayload)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedPluginMessage<M> {
     pub kind: M,
@@ -207,4 +236,100 @@ pub unsafe fn message_payload(message: *mut IMessage) -> Option<Vec<u8>> {
         return None;
     }
     Some(slice::from_raw_parts(data.cast::<u8>(), size as usize).to_vec())
+}
+
+#[macro_export]
+macro_rules! define_vst3_plugin_messages {
+    (
+        $kind_vis:vis enum $kind:ident;
+        $message_vis:vis enum $message:ident;
+        prefix $prefix:literal;
+        messages {
+            empty {
+                $($empty_variant:ident => $empty_id:literal),* $(,)?
+            }
+            payload {
+                $($payload_variant:ident($payload_ty:ty) => $payload_id:literal),* $(,)?
+            }
+        }
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        $kind_vis enum $kind {
+            $($empty_variant,)*
+            $($payload_variant,)*
+        }
+
+        impl $crate::vst3::PluginMessageType for $kind {
+            fn id(self) -> &'static str {
+                match self {
+                    $(Self::$empty_variant => concat!($prefix, $empty_id),)*
+                    $(Self::$payload_variant => concat!($prefix, $payload_id),)*
+                }
+            }
+
+            fn from_id(id: &str) -> Option<Self> {
+                match id {
+                    $(concat!($prefix, $empty_id) => Some(Self::$empty_variant),)*
+                    $(concat!($prefix, $payload_id) => Some(Self::$payload_variant),)*
+                    _ => None,
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        $message_vis enum $message {
+            $($empty_variant,)*
+            $($payload_variant($payload_ty),)*
+        }
+
+        impl $message {
+            $message_vis fn into_com_message(self) -> ::vst3::ComWrapper<$crate::vst3::PluginMessage> {
+                let message = match self {
+                    $(
+                        Self::$empty_variant => {
+                            $crate::vst3::TypedPluginMessage::empty($kind::$empty_variant)
+                        },
+                    )*
+                    $(
+                        Self::$payload_variant(payload) => {
+                            $crate::vst3::TypedPluginMessage::new(
+                                $kind::$payload_variant,
+                                $crate::vst3::PluginMessagePayload::into_payload(payload),
+                            )
+                        },
+                    )*
+                };
+                $crate::vst3::PluginMessage::from_typed(message)
+            }
+
+            /// Decode a Lindelion VST3 message.
+            ///
+            /// # Safety
+            /// `message` must be either null or a valid VST3 `IMessage` pointer for the duration
+            /// of the call.
+            $message_vis unsafe fn decode(
+                message: *mut ::vst3::Steinberg::Vst::IMessage,
+            ) -> Result<Option<Self>, $crate::vst3::PluginMessageDecodeError> {
+                let Some(message) = $crate::vst3::decode_typed_message::<$kind>(message)? else {
+                    return Ok(None);
+                };
+                match message.kind {
+                    $(
+                        $kind::$empty_variant => {
+                            <() as $crate::vst3::PluginMessagePayload>::from_payload(message.payload)
+                                .map(|()| Some(Self::$empty_variant))
+                        },
+                    )*
+                    $(
+                        $kind::$payload_variant => {
+                            <$payload_ty as $crate::vst3::PluginMessagePayload>::from_payload(
+                                message.payload,
+                            )
+                            .map(|payload| Some(Self::$payload_variant(payload)))
+                        },
+                    )*
+                }
+            }
+        }
+    };
 }

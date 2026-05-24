@@ -1,8 +1,12 @@
 use lindelion_dsp_utils::{
     db_to_gain, params::StructuralChangePolicy, smoothing::SmoothedParamSpec,
 };
+pub(crate) use lindelion_plugin_shell::ParameterCodec;
 use lindelion_plugin_shell::{
-    ParameterId, ParameterInfo, ParameterRange, SmoothedAtomicParam, SmoothedAtomicParamSpec,
+    ParameterApplyDispatcher, ParameterBinding as RegistryParameterBinding,
+    ParameterEditorBindingProjection, ParameterFormatter, ParameterId, ParameterInfo,
+    ParameterPatchPath, ParameterRange, ParameterRegistry, ParameterSmoothingSpec,
+    SmoothedAtomicParam, SmoothedAtomicParamSpec,
 };
 pub(crate) use lindelion_ui::resonator_vizia::{
     ResonatorEditorControlKind as EditorControlKind,
@@ -36,14 +40,14 @@ pub(crate) const FILTER_RESONANCE_PARAMETER_ID: u32 = 6;
 pub(crate) const PARALLEL_MIX_A_PARAMETER_ID: u32 = 11;
 pub(crate) const PARALLEL_MIX_B_PARAMETER_ID: u32 = 12;
 
-macro_rules! runtime_smoothing {
-    () => {
-        None
-    };
-    ($smoothing:expr) => {
-        Some($smoothing)
-    };
-}
+pub(crate) type ParameterBinding = RegistryParameterBinding<
+    ParameterPath,
+    ParameterApplyKind,
+    RuntimeParameterTarget,
+    RuntimeSmoothing,
+    ParameterFormatter,
+    EditorParameterBinding,
+>;
 
 macro_rules! parameter_range {
     ($range:expr) => {
@@ -51,34 +55,9 @@ macro_rules! parameter_range {
     };
 }
 
-macro_rules! parameter_binding_registry {
-    ($($info:expr => {
-        path: $path:expr,
-        apply: $apply:expr,
-        runtime: $runtime:expr,
-        $(smoothing: $smoothing:expr,)?
-        format: $format:expr,
-        editor: $editor:expr $(,)?
-    }),+ $(,)?) => {
-        pub const PARAMETERS: &[ParameterInfo] = &[
-            $($info),+
-        ];
-
-        pub(crate) const PARAMETER_BINDINGS: &[ParameterBinding] = &[
-            $(ParameterBinding::new(
-                $info,
-                $path,
-                $apply,
-                $runtime,
-                runtime_smoothing!($($smoothing)?),
-                $format,
-                $editor,
-            )),+
-        ];
-    };
-}
-
 include!("parameters/registry.rs");
+pub(crate) const PARAMETER_REGISTRY: ParameterRegistry<ParameterBinding> =
+    ParameterRegistry::new(PARAMETER_BINDINGS);
 include!("parameters/bindings.rs");
 include!("parameters/paths.rs");
 include!("parameters/codecs.rs");

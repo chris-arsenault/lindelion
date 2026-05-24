@@ -5,6 +5,8 @@ use std::ffi::{CString as StdCString, c_char};
 
 use vst3::Steinberg::Vst::TChar;
 
+#[path = "vst3_component.rs"]
+mod component;
 #[path = "vst3_factory.rs"]
 mod factory;
 #[path = "vst3_message.rs"]
@@ -14,12 +16,16 @@ mod process;
 #[path = "vst3_view.rs"]
 mod view;
 
+pub use component::{
+    Vst3BusInfo, Vst3ParameterChange, Vst3PeerConnection, can_process_32_bit_sample_size,
+    fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst, vst3_bus_count,
+};
 pub use factory::{
     Vst3ClassRegistration, Vst3CreateInstance, Vst3PluginFactory, plugin_factory_ptr,
 };
 pub use message::{
-    PluginAttributes, PluginMessage, PluginMessageDecodeError, PluginMessageType,
-    TypedPluginMessage, decode_typed_message, message_id, message_payload,
+    PluginAttributes, PluginMessage, PluginMessageDecodeError, PluginMessagePayload,
+    PluginMessageType, TypedPluginMessage, decode_typed_message, message_id, message_payload,
 };
 pub use process::{
     audio_input_buffer_from_vst_process_data, clear_vst_outputs, read_plugin_state_from_stream,

@@ -6,7 +6,7 @@ use std::{
     ptr, slice,
 };
 
-use lindelion_plugin_shell::vst3::{copy_wstring, len_wstring};
+use lindelion_plugin_shell::vst3::{Vst3PeerConnection, copy_wstring, len_wstring};
 use lindelion_sample_library::{
     FileSampleLibrary, LibraryPaths, SampleLibrary, SampleMetadata, SampleReference,
     SampleWaveformPreview,
@@ -14,8 +14,10 @@ use lindelion_sample_library::{
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{
-    PARAMETERS, ResonatorSynthPatch, ResonatorTelemetry, parameter_binding,
-    parameter_binding_by_index, parameter_binding_index, patch_io, patch_parameter_plain_value,
+    PARAMETER_BINDING_COUNT, ResonatorSynthPatch, ResonatorTelemetry,
+    normalized_parameter_value as registry_normalized_parameter_value, parameter_binding_by_index,
+    parameter_binding_index, parameter_default_normalized_value_by_index, parameter_info, patch_io,
+    patch_parameter_normalized_value,
 };
 
 use super::{

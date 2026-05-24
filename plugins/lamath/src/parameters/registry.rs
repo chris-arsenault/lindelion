@@ -1,4 +1,12 @@
-parameter_binding_registry! {
+lindelion_plugin_shell::define_parameter_bindings! {
+    binding: ParameterBinding;
+    parameters: pub const PARAMETERS;
+    bindings: pub(crate) const PARAMETER_BINDINGS;
+    defaults {
+        runtime: RuntimeParameterTarget::None,
+        smoothing: None::<RuntimeSmoothing>,
+    }
+
     ParameterInfo::continuous(MASTER_GAIN_PARAMETER_ID, "Master Gain", "dB", parameter_range!(MASTER_GAIN_DB)) => {
         path: ParameterPath::Output(OutputParameter::MasterGain),
         apply: LIVE,

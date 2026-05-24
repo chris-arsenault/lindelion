@@ -7,6 +7,9 @@ use lindelion_dsp_utils::{
     analysis::{assert_all_finite, dft_magnitude_at, peak_abs, rms},
     math::midi_note_to_hz,
 };
+use lindelion_midi::DetectedNote;
+use lindelion_phrase_analysis::{PhraseAnalysisResult, SegmentedNote};
+use lindelion_pitch_detect::{PitchContour, PitchFrame};
 use lindelion_plugin_shell::{ExpressionStream, ManualExpressionSource};
 
 include!("basic_tests.rs");

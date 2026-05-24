@@ -1,5 +1,6 @@
 use super::*;
 use crate::assert_no_allocations;
+use lindelion_plugin_shell::ParameterId;
 
 #[test]
 fn exposed_parameters_have_exactly_one_binding() {
@@ -145,6 +146,21 @@ fn editor_bindings_are_single_source_metadata() {
     assert_eq!(PARAMETER_BINDING_COUNT, PARAMETER_BINDINGS.len());
 }
 
+#[test]
+fn editor_surface_bindings_project_from_registry_metadata() {
+    let surface_bindings = resonator_editor_parameter_bindings().collect::<Vec<_>>();
+    assert_eq!(surface_bindings.len(), EditorSurfaceSlot::ALL.len());
+
+    for surface_binding in surface_bindings {
+        let binding = parameter_binding(surface_binding.id()).expect("projected binding id");
+        let editor = binding.editor().expect("projected binding editor metadata");
+
+        assert_eq!(surface_binding.slot(), editor.slot());
+        assert_eq!(surface_binding.label(), editor.label());
+        assert_eq!(surface_binding.control(), editor.control());
+    }
+}
+
 fn assert_editor_binding_roundtrips(binding: &ParameterBinding) {
     let editor = binding
         .editor()
@@ -169,7 +185,7 @@ fn assert_editor_metadata_valid(binding: &ParameterBinding) {
         .expect("visible binding should have editor metadata");
     assert!(!editor.label().is_empty());
     match editor.control() {
-        EditorControlKind::Knob | EditorControlKind::Slider => {}
+        EditorControlKind::Knob | EditorControlKind::Slider { .. } => {}
         EditorControlKind::Binary {
             left_label,
             right_label,
@@ -177,6 +193,11 @@ fn assert_editor_metadata_valid(binding: &ParameterBinding) {
         } => {
             assert!(!left_label.is_empty());
             assert!(!right_label.is_empty());
+            assert!(width > 0.0);
+        }
+        EditorControlKind::Segmented { labels, width }
+        | EditorControlKind::Selector { labels, width } => {
+            assert!(!labels.is_empty());
             assert!(width > 0.0);
         }
     }
@@ -262,7 +283,7 @@ fn enum_codecs_round_trip() {
 }
 
 fn prepare_patch_for_binding(patch: &mut ResonatorSynthPatch, binding: ParameterBinding) {
-    if let ParameterPath::Resonator { slot, parameter } = binding.path {
+    if let ParameterPath::Resonator { slot, parameter } = binding.path() {
         match parameter {
             ResonatorParameter::Modal(_) => {
                 *slot.config_mut(patch) = ResonatorConfig::Modal(ModalConfig::default());

@@ -1,100 +1,34 @@
-use lindelion_plugin_shell::vst3::{
-    PluginMessage, PluginMessageDecodeError, PluginMessageType, TypedPluginMessage,
-    decode_typed_message,
-};
-use vst3::{ComWrapper, Steinberg::Vst::IMessage};
+use lindelion_plugin_shell::vst3::{PluginMessageDecodeError, PluginMessagePayload};
 
 use crate::{AnalysisStatus, CaptureState, Glirdir};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum GlirdirMessageKind {
-    ArmCapture,
-    ClearScratchpad,
-    FinalizeCaptureRequest,
-    PlayAudition,
-    StopAudition,
-    ToggleAuditionLoop,
-    ToggleAuditionLiveEdit,
-    SampleLibrarySaveRequest,
-    SampleLibrarySaveResponse,
-    AnalysisStatusResponse,
-    PatchUpdate,
-    MidiExportRequest,
-    MidiExportResponse,
-    StatusRequest,
-    StatusResponse,
-    TelemetryRequest,
-    TelemetryResponse,
-}
-
-impl PluginMessageType for GlirdirMessageKind {
-    fn id(self) -> &'static str {
-        match self {
-            Self::ArmCapture => "lindelion.glirdir.arm_capture",
-            Self::ClearScratchpad => "lindelion.glirdir.clear_scratchpad",
-            Self::FinalizeCaptureRequest => "lindelion.glirdir.finalize_capture_request",
-            Self::PlayAudition => "lindelion.glirdir.play_audition",
-            Self::StopAudition => "lindelion.glirdir.stop_audition",
-            Self::ToggleAuditionLoop => "lindelion.glirdir.toggle_audition_loop",
-            Self::ToggleAuditionLiveEdit => "lindelion.glirdir.toggle_audition_live_edit",
-            Self::SampleLibrarySaveRequest => "lindelion.glirdir.sample_library_save_request",
-            Self::SampleLibrarySaveResponse => "lindelion.glirdir.sample_library_save_response",
-            Self::AnalysisStatusResponse => "lindelion.glirdir.analysis_status_response",
-            Self::PatchUpdate => "lindelion.glirdir.patch_update",
-            Self::MidiExportRequest => "lindelion.glirdir.midi_export_request",
-            Self::MidiExportResponse => "lindelion.glirdir.midi_export_response",
-            Self::StatusRequest => "lindelion.glirdir.status_request",
-            Self::StatusResponse => "lindelion.glirdir.status_response",
-            Self::TelemetryRequest => "lindelion.glirdir.telemetry_request",
-            Self::TelemetryResponse => "lindelion.glirdir.telemetry_response",
+lindelion_plugin_shell::define_vst3_plugin_messages! {
+    pub(super) enum GlirdirMessageKind;
+    pub(super) enum GlirdirPluginMessage;
+    prefix "lindelion.glirdir.";
+    messages {
+        empty {
+            ArmCapture => "arm_capture",
+            ClearScratchpad => "clear_scratchpad",
+            FinalizeCaptureRequest => "finalize_capture_request",
+            PlayAudition => "play_audition",
+            StopAudition => "stop_audition",
+            ToggleAuditionLoop => "toggle_audition_loop",
+            ToggleAuditionLiveEdit => "toggle_audition_live_edit",
+            SampleLibrarySaveRequest => "sample_library_save_request",
+            MidiExportRequest => "midi_export_request",
+            StatusRequest => "status_request",
+            TelemetryRequest => "telemetry_request",
+        }
+        payload {
+            SampleLibrarySaveResponse(Vec<u8>) => "sample_library_save_response",
+            AnalysisStatusResponse(GlirdirStatusPayload) => "analysis_status_response",
+            PatchUpdate(Vec<u8>) => "patch_update",
+            MidiExportResponse(Vec<u8>) => "midi_export_response",
+            StatusResponse(GlirdirStatusPayload) => "status_response",
+            TelemetryResponse(GlirdirStatusPayload) => "telemetry_response",
         }
     }
-
-    fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "lindelion.glirdir.arm_capture" => Some(Self::ArmCapture),
-            "lindelion.glirdir.clear_scratchpad" => Some(Self::ClearScratchpad),
-            "lindelion.glirdir.finalize_capture_request" => Some(Self::FinalizeCaptureRequest),
-            "lindelion.glirdir.play_audition" => Some(Self::PlayAudition),
-            "lindelion.glirdir.stop_audition" => Some(Self::StopAudition),
-            "lindelion.glirdir.toggle_audition_loop" => Some(Self::ToggleAuditionLoop),
-            "lindelion.glirdir.toggle_audition_live_edit" => Some(Self::ToggleAuditionLiveEdit),
-            "lindelion.glirdir.sample_library_save_request" => Some(Self::SampleLibrarySaveRequest),
-            "lindelion.glirdir.sample_library_save_response" => {
-                Some(Self::SampleLibrarySaveResponse)
-            }
-            "lindelion.glirdir.analysis_status_response" => Some(Self::AnalysisStatusResponse),
-            "lindelion.glirdir.patch_update" => Some(Self::PatchUpdate),
-            "lindelion.glirdir.midi_export_request" => Some(Self::MidiExportRequest),
-            "lindelion.glirdir.midi_export_response" => Some(Self::MidiExportResponse),
-            "lindelion.glirdir.status_request" => Some(Self::StatusRequest),
-            "lindelion.glirdir.status_response" => Some(Self::StatusResponse),
-            "lindelion.glirdir.telemetry_request" => Some(Self::TelemetryRequest),
-            "lindelion.glirdir.telemetry_response" => Some(Self::TelemetryResponse),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum GlirdirPluginMessage {
-    ArmCapture,
-    ClearScratchpad,
-    FinalizeCaptureRequest,
-    PlayAudition,
-    StopAudition,
-    ToggleAuditionLoop,
-    ToggleAuditionLiveEdit,
-    SampleLibrarySaveRequest,
-    SampleLibrarySaveResponse(Vec<u8>),
-    AnalysisStatusResponse(GlirdirStatusPayload),
-    PatchUpdate(Vec<u8>),
-    MidiExportRequest,
-    MidiExportResponse(Vec<u8>),
-    StatusRequest,
-    StatusResponse(GlirdirStatusPayload),
-    TelemetryRequest,
-    TelemetryResponse(GlirdirStatusPayload),
 }
 
 impl GlirdirPluginMessage {
@@ -144,104 +78,6 @@ impl GlirdirPluginMessage {
 
     pub(super) fn telemetry_request() -> Self {
         Self::TelemetryRequest
-    }
-
-    pub(super) fn into_com_message(self) -> ComWrapper<PluginMessage> {
-        PluginMessage::from_typed(match self {
-            Self::ArmCapture => TypedPluginMessage::empty(GlirdirMessageKind::ArmCapture),
-            Self::ClearScratchpad => TypedPluginMessage::empty(GlirdirMessageKind::ClearScratchpad),
-            Self::FinalizeCaptureRequest => {
-                TypedPluginMessage::empty(GlirdirMessageKind::FinalizeCaptureRequest)
-            }
-            Self::PlayAudition => TypedPluginMessage::empty(GlirdirMessageKind::PlayAudition),
-            Self::StopAudition => TypedPluginMessage::empty(GlirdirMessageKind::StopAudition),
-            Self::ToggleAuditionLoop => {
-                TypedPluginMessage::empty(GlirdirMessageKind::ToggleAuditionLoop)
-            }
-            Self::ToggleAuditionLiveEdit => {
-                TypedPluginMessage::empty(GlirdirMessageKind::ToggleAuditionLiveEdit)
-            }
-            Self::SampleLibrarySaveRequest => {
-                TypedPluginMessage::empty(GlirdirMessageKind::SampleLibrarySaveRequest)
-            }
-            Self::SampleLibrarySaveResponse(payload) => {
-                TypedPluginMessage::new(GlirdirMessageKind::SampleLibrarySaveResponse, payload)
-            }
-            Self::AnalysisStatusResponse(status) => {
-                TypedPluginMessage::new(GlirdirMessageKind::AnalysisStatusResponse, status.encode())
-            }
-            Self::PatchUpdate(payload) => {
-                TypedPluginMessage::new(GlirdirMessageKind::PatchUpdate, payload)
-            }
-            Self::MidiExportRequest => {
-                TypedPluginMessage::empty(GlirdirMessageKind::MidiExportRequest)
-            }
-            Self::MidiExportResponse(payload) => {
-                TypedPluginMessage::new(GlirdirMessageKind::MidiExportResponse, payload)
-            }
-            Self::StatusRequest => TypedPluginMessage::empty(GlirdirMessageKind::StatusRequest),
-            Self::StatusResponse(status) => {
-                TypedPluginMessage::new(GlirdirMessageKind::StatusResponse, status.encode())
-            }
-            Self::TelemetryRequest => {
-                TypedPluginMessage::empty(GlirdirMessageKind::TelemetryRequest)
-            }
-            Self::TelemetryResponse(status) => {
-                TypedPluginMessage::new(GlirdirMessageKind::TelemetryResponse, status.encode())
-            }
-        })
-    }
-
-    pub(super) unsafe fn decode(
-        message: *mut IMessage,
-    ) -> Result<Option<Self>, PluginMessageDecodeError> {
-        let Some(message) = decode_typed_message::<GlirdirMessageKind>(message)? else {
-            return Ok(None);
-        };
-        match message.kind {
-            GlirdirMessageKind::ArmCapture => empty_request(message.payload, Self::ArmCapture),
-            GlirdirMessageKind::ClearScratchpad => {
-                empty_request(message.payload, Self::ClearScratchpad)
-            }
-            GlirdirMessageKind::FinalizeCaptureRequest => {
-                empty_request(message.payload, Self::FinalizeCaptureRequest)
-            }
-            GlirdirMessageKind::PlayAudition => empty_request(message.payload, Self::PlayAudition),
-            GlirdirMessageKind::StopAudition => empty_request(message.payload, Self::StopAudition),
-            GlirdirMessageKind::ToggleAuditionLoop => {
-                empty_request(message.payload, Self::ToggleAuditionLoop)
-            }
-            GlirdirMessageKind::ToggleAuditionLiveEdit => {
-                empty_request(message.payload, Self::ToggleAuditionLiveEdit)
-            }
-            GlirdirMessageKind::SampleLibrarySaveRequest => {
-                empty_request(message.payload, Self::SampleLibrarySaveRequest)
-            }
-            GlirdirMessageKind::SampleLibrarySaveResponse => {
-                Ok(Some(Self::SampleLibrarySaveResponse(message.payload)))
-            }
-            GlirdirMessageKind::PatchUpdate => Ok(Some(Self::PatchUpdate(message.payload))),
-            GlirdirMessageKind::MidiExportRequest => {
-                empty_request(message.payload, Self::MidiExportRequest)
-            }
-            GlirdirMessageKind::MidiExportResponse => {
-                Ok(Some(Self::MidiExportResponse(message.payload)))
-            }
-            GlirdirMessageKind::StatusRequest => {
-                empty_request(message.payload, Self::StatusRequest)
-            }
-            GlirdirMessageKind::TelemetryRequest => {
-                empty_request(message.payload, Self::TelemetryRequest)
-            }
-            GlirdirMessageKind::AnalysisStatusResponse => decode_status(message.payload)
-                .map(|status| Some(Self::AnalysisStatusResponse(status))),
-            GlirdirMessageKind::StatusResponse => {
-                decode_status(message.payload).map(|status| Some(Self::StatusResponse(status)))
-            }
-            GlirdirMessageKind::TelemetryResponse => {
-                decode_status(message.payload).map(|status| Some(Self::TelemetryResponse(status)))
-            }
-        }
     }
 }
 
@@ -301,19 +137,14 @@ impl GlirdirStatusPayload {
     }
 }
 
-fn empty_request(
-    payload: Vec<u8>,
-    message: GlirdirPluginMessage,
-) -> Result<Option<GlirdirPluginMessage>, PluginMessageDecodeError> {
-    if payload.is_empty() {
-        Ok(Some(message))
-    } else {
-        Err(PluginMessageDecodeError::MalformedPayload)
+impl PluginMessagePayload for GlirdirStatusPayload {
+    fn into_payload(self) -> Vec<u8> {
+        self.encode()
     }
-}
 
-fn decode_status(payload: Vec<u8>) -> Result<GlirdirStatusPayload, PluginMessageDecodeError> {
-    GlirdirStatusPayload::decode(&payload).ok_or(PluginMessageDecodeError::MalformedPayload)
+    fn from_payload(payload: Vec<u8>) -> Result<Self, PluginMessageDecodeError> {
+        GlirdirStatusPayload::decode(&payload).ok_or(PluginMessageDecodeError::MalformedPayload)
+    }
 }
 
 fn capture_state_id(state: CaptureState) -> &'static str {

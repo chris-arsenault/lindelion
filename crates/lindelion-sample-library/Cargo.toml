@@ -12,5 +12,6 @@ wav-decoder = []
 
 [dependencies]
 blake3 = { version = "1.8.2", features = ["pure"], optional = true }
+lindelion-dsp-utils.workspace = true
 rusqlite = { version = "0.37.0", features = ["bundled"], optional = true }
 serde.workspace = true
