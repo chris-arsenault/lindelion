@@ -7,6 +7,12 @@ fn parameter_state_roundtrip_preserves_exposed_audio_controls() {
     set_parameter_plain(&mut synth, 52, 0.42);
     set_parameter_plain(&mut synth, 55, 1.0);
     set_parameter_plain(&mut synth, 56, -0.5);
+    set_parameter_plain(&mut synth, 100, 2.0);
+    set_parameter_plain(&mut synth, 101, 1.0);
+    set_parameter_plain(&mut synth, 102, 12.0);
+    set_parameter_plain(&mut synth, 110, 0.75);
+    set_parameter_plain(&mut synth, 120, 3.0);
+    set_parameter_plain(&mut synth, 122, 180.0);
 
     let state = AudioPlugin::state(&synth);
     let mut restored = ResonatorSynth::default();
@@ -18,6 +24,27 @@ fn parameter_state_roundtrip_preserves_exposed_audio_controls() {
     assert_resonator_b_loop_gain(restored.patch(), 0.42);
     assert_resonator_b_waveguide_style(restored.patch(), WaveguideStyle::Tube);
     assert_resonator_b_boundary_reflection(restored.patch(), -0.5);
+    assert_eq!(
+        restored.patch().audio_input.mode,
+        AudioInputMode::MidiPlusAudioCreatesNotes
+    );
+    assert!(restored.patch().audio_expression.enabled);
+    assert!(
+        (restored
+            .patch()
+            .audio_expression
+            .mapping
+            .pitch_bend_range_semitones
+            - 12.0)
+            .abs()
+            < 0.001
+    );
+    assert!((restored.patch().note_detection.onset_sensitivity - 0.75).abs() < 0.001);
+    assert_eq!(
+        restored.patch().live_excitation.mode,
+        LiveExcitationMode::ContinuousAndNoteLatched
+    );
+    assert!((restored.patch().live_excitation.latch_window_ms - 180.0).abs() < 0.001);
 }
 
 #[test]
@@ -51,6 +78,23 @@ fn exposes_complete_patch_parameter_surface() {
         "Amp Attack",
         "Amp Release",
         "LFO Shape",
+        "Audio Input Mode",
+        "Audio Expression Enable",
+        "Audio Expression Pitch Range",
+        "Audio Expression Pressure Floor",
+        "Audio Expression Pressure Ceiling",
+        "Audio Expression Brightness Floor",
+        "Audio Expression Brightness Ceiling",
+        "Audio Note Onset Sensitivity",
+        "Audio Note Release Floor",
+        "Audio Note Minimum Length",
+        "Audio Note Pitch Confidence",
+        "Audio Note Velocity Amount",
+        "Live Excitation Mode",
+        "Live Excitation Gain",
+        "Live Excitation Latch Window",
+        "Live Excitation Latch Pre-roll",
+        "Live Excitation Latch Fade",
         "Mod 1 Source",
         "Mod 4 Amount",
     ] {
@@ -179,7 +223,39 @@ fn structural_parameters_have_explicit_apply_policies() {
         ParameterApplyKind::Structural(StructuralChangePolicy::NoteBoundary)
     );
     assert_eq!(
+        apply_parameter_plain(&mut patch, 100, 2.0),
+        ParameterApplyKind::Structural(StructuralChangePolicy::NoteBoundary)
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 110, 0.75),
+        ParameterApplyKind::Structural(StructuralChangePolicy::ResetState)
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 112, 90.0),
+        ParameterApplyKind::Structural(StructuralChangePolicy::ResetState)
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 120, 3.0),
+        ParameterApplyKind::Structural(StructuralChangePolicy::NoteBoundary)
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 122, 180.0),
+        ParameterApplyKind::Structural(StructuralChangePolicy::ResetState)
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 123, 30.0),
+        ParameterApplyKind::Structural(StructuralChangePolicy::ResetState)
+    );
+    assert_eq!(
         apply_parameter_plain(&mut patch, 11, 0.25),
+        ParameterApplyKind::Live
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 101, 1.0),
+        ParameterApplyKind::Live
+    );
+    assert_eq!(
+        apply_parameter_plain(&mut patch, 121, -6.0),
         ParameterApplyKind::Live
     );
 }
@@ -275,6 +351,7 @@ fn expanded_parameter_updates_mutate_patch_and_roundtrip() {
     assert_expanded_output_and_routing(&patch);
     assert_expanded_resonator_parameters(&patch);
     assert_expanded_modulation_parameters(&patch);
+    assert_expanded_v2_parameters(&patch);
 }
 
 fn roundtrip_patch_after_parameter_updates() -> ResonatorSynthPatch {
@@ -299,6 +376,23 @@ fn roundtrip_patch_after_parameter_updates() -> ResonatorSynthPatch {
         (81, 5.0),
         (82, 3.0),
         (83, -0.33),
+        (100, 2.0),
+        (101, 1.0),
+        (102, 12.0),
+        (103, 0.04),
+        (104, 0.5),
+        (105, 900.0),
+        (106, 9_000.0),
+        (110, 0.75),
+        (111, 0.03),
+        (112, 90.0),
+        (113, 0.8),
+        (114, 0.6),
+        (120, 3.0),
+        (121, -6.0),
+        (122, 180.0),
+        (123, 30.0),
+        (124, 10.0),
     ] {
         set_parameter_plain(&mut synth, id, plain);
     }
@@ -351,3 +445,36 @@ fn assert_expanded_modulation_parameters(patch: &ResonatorSynthPatch) {
     assert!((patch.modulation.slots[0].amount + 0.33).abs() < 0.001);
 }
 
+fn assert_expanded_v2_parameters(patch: &ResonatorSynthPatch) {
+    assert_eq!(
+        patch.audio_input.mode,
+        AudioInputMode::MidiPlusAudioCreatesNotes
+    );
+    assert!(patch.audio_expression.enabled);
+    assert!(
+        (patch
+            .audio_expression
+            .mapping
+            .pitch_bend_range_semitones
+            - 12.0)
+            .abs()
+            < 0.001
+    );
+    assert!((patch.audio_expression.mapping.pressure_floor_rms - 0.04).abs() < 0.001);
+    assert!((patch.audio_expression.mapping.pressure_ceiling_rms - 0.5).abs() < 0.001);
+    assert!((patch.audio_expression.mapping.brightness_floor_hz - 900.0).abs() < 0.001);
+    assert!((patch.audio_expression.mapping.brightness_ceiling_hz - 9_000.0).abs() < 0.001);
+    assert!((patch.note_detection.onset_sensitivity - 0.75).abs() < 0.001);
+    assert!((patch.note_detection.note_release_floor_rms - 0.03).abs() < 0.001);
+    assert!((patch.note_detection.minimum_note_length_ms - 90.0).abs() < 0.001);
+    assert!((patch.note_detection.pitch_confidence - 0.8).abs() < 0.001);
+    assert!((patch.note_detection.velocity_amount - 0.6).abs() < 0.001);
+    assert_eq!(
+        patch.live_excitation.mode,
+        LiveExcitationMode::ContinuousAndNoteLatched
+    );
+    assert!((patch.live_excitation.gain_db + 6.0).abs() < 0.001);
+    assert!((patch.live_excitation.latch_window_ms - 180.0).abs() < 0.001);
+    assert!((patch.live_excitation.latch_pre_roll_ms - 30.0).abs() < 0.001);
+    assert!((patch.live_excitation.latch_fade_ms - 10.0).abs() < 0.001);
+}

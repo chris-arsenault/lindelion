@@ -95,6 +95,87 @@ fn string_helpers_roundtrip_ascii_and_unicode_without_overflow() {
 }
 
 #[test]
+fn bus_info_defaults_existing_constructors_to_main_active_buses() {
+    let buses = [
+        Vst3BusInfo::audio_input(2, "Input"),
+        Vst3BusInfo::audio_output(2, "Output"),
+        Vst3BusInfo::event_input(1, "MIDI Input"),
+    ];
+
+    let mut audio_input = unsafe { std::mem::zeroed::<BusInfo>() };
+    assert_eq!(
+        unsafe { fill_vst3_bus_info(&buses, audio(), input(), 0, &mut audio_input) },
+        kResultOk
+    );
+    assert_eq!(audio_input.channelCount, 2);
+    assert_eq!(wide_string(&audio_input.name), "Input");
+    assert_eq!(audio_input.busType, BusTypes_::kMain as BusType);
+    assert_eq!(
+        audio_input.flags,
+        BusInfo_::BusFlags_::kDefaultActive as u32
+    );
+
+    let mut event_input = unsafe { std::mem::zeroed::<BusInfo>() };
+    assert_eq!(
+        unsafe { fill_vst3_bus_info(&buses, event(), input(), 0, &mut event_input) },
+        kResultOk
+    );
+    assert_eq!(event_input.channelCount, 1);
+    assert_eq!(wide_string(&event_input.name), "MIDI Input");
+    assert_eq!(event_input.busType, BusTypes_::kMain as BusType);
+    assert_eq!(
+        event_input.flags,
+        BusInfo_::BusFlags_::kDefaultActive as u32
+    );
+}
+
+#[test]
+fn bus_info_supports_optional_aux_audio_input() {
+    let buses = [
+        Vst3BusInfo::audio_output(2, "Output"),
+        Vst3BusInfo::optional_audio_input(2, "Sidechain Input"),
+    ];
+
+    assert_eq!(vst3_bus_count(&buses, audio(), input()), 1);
+    assert_eq!(vst3_bus_count(&buses, audio(), output()), 1);
+
+    let mut sidechain = unsafe { std::mem::zeroed::<BusInfo>() };
+    assert_eq!(
+        unsafe { fill_vst3_bus_info(&buses, audio(), input(), 0, &mut sidechain) },
+        kResultOk
+    );
+    assert_eq!(sidechain.channelCount, 2);
+    assert_eq!(wide_string(&sidechain.name), "Sidechain Input");
+    assert_eq!(sidechain.busType, BusTypes_::kAux as BusType);
+    assert_eq!(
+        sidechain.flags & BusInfo_::BusFlags_::kDefaultActive as u32,
+        0
+    );
+
+    let mut output_bus = unsafe { std::mem::zeroed::<BusInfo>() };
+    assert_eq!(
+        unsafe { fill_vst3_bus_info(&buses, audio(), output(), 0, &mut output_bus) },
+        kResultOk
+    );
+    assert_eq!(output_bus.busType, BusTypes_::kMain as BusType);
+    assert_eq!(output_bus.flags, BusInfo_::BusFlags_::kDefaultActive as u32);
+}
+
+#[test]
+fn mono_or_stereo_speaker_arrangement_supports_audio_input_shapes() {
+    assert!(mono_or_stereo_speaker_arrangement_supported(
+        SpeakerArr::kMono
+    ));
+    assert!(mono_or_stereo_speaker_arrangement_supported(
+        SpeakerArr::kStereo
+    ));
+    assert!(!mono_or_stereo_speaker_arrangement_supported(
+        SpeakerArr::k51
+    ));
+    assert!(!mono_or_stereo_speaker_arrangement_supported(0));
+}
+
+#[test]
 fn vst_process_data_projects_mono_audio_input_buffer() {
     let mono = [0.25_f32, -0.5];
     let mut channels = [mono.as_ptr() as *mut Sample32];
@@ -561,4 +642,20 @@ fn assert_rect(rect: ViewRect, left: i32, top: i32, right: i32, bottom: i32) {
         (rect.left, rect.top, rect.right, rect.bottom),
         (left, top, right, bottom)
     );
+}
+
+fn audio() -> MediaType {
+    MediaTypes_::kAudio as MediaType
+}
+
+fn event() -> MediaType {
+    MediaTypes_::kEvent as MediaType
+}
+
+fn input() -> BusDirection {
+    BusDirections_::kInput as BusDirection
+}
+
+fn output() -> BusDirection {
+    BusDirections_::kOutput as BusDirection
 }

@@ -55,6 +55,14 @@ fn formatters_are_owned_by_bindings() {
         "Retrigger"
     );
     assert_eq!(
+        parameter_binding(100).unwrap().format_plain_value(2.0),
+        "MIDI + Audio"
+    );
+    assert_eq!(
+        parameter_binding(120).unwrap().format_plain_value(3.0),
+        "Cont + Latch"
+    );
+    assert_eq!(
         parameter_binding(20).unwrap().format_plain_value(1.0),
         "Waveguide"
     );
@@ -103,6 +111,38 @@ fn live_smoothed_parameters_are_declared_in_registry() {
             .unwrap()
             .smoothed_atomic_spec()
             .is_none()
+    );
+}
+
+#[test]
+fn audio_expression_parameters_update_the_runtime_patch() {
+    for id in [
+        AUDIO_EXPRESSION_ENABLE_PARAMETER_ID,
+        AUDIO_EXPRESSION_PITCH_RANGE_PARAMETER_ID,
+        AUDIO_EXPRESSION_PRESSURE_FLOOR_PARAMETER_ID,
+        AUDIO_EXPRESSION_PRESSURE_CEILING_PARAMETER_ID,
+        AUDIO_EXPRESSION_BRIGHTNESS_FLOOR_PARAMETER_ID,
+        AUDIO_EXPRESSION_BRIGHTNESS_CEILING_PARAMETER_ID,
+    ] {
+        let binding = parameter_binding(id).expect("missing audio expression binding");
+        assert_eq!(
+            binding.runtime_target(),
+            RuntimeParameterTarget::Patch,
+            "{} should update runtime patch state for audio expression",
+            binding.info().name
+        );
+    }
+}
+
+#[test]
+fn live_excitation_gain_updates_the_runtime_patch() {
+    let binding = parameter_binding(LIVE_EXCITATION_GAIN_PARAMETER_ID)
+        .expect("missing live excitation gain binding");
+
+    assert_eq!(
+        binding.runtime_target(),
+        RuntimeParameterTarget::Patch,
+        "live excitation gain should update runtime patch state"
     );
 }
 
@@ -159,6 +199,63 @@ fn editor_surface_bindings_project_from_registry_metadata() {
         assert_eq!(surface_binding.label(), editor.label());
         assert_eq!(surface_binding.control(), editor.control());
     }
+}
+
+#[test]
+fn v2_audio_parameters_are_visible_on_the_registry_backed_editor_surface() {
+    for (id, slot) in [
+        (
+            AUDIO_INPUT_MODE_PARAMETER_ID,
+            EditorSurfaceSlot::AudioInputMode,
+        ),
+        (
+            AUDIO_EXPRESSION_ENABLE_PARAMETER_ID,
+            EditorSurfaceSlot::AudioExpressionEnable,
+        ),
+        (
+            AUDIO_EXPRESSION_PITCH_RANGE_PARAMETER_ID,
+            EditorSurfaceSlot::AudioExpressionPitchRange,
+        ),
+        (
+            AUDIO_NOTE_ONSET_SENSITIVITY_PARAMETER_ID,
+            EditorSurfaceSlot::AudioNoteOnsetSensitivity,
+        ),
+        (
+            AUDIO_NOTE_PITCH_CONFIDENCE_PARAMETER_ID,
+            EditorSurfaceSlot::AudioNotePitchConfidence,
+        ),
+        (
+            LIVE_EXCITATION_MODE_PARAMETER_ID,
+            EditorSurfaceSlot::LiveExcitationMode,
+        ),
+        (
+            LIVE_EXCITATION_LATCH_WINDOW_PARAMETER_ID,
+            EditorSurfaceSlot::LiveExcitationLatchWindow,
+        ),
+    ] {
+        let binding = parameter_binding(id).expect("v2 parameter binding");
+        assert_eq!(
+            binding.editor().expect("visible v2 editor binding").slot(),
+            slot
+        );
+    }
+
+    assert!(matches!(
+        parameter_binding(AUDIO_INPUT_MODE_PARAMETER_ID)
+            .unwrap()
+            .editor()
+            .unwrap()
+            .control(),
+        EditorControlKind::Segmented { .. }
+    ));
+    assert!(matches!(
+        parameter_binding(LIVE_EXCITATION_MODE_PARAMETER_ID)
+            .unwrap()
+            .editor()
+            .unwrap()
+            .control(),
+        EditorControlKind::Segmented { .. }
+    ));
 }
 
 fn assert_editor_binding_roundtrips(binding: &ParameterBinding) {
@@ -243,6 +340,17 @@ fn enum_codecs_round_trip() {
         FilterMode::LowPass,
         FilterMode::BandPass,
         FilterMode::HighPass,
+    ]);
+    assert_codec_roundtrip(&[
+        AudioInputMode::Off,
+        AudioInputMode::AudioCreatesNotes,
+        AudioInputMode::MidiPlusAudioCreatesNotes,
+    ]);
+    assert_codec_roundtrip(&[
+        LiveExcitationMode::Off,
+        LiveExcitationMode::Continuous,
+        LiveExcitationMode::NoteLatched,
+        LiveExcitationMode::ContinuousAndNoteLatched,
     ]);
     assert_codec_roundtrip(&[RoutingMode::Parallel, RoutingMode::Series]);
     assert_codec_roundtrip(&[ResonatorModel::Modal, ResonatorModel::Waveguide]);

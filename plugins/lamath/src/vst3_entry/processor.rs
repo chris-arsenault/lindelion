@@ -7,9 +7,10 @@ use lindelion_plugin_shell::{
     AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
     ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
     vst3::{
-        Vst3BusInfo, Vst3PeerConnection, can_process_32_bit_sample_size, clear_vst_outputs,
-        fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst,
-        stereo_output_buffers_from_vst_process_data, vst3_bus_count,
+        Vst3BusInfo, Vst3PeerConnection, audio_input_buffer_from_vst_process_data,
+        can_process_32_bit_sample_size, clear_vst_outputs, fill_vst3_bus_info,
+        for_each_vst3_parameter_change, mono_or_stereo_speaker_arrangement_supported,
+        process_setup_from_vst, stereo_output_buffers_from_vst_process_data, vst3_bus_count,
     },
 };
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
@@ -23,14 +24,16 @@ use super::{
     write_plugin_state_to_stream,
 };
 
-const RESONATOR_BUSES: [Vst3BusInfo; 2] = [
+const RESONATOR_BUSES: [Vst3BusInfo; 3] = [
     Vst3BusInfo::audio_output(2, "Output"),
+    Vst3BusInfo::optional_audio_input(2, "Sidechain Input"),
     Vst3BusInfo::event_input(1, "MIDI Input"),
 ];
 
 pub(super) struct ResonatorVst3Processor {
     pub(super) synth: RefCell<ResonatorSynth>,
     setup: Cell<ShellProcessSetup>,
+    sidechain_arrangement: Cell<SpeakerArrangement>,
     peer: Vst3PeerConnection,
 }
 
@@ -53,6 +56,7 @@ impl ResonatorVst3Processor {
         Self {
             synth: RefCell::new(synth),
             setup: Cell::new(setup),
+            sidechain_arrangement: Cell::new(SpeakerArr::kStereo),
             peer: Vst3PeerConnection::new(),
         }
     }
@@ -217,18 +221,26 @@ impl IComponentTrait for ResonatorVst3Processor {
 impl IAudioProcessorTrait for ResonatorVst3Processor {
     unsafe fn setBusArrangements(
         &self,
-        _inputs: *mut SpeakerArrangement,
+        inputs: *mut SpeakerArrangement,
         num_ins: i32,
         outputs: *mut SpeakerArrangement,
         num_outs: i32,
     ) -> tresult {
-        if num_ins != 0 || num_outs != 1 || outputs.is_null() {
+        if num_outs != 1 || outputs.is_null() || *outputs != SpeakerArr::kStereo {
             return kResultFalse;
         }
-        if *outputs == SpeakerArr::kStereo {
-            kResultTrue
-        } else {
-            kResultFalse
+
+        match num_ins {
+            0 => kResultTrue,
+            1 if !inputs.is_null() && *inputs == SpeakerArr::kEmpty => {
+                self.sidechain_arrangement.set(SpeakerArr::kEmpty);
+                kResultTrue
+            }
+            1 if !inputs.is_null() && mono_or_stereo_speaker_arrangement_supported(*inputs) => {
+                self.sidechain_arrangement.set(*inputs);
+                kResultTrue
+            }
+            _ => kResultFalse,
         }
     }
 
@@ -243,6 +255,10 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
         }
 
         match dir as BusDirections {
+            BusDirections_::kInput => {
+                *arrangement = self.sidechain_arrangement.get();
+                kResultOk
+            }
             BusDirections_::kOutput => {
                 *arrangement = SpeakerArr::kStereo;
                 kResultOk
@@ -290,9 +306,11 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
             return kResultOk;
         }
 
-        let input_events = data.inputEvents;
-        let Some(mut buffer) = stereo_output_buffers_from_vst_process_data(data) else {
-            clear_vst_outputs(data);
+        let data_ptr = data as *mut ProcessData;
+        let input_events = (*data_ptr).inputEvents;
+        let input = audio_input_buffer_from_vst_process_data(&*data_ptr);
+        let Some(mut buffer) = stereo_output_buffers_from_vst_process_data(&mut *data_ptr) else {
+            clear_vst_outputs(&mut *data_ptr);
             return kResultOk;
         };
         let mut events = [empty_midi_event(); MAX_BLOCK_EVENTS];
@@ -302,11 +320,10 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
             buffer.clear();
             return kResultFalse;
         };
-        synth.process(ShellProcessContext::new(
-            self.setup.get(),
-            buffer,
-            &events[..event_count],
-        ));
+        synth.process(
+            ShellProcessContext::new(self.setup.get(), buffer, &events[..event_count])
+                .with_input(input),
+        );
 
         kResultOk
     }

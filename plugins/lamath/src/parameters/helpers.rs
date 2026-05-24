@@ -129,6 +129,14 @@ fn output_gain_from_plain(gain_db: f32) -> f32 {
     db_to_gain(MASTER_GAIN_DB.clamp(gain_db))
 }
 
+fn audio_input_mode_label_from_plain(value: f32) -> &'static str {
+    AudioInputMode::label_from_plain(value)
+}
+
+fn live_excitation_mode_label_from_plain(value: f32) -> &'static str {
+    LiveExcitationMode::label_from_plain(value)
+}
+
 fn modal_config_from(config: ResonatorConfig) -> ModalConfig {
     match config {
         ResonatorConfig::Modal(config) => config,

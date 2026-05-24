@@ -12,18 +12,30 @@ pub use dsp::WaveguideStyle;
 pub use lindelion_audio_expression::{
     AudioAnalysisExpressionSource, AudioExpressionFeatures, AudioExpressionFrame,
     AudioExpressionFrameSource, AudioExpressionMapping, AudioExpressionSource,
-    PhraseAnalysisExpressionFrameSource, RmsCentroidLoudnessTracker,
-    StreamingAudioAnalysisExpressionSource, StreamingAudioAnalysisFrameSource,
-    StreamingAudioExpressionFrameSource, StreamingLoudnessFrame, StreamingLoudnessTracker,
+    AudioNoteDetectionConfig, AudioNoteEvent, DEFAULT_AUDIO_NOTE_MINIMUM_LENGTH_MS,
+    DEFAULT_AUDIO_NOTE_ONSET_SENSITIVITY, DEFAULT_AUDIO_NOTE_PITCH_CONFIDENCE,
+    DEFAULT_AUDIO_NOTE_RELEASE_FLOOR_RMS, DEFAULT_AUDIO_NOTE_VELOCITY_AMOUNT,
+    DEFAULT_BRIGHTNESS_CEILING_HZ, DEFAULT_BRIGHTNESS_FLOOR_HZ, DEFAULT_PITCH_BEND_RANGE_SEMITONES,
+    DEFAULT_PRESSURE_CEILING_RMS, DEFAULT_PRESSURE_FLOOR_RMS,
+    DefaultStreamingAudioAnalysisExpressionSource, PhraseAnalysisExpressionFrameSource,
+    RealtimeStreamingAudioAnalysisExpressionSource, RealtimeStreamingAudioAnalysisNoteDetector,
+    RmsCentroidLoudnessTracker, StreamingAudioAnalysisExpressionSource,
+    StreamingAudioAnalysisFrameSource, StreamingAudioAnalysisNoteDetector,
+    StreamingAudioExpressionFrameSource, StreamingAudioNoteDetector, StreamingLoudnessFrame,
+    StreamingLoudnessTracker, realtime_audio_analysis_expression_source,
+    realtime_audio_analysis_note_detector, streaming_audio_analysis_expression_source,
+    streaming_audio_analysis_note_detector,
 };
 pub use parameters::PARAMETERS;
 pub use patch::{
-    EnvelopeConfig, ExcitationSlot, FilterMode, LfoConfig, LfoShape, ModalConfig, ModalPreset,
-    ModulationConfig, ModulationDestination, ModulationSlot, ModulationSource, OutputConfig,
-    ResonatorConfig, ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,
+    AudioExpressionConfig, AudioInputConfig, AudioInputMode, EnvelopeConfig, ExcitationSlot,
+    FilterMode, LfoConfig, LfoShape, LiveExcitationConfig, LiveExcitationMode, ModalConfig,
+    ModalPreset, ModulationConfig, ModulationDestination, ModulationSlot, ModulationSource,
+    OutputConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,
 };
 pub use plugin::{
-    LoadedExcitationBuffer, ResonatorSynth, ResonatorTelemetry, SampleLoadError, SampleLoadReport,
+    LoadedExcitationBuffer, ResonatorSidechainTelemetry, ResonatorSynth, ResonatorTelemetry,
+    SampleLoadError, SampleLoadReport,
 };
 
 #[cfg(test)]
@@ -49,6 +61,9 @@ pub(crate) use parameters::{
 };
 #[cfg(test)]
 pub(crate) use parameters::{ParameterApplyKind, apply_parameter_plain};
+
+#[cfg(test)]
+mod test_support;
 
 pub const DESCRIPTOR: PluginDescriptor =
     PluginDescriptor::instrument("Lamath", *b"lamath_resonator");

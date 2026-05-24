@@ -14,14 +14,13 @@ mod processor;
 #[cfg(test)]
 mod tests;
 
-use crate::PARAMETER_BINDING_COUNT;
+use crate::{DEFAULT_PITCH_BEND_RANGE_SEMITONES, PARAMETER_BINDING_COUNT};
 
 const MAX_BLOCK_EVENTS: usize = 128;
 const SUBCATEGORY: &str = "Instrument|Synth";
 const PITCH_BEND_PARAMETER_ID: u32 = 10_000;
 const PITCH_BEND_PARAMETER_INDEX: usize = PARAMETER_BINDING_COUNT;
 const VST3_PARAMETER_COUNT: usize = PARAMETER_BINDING_COUNT + 1;
-const DEFAULT_PITCH_BEND_RANGE_SEMITONES: f32 = 2.0;
 const DEFAULT_LIBRARY_DIR: &str = "Ahara";
 
 #[cfg(any(test, target_os = "macos"))]

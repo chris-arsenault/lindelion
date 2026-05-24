@@ -6,7 +6,8 @@ use lindelion_plugin_shell::{
     vst3::{
         Vst3BusInfo, Vst3PeerConnection, audio_input_buffer_from_vst_process_data,
         can_process_32_bit_sample_size, clear_vst_outputs, fill_vst3_bus_info,
-        for_each_vst3_parameter_change, process_setup_from_vst, read_plugin_state_from_stream,
+        for_each_vst3_parameter_change, mono_or_stereo_speaker_arrangement_supported,
+        process_setup_from_vst, read_plugin_state_from_stream,
         stereo_output_buffers_from_vst_process_data, transport_context_from_vst_process_context,
         vst3_bus_count, write_plugin_state_to_stream,
     },
@@ -247,7 +248,8 @@ impl IAudioProcessorTrait for GlirdirVst3Processor {
         if inputs.is_null() || outputs.is_null() || num_ins != 1 || num_outs != 1 {
             return kResultFalse;
         }
-        if input_arrangement_supported(*inputs) && *outputs == SpeakerArr::kStereo {
+        if mono_or_stereo_speaker_arrangement_supported(*inputs) && *outputs == SpeakerArr::kStereo
+        {
             self.input_arrangement.set(*inputs);
             kResultTrue
         } else {
@@ -403,8 +405,4 @@ impl IConnectionPointTrait for GlirdirVst3Processor {
             | GlirdirPluginMessage::TelemetryResponse(_) => kNotImplemented,
         }
     }
-}
-
-fn input_arrangement_supported(arrangement: SpeakerArrangement) -> bool {
-    matches!(arrangement, SpeakerArr::kMono | SpeakerArr::kStereo)
 }

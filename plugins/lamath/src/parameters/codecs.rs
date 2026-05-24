@@ -51,6 +51,27 @@ impl RoutingMode {
 }
 
 lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for AudioInputMode {
+        max: 2;
+        fallback: Self::Off;
+        0 => Self::Off, "Off";
+        1 => Self::AudioCreatesNotes, "Audio Notes";
+        2 => Self::MidiPlusAudioCreatesNotes, "MIDI + Audio";
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for LiveExcitationMode {
+        max: 3;
+        fallback: Self::Off;
+        0 => Self::Off, "Off";
+        1 => Self::Continuous, "Continuous";
+        2 => Self::NoteLatched, "Note Latched";
+        3 => Self::ContinuousAndNoteLatched, "Cont + Latch";
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
     impl ParameterCodec for FilterMode {
         max: 2;
         fallback: Self::LowPass;

@@ -1,3 +1,6 @@
+const AUDIO_INPUT_MODE_EDITOR_LABELS: &[&str] = &["Off", "Audio Notes", "MIDI + Audio"];
+const LIVE_EXCITATION_MODE_EDITOR_LABELS: &[&str] = &["Off", "Cont", "Latch", "Both"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParameterApplyKind {
     Live,
@@ -8,6 +11,7 @@ pub(crate) enum ParameterApplyKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeParameterTarget {
     None,
+    Patch,
     Output,
     Routing,
 }
@@ -136,6 +140,23 @@ impl EditorParameterBinding {
         }
     }
 
+    pub(crate) const fn segmented(
+        slot: EditorSurfaceSlot,
+        group: EditorSurfaceGroup,
+        order: u8,
+        label: &'static str,
+        labels: &'static [&'static str],
+        width: f32,
+    ) -> Self {
+        Self {
+            slot,
+            group,
+            order,
+            label,
+            control: EditorControlKind::Segmented { labels, width },
+        }
+    }
+
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     pub(crate) const fn slot(self) -> EditorSurfaceSlot {
         self.slot
@@ -192,11 +213,15 @@ pub(crate) enum EditorSurfaceGroup {
     OutputFilter,
     OutputEnvelope,
     OutputModulation,
+    LiveInput,
+    NoteDetection,
+    AudioExpression,
+    LiveExcitation,
 }
 
 impl EditorSurfaceGroup {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const REQUIRED: [Self; 10] = [
+    pub(crate) const REQUIRED: [Self; 14] = [
         Self::ResonatorHeader,
         Self::ResonatorAHeader,
         Self::ResonatorAControls,
@@ -207,5 +232,9 @@ impl EditorSurfaceGroup {
         Self::OutputFilter,
         Self::OutputEnvelope,
         Self::OutputModulation,
+        Self::LiveInput,
+        Self::NoteDetection,
+        Self::AudioExpression,
+        Self::LiveExcitation,
     ];
 }

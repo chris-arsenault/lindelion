@@ -1,3 +1,6 @@
+use lindelion_audio_expression::{
+    AudioExpressionMapping, AudioNoteDetectionConfig, DEFAULT_PITCH_BEND_RANGE_SEMITONES,
+};
 use lindelion_sample_library::SampleReference;
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +24,14 @@ pub struct ResonatorSynthPatch {
     pub retrigger_resonators: bool,
     pub output: OutputConfig,
     pub modulation: ModulationConfig,
+    #[serde(default)]
+    pub audio_input: AudioInputConfig,
+    #[serde(default)]
+    pub audio_expression: AudioExpressionConfig,
+    #[serde(default)]
+    pub note_detection: AudioNoteDetectionConfig,
+    #[serde(default)]
+    pub live_excitation: LiveExcitationConfig,
 }
 
 impl Default for ResonatorSynthPatch {
@@ -38,8 +49,76 @@ impl Default for ResonatorSynthPatch {
             retrigger_resonators: false,
             output: OutputConfig::default(),
             modulation: ModulationConfig::default(),
+            audio_input: AudioInputConfig::default(),
+            audio_expression: AudioExpressionConfig::default(),
+            note_detection: AudioNoteDetectionConfig::default(),
+            live_excitation: LiveExcitationConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AudioInputConfig {
+    pub mode: AudioInputMode,
+}
+
+impl Default for AudioInputConfig {
+    fn default() -> Self {
+        Self {
+            mode: AudioInputMode::Off,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AudioInputMode {
+    Off,
+    AudioCreatesNotes,
+    MidiPlusAudioCreatesNotes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AudioExpressionConfig {
+    pub enabled: bool,
+    pub mapping: AudioExpressionMapping,
+}
+
+impl Default for AudioExpressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mapping: AudioExpressionMapping::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LiveExcitationConfig {
+    pub mode: LiveExcitationMode,
+    pub gain_db: f32,
+    pub latch_window_ms: f32,
+    pub latch_pre_roll_ms: f32,
+    pub latch_fade_ms: f32,
+}
+
+impl Default for LiveExcitationConfig {
+    fn default() -> Self {
+        Self {
+            mode: LiveExcitationMode::Off,
+            gain_db: 0.0,
+            latch_window_ms: 120.0,
+            latch_pre_roll_ms: 20.0,
+            latch_fade_ms: 5.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LiveExcitationMode {
+    Off,
+    Continuous,
+    NoteLatched,
+    ContinuousAndNoteLatched,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -267,7 +346,7 @@ impl Default for ModulationConfig {
                 release_ms: 150.0,
             },
             lfo: LfoConfig::default(),
-            pitch_bend_range_semitones: 2.0,
+            pitch_bend_range_semitones: DEFAULT_PITCH_BEND_RANGE_SEMITONES,
             velocity_to_excitation_depth: 1.0,
             slots: [ModulationSlot::default(); 4],
         }

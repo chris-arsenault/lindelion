@@ -5,6 +5,10 @@ pub(crate) enum ParameterPath {
     ParallelMixA,
     ParallelMixB,
     RetriggerResonators,
+    AudioInputMode,
+    AudioExpression(AudioExpressionParameter),
+    NoteDetection(AudioNoteDetectionParameter),
+    LiveExcitation(LiveExcitationParameter),
     Resonator {
         slot: ResonatorSlot,
         parameter: ResonatorParameter,
@@ -32,6 +36,10 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::ParallelMixA => parallel_mix_a(patch.routing),
             Self::ParallelMixB => parallel_mix_b(patch.routing),
             Self::RetriggerResonators => bool_plain(patch.retrigger_resonators),
+            Self::AudioInputMode => patch.audio_input.mode.plain(),
+            Self::AudioExpression(parameter) => parameter.plain_value(patch),
+            Self::NoteDetection(parameter) => parameter.plain_value(patch),
+            Self::LiveExcitation(parameter) => parameter.plain_value(patch),
             Self::Resonator { slot, parameter } => parameter.plain_value(slot.config(patch)),
             Self::Envelope { target, parameter } => parameter.plain_value(target.config(patch)),
             Self::LfoRate => patch.modulation.lfo.rate_hz,
@@ -58,6 +66,10 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
                 patch.routing = set_parallel_mix(patch.routing, MixSide::B, value)
             }
             Self::RetriggerResonators => patch.retrigger_resonators = bool_from_plain(value),
+            Self::AudioInputMode => patch.audio_input.mode = AudioInputMode::from_plain(value),
+            Self::AudioExpression(parameter) => parameter.apply_plain(patch, value),
+            Self::NoteDetection(parameter) => parameter.apply_plain(patch, value),
+            Self::LiveExcitation(parameter) => parameter.apply_plain(patch, value),
             Self::Resonator { slot, parameter } => {
                 parameter.apply_plain(slot.config_mut(patch), value);
             }
@@ -74,7 +86,12 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
                 patch.modulation.lfo.tempo_sync = bool_from_plain(value);
             }
             Self::PitchBendRange => {
-                patch.modulation.pitch_bend_range_semitones = finite_value(value, 0.0, 24.0, 2.0);
+                patch.modulation.pitch_bend_range_semitones = finite_value(
+                    value,
+                    0.0,
+                    24.0,
+                    DEFAULT_PITCH_BEND_RANGE_SEMITONES,
+                );
             }
             Self::VelocityExcitationDepth => {
                 patch.modulation.velocity_to_excitation_depth = finite_value(value, 0.0, 1.0, 1.0);
@@ -120,6 +137,163 @@ impl OutputParameter {
                 output.filter_resonance = FILTER_RESONANCE.clamp(value);
             }
             Self::FilterMode => output.filter_mode = FilterMode::from_plain(value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AudioExpressionParameter {
+    Enabled,
+    PitchBendRange,
+    PressureFloor,
+    PressureCeiling,
+    BrightnessFloor,
+    BrightnessCeiling,
+}
+
+impl AudioExpressionParameter {
+    fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
+        let mapping = patch.audio_expression.mapping;
+        match self {
+            Self::Enabled => bool_plain(patch.audio_expression.enabled),
+            Self::PitchBendRange => mapping.pitch_bend_range_semitones,
+            Self::PressureFloor => mapping.pressure_floor_rms,
+            Self::PressureCeiling => mapping.pressure_ceiling_rms,
+            Self::BrightnessFloor => mapping.brightness_floor_hz,
+            Self::BrightnessCeiling => mapping.brightness_ceiling_hz,
+        }
+    }
+
+    fn apply_plain(self, patch: &mut ResonatorSynthPatch, value: f32) {
+        match self {
+            Self::Enabled => patch.audio_expression.enabled = bool_from_plain(value),
+            Self::PitchBendRange => {
+                patch.audio_expression.mapping.pitch_bend_range_semitones = finite_value(
+                    value,
+                    0.0,
+                    48.0,
+                    DEFAULT_PITCH_BEND_RANGE_SEMITONES,
+                );
+            }
+            Self::PressureFloor => {
+                patch.audio_expression.mapping.pressure_floor_rms =
+                    finite_value(value, 0.0, 1.0, DEFAULT_PRESSURE_FLOOR_RMS);
+            }
+            Self::PressureCeiling => {
+                patch.audio_expression.mapping.pressure_ceiling_rms =
+                    finite_value(value, 0.0, 1.0, DEFAULT_PRESSURE_CEILING_RMS);
+            }
+            Self::BrightnessFloor => {
+                patch.audio_expression.mapping.brightness_floor_hz =
+                    finite_value(value, 0.0, 48_000.0, DEFAULT_BRIGHTNESS_FLOOR_HZ);
+            }
+            Self::BrightnessCeiling => {
+                patch.audio_expression.mapping.brightness_ceiling_hz =
+                    finite_value(value, 0.0, 48_000.0, DEFAULT_BRIGHTNESS_CEILING_HZ);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AudioNoteDetectionParameter {
+    OnsetSensitivity,
+    ReleaseFloor,
+    MinimumLength,
+    PitchConfidence,
+    VelocityAmount,
+}
+
+impl AudioNoteDetectionParameter {
+    fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
+        let detection = patch.note_detection;
+        match self {
+            Self::OnsetSensitivity => detection.onset_sensitivity,
+            Self::ReleaseFloor => detection.note_release_floor_rms,
+            Self::MinimumLength => detection.minimum_note_length_ms,
+            Self::PitchConfidence => detection.pitch_confidence,
+            Self::VelocityAmount => detection.velocity_amount,
+        }
+    }
+
+    fn apply_plain(self, patch: &mut ResonatorSynthPatch, value: f32) {
+        let detection = &mut patch.note_detection;
+        match self {
+            Self::OnsetSensitivity => {
+                detection.onset_sensitivity = finite_value(
+                    value,
+                    0.0,
+                    1.0,
+                    DEFAULT_AUDIO_NOTE_ONSET_SENSITIVITY,
+                );
+            }
+            Self::ReleaseFloor => {
+                detection.note_release_floor_rms = finite_value(
+                    value,
+                    0.0,
+                    1.0,
+                    DEFAULT_AUDIO_NOTE_RELEASE_FLOOR_RMS,
+                );
+            }
+            Self::MinimumLength => {
+                detection.minimum_note_length_ms = finite_value(
+                    value,
+                    1.0,
+                    2_000.0,
+                    DEFAULT_AUDIO_NOTE_MINIMUM_LENGTH_MS,
+                );
+            }
+            Self::PitchConfidence => {
+                detection.pitch_confidence = finite_value(
+                    value,
+                    0.0,
+                    1.0,
+                    DEFAULT_AUDIO_NOTE_PITCH_CONFIDENCE,
+                );
+            }
+            Self::VelocityAmount => {
+                detection.velocity_amount =
+                    finite_value(value, 0.0, 1.0, DEFAULT_AUDIO_NOTE_VELOCITY_AMOUNT);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveExcitationParameter {
+    Mode,
+    Gain,
+    LatchWindow,
+    LatchPreRoll,
+    LatchFade,
+}
+
+impl LiveExcitationParameter {
+    fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
+        let excitation = patch.live_excitation;
+        match self {
+            Self::Mode => excitation.mode.plain(),
+            Self::Gain => excitation.gain_db,
+            Self::LatchWindow => excitation.latch_window_ms,
+            Self::LatchPreRoll => excitation.latch_pre_roll_ms,
+            Self::LatchFade => excitation.latch_fade_ms,
+        }
+    }
+
+    fn apply_plain(self, patch: &mut ResonatorSynthPatch, value: f32) {
+        let excitation = &mut patch.live_excitation;
+        match self {
+            Self::Mode => excitation.mode = LiveExcitationMode::from_plain(value),
+            Self::Gain => excitation.gain_db = finite_value(value, -60.0, 24.0, 0.0),
+            Self::LatchWindow => {
+                excitation.latch_window_ms = finite_value(value, 1.0, 2_000.0, 120.0);
+            }
+            Self::LatchPreRoll => {
+                excitation.latch_pre_roll_ms = finite_value(value, 0.0, 500.0, 20.0);
+            }
+            Self::LatchFade => {
+                excitation.latch_fade_ms = finite_value(value, 0.0, 250.0, 5.0);
+            }
         }
     }
 }

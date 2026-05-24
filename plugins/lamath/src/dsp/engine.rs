@@ -6,7 +6,10 @@ use lindelion_plugin_shell::{
     VoiceRenderStatus,
 };
 
-use super::voice::{Voice, VoiceExpression, VoiceTrigger};
+use super::{
+    excitation::LiveExcitationBlock,
+    voice::{Voice, VoiceExpression, VoiceTrigger},
+};
 use crate::{OutputConfig, ResonatorRouting};
 
 #[cfg(test)]
@@ -21,9 +24,20 @@ pub struct SynthEngine<'a> {
 }
 
 impl<'a> SynthEngine<'a> {
+    #[cfg(test)]
     pub fn new(sample_rate: f32, polyphony: usize) -> Self {
+        Self::with_live_latch_capacity(sample_rate, polyphony, 0)
+    }
+
+    pub fn with_live_latch_capacity(
+        sample_rate: f32,
+        polyphony: usize,
+        live_latch_capacity_samples: usize,
+    ) -> Self {
         Self {
-            voices: VoiceManager::new(polyphony, || Voice::new(sample_rate)),
+            voices: VoiceManager::new(polyphony, || {
+                Voice::with_live_latch_capacity(sample_rate, live_latch_capacity_samples)
+            }),
         }
     }
 
@@ -73,8 +87,8 @@ impl<'a> SynthEngine<'a> {
         self.voices.release_note(note);
     }
 
-    pub fn note_off_for_channel(&mut self, channel: u8, note: u8) {
-        self.voices.release_note_for_channel(channel, note);
+    pub fn note_off_voice(&mut self, voice_id: usize) -> bool {
+        self.voices.release_voice(voice_id)
     }
 
     #[cfg(test)]
@@ -114,6 +128,15 @@ impl<'a> SynthEngine<'a> {
         self.voices.sync_expression_source(source);
     }
 
+    pub fn continue_live_latch_captures(&mut self, sidechain: &[f32]) {
+        if sidechain.is_empty() {
+            return;
+        }
+
+        self.voices
+            .for_each_live_voice_mut(|voice| voice.continue_live_latch_capture(sidechain));
+    }
+
     pub fn set_output_config(&mut self, output: OutputConfig) {
         self.voices
             .for_each_live_voice_mut(|voice| voice.set_output_config(output));
@@ -125,12 +148,22 @@ impl<'a> SynthEngine<'a> {
     }
 
     pub fn render_add(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.render_add_with_live_excitation(left, right, LiveExcitationBlock::disabled());
+    }
+
+    pub fn render_add_with_live_excitation(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        live_excitation: LiveExcitationBlock<'_>,
+    ) {
         let len = left.len().min(right.len());
 
         self.voices.process_live_voices(|voice| {
             let mut block_peak = 0.0_f32;
             for index in 0..len {
-                let (sample_left, sample_right) = voice.process_stereo_sample();
+                let (sample_left, sample_right) = voice
+                    .process_stereo_sample_with_live_excitation(live_excitation.sample_at(index));
                 block_peak = block_peak.max(sample_left.abs()).max(sample_right.abs());
                 left[index] = snap_to_zero(left[index] + sample_left);
                 right[index] = snap_to_zero(right[index] + sample_right);
@@ -380,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn note_off_for_channel_routes_gate_only_to_owned_voice_slot() {
+    fn note_off_voice_routes_gate_only_to_addressed_voice_slot() {
         let sample_rate = 48_000.0;
         let patch = test_patch();
         let excitation = impulse();
@@ -388,7 +421,7 @@ mod tests {
         let slot_a = engine.note_on(channel_trigger(1, 60, &excitation, sample_rate, &patch));
         let slot_b = engine.note_on(channel_trigger(2, 60, &excitation, sample_rate, &patch));
 
-        engine.note_off_for_channel(2, 60);
+        assert!(engine.note_off_voice(slot_b));
 
         assert_slot_gate(&engine, slot_a, VoiceSlotState::Active, true);
         assert_slot_gate(&engine, slot_b, VoiceSlotState::Released, false);

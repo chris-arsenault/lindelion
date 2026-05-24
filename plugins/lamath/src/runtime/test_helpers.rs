@@ -183,3 +183,32 @@ fn mean_abs_difference(left: &[f32], right: &[f32]) -> f32 {
         .sum::<f32>()
         / len as f32
 }
+
+fn assert_runtime_process_does_not_allocate(
+    label: &str,
+    processor: &mut ResonatorProcessor<'_>,
+    events: &[MidiEvent],
+    left: &mut [f32],
+    right: &mut [f32],
+) {
+    assert_runtime_input_process_does_not_allocate(label, processor, events, &[], left, right);
+}
+
+fn assert_runtime_input_process_does_not_allocate(
+    label: &str,
+    processor: &mut ResonatorProcessor<'_>,
+    events: &[MidiEvent],
+    sidechain: &[f32],
+    left: &mut [f32],
+    right: &mut [f32],
+) {
+    assert_no_allocations(label, || {
+        processor.process_with_runtime_input(
+            ResonatorRuntimeInput::new(events).with_sidechain(sidechain),
+            left,
+            right,
+        );
+    });
+    assert_all_finite(left);
+    assert_all_finite(right);
+}

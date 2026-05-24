@@ -5,8 +5,8 @@ use crate::editor_surface::{
     EditorSurfaceSlot,
 };
 
-pub const RESONATOR_EDITOR_WIDTH: i32 = 960;
-pub const RESONATOR_EDITOR_HEIGHT: i32 = 640;
+pub const RESONATOR_EDITOR_WIDTH: i32 = 1240;
+pub const RESONATOR_EDITOR_HEIGHT: i32 = 760;
 pub const RESONATOR_EDITOR_PARAMETER_BINDING_COUNT: usize = ResonatorEditorSurfaceSlot::ALL.len();
 
 pub type ResonatorEditorControlKind = EditorControlKind;
@@ -43,10 +43,27 @@ pub enum ResonatorEditorSurfaceSlot {
     Mod1Source,
     Mod1Destination,
     Mod1Amount,
+    AudioInputMode,
+    AudioExpressionEnable,
+    AudioExpressionPitchRange,
+    AudioExpressionPressureFloor,
+    AudioExpressionPressureCeiling,
+    AudioExpressionBrightnessFloor,
+    AudioExpressionBrightnessCeiling,
+    AudioNoteOnsetSensitivity,
+    AudioNoteReleaseFloor,
+    AudioNoteMinimumLength,
+    AudioNotePitchConfidence,
+    AudioNoteVelocityAmount,
+    LiveExcitationMode,
+    LiveExcitationGain,
+    LiveExcitationLatchWindow,
+    LiveExcitationLatchPreRoll,
+    LiveExcitationLatchFade,
 }
 
 impl ResonatorEditorSurfaceSlot {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 45] = [
         Self::Master,
         Self::Cutoff,
         Self::Saturation,
@@ -75,6 +92,23 @@ impl ResonatorEditorSurfaceSlot {
         Self::Mod1Source,
         Self::Mod1Destination,
         Self::Mod1Amount,
+        Self::AudioInputMode,
+        Self::AudioExpressionEnable,
+        Self::AudioExpressionPitchRange,
+        Self::AudioExpressionPressureFloor,
+        Self::AudioExpressionPressureCeiling,
+        Self::AudioExpressionBrightnessFloor,
+        Self::AudioExpressionBrightnessCeiling,
+        Self::AudioNoteOnsetSensitivity,
+        Self::AudioNoteReleaseFloor,
+        Self::AudioNoteMinimumLength,
+        Self::AudioNotePitchConfidence,
+        Self::AudioNoteVelocityAmount,
+        Self::LiveExcitationMode,
+        Self::LiveExcitationGain,
+        Self::LiveExcitationLatchWindow,
+        Self::LiveExcitationLatchPreRoll,
+        Self::LiveExcitationLatchFade,
     ];
 
     pub const fn index(self) -> usize {
@@ -107,6 +141,23 @@ impl ResonatorEditorSurfaceSlot {
             Self::Mod1Source => 25,
             Self::Mod1Destination => 26,
             Self::Mod1Amount => 27,
+            Self::AudioInputMode => 28,
+            Self::AudioExpressionEnable => 29,
+            Self::AudioExpressionPitchRange => 30,
+            Self::AudioExpressionPressureFloor => 31,
+            Self::AudioExpressionPressureCeiling => 32,
+            Self::AudioExpressionBrightnessFloor => 33,
+            Self::AudioExpressionBrightnessCeiling => 34,
+            Self::AudioNoteOnsetSensitivity => 35,
+            Self::AudioNoteReleaseFloor => 36,
+            Self::AudioNoteMinimumLength => 37,
+            Self::AudioNotePitchConfidence => 38,
+            Self::AudioNoteVelocityAmount => 39,
+            Self::LiveExcitationMode => 40,
+            Self::LiveExcitationGain => 41,
+            Self::LiveExcitationLatchWindow => 42,
+            Self::LiveExcitationLatchPreRoll => 43,
+            Self::LiveExcitationLatchFade => 44,
         }
     }
 }
@@ -126,6 +177,11 @@ pub struct ResonatorEditorTelemetry {
     pub left_rms: f32,
     pub right_rms: f32,
     pub active_voices: f32,
+    pub sidechain_required: bool,
+    pub sidechain_input_detected: bool,
+    pub sidechain_signal_active: bool,
+    pub audio_note_detected: bool,
+    pub audio_note_pitch_confidence: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

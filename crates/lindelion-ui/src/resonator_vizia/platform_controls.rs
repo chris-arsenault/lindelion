@@ -6,15 +6,61 @@ fn compact_binary_switch(cx: &mut Context, parameter: EditorParameterControl) {
     segmented_switch(cx, parameter);
 }
 
+fn parameter_segmented(cx: &mut Context, parameter: EditorParameterControl) {
+    HStack::new(cx, |cx| {
+        Label::new(cx, parameter.label())
+            .class("meter-label")
+            .width(Pixels(48.0));
+        segmented_switch(cx, parameter);
+    })
+    .height(Pixels(26.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(6.0));
+}
+
 fn segmented_switch(cx: &mut Context, parameter: EditorParameterControl) {
     let id = parameter.id;
     let signal = parameter.signal;
-    let (left_label, right_label, width) = parameter
-        .binary_labels()
-        .expect("segmented switch requires binary editor metadata");
+    let control = parameter.editor.control();
+    let (labels, width) = match control {
+        ResonatorEditorControlKind::Binary {
+            left_label,
+            right_label,
+            width,
+        } => {
+            HStack::new(cx, move |cx| {
+                segmented_switch_button(cx, id, signal, 0.0, 0.5, left_label);
+                segmented_switch_button(cx, id, signal, 1.0, 0.5, right_label);
+            })
+            .class("segmented")
+            .height(Pixels(26.0))
+            .width(Pixels(width))
+            .horizontal_gap(Pixels(2.0));
+            return;
+        }
+        ResonatorEditorControlKind::Segmented { labels, width }
+        | ResonatorEditorControlKind::Selector { labels, width } => (labels, width),
+        ResonatorEditorControlKind::Knob | ResonatorEditorControlKind::Slider { .. } => {
+            panic!("segmented switch requires segmented editor metadata")
+        }
+    };
+    segmented_buttons(cx, id, signal, labels, width);
+}
+
+fn segmented_buttons(
+    cx: &mut Context,
+    id: u32,
+    signal: Signal<f32>,
+    labels: &[&'static str],
+    width: f32,
+) {
     HStack::new(cx, move |cx| {
-        binary_switch_button(cx, id, signal, 0.0, left_label);
-        binary_switch_button(cx, id, signal, 1.0, right_label);
+        let denominator = labels.len().saturating_sub(1).max(1) as f32;
+        let tolerance = 0.5 / denominator;
+        for (index, label) in labels.iter().copied().enumerate() {
+            let normalized = index as f32 / denominator;
+            segmented_switch_button(cx, id, signal, normalized, tolerance, label);
+        }
     })
     .class("segmented")
     .height(Pixels(26.0))
@@ -22,11 +68,12 @@ fn segmented_switch(cx: &mut Context, parameter: EditorParameterControl) {
     .horizontal_gap(Pixels(2.0));
 }
 
-fn binary_switch_button(
+fn segmented_switch_button(
     cx: &mut Context,
     id: u32,
     signal: Signal<f32>,
     normalized: f32,
+    tolerance: f32,
     label: &'static str,
 ) {
     Button::new(cx, move |cx| {
@@ -38,7 +85,7 @@ fn binary_switch_button(
     .class("seg-button")
     .toggle_class(
         "seg-active",
-        signal.map(move |value| (value - normalized).abs() < 0.25),
+        signal.map(move |value| (value - normalized).abs() <= tolerance),
     )
     .width(Stretch(1.0))
     .height(Stretch(1.0));
@@ -76,7 +123,7 @@ fn parameter_slider(cx: &mut Context, parameter: EditorParameterControl) {
     HStack::new(cx, move |cx| {
         Label::new(cx, label)
             .class("meter-label")
-            .width(Pixels(46.0));
+            .width(Pixels(58.0));
         Slider::new(cx, signal)
             .range(0.0..1.0)
             .on_change(move |cx, normalized| {
@@ -105,7 +152,7 @@ fn sample_drawer(cx: &mut Context, signals: EditorSignals) {
             library_sample_row(cx, index, item, signals);
         })
         .class("strip")
-        .width(Pixels(558.0))
+        .width(Stretch(1.0))
         .height(Pixels(54.0));
 
         icon_button(cx, ICON_LIBRARY, "Open library", UiCommand::OpenLibrary);
@@ -188,6 +235,40 @@ fn icon_button(
 
 fn value_text(parameter: EditorParameterControl) -> Memo<String> {
     parameter.value_text()
+}
+
+fn sidechain_status_text(signals: EditorSignals) -> Memo<String> {
+    Memo::new(move |_| {
+        let required = signals.sidechain_required.get();
+        let detected = signals.sidechain_input_detected.get();
+        let active = signals.sidechain_signal_active.get();
+        if required && !detected {
+            "Sidechain missing".to_string()
+        } else if required && !active {
+            "Sidechain inactive".to_string()
+        } else if active {
+            "Sidechain active".to_string()
+        } else {
+            "Sidechain idle".to_string()
+        }
+    })
+}
+
+fn sidechain_warning(signals: EditorSignals) -> Memo<bool> {
+    Memo::new(move |_| {
+        signals.sidechain_required.get()
+            && (!signals.sidechain_input_detected.get() || !signals.sidechain_signal_active.get())
+    })
+}
+
+fn pitch_confidence_text(note_detected: Signal<bool>, confidence: Signal<f32>) -> Memo<String> {
+    Memo::new(move |_| {
+        if !note_detected.get() {
+            return "Conf --".to_string();
+        }
+        let percent = (confidence.get().clamp(0.0, 1.0) * 100.0).round() as u8;
+        format!("Conf {percent}%")
+    })
 }
 
 fn command_status_text(signal: Signal<Option<UiCommand>>) -> Memo<String> {
@@ -298,6 +379,17 @@ unsafe fn sync_telemetry_from_controller(host: ResonatorEditorHost, signals: Edi
     signals.left_rms.set(telemetry.left_rms);
     signals.right_rms.set(telemetry.right_rms);
     signals.active_voices.set(telemetry.active_voices);
+    signals.sidechain_required.set(telemetry.sidechain_required);
+    signals
+        .sidechain_input_detected
+        .set(telemetry.sidechain_input_detected);
+    signals
+        .sidechain_signal_active
+        .set(telemetry.sidechain_signal_active);
+    signals.audio_note_detected.set(telemetry.audio_note_detected);
+    signals
+        .audio_note_pitch_confidence
+        .set(telemetry.audio_note_pitch_confidence);
 }
 
 fn default_normalized(host: ResonatorEditorHost, parameter_id: u32) -> f32 {

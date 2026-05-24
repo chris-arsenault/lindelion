@@ -7,7 +7,8 @@ mod waveguide;
 
 pub(crate) use engine::SynthEngine;
 pub(crate) use excitation::{
-    ExcitationSelector, MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations,
+    ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
+    MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations,
 };
 pub(crate) use voice::{VoiceExpression, VoiceTrigger};
 pub use waveguide::WaveguideStyle;

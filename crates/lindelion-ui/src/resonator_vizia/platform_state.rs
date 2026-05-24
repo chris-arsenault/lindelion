@@ -366,19 +366,6 @@ impl EditorParameterControl {
         Memo::new(move |_| unsafe { host.parameter_value_text(id, f64::from(signal.get())) })
     }
 
-    fn binary_labels(self) -> Option<(&'static str, &'static str, f32)> {
-        match self.editor.control() {
-            ResonatorEditorControlKind::Binary {
-                left_label,
-                right_label,
-                width,
-            } => Some((left_label, right_label, width)),
-            ResonatorEditorControlKind::Knob
-            | ResonatorEditorControlKind::Slider { .. }
-            | ResonatorEditorControlKind::Segmented { .. }
-            | ResonatorEditorControlKind::Selector { .. } => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -393,6 +380,11 @@ struct EditorSignals {
     left_rms: Signal<f32>,
     right_rms: Signal<f32>,
     active_voices: Signal<f32>,
+    sidechain_required: Signal<bool>,
+    sidechain_input_detected: Signal<bool>,
+    sidechain_signal_active: Signal<bool>,
+    audio_note_detected: Signal<bool>,
+    audio_note_pitch_confidence: Signal<f32>,
     patch_name: Signal<String>,
     slot_summaries: Signal<[ResonatorEditorSlotSummary; 4]>,
     library_samples: Signal<Vec<ResonatorEditorSampleSummary>>,

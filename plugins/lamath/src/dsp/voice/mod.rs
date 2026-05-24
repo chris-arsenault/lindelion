@@ -16,7 +16,7 @@ use self::{
     output_stage::OutputStage,
     resonator_stack::ResonatorStack,
 };
-use super::excitation::{SelectedExcitations, VoiceExcitation};
+use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
 use crate::{
     ModulationConfig, ModulationDestination, OutputConfig, ResonatorRouting, ResonatorSynthPatch,
     dsp::constants::DSP_FALLBACK_SAMPLE_RATE,
@@ -33,6 +33,7 @@ pub struct VoiceTrigger<'a, 'p> {
     pub expression: VoiceExpression,
     pub modulation: ModulationConfig,
     pub excitations: SelectedExcitations<'a>,
+    pub live_latch: Option<LiveExcitationLatchCapture<'p>>,
     pub patch: &'p ResonatorSynthPatch,
 }
 
@@ -106,6 +107,7 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
                 excitation_samples,
                 excitation_sample_rate,
             ),
+            live_latch: None,
             patch,
         }
     }
@@ -122,6 +124,7 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
             expression: VoiceExpression::note_on(velocity),
             modulation: patch.modulation,
             excitations,
+            live_latch: None,
             patch,
         }
     }
@@ -131,6 +134,7 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
 pub struct Voice<'a> {
     sample_rate: f32,
     excitation: VoiceExcitation<'a>,
+    live_latch: super::excitation::VoiceLiveExcitationLatch,
     excitation_gain: f32,
     midi_note: u8,
     resonators: ResonatorStack,
@@ -139,10 +143,18 @@ pub struct Voice<'a> {
 }
 
 impl<'a> Voice<'a> {
+    #[cfg(test)]
     pub fn new(sample_rate: f32) -> Self {
+        Self::with_live_latch_capacity(sample_rate, 0)
+    }
+
+    pub fn with_live_latch_capacity(sample_rate: f32, live_latch_capacity_samples: usize) -> Self {
         Self {
             sample_rate,
             excitation: VoiceExcitation::default(),
+            live_latch: super::excitation::VoiceLiveExcitationLatch::with_capacity(
+                live_latch_capacity_samples,
+            ),
             excitation_gain: 0.0,
             midi_note: 60,
             resonators: ResonatorStack::new(sample_rate),
@@ -162,6 +174,11 @@ impl<'a> Voice<'a> {
             self.sample_rate,
             excitation_pitch_ratio,
         );
+        if let Some(capture) = trigger.live_latch {
+            self.live_latch.trigger(capture);
+        } else {
+            self.live_latch.clear();
+        }
         self.excitation_gain = velocity_to_gain(
             expression.stream.velocity,
             trigger.modulation.velocity_to_excitation_depth,
@@ -196,19 +213,28 @@ impl<'a> Voice<'a> {
         let len = left.len().min(right.len());
 
         for index in 0..len {
-            let (sample_left, sample_right) = self.process_stereo_sample();
+            let (sample_left, sample_right) = self.process_stereo_sample_with_live_excitation(0.0);
             left[index] += sample_left;
             right[index] += sample_right;
         }
     }
 
-    pub fn process_stereo_sample(&mut self) -> (f32, f32) {
-        let sample = self.process_sample();
+    pub(super) fn process_stereo_sample_with_live_excitation(
+        &mut self,
+        live_excitation: f32,
+    ) -> (f32, f32) {
+        let sample = self.process_sample_with_live_excitation(live_excitation);
         equal_power_pan(sample, self.output.next_pan())
     }
 
     pub fn is_excitation_finished(&self) -> bool {
-        self.excitation.is_finished() && self.modulation.is_amp_idle()
+        self.excitation.is_finished()
+            && self.live_latch.is_finished()
+            && self.modulation.is_amp_idle()
+    }
+
+    pub fn continue_live_latch_capture(&mut self, sidechain: &[f32]) {
+        self.live_latch.continue_capture(sidechain);
     }
 
     #[cfg(test)]
@@ -242,7 +268,12 @@ impl<'a> Voice<'a> {
         self.output.clear();
     }
 
+    #[cfg(test)]
     pub fn process_sample(&mut self) -> f32 {
+        self.process_sample_with_live_excitation(0.0)
+    }
+
+    fn process_sample_with_live_excitation(&mut self, live_excitation: f32) -> f32 {
         let structural_gain = self.apply_structural_transitions();
         self.apply_smoothed_modulation_targets();
 
@@ -251,9 +282,10 @@ impl<'a> Voice<'a> {
         let excitation_mod = self
             .modulation
             .modulation_sum(ModulationDestination::ExcitationGain, sources);
-        let excitation = self.excitation.next_sample()
-            * self.excitation_gain
-            * (1.0 + excitation_mod).clamp(0.0, 2.0);
+        let excitation =
+            (self.excitation.next_sample() + self.live_latch.next_sample() + live_excitation)
+                * self.excitation_gain
+                * (1.0 + excitation_mod).clamp(0.0, 2.0);
 
         let resonator_output = self.resonators.process_sample(excitation);
 

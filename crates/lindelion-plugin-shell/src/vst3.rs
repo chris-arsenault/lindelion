@@ -18,7 +18,8 @@ mod view;
 
 pub use component::{
     Vst3BusInfo, Vst3ParameterChange, Vst3PeerConnection, can_process_32_bit_sample_size,
-    fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst, vst3_bus_count,
+    fill_vst3_bus_info, for_each_vst3_parameter_change,
+    mono_or_stereo_speaker_arrangement_supported, process_setup_from_vst, vst3_bus_count,
 };
 pub use factory::{
     Vst3ClassRegistration, Vst3CreateInstance, Vst3PluginFactory, plugin_factory_ptr,

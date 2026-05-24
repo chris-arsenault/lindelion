@@ -361,6 +361,32 @@ impl StreamingEnergyTransientDetector {
         }
     }
 
+    pub fn with_realtime_capacity(
+        sample_rate: u32,
+        config: DetectionConfig,
+        max_block_size: usize,
+    ) -> Self {
+        let mut detector = Self::new(sample_rate, config);
+        detector.reserve_realtime_capacity(max_block_size);
+        detector
+    }
+
+    pub fn reserve_realtime_capacity(&mut self, max_block_size: usize) {
+        let pending_capacity = self.frame_size.saturating_add(max_block_size);
+        if self.pending.capacity() < pending_capacity {
+            self.pending
+                .reserve_exact(pending_capacity - self.pending.capacity());
+        }
+
+        let marker_capacity = pending_capacity
+            .div_ceil(self.frame_size.max(1))
+            .saturating_add(1);
+        if self.block_markers.capacity() < marker_capacity {
+            self.block_markers
+                .reserve_exact(marker_capacity - self.block_markers.capacity());
+        }
+    }
+
     pub fn finish(&mut self) -> &[SliceMarker] {
         self.block_markers.clear();
         self.process_available_frames(true);
@@ -412,21 +438,13 @@ impl StreamingOnsetDetector for StreamingEnergyTransientDetector {
     }
 
     fn reset(&mut self) {
-        let frame_size = self.frame_size;
-        let min_gap_samples = self.min_gap_samples;
-        let threshold = self.threshold;
-        *self = Self {
-            frame_size,
-            min_gap_samples,
-            threshold,
-            pending: Vec::new(),
-            next_frame_start: 0,
-            total_samples_seen: 0,
-            last_energy: 0.0,
-            last_marker: 0,
-            emitted_initial_marker: false,
-            block_markers: Vec::new(),
-        };
+        self.pending.clear();
+        self.block_markers.clear();
+        self.next_frame_start = 0;
+        self.total_samples_seen = 0;
+        self.last_energy = 0.0;
+        self.last_marker = 0;
+        self.emitted_initial_marker = false;
     }
 }
 

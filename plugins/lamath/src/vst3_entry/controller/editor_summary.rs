@@ -5,6 +5,11 @@ pub(super) struct EditorTelemetry {
     pub(super) left_rms: f32,
     pub(super) right_rms: f32,
     pub(super) active_voices: f32,
+    pub(super) sidechain_required: bool,
+    pub(super) sidechain_input_detected: bool,
+    pub(super) sidechain_signal_active: bool,
+    pub(super) audio_note_detected: bool,
+    pub(super) audio_note_pitch_confidence: f32,
 }
 
 impl From<ResonatorTelemetry> for EditorTelemetry {
@@ -15,18 +20,28 @@ impl From<ResonatorTelemetry> for EditorTelemetry {
             left_rms: value.left_rms,
             right_rms: value.right_rms,
             active_voices: value.active_voices as f32,
+            sidechain_required: value.sidechain.required,
+            sidechain_input_detected: value.sidechain.input_detected,
+            sidechain_signal_active: value.sidechain.signal_active,
+            audio_note_detected: value.sidechain.note_detected,
+            audio_note_pitch_confidence: value.sidechain.pitch_confidence,
         }
     }
 }
 
 pub(super) fn encode_telemetry(telemetry: ResonatorTelemetry) -> String {
     format!(
-        "{:.8},{:.8},{:.8},{:.8},{}",
+        "{:.8},{:.8},{:.8},{:.8},{},{},{},{},{},{:.8}",
         telemetry.left_peak,
         telemetry.right_peak,
         telemetry.left_rms,
         telemetry.right_rms,
-        telemetry.active_voices
+        telemetry.active_voices,
+        bool_field(telemetry.sidechain.required),
+        bool_field(telemetry.sidechain.input_detected),
+        bool_field(telemetry.sidechain.signal_active),
+        bool_field(telemetry.sidechain.note_detected),
+        telemetry.sidechain.pitch_confidence,
     )
 }
 
@@ -38,6 +53,11 @@ pub(super) fn decode_telemetry(payload: &[u8]) -> Option<EditorTelemetry> {
     let left_rms = finite_telemetry(parts.next()?.parse().ok()?);
     let right_rms = finite_telemetry(parts.next()?.parse().ok()?);
     let active_voices = parts.next()?.parse::<f32>().ok()?.clamp(0.0, 64.0);
+    let sidechain_required = bool_value(parts.next()?)?;
+    let sidechain_input_detected = bool_value(parts.next()?)?;
+    let sidechain_signal_active = bool_value(parts.next()?)?;
+    let audio_note_detected = bool_value(parts.next()?)?;
+    let audio_note_pitch_confidence = finite_unit_telemetry(parts.next()?.parse().ok()?);
     if parts.next().is_some() {
         return None;
     }
@@ -47,6 +67,11 @@ pub(super) fn decode_telemetry(payload: &[u8]) -> Option<EditorTelemetry> {
         left_rms,
         right_rms,
         active_voices,
+        sidechain_required,
+        sidechain_input_detected,
+        sidechain_signal_active,
+        audio_note_detected,
+        audio_note_pitch_confidence,
     })
 }
 
@@ -55,6 +80,22 @@ fn finite_telemetry(value: f32) -> f32 {
         value.clamp(0.0, 64.0)
     } else {
         0.0
+    }
+}
+
+fn finite_unit_telemetry(value: f32) -> f32 {
+    finite_telemetry(value).clamp(0.0, 1.0)
+}
+
+fn bool_field(value: bool) -> u8 {
+    u8::from(value)
+}
+
+fn bool_value(value: &str) -> Option<bool> {
+    match value {
+        "0" => Some(false),
+        "1" => Some(true),
+        _ => None,
     }
 }
 

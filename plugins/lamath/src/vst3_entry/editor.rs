@@ -14,7 +14,7 @@ use vst3::{ComWrapper, Steinberg::*};
 
 use super::ResonatorVst3Controller;
 
-const EDITOR_SIZE: FixedSizePlugViewSize = FixedSizePlugViewSize::new(960, 640);
+const EDITOR_SIZE: FixedSizePlugViewSize = FixedSizePlugViewSize::new(1240, 760);
 
 pub(super) fn create_editor_view(controller: &ResonatorVst3Controller) -> *mut IPlugView {
     ComWrapper::new(FixedSizePlugView::new(
@@ -291,6 +291,11 @@ mod macos {
             left_rms: telemetry.left_rms,
             right_rms: telemetry.right_rms,
             active_voices: telemetry.active_voices,
+            sidechain_required: telemetry.sidechain_required,
+            sidechain_input_detected: telemetry.sidechain_input_detected,
+            sidechain_signal_active: telemetry.sidechain_signal_active,
+            audio_note_detected: telemetry.audio_note_detected,
+            audio_note_pitch_confidence: telemetry.audio_note_pitch_confidence,
         }
     }
 

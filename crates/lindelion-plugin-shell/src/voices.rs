@@ -138,6 +138,18 @@ impl<const N: usize, V: VoiceLike> VoiceManager<N, V> {
         self.release_matching(|slot| slot.channel == Some(channel) && slot.note == Some(note));
     }
 
+    pub fn release_voice(&mut self, voice_id: usize) -> bool {
+        if voice_id >= self.voice_limit {
+            return false;
+        }
+        self.clock = self.clock.wrapping_add(1);
+        let released_at = self.clock;
+        let slot = &mut self.slots[voice_id];
+        let was_active = slot.state == VoiceSlotState::Active;
+        release_slot(slot, released_at);
+        was_active
+    }
+
     pub fn release_all(&mut self) {
         self.clock = self.clock.wrapping_add(1);
         let released_at = self.clock;
@@ -532,6 +544,22 @@ mod tests {
             manager.start_voice(0, 60, TestExpression::active(0.0), false, |_| {});
 
         assert_eq!(released_retrigger, 0);
+    }
+
+    #[test]
+    fn release_voice_releases_only_the_addressed_slot() {
+        let mut manager = manager::<3>();
+        let slot_a = manager.start_voice(0, 60, TestExpression::active(0.2), true, |_| {});
+        let slot_b = manager.start_voice(0, 60, TestExpression::active(0.7), true, |_| {});
+
+        assert!(manager.release_voice(slot_b));
+
+        assert_eq!(slot_a, 0);
+        assert_eq!(slot_b, 1);
+        assert_eq!(manager.slot_state(slot_a), Some(VoiceSlotState::Active));
+        assert_eq!(manager.slot_state(slot_b), Some(VoiceSlotState::Released));
+        assert!(manager.slot_expression(slot_a).unwrap().stream().gate);
+        assert!(!manager.slot_expression(slot_b).unwrap().stream().gate);
     }
 
     #[test]

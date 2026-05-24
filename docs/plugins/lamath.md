@@ -3,7 +3,7 @@
 **Name:** Lamath
 **Name etymology:** Sindarin, "echo" or "ringing of voices." Six letters, pronounced LAH-math; paired phonetically with Glirdir.
 **Target:** macOS (Apple Silicon primary, Intel best-effort), VST3
-**Status:** Implemented VST3 instrument. This document preserves current behavior plus planned extension seams.
+**Status:** Implemented VST3 instrument. This document preserves current behavior plus the v2 sidechain note/excitation plan.
 
 ---
 
@@ -15,14 +15,14 @@ A polyphonic physical-modeling synth where the **excitation source** is a user-l
 
 - **Sound generation only.** No FX, no reverb, no time-based or spectral processing beyond what's structurally part of the physical model. Effects belong in the Ableton chain downstream.
 - **Sample as DSP component, not as playback.** The excitation sample is treated as an input signal into a resonator — not as a pitched/timestretched sound source. Tonality comes from the resonator.
-- **Architectural seams for v2.** Live audio input as excitation, and audio-derived expression streams, are deferred but the architecture leaves clean hooks.
+- **Shared v2 audio path.** Sidechain audio can create notes, produce expression streams, and act as live excitation on the existing instrument through an optional input bus. Host-neutral detection and expression mapping live in shared crates; Lamath owns voice allocation, bus policy, and excitation routing.
 - **Tight scope.** Fixed modulation routings, two resonator models, one output stage. No mod matrix, no per-effect chains, no built-in factory library.
 
 ### Non-goals
 
 - Not a sampler. Excitations are short transients (typically <500ms), not melodic/looped content.
 - Not a granular synth.
-- Not an FX plugin (will not host or emulate reverb, delay, distortion-as-effect, etc.).
+- Not an FX plugin. v2 adds an optional sidechain input bus to the existing instrument; it does not create a separate effect variant or host/emulate reverb, delay, distortion-as-effect, etc.
 - Not cross-DAW polished — Ableton on Mac is the only test target for v1.
 
 ---
@@ -32,7 +32,10 @@ A polyphonic physical-modeling synth where the **excitation source** is a user-l
 ```mermaid
 flowchart LR
     MIDI[MIDI In] --> VM[Voice Manager]
+    SIDE[Optional Sidechain In] --> ANALYSIS[Audio Note & Expression Analysis]
+    ANALYSIS -->|audio note on/off| VM
     EXP[Expression Stream] --> VM
+    ANALYSIS --> EXP
 
     VM --> V1[Voice 1]
     VM --> V2[Voice 2]
@@ -45,6 +48,7 @@ flowchart LR
         FILT[SVF Filter]
         SAT[Soft Saturator]
 
+        SIDE -.->|v2 continuous or latch| EE
         EE -->|excitation buffer| RA
         EE -.->|parallel mode only| RB
         RA -->|series mode: A.out → B.exc| RB
@@ -60,7 +64,7 @@ flowchart LR
     MIX --> OUT[Stereo Out]
 ```
 
-Each voice is independent state. The voice manager handles allocation, stealing, and routing MIDI/Expression to active voices. The `Expression Stream` is a per-voice struct (see §8) that v1 fills from MIDI and v2 will optionally fill from analyzed audio.
+Each voice is independent state. The voice manager handles allocation, stealing, and routing MIDI/Expression to active voices. The `Expression Stream` is a per-voice struct (see §8) that v1 fills from MIDI and v2 can fill from shared audio analysis. In v2, sidechain audio can also create and release notes; audio-created voices use the same voice manager and expression contracts as MIDI-created voices.
 
 ---
 
@@ -95,6 +99,23 @@ This gives you, in one patch: a single excitation; or a velocity-split (soft tap
 - Per-voice playback cursor (f32 sample index) advances at `dest_sr / source_sr * pitch_ratio` per output sample.
 - Linear interpolation between adjacent samples. Sufficient for excitation use; not trying to be Acoustica.
 - Cursor terminates at sample end (one-shot) or wraps (loop).
+
+### 3.4 v2 live audio excitation
+
+v2 keeps Lamath as the existing instrument and adds an optional sidechain input bus. The sidechain stream can be used as excitation in four patch-configurable modes:
+
+- `Off` — v1 sample-slot behavior only.
+- `Continuous` — sanitized sidechain audio is mixed into active voices every block, with level control and hard realtime bounds.
+- `NoteLatched` — each audio-created or MIDI-created note copies a bounded sidechain window into a per-voice latch buffer and plays it through the existing excitation path.
+- `ContinuousAndNoteLatched` — a latched onset transient plus continuous sidechain drive while the voice remains active.
+
+The continuous path is for breath/voice-driven energy. The latched path is for preserving onset identity: consonants, key clicks, chiff, plucks, or other transients around the note start. Both modes are product behavior local to Lamath, but input projection uses shared `ProcessContext::input` and audio analysis uses shared detector/expression crates.
+
+Realtime constraints:
+
+- All sidechain scratch buffers, pre-roll rings, detector state, and per-voice latch buffers are allocated during setup or structural patch application.
+- Changing latch window size, pre-roll, or max latency is structural and must use an explicit apply policy.
+- Empty or inactive input must behave exactly like v1.
 
 ---
 
@@ -246,23 +267,33 @@ One stream per voice. The Voice Manager maintains stream state and passes it int
 - `velocity` ← note-on velocity
 - `gate` ← note-on / note-off
 
-### 8.3 v2 stream source — audio analysis (architectural seam only)
+### 8.3 v2 stream source — sidechain audio
 
-The trait is defined in v1 but only the MIDI implementation ships:
+The expression contract is shared in `lindelion-plugin-shell`:
 
 ```rust
 trait ExpressionSource {
-    fn next_block(&mut self, voice_id: VoiceId) -> ExpressionStream;
+    fn voice_started(&mut self, voice_id: u32, channel: u8, note: u8, velocity: f32);
+    fn voice_released(&mut self, voice_id: u32);
+    fn next_block(&mut self, voice_id: u32) -> ExpressionStream;
 }
 ```
 
-v2 will add `AudioAnalysisExpressionSource` that consumes a sidechain audio stream and emits ExpressionStream via:
+`lindelion-audio-expression` provides the shared audio-analysis-to-expression layer. Lamath v2 composes that layer with Lamath-local voice allocation and excitation policy. The optional sidechain input can run in three source modes:
 
-- Pitch tracker (SwiftF0 or similar) → `pitch_bend`
-- Smoothed RMS envelope → `pressure`
-- Spectral centroid or harmonic/noise ratio → `brightness`
+- `Off` — MIDI creates voices and fills `ExpressionStream` exactly as v1.
+- `AudioCreatesNotes` — sidechain onsets create/release voices. MIDI note input does not allocate voices, though automation and transport still apply.
+- `MidiPlusAudioCreatesNotes` — MIDI and sidechain audio can both create voices. Voice ownership is tracked so audio note-offs cannot release MIDI voices and MIDI note-offs cannot release audio voices.
 
-This is also the seam where v2's "live audio as excitation" plugs in — the same audio stream that drives `AudioAnalysisExpressionSource` will optionally route into the excitation buffer of triggered voices.
+Sidechain note creation uses shared pitch, onset, loudness, and brightness primitives:
+
+- Streaming onset plus stable pitch chooses the MIDI note at voice start.
+- RMS maps to note velocity and ongoing `pressure`.
+- Pitch drift after voice start maps to `pitch_bend` relative to the chosen MIDI note; it should not churn repeated note-on events.
+- Spectral centroid maps to `brightness`.
+- Release hysteresis and minimum note length prevent breath/noise tails from chattering gate state.
+
+Lamath owns the product policy above the shared detectors: source mode, voice ownership, note retrigger behavior, latch/continuous excitation routing, and UI/status payloads.
 
 ---
 
@@ -353,8 +384,9 @@ A "Export patch with samples" action bakes referenced sample audio into the patc
 ## 10. State & Presets
 
 - Patches stored as TOML on disk in `Patches/` (human-readable, diffable, easy to version-control).
-- Plugin state for DAW project save/load is serialized via VST3's `IComponent::getState` / `setState` — current implementation: serialize the active patch (plus any unsaved parameter overrides) to a self-contained byte buffer using `serde` + `bincode` or `postcard`. Reload reconstructs the same patch.
+- Plugin state for DAW project save/load uses the shared `PluginState` and versioned TOML patch helpers through VST3's `IComponent::getState` / `setState`. Reload reconstructs the active patch plus unsaved parameter overrides.
 - Patch file references samples by hash; resolution at load time per §9.4.
+- Current patch/state payloads include the v2 audio input, expression, note-detection, and live-excitation fields directly. Lamath has no deployed pre-v2 compatibility surface.
 - "Default patch" ships hardcoded — a single excitation slot referencing a synthesized noise burst (generated at plugin init), feeding a modal bank with the `marimba` template. So the plugin makes sound out of the box with no user samples.
 
 ---
@@ -390,33 +422,35 @@ Rationale for going framework-less:
 | Layer            | Choice                                                 | Notes                                                                          |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | VST3 ABI         | **`vst3` crate** (coupler.rs)                          | MIT/Apache 2.0. Pre-generated bindings, no libclang at build time.             |
-| Plugin shell     | **Project code (`crate::shell`)**                      | Implements `IPluginFactory`, `IComponent`, `IAudioProcessor`, `IEditController`, `IPlugView`. See §12.2. |
+| Plugin shell     | **`lindelion-plugin-shell` + Lamath adapters**         | Shared descriptors, parameters, process context, state, VST3 helpers, messages, MIDI normalization, and voice allocation. Lamath declares product CIDs, buses, payloads, patch paths, and runtime policy. |
 | Window lifecycle | **`baseview`**                                         | NSView embedding, dpi, focus, event loop. Used directly, not via nih-plug.    |
 | UI framework     | **`vizia`** (direct)                                   | Declarative, retained-mode. Custom binding into project parameter system.      |
 | Format           | **VST3** only                                          | Ableton on Mac loads VST3 natively. CLAP not yet supported by Ableton (as of Live 12.4, May 2026). |
 | Build target     | Apple Silicon primary, Intel best-effort               | Custom `xtask` produces `.vst3` macOS bundle (Info.plist, PkgInfo, ad-hoc signature). |
-| DSP              | Hand-rolled biquad bank, hand-rolled waveguide         | Optional `realfft` for any FFT needs. No C++ STK dependency.                   |
-| Sample I/O       | `symphonia` for decode, `claxon` for flac write        | All pure-Rust.                                                                 |
-| Resampling       | `rubato`                                               | Pure-Rust, real-time-capable.                                                  |
-| Database         | `rusqlite` (bundled libsqlite)                         | Single-file embedded DB.                                                       |
+| DSP              | `lindelion-dsp-utils` plus Lamath resonator DSP        | Shared math/analysis/smoothing helpers; product-local modal bank and waveguide. |
+| Audio analysis   | `lindelion-audio-expression`, `lindelion-pitch-detect`, `lindelion-onset-detect` | Shared streaming pitch/onset/loudness/expression surfaces for v2 sidechain analysis. |
+| Sample I/O       | `lindelion-sample-library`                             | Shared loaded-audio ownership, file-library ingest, hashing, indexing, and preview generation. |
+| Database         | `rusqlite` (bundled libsqlite)                         | Single-file embedded DB behind the sample-library file feature.                |
 | Hashing          | `blake3`                                               | Fast content addressing.                                                       |
-| Serialization    | `serde` + `toml` (patches), `postcard` (DAW state)    | Patch files diffable; DAW state compact binary.                                |
+| Serialization    | `serde` + `toml` through shared patch/state helpers    | Patch files diffable; DAW state carries the versioned plugin state payload.    |
 | SIMD             | `std::simd` (portable) or `pulp`                       | For modal-bank batching; see §13.                                              |
 
-### 12.2 Plugin shell — what we own and write
+### 12.2 Plugin shell boundary
 
-This is the layer that nih-plug would have provided. Owning it is the cost of going framework-less; the size is bounded by the plugin's actual surface.
+The workspace owns framework-less VST3 integration through shared shell crates plus thin product adapters. v2 work should extend the shared shell when the behavior is host protocol mechanics, and keep Lamath-only policy in Lamath.
 
-- **Factory entry point.** `IPluginFactory` exposing the plugin's UID, category, and component class. ~50 LOC.
-- **Component lifecycle.** `IComponent` + `IAudioProcessor` — bus arrangements (stereo out, MIDI in), process setup/teardown, `process()` audio loop. ~200–300 LOC.
-- **Parameter system.** Atomic `f32` per parameter (audio thread reads, UI/host writes via atomics). Parameter info: ID, normalized range, display formatter, step count, automation flags. Wired through `IEditController`. ~300–400 LOC.
-- **MIDI event normalization.** VST3 event stream → internal `NoteEvent` / `CcEvent` enums. Channel pressure, pitch bend, note on/off, CC mapping. ~150 LOC.
-- **State serialization.** `IComponent::getState` / `setState` writing/reading the active patch via `postcard`. ~80 LOC.
-- **Editor binding.** `IPlugView` wrapping `baseview::Window`, connecting Vizia's render loop, handling resize and dpi. ~200–400 LOC.
-- **Bundle build script.** Custom `cargo xtask` that produces `.vst3` macOS bundle layout, Info.plist, ad-hoc signature for local dev. Reference: vst3-sys repo example. ~200 LOC.
-- **Threading discipline.** Lock-free SPSC ring buffer for UI→audio messages, atomic params for the reverse. ~150 LOC.
+Shared shell responsibilities:
 
-Total shell code: roughly 1500–2500 LOC. Written once, doesn't churn.
+- **Factory and component helpers.** VST3 factory registration, bus metadata helpers, state stream helpers, fixed-size view behavior, and typed message wrappers.
+- **Process context.** `ProcessContext` carries setup, output buffers, optional audio input, MIDI events, and transport. v2 sidechain audio must enter through this shared input field.
+- **Parameter registry.** Stable IDs, normalized/plain conversion, formatting, smoothing metadata, editor metadata, and apply dispatch live behind the shared registry model.
+- **MIDI and expression contracts.** Host MIDI normalizes to shared `MidiEvent`; MIDI and audio-driven control both feed `ExpressionSource` / `ExpressionStream`.
+- **Patch/state helpers.** Versioned TOML patch envelopes and `PluginState` roundtrips use shared patch I/O helpers.
+
+Lamath-local responsibilities:
+
+- Product CIDs, bus table, parameter list, patch paths, apply-policy enums, runtime targets, UI slots, and product-specific VST3 message payloads.
+- Resonator DSP, voice-trigger policy, sidechain source modes, audio-created voice ownership, live-excitation routing, and latch-buffer policy.
 
 ### 12.3 VST3 validator
 
@@ -477,10 +511,19 @@ Worth doing from the start because the architecture (mode parameter layout in me
 - Sample library: SQLite-indexed, drag-drop ingest, hash-based patch references
 - VST3, Mac primary
 
-### V2 architectural seams (designed-in, not implemented)
+### V2 committed scope
 
-- **Live audio input as excitation** — sidechain audio → excitation buffer path. Slot infrastructure already supports a "source" abstraction; v2 adds a `LiveAudioSlot` source.
-- **Audio-derived ExpressionStream** — pluggable `ExpressionSource` trait, v2 adds `AudioAnalysisExpressionSource` (SwiftF0 or similar pitch tracking + RMS + centroid).
+- **Optional sidechain input bus on the existing instrument** — Lamath remains the same VST3 instrument and adds an optional audio input bus. Empty, inactive, or unrouted input preserves v1 MIDI-only behavior.
+- **Sidechain audio creates notes** — audio onsets create voices through the existing voice manager. Stable pitch at onset chooses the MIDI note; later pitch drift becomes expression pitch bend.
+- **Audio-derived ExpressionStream** — shared `lindelion-audio-expression` maps pitch, RMS, and spectral centroid to pitch bend, pressure, and brightness. Lamath owns voice ownership, retrigger policy, and source-mode behavior.
+- **Live audio excitation** — sidechain audio can be `Off`, `Continuous`, `NoteLatched`, or `ContinuousAndNoteLatched` per patch. Continuous mode mixes bounded sidechain energy into active voices; note-latched mode captures a bounded onset window into a per-voice buffer.
+- **MIDI/audio interaction policy** — v2 exposes MIDI-only, audio-created, and MIDI-plus-audio-created modes. Audio-created note-offs release only audio-owned voices; MIDI note-offs release only MIDI-owned voices.
+- **Registry-backed v2 parameter surface** — v2 parameters cover source mode, expression enable/mapping, note detection thresholds, release hysteresis, velocity amount, live excitation mode/gain, latch window, latch pre-roll, and latch fade. Patch paths, apply policies, and runtime targets remain Lamath-local.
+- **Patch/state payloads** — current patches and DAW states roundtrip the registry-backed v2 fields directly. No pre-v2 migration layer is maintained for Lamath.
+- **Realtime contract** — sidechain scratch buffers, detector state, pre-roll rings, and latch buffers are allocated during setup or structural patch application. Audio-thread processing must not allocate, block, log, perform file/database I/O, or call UI/host services.
+
+### Later extensions
+
 - **Plate / membrane resonator** — third model type plugged into the existing resonator slot interface.
 - **Banded waveguide** — fourth model type for bowed/glass timbres.
 - **Cross-coupling / sympathetic resonance routing** — third routing mode where B's output partially feeds back into A's excitation.
@@ -504,6 +547,7 @@ Lamath is the current bundleable Lindelion VST3 instrument. The core audio path,
 - File-backed sample library with ingest, hashing, indexing, preview generation, moved-file recovery, and missing-sample reporting.
 - Native editor command services for patch save/load/export, sample ingest/assignment/clear, and telemetry requests.
 - macOS VST3 bundle layout, moduleinfo generation, ad-hoc signing, staging, and install automation.
+- Shared audio-expression types are available through `lindelion-audio-expression`; v2 still needs product integration for the optional sidechain bus, audio-created voice allocation, and live excitation routing.
 
 ### External Validation
 

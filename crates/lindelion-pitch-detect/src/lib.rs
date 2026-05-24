@@ -173,6 +173,80 @@ pub trait StreamingPitchTracker {
 }
 
 #[derive(Debug, Clone)]
+pub struct ZeroCrossingStreamingPitchTracker {
+    config: PitchDetectionConfig,
+    source_sample_rate: u32,
+    source_samples_seen: usize,
+    block_frames: [PitchFrame; 1],
+    block_frame_count: usize,
+}
+
+impl ZeroCrossingStreamingPitchTracker {
+    pub fn new(source_sample_rate: u32, config: PitchDetectionConfig) -> Self {
+        Self {
+            config: config.sanitized(),
+            source_sample_rate: source_sample_rate.max(1),
+            source_samples_seen: 0,
+            block_frames: [PitchFrame {
+                frame_index: 0,
+                source_sample_position: 0,
+                timestamp_seconds: 0.0,
+                f0_hz: None,
+                raw_f0_hz: 0.0,
+                confidence: 0.0,
+                voiced: false,
+                rms: 0.0,
+            }],
+            block_frame_count: 0,
+        }
+    }
+
+    pub const fn config(&self) -> PitchDetectionConfig {
+        self.config
+    }
+
+    pub const fn source_sample_rate(&self) -> u32 {
+        self.source_sample_rate
+    }
+
+    fn pitch_frame_from_block(&self, audio: &[f32]) -> Option<PitchFrame> {
+        let rms = analysis::rms(audio);
+        let raw_f0_hz = zero_crossing_pitch_hz(audio, self.source_sample_rate)?;
+        let confidence = if rms > 0.000_001 { 0.95 } else { 0.0 };
+        let voiced = confidence >= self.config.confidence_threshold
+            && (self.config.fmin_hz..=self.config.fmax_hz).contains(&raw_f0_hz);
+
+        Some(PitchFrame {
+            frame_index: self.source_samples_seen,
+            source_sample_position: self.source_samples_seen,
+            timestamp_seconds: self.source_samples_seen as f32 / self.source_sample_rate as f32,
+            f0_hz: voiced.then_some(raw_f0_hz),
+            raw_f0_hz,
+            confidence,
+            voiced,
+            rms,
+        })
+    }
+}
+
+impl StreamingPitchTracker for ZeroCrossingStreamingPitchTracker {
+    fn next_block(&mut self, audio: &[f32]) -> Result<&[PitchFrame], PitchDetectionError> {
+        self.block_frame_count = 0;
+        if let Some(frame) = self.pitch_frame_from_block(audio) {
+            self.block_frames[0] = frame;
+            self.block_frame_count = 1;
+        }
+        self.source_samples_seen = self.source_samples_seen.saturating_add(audio.len());
+        Ok(&self.block_frames[..self.block_frame_count])
+    }
+
+    fn reset(&mut self) {
+        self.source_samples_seen = 0;
+        self.block_frame_count = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SwiftF0Detector {
     config: PitchDetectionConfig,
 }
@@ -563,6 +637,49 @@ fn frame_rms(audio_16k: &[f32], frame_index: usize) -> f32 {
     analysis::rms(audio_16k.get(start..end).unwrap_or_default())
 }
 
+fn zero_crossing_pitch_hz(audio: &[f32], sample_rate: u32) -> Option<f32> {
+    if audio.len() < 3 || sample_rate == 0 {
+        return None;
+    }
+
+    let mut previous = finite_or(audio[0], 0.0);
+    let mut first_crossing = None;
+    let mut last_crossing = 0.0;
+    let mut crossing_count = 0usize;
+
+    for index in 1..audio.len() {
+        let current = finite_or(audio[index], 0.0);
+        if previous <= 0.0 && current > 0.0 {
+            let denominator = current - previous;
+            let fraction = if denominator.abs() > f32::EPSILON {
+                -previous / denominator
+            } else {
+                0.0
+            };
+            let crossing = index as f32 - 1.0 + fraction;
+            first_crossing.get_or_insert(crossing);
+            last_crossing = crossing;
+            crossing_count += 1;
+        }
+        previous = current;
+    }
+
+    let first_crossing = first_crossing?;
+    if crossing_count < 2 {
+        return None;
+    }
+
+    let span = last_crossing - first_crossing;
+    if span <= f32::EPSILON {
+        return None;
+    }
+
+    let period_samples = span / (crossing_count - 1) as f32;
+    (period_samples > f32::EPSILON)
+        .then_some(sample_rate as f32 / period_samples)
+        .filter(|pitch| pitch.is_finite() && *pitch > 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,6 +821,34 @@ mod tests {
             .filter_map(|frame| frame.f0_hz)
             .collect::<Vec<_>>();
         assert_close_cents(median(voiced), 440.0, 80.0);
+    }
+
+    #[test]
+    fn zero_crossing_streaming_pitch_tracker_detects_block_pitch() {
+        let audio = sine_wave(440.0, 8_192);
+        let mut tracker =
+            ZeroCrossingStreamingPitchTracker::new(16_000, PitchDetectionConfig::default());
+
+        let frames = tracker.next_block(&audio).unwrap();
+
+        assert_eq!(frames.len(), 1);
+        assert_close_cents(frames[0].f0_hz.unwrap(), 440.0, 5.0);
+        assert_eq!(frames[0].source_sample_position, 0);
+    }
+
+    #[test]
+    fn zero_crossing_streaming_pitch_tracker_advances_and_resets_position() {
+        let audio = sine_wave(220.0, 4_096);
+        let mut tracker =
+            ZeroCrossingStreamingPitchTracker::new(16_000, PitchDetectionConfig::default());
+
+        tracker.next_block(&audio).unwrap();
+        let frames = tracker.next_block(&audio).unwrap();
+        assert_eq!(frames[0].source_sample_position, audio.len());
+
+        tracker.reset();
+        let frames = tracker.next_block(&audio).unwrap();
+        assert_eq!(frames[0].source_sample_position, 0);
     }
 
     fn sine_wave(frequency_hz: f32, len: usize) -> Vec<f32> {

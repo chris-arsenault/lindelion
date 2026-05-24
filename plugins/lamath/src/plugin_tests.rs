@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::{audio_note_detection_patch, sidechain_sine_note};
 use lindelion_dsp_utils::{
     analysis::{assert_all_finite, dft_magnitude_at, peak_abs, rms},
     db_to_gain,
@@ -6,8 +7,8 @@ use lindelion_dsp_utils::{
     params::StructuralChangePolicy,
 };
 use lindelion_plugin_shell::{
-    AudioBuffer, AudioPlugin, ControlEvent, MidiEvent, NoteEvent, ParameterId, ProcessContext,
-    ProcessMode, ProcessSetup,
+    AudioBuffer, AudioInputBuffer, AudioPlugin, ControlEvent, MidiEvent, NoteEvent, ParameterId,
+    ProcessContext, ProcessMode, ProcessSetup,
 };
 use lindelion_sample_library::{SampleLibrary, SampleReference, SampleResolution};
 use std::{

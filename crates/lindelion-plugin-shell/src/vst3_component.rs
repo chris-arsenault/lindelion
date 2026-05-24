@@ -71,12 +71,18 @@ pub fn can_process_32_bit_sample_size(symbolic_sample_size: i32) -> tresult {
     }
 }
 
+pub fn mono_or_stereo_speaker_arrangement_supported(arrangement: SpeakerArrangement) -> bool {
+    matches!(arrangement, SpeakerArr::kMono | SpeakerArr::kStereo)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vst3BusInfo {
     pub media_type: MediaTypes,
     pub direction: BusDirections,
     pub channel_count: i32,
     pub name: &'static str,
+    pub bus_type: BusTypes,
+    pub flags: u32,
 }
 
 impl Vst3BusInfo {
@@ -86,6 +92,19 @@ impl Vst3BusInfo {
             direction: BusDirections_::kInput,
             channel_count,
             name,
+            bus_type: BusTypes_::kMain,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
+        }
+    }
+
+    pub const fn optional_audio_input(channel_count: i32, name: &'static str) -> Self {
+        Self {
+            media_type: MediaTypes_::kAudio,
+            direction: BusDirections_::kInput,
+            channel_count,
+            name,
+            bus_type: BusTypes_::kAux,
+            flags: 0,
         }
     }
 
@@ -95,6 +114,8 @@ impl Vst3BusInfo {
             direction: BusDirections_::kOutput,
             channel_count,
             name,
+            bus_type: BusTypes_::kMain,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 
@@ -104,6 +125,8 @@ impl Vst3BusInfo {
             direction: BusDirections_::kInput,
             channel_count,
             name,
+            bus_type: BusTypes_::kMain,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 
@@ -113,6 +136,8 @@ impl Vst3BusInfo {
             direction: BusDirections_::kOutput,
             channel_count,
             name,
+            bus_type: BusTypes_::kMain,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 }
@@ -161,8 +186,8 @@ pub unsafe fn fill_vst3_bus_info(
     bus.direction = direction;
     bus.channelCount = spec.channel_count;
     copy_wstring(spec.name, &mut bus.name);
-    bus.busType = BusTypes_::kMain as BusType;
-    bus.flags = BusInfo_::BusFlags_::kDefaultActive;
+    bus.busType = spec.bus_type as BusType;
+    bus.flags = spec.flags;
     kResultOk
 }
 
