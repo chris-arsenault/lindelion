@@ -94,13 +94,11 @@ snap_to_zero(sum * self.output_scale)
 
 ## 5. Response plots
 
-| Plot | Status |
-| ---- | ---- |
-| Impulse response, 8 modes at $f_0 = 220\,\mathrm{Hz}$, Marimba preset | Pending plot-data infrastructure |
-| Magnitude spectrum at $f_s = 48\,\mathrm{kHz}$, GenericStrike preset | Pending |
-| Parameter sweep over fundamental $\in \{40, 110, 440, 1760, 4000\}\,\mathrm{Hz}$ at Bell preset | Pending |
-| Brightness sweep ($b \in \{0.1, 0.3, 0.5, 0.7, 0.9\}$) | Pending |
-| Strike-position sweep ($p \in \{0.1, 0.25, 0.5, 0.75\}$) | Pending |
+![Impulse response](../plots/modal_impulse.svg)
+
+Impulse response over 16 384 samples (~0.34 s at 48 kHz). Marimba preset, 32 modes, fundamental 220 Hz, inharmonicity 0.05, brightness 0.6, decay-global 1.2, decay-tilt 0.4, strike position 0.21. The trace shows the superposition of 32 exponentially-decaying sinusoids, weighted by the strike-position spatial factor and the brightness tilt.
+
+Parameter sweeps (brightness, strike position, fundamental), spectrum plots, and per-preset comparisons are not yet emitted — they would extend `plot_data.rs` and the `make docs` target on the same Rust-test → CSV → matplotlib pipeline.
 
 ## 6. Realtime contract
 

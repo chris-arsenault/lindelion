@@ -32,5 +32,5 @@ Per-product backlogs cover product-specific work:
 
 ## DSP documentation
 
-- Wire the Rust test → CSV → matplotlib pipeline so DSP module docs in `docs/dsp/` can include actual response plots. Per-module §5 currently lists expected plots with "Pending" status.
 - Document the remaining DSP modules: `WaveguideResonator`, `SynthEngine`, `Svf`, `DelayLine`, `FirstOrderAllpass`, smoothing types, onset detector, pitch detector, phrase analysis.
+- Extend the `make docs` plot set: ModalBank parameter/brightness/strike-position sweeps and spectrum plots; per-preset comparisons; group-delay plots where relevant.

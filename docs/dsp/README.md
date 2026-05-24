@@ -9,4 +9,4 @@ Per-module reference docs for DSP types in the Lindelion workspace. Each doc fol
 | [Adsr](adsr.md) | `crates/lindelion-dsp-utils/src/envelope.rs` | Linear-step ADSR envelope state machine |
 | [ModalBank](modal-bank.md) | `plugins/lamath/src/dsp/modal.rs` | Bank of second-order resonant filters per vibrational mode |
 
-Plot generation infrastructure (Rust test → CSV → matplotlib → SVG) is not yet wired up. Each module doc names the expected response plots in its §5 with a "Pending" status. See [`../backlog.md`](../backlog.md) for the workspace item.
+Plot generation is wired through Rust integration tests in `crates/lindelion-dsp-utils/tests/plot_data.rs` and a unit test in `plugins/lamath/src/dsp/modal.rs`. The tests emit deterministic CSVs under `docs/plots/data/`; `make docs` reads those CSVs and renders SVGs under `docs/plots/`. See [`../../tools/dsp-plot/README.md`](../../tools/dsp-plot/README.md) for the pipeline details and Python setup.

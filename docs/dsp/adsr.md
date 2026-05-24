@@ -75,10 +75,9 @@ match self.phase {
 
 ## 5. Response plots
 
-| Plot | Status |
-| ---- | ---- |
-| Step response (note_on then note_off) at four parameter sets | Pending plot-data infrastructure |
-| Sustain hold at $s \in \{0.0, 0.25, 0.5, 0.75, 1.0\}$ | Pending |
+![Step response](../plots/adsr_step.svg)
+
+Step response with $\mathit{attack\_ms} = 20$, $\mathit{decay\_ms} = 100$, $\mathit{sustain} = 0.5$, $\mathit{release\_ms} = 200$. `note_on` fires at $t = 0$, `note_off` fires at $t = 0.4\,\mathrm{s}$. The four segments are visible as linear ramps: attack rises to 1 in 20 ms, decay falls to 0.5 in 100 ms, sustain holds, release falls to 0 in 200 ms.
 
 Pole-zero is not applicable — the envelope is a state machine with linear ramps, not an LTI filter.
 

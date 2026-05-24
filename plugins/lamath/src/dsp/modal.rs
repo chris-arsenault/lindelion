@@ -368,4 +368,51 @@ mod tests {
             assert!(peak_abs(&output) < 20.0);
         }
     }
+
+    /// Emits docs/plots/data/modal_impulse.csv for the ModalBank doc.
+    #[test]
+    fn export_modal_bank_impulse_csv() {
+        use std::fs::{File, create_dir_all};
+        use std::io::Write;
+        use std::path::PathBuf;
+
+        let sample_rate = 48_000.0_f32;
+        let mut bank = ModalBank::new(
+            sample_rate,
+            ModalBankParams {
+                fundamental_hz: 220.0,
+                mode_count: 32,
+                preset: ModalPreset::Marimba,
+                inharmonicity: 0.05,
+                brightness: 0.6,
+                decay_global: 1.2,
+                decay_tilt: 0.4,
+                position_of_strike: 0.21,
+            },
+        );
+
+        let n_samples = 16_384_usize;
+        let mut output = Vec::with_capacity(n_samples);
+        output.push(bank.process_sample(1.0));
+        for _ in 1..n_samples {
+            output.push(bank.process_sample(0.0));
+        }
+
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("plugins dir")
+            .parent()
+            .expect("workspace root")
+            .join("docs")
+            .join("plots")
+            .join("data");
+        create_dir_all(&dir).expect("create data dir");
+
+        let mut file = File::create(dir.join("modal_impulse.csv")).expect("create csv");
+        writeln!(file, "time_s,value").unwrap();
+        for (i, v) in output.iter().enumerate() {
+            let t = i as f32 / sample_rate;
+            writeln!(file, "{:.6},{:.6}", t, v).unwrap();
+        }
+    }
 }

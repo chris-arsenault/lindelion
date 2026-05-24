@@ -13,7 +13,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test check bench bench-smoke macos-check build bundle-macos inspect-vst3 cache-dir
+.PHONY: ci fmt fmt-check clippy test check bench bench-smoke macos-check build bundle-macos inspect-vst3 cache-dir docs
 
 ci: check bench-smoke
 
@@ -40,6 +40,22 @@ bench:
 
 bench-smoke:
 	cargo bench --workspace --no-run
+
+docs:
+	cargo test -p lindelion-dsp-utils --test plot_data
+	cargo test -p lamath export_modal_bank_impulse_csv
+	@command -v python3 >/dev/null || { echo "python3 required for plot rendering. See tools/dsp-plot/README.md." >&2; exit 1; }
+	@python3 -c "import matplotlib, scipy" 2>/dev/null || { echo "matplotlib + scipy required. pip install -r tools/dsp-plot/requirements.txt" >&2; exit 1; }
+	@mkdir -p docs/plots
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/onepolelowpass_mag.csv docs/plots/onepolelowpass_mag.svg --title "OnePoleLowpass magnitude response (fs=48 kHz)"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/onepolelowpass_phase.csv docs/plots/onepolelowpass_phase.svg --title "OnePoleLowpass phase response (fs=48 kHz)" --ylabel "Phase (degrees)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/onepolelowpass_impulse.csv docs/plots/onepolelowpass_impulse.svg --title "OnePoleLowpass impulse response (fs=48 kHz)"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/biquad_mag.csv docs/plots/biquad_mag.svg --title "Biquad magnitude response (fc=1 kHz, Q=0.707)"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/biquad_phase.csv docs/plots/biquad_phase.svg --title "Biquad phase response (fc=1 kHz, Q=0.707)" --ylabel "Phase (degrees)"
+	python3 tools/dsp-plot/plot_pz.py docs/plots/data/biquad_ba.csv docs/plots/biquad_pz.svg --title "Biquad pole-zero (fc=1 kHz, Q=0.707)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/biquad_impulse.csv docs/plots/biquad_impulse.svg --title "Biquad impulse response (fc=1 kHz, Q=0.707)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/adsr_step.csv docs/plots/adsr_step.svg --title "ADSR step response (A=20 ms, D=100 ms, S=0.5, R=200 ms)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/modal_impulse.csv docs/plots/modal_impulse.svg --title "ModalBank impulse response (Marimba, 32 modes, 220 Hz)"
 
 macos-check:
 	cargo check -p lamath --target aarch64-apple-darwin

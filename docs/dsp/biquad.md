@@ -62,14 +62,21 @@ Coefficient flavors:
 
 ## 5. Response plots
 
-| Plot | Status |
-| ---- | ---- |
-| Magnitude (dB) on log frequency, three flavors at $Q = 0.707$ | Pending plot-data infrastructure |
-| Phase (degrees) on log frequency | Pending |
-| Pole-zero on the unit circle for each flavor | Pending |
-| Impulse response, three flavors | Pending |
+![Magnitude response](../plots/biquad_mag.svg)
 
-The expected pole-zero for the low-pass: two complex-conjugate poles inside the unit circle (angle $\omega = 2\pi f_c / f_s$, radius determined by $Q$); two zeros at $z = -1$ (DC mirror).
+Magnitude in dB on log frequency at $f_c = 1\,\mathrm{kHz}$, $Q = 0.707$ (Butterworth), $f_s = 48\,\mathrm{kHz}$. Low-pass and high-pass each show $-12\,\mathrm{dB/octave}$ rolloff away from $f_c$; the band-pass peaks at $f_c$ with $-3\,\mathrm{dB}$ skirts.
+
+![Phase response](../plots/biquad_phase.svg)
+
+Phase in degrees on log frequency. The low-pass rolls from $0°$ through $-90°$ at $f_c$ toward $-180°$; the high-pass mirrors that from $+180°$; the band-pass crosses $0°$ at $f_c$.
+
+![Pole-zero](../plots/biquad_pz.svg)
+
+Pole-zero on the unit circle. Each flavor has the same pole pair (complex conjugates inside the unit circle at angle $\omega = 2\pi f_c / f_s$). Zeros differ: low-pass has both at $z = -1$ (Nyquist), high-pass has both at $z = +1$ (DC), band-pass has them split at $z = \pm 1$.
+
+![Impulse response](../plots/biquad_impulse.svg)
+
+Impulse response over 512 samples (~10.6 ms at 48 kHz). All three flavors show the second-order ringing characteristic of complex-conjugate poles. The low-pass settles smoothly toward zero; the high-pass and band-pass swing through both polarities before settling.
 
 ## 6. Realtime contract
 
