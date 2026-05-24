@@ -37,7 +37,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 
 ## Durable Architecture Principles
 
-These principles came out of the Glirdir/Lamath reuse remediation work and apply to new plugin work unless a later design explicitly replaces them.
+These principles govern plugin reuse, shared crate boundaries, parameter management, host integration, editor design, module organization, state handling, and realtime behavior. The rationale for each major principle is captured as an Architecture Decision Record under [adr/](adr/README.md).
 
 ### Shared Core Boundaries
 

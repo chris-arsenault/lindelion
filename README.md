@@ -6,11 +6,11 @@ Lindelion is a Rust workspace for audio instruments and shared plugin infrastruc
 
 ## Plugins
 
-| Plugin | Meaning | Status | Links |
+| Plugin | Meaning | Description | Links |
 | ---- | ---- | ---- | ---- |
-| Lamath | Sindarin, "echo" or "ringing of voices" | Implemented VST3 resonator instrument with optional sidechain note/excitation path; DAW validation pending | [README](plugins/lamath/README.md), [current](docs/plugins/lamath.md), [backlog](docs/plugins/lamath-backlog.md) |
-| Linnod | Sindarin measured verse unit, from the `lind`/`lin-` song root | Cargo scaffold and patch model | [README](plugins/linnod/README.md), [current](docs/plugins/linnod.md), [backlog](docs/plugins/linnod-backlog.md) |
-| Glirdir | Sindarin `glir-` + `-dir`, "singer" or "song-bearer" | Sing-to-MIDI scratchpad with VST3 adapter, editor, drag/export, sample-library save, and bundle support; DAW validation pending | [README](plugins/glirdir/README.md), [current](docs/plugins/glirdir.md), [backlog](docs/plugins/glirdir-backlog.md) |
+| Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs | [README](plugins/lamath/README.md), [spec](docs/plugins/lamath.md), [backlog](docs/plugins/lamath-backlog.md) |
+| Linnod | Sindarin measured verse unit, from the `lind`/`lin-` song root | Cargo scaffold and patch model | [README](plugins/linnod/README.md), [spec](docs/plugins/linnod.md), [backlog](docs/plugins/linnod-backlog.md) |
+| Glirdir | Sindarin `glir-` + `-dir`, "singer" or "song-bearer" | VST3 sing-to-MIDI scratchpad with editor, drag/export, sample-library save, and bundle support | [README](plugins/glirdir/README.md), [spec](docs/plugins/glirdir.md), [backlog](docs/plugins/glirdir-backlog.md) |
 
 ## Docs
 
@@ -18,16 +18,13 @@ Lindelion is a Rust workspace for audio instruments and shared plugin infrastruc
 | ---- | ---- |
 | Documentation index | [docs/README.md](docs/README.md) |
 | Workspace architecture | [docs/architecture.md](docs/architecture.md) |
+| Architecture decisions | [docs/adr/README.md](docs/adr/README.md) |
 | Local development | [docs/development.md](docs/development.md) |
 | Audio performance contract | [docs/performance.md](docs/performance.md) |
 | macOS VST3 build | [docs/macos-vst3-build.md](docs/macos-vst3-build.md) |
-
-## Agent Guides
-
-| Agent | Guide |
-| ---- | ---- |
-| Codex | [CODEX.md](CODEX.md) |
-| Claude | [CLAUDE.md](CLAUDE.md) |
+| Workspace backlog | [docs/backlog.md](docs/backlog.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) |
+| Agent guide | [AGENTS.md](AGENTS.md) |
 
 ## License
 

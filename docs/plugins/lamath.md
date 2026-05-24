@@ -3,9 +3,9 @@
 **Name:** Lamath
 **Name etymology:** Sindarin, "echo" or "ringing of voices." Six letters, pronounced LAH-math; paired phonetically with Glirdir.
 **Target:** macOS VST3 instrument, Apple Silicon primary and Intel best-effort.
-**Status:** Implemented VST3 resonator instrument with MIDI and optional sidechain note/excitation paths. Linux workspace validation and realtime/no-allocation tests pass. macOS host validation is tracked in [lamath-backlog.md](lamath-backlog.md).
+**Status:** VST3 resonator instrument with MIDI and sidechain audio inputs. Linux workspace validation and realtime/no-allocation tests pass.
 
-This document describes the behavior implemented in the workspace today. Deferred validation, product expansion, and unresolved design decisions live in [lamath-backlog.md](lamath-backlog.md).
+This document describes the behavior implemented in the workspace today. Planned work for Lamath lives in [lamath-backlog.md](lamath-backlog.md).
 
 ---
 
@@ -23,12 +23,7 @@ Design principles:
 - Shared host-neutral core. Plugin shell, process context, MIDI normalization, patch/state helpers, sample-library ownership, and audio-expression analysis live in shared crates. Lamath owns product identity, sidechain policy, voice ownership, and resonator behavior.
 - Bounded realtime path. Audio-thread processing must not allocate, block, log, perform file/database I/O, or call UI/host services.
 
-Non-goals:
-
-- Not a sampler.
-- Not a granular synth.
-- Not an audio effect variant.
-- Not a full DAW-polished cross-host product; Ableton on macOS is the primary host target.
+Primary host target: Ableton on macOS.
 
 ---
 

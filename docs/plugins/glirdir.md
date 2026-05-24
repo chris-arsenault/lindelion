@@ -3,9 +3,9 @@
 **Name:** Glirdir
 **Name etymology:** Sindarin, "singer" or "song-bearer." From `glir-` (to sing, song) plus `-dir` (masculine agentive).
 **Target:** macOS VST3 audio effect, Apple Silicon primary.
-**Status:** Implemented sing-to-MIDI scratchpad core with VST3 adapter, editor surface, drag/export fallback paths, sample-library scratchpad save, patch/state persistence, and macOS bundle support. Host validation and deferred product work are tracked in [glirdir-backlog.md](glirdir-backlog.md).
+**Status:** VST3 sing-to-MIDI scratchpad with editor surface, drag/export fallback paths, sample-library scratchpad save, patch/state persistence, and macOS bundle support.
 
-This document describes the behavior implemented in the workspace today. Deferred validation, storage changes, and product extensions live in [glirdir-backlog.md](glirdir-backlog.md).
+This document describes the behavior implemented in the workspace today. Planned work for Glirdir lives in [glirdir-backlog.md](glirdir-backlog.md).
 
 ---
 
@@ -23,13 +23,7 @@ Design principles:
 - Single-shot songwriting scratchpad. One capture buffer is active at a time.
 - Reuse shared Lindelion crates for capture, pitch, onset, MIDI, UI, sample-library, patch/state, and plugin-shell boundaries.
 
-Non-goals:
-
-- Not a real-time MIDI controller.
-- Not a recording or take-management tool.
-- Not a beatboxing or percussion detector.
-- Not a MIDI editor.
-- Not a vocal tuner or pitch-correction processor.
+Primary host target: Ableton and Logic on macOS.
 
 ---
 

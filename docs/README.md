@@ -1,27 +1,29 @@
 # Lindelion Docs
 
-Current documentation for the Lindelion audio-plugin workspace.
+Documentation index for the Lindelion audio-plugin workspace.
 
 ## Product Docs
 
-| Plugin | Status | Docs |
+| Plugin | Description | Docs |
 | ---- | ---- | ---- |
-| Lamath | Implemented VST3 resonator instrument with optional sidechain note/excitation path; DAW validation pending | [Current spec](plugins/lamath.md), [backlog](plugins/lamath-backlog.md), [plugin README](../plugins/lamath/README.md) |
-| Linnod | Cargo scaffold and patch model | [Current spec](plugins/linnod.md), [backlog](plugins/linnod-backlog.md), [plugin README](../plugins/linnod/README.md) |
-| Glirdir | Sing-to-MIDI scratchpad with VST3 adapter, editor, drag/export, sample-library save, and bundle support; DAW validation pending | [Current spec](plugins/glirdir.md), [backlog](plugins/glirdir-backlog.md), [plugin README](../plugins/glirdir/README.md) |
+| Lamath | VST3 resonator instrument with MIDI and sidechain audio inputs | [Spec](plugins/lamath.md), [backlog](plugins/lamath-backlog.md), [README](../plugins/lamath/README.md) |
+| Linnod | Cargo scaffold and patch model | [Spec](plugins/linnod.md), [backlog](plugins/linnod-backlog.md), [README](../plugins/linnod/README.md) |
+| Glirdir | VST3 sing-to-MIDI scratchpad with editor, drag/export, sample-library save, and bundle support | [Spec](plugins/glirdir.md), [backlog](plugins/glirdir-backlog.md), [README](../plugins/glirdir/README.md) |
 
 ## Architecture And Development
 
 | Topic | Doc |
 | ---- | ---- |
 | Workspace architecture | [architecture.md](architecture.md) |
+| Architecture decisions | [adr/README.md](adr/README.md) |
 | Local development commands | [development.md](development.md) |
 | Real-time audio performance contract | [performance.md](performance.md) |
 | macOS VST3 build and validation | [macos-vst3-build.md](macos-vst3-build.md) |
+| Workspace backlog | [backlog.md](backlog.md) |
+| Changelog | [../CHANGELOG.md](../CHANGELOG.md) |
 
-## Agent Guides
+## Agent Guide
 
-| Agent | Guide |
+| File | Purpose |
 | ---- | ---- |
-| Codex | [../CODEX.md](../CODEX.md) |
-| Claude | [../CLAUDE.md](../CLAUDE.md) |
+| [../AGENTS.md](../AGENTS.md) | Canonical agent guide for every coding agent (Claude, Codex, etc.) |
