@@ -27,5 +27,5 @@ Per-product backlogs cover product-specific work:
 
 ## Performance and CI
 
-- Add a self-hosted Linux runner for `make bench` with baseline storage and regression diffs (see [BENCHES_PLAN.md](../BENCHES_PLAN.md) §CI integration).
+- Add a self-hosted Linux runner for `make bench` with baseline storage and regression diffs.
 - Wire `bench-smoke` into the regular `make ci` path so bench files cannot rot without paying the full Criterion runtime.

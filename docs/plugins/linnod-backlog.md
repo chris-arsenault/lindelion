@@ -13,15 +13,10 @@ Design principles:
 - Multiple onset detection algorithms are first-class options.
 - Every slice has musical controls: ADSR, fine pitch, gain, pan, reverse, and playback mode.
 - Pad mode is per-pad mono; chromatic mode is polyphonic across the global voice pool.
-- The host owns sequencing. Linnod does not include an internal pattern editor.
-- Shared Lindelion crates should carry plugin-shell, sample-library, DSP, UI, onset, and PSOLA functionality.
-
-Non-goals:
-
-- Not a beat slicer, though percussive material can be loaded.
-- Not a time-stretch engine.
-- Not a granular, spectral, or broad sample-mangling synth.
-- No host-tempo sync of slice playback.
+- The host owns sequencing and tempo. Linnod is MIDI-triggered.
+- Shared Lindelion crates carry plugin-shell, sample-library, DSP, UI, onset, and PSOLA functionality.
+- Optimized for melodic monophonic source material such as wind, voice, and bowed strings.
+- Playback uses PSOLA pitch shifting and per-slice playback-rate adjustment.
 
 ---
 
