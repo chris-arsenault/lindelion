@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Agent Guide
 
-Agent guide for Claude sessions in the Lindelion repository.
+Agent guide for sessions in the Lindelion repository.
 
 ## Read First
 

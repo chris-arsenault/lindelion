@@ -1,6 +1,6 @@
-# CODEX.md
+# Agent Guide
 
-Agent guide for Codex sessions in the Lindelion repository.
+Agent guide for sessions in the Lindelion repository.
 
 ## Read First
 
