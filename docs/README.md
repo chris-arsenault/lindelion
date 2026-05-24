@@ -16,6 +16,7 @@ Documentation index for the Lindelion audio-plugin workspace.
 | ---- | ---- |
 | Workspace architecture | [architecture.md](architecture.md) |
 | Architecture decisions | [adr/README.md](adr/README.md) |
+| DSP module docs | [dsp/README.md](dsp/README.md) |
 | Local development commands | [development.md](development.md) |
 | Real-time audio performance contract | [performance.md](performance.md) |
 | macOS VST3 build and validation | [macos-vst3-build.md](macos-vst3-build.md) |

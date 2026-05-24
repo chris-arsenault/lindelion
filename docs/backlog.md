@@ -29,3 +29,8 @@ Per-product backlogs cover product-specific work:
 
 - Add a self-hosted Linux runner for `make bench` with baseline storage and regression diffs.
 - Wire `bench-smoke` into the regular `make ci` path so bench files cannot rot without paying the full Criterion runtime.
+
+## DSP documentation
+
+- Wire the Rust test → CSV → matplotlib pipeline so DSP module docs in `docs/dsp/` can include actual response plots. Per-module §5 currently lists expected plots with "Pending" status.
+- Document the remaining DSP modules: `WaveguideResonator`, `SynthEngine`, `Svf`, `DelayLine`, `FirstOrderAllpass`, smoothing types, onset detector, pitch detector, phrase analysis.

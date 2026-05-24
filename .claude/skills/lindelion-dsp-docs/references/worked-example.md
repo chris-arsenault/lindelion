@@ -32,7 +32,7 @@ $$H(z) = \frac{\alpha}{1 - (1 - \alpha) z^{-1}}$$
 
 **Discretization.** Matched-z (exponential mapping of the analog `1 / (1 + sτ)` prototype), not BLT. No prewarp is needed because the analog prototype is single-pole and the matched-z mapping preserves the pole location.
 
-**Valid parameter range.** `1 Hz ≤ f_c ≤ 0.49 · f_s`. Clamped in `OnePoleLowpass::new` via `cutoff_for_sample_rate()`.
+**Valid parameter range.** `20 Hz ≤ f_c ≤ 0.45 · f_s`. Clamped in `OnePoleLowpass::set_cutoff` via `cutoff_for_sample_rate()`.
 
 ## 3. Algorithm
 
@@ -49,7 +49,7 @@ self.state
 
 | Name | Type | Units | Range | Default | Notes |
 | ---- | ---- | ---- | ---- | ---- | ---- |
-| `cutoff_hz` | `f32` | Hz | `1.0 .. (fs · 0.49)` | `1000.0` | Clamped at construction via `cutoff_for_sample_rate()` in `lindelion-dsp-utils::filters` |
+| `cutoff_hz` | `f32` | Hz | `20.0 .. (fs · 0.45)` | `1000.0` | Clamped at construction via `cutoff_for_sample_rate()` in `lindelion-dsp-utils::filters` |
 
 ## 5. Response plots
 
@@ -82,7 +82,7 @@ Plot data is committed under `docs/plots/data/onepolelowpass_*.csv` (see `crates
 use lindelion_dsp_utils::filters::OnePoleLowpass;
 
 let sample_rate = 48_000.0;
-let mut lp = OnePoleLowpass::new(sample_rate, 1_000.0);
+let mut lp = OnePoleLowpass::new(1_000.0, sample_rate);
 
 for sample in audio_block.iter_mut() {
     *sample = lp.process(*sample);
