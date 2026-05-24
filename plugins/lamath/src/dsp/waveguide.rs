@@ -437,6 +437,51 @@ mod tests {
         );
     }
 
+    /// Emits docs/plots/data/waveguide_impulse.csv for the WaveguideResonator doc.
+    #[test]
+    fn export_waveguide_impulse_csv() {
+        use std::fs::{File, create_dir_all};
+        use std::io::Write;
+        use std::path::PathBuf;
+
+        let sample_rate = 48_000.0_f32;
+        let mut waveguide = WaveguideResonator::new(sample_rate, 30.0);
+        let params = WaveguideParams {
+            style: WaveguideStyle::String,
+            frequency_hz: 240.0,
+            loop_filter_cutoff: 12_000.0,
+            loop_filter_resonance: 0.0,
+            loop_gain: 0.95,
+            loop_nonlinearity: 0.0,
+            position_of_strike: 0.5,
+            ..WaveguideParams::default()
+        };
+
+        let n_samples = 8_192_usize;
+        let mut output = Vec::with_capacity(n_samples);
+        output.push(waveguide.process_sample(1.0, params));
+        for _ in 1..n_samples {
+            output.push(waveguide.process_sample(0.0, params));
+        }
+
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("plugins dir")
+            .parent()
+            .expect("workspace root")
+            .join("docs")
+            .join("plots")
+            .join("data");
+        create_dir_all(&dir).expect("create data dir");
+
+        let mut file = File::create(dir.join("waveguide_impulse.csv")).expect("create csv");
+        writeln!(file, "time_s,value").unwrap();
+        for (i, v) in output.iter().enumerate() {
+            let t = i as f32 / sample_rate;
+            writeln!(file, "{:.6},{:.6}", t, v).unwrap();
+        }
+    }
+
     #[test]
     fn stable_across_parameter_sweep() {
         let sample_rate = 48_000.0;

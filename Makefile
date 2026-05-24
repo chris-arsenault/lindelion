@@ -44,6 +44,7 @@ bench-smoke:
 docs:
 	cargo test -p lindelion-dsp-utils --test plot_data
 	cargo test -p lamath export_modal_bank_impulse_csv
+	cargo test -p lamath export_waveguide_impulse_csv
 	@command -v python3 >/dev/null || { echo "python3 required for plot rendering. See tools/dsp-plot/README.md." >&2; exit 1; }
 	@python3 -c "import matplotlib, scipy" 2>/dev/null || { echo "matplotlib + scipy required. pip install -r tools/dsp-plot/requirements.txt" >&2; exit 1; }
 	@mkdir -p docs/plots
@@ -54,8 +55,17 @@ docs:
 	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/biquad_phase.csv docs/plots/biquad_phase.svg --title "Biquad phase response (fc=1 kHz, Q=0.707)" --ylabel "Phase (degrees)"
 	python3 tools/dsp-plot/plot_pz.py docs/plots/data/biquad_ba.csv docs/plots/biquad_pz.svg --title "Biquad pole-zero (fc=1 kHz, Q=0.707)"
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/biquad_impulse.csv docs/plots/biquad_impulse.svg --title "Biquad impulse response (fc=1 kHz, Q=0.707)"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/svf_mag.csv docs/plots/svf_mag.svg --title "Svf magnitude response (fc=1 kHz, R=0.3)"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/svf_phase.csv docs/plots/svf_phase.svg --title "Svf phase response (fc=1 kHz, R=0.3)" --ylabel "Phase (degrees)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/svf_impulse.csv docs/plots/svf_impulse.svg --title "Svf impulse response (fc=1 kHz, R=0.3)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/delay_impulse.csv docs/plots/delay_impulse.svg --title "DelayLine impulse response"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/allpass_mag.csv docs/plots/allpass_mag.svg --title "FirstOrderAllpass magnitude response"
+	python3 tools/dsp-plot/plot_freqz.py docs/plots/data/allpass_phase.csv docs/plots/allpass_phase.svg --title "FirstOrderAllpass phase response" --ylabel "Phase (degrees)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/allpass_impulse.csv docs/plots/allpass_impulse.svg --title "FirstOrderAllpass impulse response"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/smoothing_step.csv docs/plots/smoothing_step.svg --title "LinearSmoother step response (target = 1.0, fs = 48 kHz)"
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/adsr_step.csv docs/plots/adsr_step.svg --title "ADSR step response (A=20 ms, D=100 ms, S=0.5, R=200 ms)"
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/modal_impulse.csv docs/plots/modal_impulse.svg --title "ModalBank impulse response (Marimba, 32 modes, 220 Hz)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/waveguide_impulse.csv docs/plots/waveguide_impulse.svg --title "WaveguideResonator impulse response (String, 240 Hz, gain=0.95)"
 
 macos-check:
 	cargo check -p lamath --target aarch64-apple-darwin
