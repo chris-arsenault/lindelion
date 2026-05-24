@@ -8,7 +8,8 @@ Glirdir is Lindelion's sing-to-MIDI scratchpad. The core Rust crate currently im
 
 | Topic | Link |
 | ---- | ---- |
-| Current design and implementation status | [../../docs/plugins/glirdir.md](../../docs/plugins/glirdir.md) |
+| Current implementation spec | [../../docs/plugins/glirdir.md](../../docs/plugins/glirdir.md) |
+| Backlog | [../../docs/plugins/glirdir-backlog.md](../../docs/plugins/glirdir-backlog.md) |
 | Workspace docs | [../../docs/README.md](../../docs/README.md) |
 | Architecture | [../../docs/architecture.md](../../docs/architecture.md) |
 | Audio performance contract | [../../docs/performance.md](../../docs/performance.md) |

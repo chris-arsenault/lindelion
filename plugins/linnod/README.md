@@ -8,7 +8,8 @@ Linnod is Lindelion's melodic sample-slicer scaffold.
 
 | Topic | Link |
 | ---- | ---- |
-| Current design and implementation | [../../docs/plugins/linnod.md](../../docs/plugins/linnod.md) |
+| Current implementation spec | [../../docs/plugins/linnod.md](../../docs/plugins/linnod.md) |
+| Backlog | [../../docs/plugins/linnod-backlog.md](../../docs/plugins/linnod-backlog.md) |
 | Workspace docs | [../../docs/README.md](../../docs/README.md) |
 | Architecture | [../../docs/architecture.md](../../docs/architecture.md) |
 | Audio performance contract | [../../docs/performance.md](../../docs/performance.md) |

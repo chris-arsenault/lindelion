@@ -2,7 +2,7 @@
 
 *Sindarin **Lamath**: "echo" or "ringing of voices." Six letters, pronounced LAH-math; paired phonetically with Glirdir.*
 
-Lamath is Lindelion's implemented breath-excited resonator VST3 instrument. It combines sample-slot excitation with modal/waveguide resonators, and the v2 path adds an optional sidechain input on the same instrument.
+Lamath is Lindelion's implemented breath-excited resonator VST3 instrument. It combines sample-slot excitation with modal/waveguide resonators and an optional sidechain input on the same instrument.
 
 ## Current Behavior
 
@@ -20,7 +20,8 @@ Linux workspace validation and Lamath realtime/no-allocation tests pass. The mac
 
 | Topic | Link |
 | ---- | ---- |
-| Current design and implementation | [../../docs/plugins/lamath.md](../../docs/plugins/lamath.md) |
+| Current implementation spec | [../../docs/plugins/lamath.md](../../docs/plugins/lamath.md) |
+| Backlog | [../../docs/plugins/lamath-backlog.md](../../docs/plugins/lamath-backlog.md) |
 | Workspace docs | [../../docs/README.md](../../docs/README.md) |
 | Architecture | [../../docs/architecture.md](../../docs/architecture.md) |
 | Audio performance contract | [../../docs/performance.md](../../docs/performance.md) |
