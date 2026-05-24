@@ -18,6 +18,9 @@ use lindelion_pitch_detect::{PitchContour, PitchFrame};
 use lindelion_plugin_shell::{ExpressionStream, ManualExpressionSource, VoiceSlotState};
 
 include!("basic_tests.rs");
+include!("audio_note_tests.rs");
+include!("live_excitation_tests.rs");
+include!("expression_source_tests.rs");
 include!("pressure_tests.rs");
 include!("expression_tests.rs");
 include!("test_helpers.rs");

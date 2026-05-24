@@ -24,6 +24,8 @@ use std::{
 include!("plugin_tests/render_tests.rs");
 include!("plugin_tests/parameter_tests.rs");
 include!("plugin_tests/runtime_tests.rs");
+include!("plugin_tests/runtime_sidechain_tests.rs");
+include!("plugin_tests/runtime_sample_tests.rs");
 include!("plugin_tests/performance_tests.rs");
 include!("plugin_tests/render_helpers.rs");
 include!("plugin_tests/expression_helpers.rs");
