@@ -43,6 +43,8 @@ bench-smoke:
 
 docs:
 	cargo test -p lindelion-dsp-utils --test plot_data
+	cargo test -p lindelion-onset-detect --test plot_data
+	cargo test -p lindelion-pitch-detect --test plot_data
 	cargo test -p lamath export_modal_bank_impulse_csv
 	cargo test -p lamath export_waveguide_impulse_csv
 	@command -v python3 >/dev/null || { echo "python3 required for plot rendering. See tools/dsp-plot/README.md." >&2; exit 1; }
@@ -66,6 +68,8 @@ docs:
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/adsr_step.csv docs/plots/adsr_step.svg --title "ADSR step response (A=20 ms, D=100 ms, S=0.5, R=200 ms)"
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/modal_impulse.csv docs/plots/modal_impulse.svg --title "ModalBank impulse response (Marimba, 32 modes, 220 Hz)"
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/waveguide_impulse.csv docs/plots/waveguide_impulse.svg --title "WaveguideResonator impulse response (String, 240 Hz, gain=0.95)"
+	python3 tools/dsp-plot/plot_markers.py docs/plots/data/onset_signal.csv docs/plots/data/onset_markers.csv docs/plots/onset_detection.svg --title "EnergyTransientDetector on synthetic tone bursts (sensitivity=0.7)"
+	python3 tools/dsp-plot/plot_time.py docs/plots/data/pitch_tracking.csv docs/plots/pitch_tracking.svg --title "SwiftF0Detector tracking synthetic frequency sweep" --ylabel "Frequency (Hz)"
 
 macos-check:
 	cargo check -p lamath --target aarch64-apple-darwin
