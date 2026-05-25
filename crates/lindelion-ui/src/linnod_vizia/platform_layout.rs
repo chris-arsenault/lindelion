@@ -58,20 +58,15 @@ fn linnod_source_section(cx: &mut Context, signals: EditorSignals) {
             source_label(signals.summary),
             crate::vizia_controls::Accent::Audio,
         );
-        Button::new(cx, move |cx| {
-            SourceWaveformView::new(cx, signals.summary, signals.drop_active)
-                .class("source-view")
-                .class("ll-visual-frame")
-                .class("ll-visual-audio")
-                .height(Stretch(1.0))
-        })
-        .on_press(|cx| cx.emit(EditorEvent::LoadSourceDialog))
-        .class("ll-visual-frame")
-        .class("ll-visual-audio")
-        .height(Pixels(240.0));
+        SourceWaveformView::new_editable(cx, signals.summary, signals.drop_active)
+            .class("source-view")
+            .class("ll-visual-frame")
+            .class("ll-visual-audio")
+            .height(Pixels(240.0));
         HStack::new(cx, move |cx| {
             crate::vizia_controls::metric(cx, "source", source_rate_text(signals.summary));
             crate::vizia_controls::metric(cx, "detection", detection_detail_text(signals.summary));
+            crate::vizia_controls::metric(cx, "markers", marker_count_text(signals.status));
             linnod_command_button(
                 cx,
                 ICON_WAVE_SINE,
@@ -247,6 +242,7 @@ fn linnod_slice_section(cx: &mut Context, signals: EditorSignals) {
             .class("ll-visual-slice")
             .height(Pixels(112.0));
         linnod_status_chip(cx, selected_slice_range(signals.summary), crate::vizia_controls::ChipKind::Slice);
+        linnod_status_chip(cx, selected_pitch_diagnostic_text(signals.summary), crate::vizia_controls::ChipKind::Slice);
         slice_trim_controls(cx, signals.summary);
         slice_pitch_controls(cx, signals.summary);
         slice_gain_pan_controls(cx, signals.summary);
@@ -304,64 +300,142 @@ fn linnod_slice_section(cx: &mut Context, signals: EditorSignals) {
 }
 
 fn slice_trim_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    slice_nudge_row(
-        cx,
-        "trim",
-        selected_slice_trim_text(summary),
-        move |cx| cx.emit(slice_trim_event(summary, -1.0, 0.0)),
-        move |cx| cx.emit(slice_trim_event(summary, 1.0, 0.0)),
-    );
-    slice_nudge_row(
-        cx,
-        "end",
-        selected_slice_range(summary),
-        move |cx| cx.emit(slice_trim_event(summary, 0.0, -1.0)),
-        move |cx| cx.emit(slice_trim_event(summary, 0.0, 1.0)),
-    );
+    HStack::new(cx, move |cx| {
+        crate::vizia_controls::drag_value(
+            cx,
+            "START",
+            selected_slice_start_offset_text(summary),
+            selected_slice_start_offset_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                0.0,
+                60_000.0,
+                0.0,
+                1.0,
+                0.1,
+                88.0,
+                crate::vizia_controls::Accent::Slice,
+            ),
+            move |cx, value| cx.emit(slice_trim_start_event(summary, value)),
+        );
+        crate::vizia_controls::drag_value(
+            cx,
+            "END",
+            selected_slice_end_offset_text(summary),
+            selected_slice_end_offset_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                0.0,
+                60_000.0,
+                0.0,
+                1.0,
+                0.1,
+                88.0,
+                crate::vizia_controls::Accent::Slice,
+            ),
+            move |cx, value| cx.emit(slice_trim_end_event(summary, value)),
+        );
+    })
+    .height(Pixels(44.0))
+    .horizontal_gap(Pixels(6.0));
 }
 
 fn slice_pitch_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    slice_nudge_row(
-        cx,
-        "pitch",
-        selected_pitch_text(summary),
-        move |cx| cx.emit(slice_pitch_event(summary, -1, 0.0)),
-        move |cx| cx.emit(slice_pitch_event(summary, 1, 0.0)),
-    );
-    slice_nudge_row(
-        cx,
-        "cents",
-        selected_pitch_text(summary),
-        move |cx| cx.emit(slice_pitch_event(summary, 0, -5.0)),
-        move |cx| cx.emit(slice_pitch_event(summary, 0, 5.0)),
-    );
+    HStack::new(cx, move |cx| {
+        crate::vizia_controls::drag_value(
+            cx,
+            "SEMI",
+            selected_slice_semitone_text(summary),
+            selected_slice_semitone_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                -48.0,
+                48.0,
+                0.0,
+                1.0,
+                1.0,
+                88.0,
+                crate::vizia_controls::Accent::Slice,
+            ),
+            move |cx, value| cx.emit(slice_pitch_semitone_event(summary, value)),
+        );
+        crate::vizia_controls::drag_value(
+            cx,
+            "CENT",
+            selected_slice_cent_text(summary),
+            selected_slice_cent_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                -100.0,
+                100.0,
+                0.0,
+                1.0,
+                0.1,
+                88.0,
+                crate::vizia_controls::Accent::Slice,
+            ),
+            move |cx, value| cx.emit(slice_pitch_cent_event(summary, value)),
+        );
+    })
+    .height(Pixels(44.0))
+    .horizontal_gap(Pixels(6.0));
 }
 
 fn slice_gain_pan_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    slice_nudge_row(
-        cx,
-        "gain",
-        selected_gain_pan_text(summary),
-        move |cx| cx.emit(slice_gain_event(summary, -1.0)),
-        move |cx| cx.emit(slice_gain_event(summary, 1.0)),
-    );
-    slice_nudge_row(
-        cx,
-        "pan",
-        selected_gain_pan_text(summary),
-        move |cx| cx.emit(slice_pan_event(summary, -0.05)),
-        move |cx| cx.emit(slice_pan_event(summary, 0.05)),
-    );
+    HStack::new(cx, move |cx| {
+        crate::vizia_controls::drag_value(
+            cx,
+            "GAIN",
+            selected_slice_gain_text(summary),
+            selected_slice_gain_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                -60.0,
+                24.0,
+                0.0,
+                0.5,
+                0.1,
+                88.0,
+                crate::vizia_controls::Accent::Tone,
+            ),
+            move |cx, value| cx.emit(slice_gain_event(summary, value)),
+        );
+        crate::vizia_controls::drag_value(
+            cx,
+            "PAN",
+            selected_slice_pan_text(summary),
+            selected_slice_pan_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                -1.0,
+                1.0,
+                0.0,
+                0.05,
+                0.01,
+                88.0,
+                crate::vizia_controls::Accent::Mod,
+            ),
+            move |cx, value| cx.emit(slice_pan_event(summary, value)),
+        );
+    })
+    .height(Pixels(44.0))
+    .horizontal_gap(Pixels(6.0));
 }
 
 fn slice_filter_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    slice_nudge_row(
-        cx,
-        "filter",
-        selected_filter_text(summary),
-        move |cx| cx.emit(slice_filter_event(summary, 0.5)),
-        move |cx| cx.emit(slice_filter_event(summary, 2.0)),
-    );
+    HStack::new(cx, move |cx| {
+        crate::vizia_controls::drag_value(
+            cx,
+            "FILTER",
+            selected_filter_text(summary),
+            selected_filter_octave_value(summary),
+            crate::vizia_controls::DragValueSpec::new(
+                20.0_f32.log2(),
+                20_000.0_f32.log2(),
+                20_000.0_f32.log2(),
+                0.25,
+                0.02,
+                182.0,
+                crate::vizia_controls::Accent::Tone,
+            ),
+            move |cx, value| cx.emit(slice_filter_event(summary, value)),
+        );
+    })
+    .height(Pixels(44.0));
 }
 
 fn slice_playback_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
@@ -397,51 +471,6 @@ fn playback_button(
     .height(Stretch(1.0));
 }
 
-fn slice_nudge_row<T, Down, Up>(
-    cx: &mut Context,
-    label: &'static str,
-    value: T,
-    down: Down,
-    up: Up,
-) where
-    T: Res<String> + Clone + 'static,
-    Down: Fn(&mut EventContext) + Copy + Send + Sync + 'static,
-    Up: Fn(&mut EventContext) + Copy + Send + Sync + 'static,
-{
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label)
-            .class("ll-control-label")
-            .width(Pixels(44.0));
-        Button::new(cx, |cx| {
-            Svg::new(cx, ICON_MINUS)
-                .class("toolbar-icon")
-                .class("ll-toolbar-icon")
-        })
-        .on_press(down)
-        .class("toolbar-button")
-        .class("ll-tool-button")
-        .width(Pixels(28.0))
-        .height(Pixels(24.0));
-        Label::new(cx, value.clone())
-            .class("ll-control-value")
-            .width(Stretch(1.0))
-            .alignment(Alignment::Center);
-        Button::new(cx, |cx| {
-            Svg::new(cx, ICON_PLUS)
-                .class("toolbar-icon")
-                .class("ll-toolbar-icon")
-        })
-        .on_press(up)
-        .class("toolbar-button")
-        .class("ll-tool-button")
-        .width(Pixels(28.0))
-        .height(Pixels(24.0));
-    })
-    .height(Pixels(27.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(5.0));
-}
-
 #[derive(Clone, Copy)]
 enum ChokeChange {
     Clear,
@@ -462,53 +491,66 @@ fn pad_choke_event(summary: Signal<LinnodEditorPatchSummary>, change: ChokeChang
     EditorEvent::PadEdit(LinnodEditorPadEdit::ChokeGroup { pad: pad.pad, group })
 }
 
-fn slice_trim_event(
-    summary: Signal<LinnodEditorPatchSummary>,
-    start_delta: f32,
-    end_delta: f32,
-) -> EditorEvent {
+fn slice_trim_start_event(summary: Signal<LinnodEditorPatchSummary>, start_offset_ms: f32) -> EditorEvent {
     let slice = selected_slice(&summary.get());
     EditorEvent::SliceEdit(LinnodEditorSliceEdit::Offsets {
         slice_index: slice.index,
-        start_offset_ms: (slice.start_offset_ms + start_delta).max(0.0),
-        end_offset_ms: (slice.end_offset_ms + end_delta).max(0.0),
+        start_offset_ms,
+        end_offset_ms: slice.end_offset_ms,
     })
 }
 
-fn slice_pitch_event(
+fn slice_trim_end_event(summary: Signal<LinnodEditorPatchSummary>, end_offset_ms: f32) -> EditorEvent {
+    let slice = selected_slice(&summary.get());
+    EditorEvent::SliceEdit(LinnodEditorSliceEdit::Offsets {
+        slice_index: slice.index,
+        start_offset_ms: slice.start_offset_ms,
+        end_offset_ms,
+    })
+}
+
+fn slice_pitch_semitone_event(
     summary: Signal<LinnodEditorPatchSummary>,
-    semitone_delta: i32,
-    cent_delta: f32,
+    semitones: f32,
 ) -> EditorEvent {
     let slice = selected_slice(&summary.get());
     EditorEvent::SliceEdit(LinnodEditorSliceEdit::Pitch {
         slice_index: slice.index,
-        semitones: (slice.pitch_semitones + semitone_delta).clamp(-48, 48),
-        cents: (slice.pitch_cents + cent_delta).clamp(-100.0, 100.0),
+        semitones: semitones.round() as i32,
+        cents: slice.pitch_cents,
     })
 }
 
-fn slice_gain_event(summary: Signal<LinnodEditorPatchSummary>, delta: f32) -> EditorEvent {
+fn slice_pitch_cent_event(summary: Signal<LinnodEditorPatchSummary>, cents: f32) -> EditorEvent {
+    let slice = selected_slice(&summary.get());
+    EditorEvent::SliceEdit(LinnodEditorSliceEdit::Pitch {
+        slice_index: slice.index,
+        semitones: slice.pitch_semitones,
+        cents,
+    })
+}
+
+fn slice_gain_event(summary: Signal<LinnodEditorPatchSummary>, gain_db: f32) -> EditorEvent {
     let slice = selected_slice(&summary.get());
     EditorEvent::SliceEdit(LinnodEditorSliceEdit::GainDb {
         slice_index: slice.index,
-        gain_db: (slice.gain_db + delta).clamp(-60.0, 24.0),
+        gain_db,
     })
 }
 
-fn slice_pan_event(summary: Signal<LinnodEditorPatchSummary>, delta: f32) -> EditorEvent {
+fn slice_pan_event(summary: Signal<LinnodEditorPatchSummary>, pan: f32) -> EditorEvent {
     let slice = selected_slice(&summary.get());
     EditorEvent::SliceEdit(LinnodEditorSliceEdit::Pan {
         slice_index: slice.index,
-        pan: (slice.pan + delta).clamp(-1.0, 1.0),
+        pan,
     })
 }
 
-fn slice_filter_event(summary: Signal<LinnodEditorPatchSummary>, factor: f32) -> EditorEvent {
+fn slice_filter_event(summary: Signal<LinnodEditorPatchSummary>, cutoff_log2: f32) -> EditorEvent {
     let slice = selected_slice(&summary.get());
     EditorEvent::SliceEdit(LinnodEditorSliceEdit::FilterCutoff {
         slice_index: slice.index,
-        cutoff_hz: (slice.filter_cutoff_hz * factor).clamp(20.0, 20_000.0),
+        cutoff_hz: cutoff_log2.exp2(),
     })
 }
 

@@ -8,6 +8,7 @@ use crate::{
 pub struct SpectralFrameAnalysis {
     pub start_sample: usize,
     pub end_sample: usize,
+    pub harmonic_magnitudes: Vec<f32>,
     pub envelope: SpectralEnvelope,
     pub residual: ResidualEnergyDescriptor,
 }
@@ -32,6 +33,7 @@ pub fn analyze_spectral_frame(
     SpectralFrameAnalysis {
         start_sample,
         end_sample,
+        harmonic_magnitudes: harmonic_magnitudes(&magnitudes, bin_hz, f0_hz),
         envelope: spectral_envelope(&magnitudes, bin_hz, f0_hz, config),
         residual,
     }
@@ -157,6 +159,24 @@ fn harmonic_energy(magnitudes: &[f32], bin_hz: f32, f0_hz: f32) -> f32 {
         harmonic += f0_hz;
     }
     energy
+}
+
+fn harmonic_magnitudes(magnitudes: &[f32], bin_hz: f32, f0_hz: Option<f32>) -> Vec<f32> {
+    let Some(f0_hz) = f0_hz.filter(|f0| *f0 > 0.0 && bin_hz > 0.0) else {
+        return Vec::new();
+    };
+    let nyquist_hz = bin_hz * magnitudes.len().saturating_sub(1) as f32;
+    let radius_bins = (f0_hz * 0.05 / bin_hz).ceil().max(1.0) as usize;
+    let mut values = Vec::new();
+    let mut harmonic = f0_hz;
+    while harmonic <= nyquist_hz {
+        let center = (harmonic / bin_hz).round() as usize;
+        let start = center.saturating_sub(radius_bins);
+        let end = (center + radius_bins + 1).min(magnitudes.len());
+        values.push(rms_magnitude(&magnitudes[start..end]));
+        harmonic += f0_hz;
+    }
+    values
 }
 
 fn rms_magnitude(values: &[f32]) -> f32 {

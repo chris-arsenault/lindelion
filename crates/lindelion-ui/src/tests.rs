@@ -118,6 +118,39 @@ fn waveform_points_from_samples_are_bounded_and_sanitized() {
 }
 
 #[test]
+fn waveform_points_for_view_aggregates_visible_bins() {
+    let points = vec![
+        WaveformPoint {
+            min: -0.1,
+            max: 0.2,
+            rms: 0.1,
+        },
+        WaveformPoint {
+            min: -0.8,
+            max: 0.4,
+            rms: 0.4,
+        },
+        WaveformPoint {
+            min: -0.2,
+            max: 0.9,
+            rms: 0.6,
+        },
+        WaveformPoint {
+            min: -0.3,
+            max: 0.3,
+            rms: 0.2,
+        },
+    ];
+
+    let visible = waveform_points_for_view(&points, 0.25, 0.75, 1);
+
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].min, -0.8);
+    assert_eq!(visible[0].max, 0.9);
+    assert!(visible[0].rms > 0.4);
+}
+
+#[test]
 fn command_handler_invokes_patch_io_services() {
     let mut patch_io = MockPatchIoService::default();
     let mut sample_slots = MockSampleSlotService::default();

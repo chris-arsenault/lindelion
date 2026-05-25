@@ -1,7 +1,6 @@
 use lindelion_onset_detect::{
     AlgorithmParams, DetectionAlgorithm, DetectionConfig, MarkerKind, SliceMarker,
 };
-use lindelion_sample_library::DEFAULT_WAVEFORM_PREVIEW_POINTS;
 use lindelion_ui::{
     PadId as UiPadId,
     linnod_vizia::{
@@ -12,6 +11,8 @@ use lindelion_ui::{
     },
     waveform_points_from_samples,
 };
+
+const LINNOD_WAVEFORM_PREVIEW_POINTS: usize = 16_384;
 
 use crate::{
     LinnodPatch,
@@ -52,7 +53,7 @@ pub(super) fn source_summary_payload_from_plugin(
         source_sample_rate: analysis.source.sample_rate,
         waveform: waveform_points_from_samples(
             analysis.audio.samples(),
-            DEFAULT_WAVEFORM_PREVIEW_POINTS,
+            LINNOD_WAVEFORM_PREVIEW_POINTS,
         )
         .into_iter()
         .map(Into::into)
@@ -71,7 +72,14 @@ pub(super) fn source_summary_payload_from_plugin(
                     start_sample: summary.start_sample,
                     end_sample: summary.end_sample,
                     detected_f0_hz: summary.detected_f0_hz,
+                    detected_midi_note: tuning_info.map(|info| info.detected_midi_note),
+                    nearest_midi_note: tuning_info.map(|info| info.nearest_midi_note),
+                    nearest_scale_midi_note: tuning_info.map(|info| info.nearest_scale_midi_note),
+                    nearest_midi_note_hz: tuning_info.map(|info| info.nearest_midi_note_hz),
+                    nearest_scale_midi_note_hz: tuning_info
+                        .map(|info| info.nearest_scale_midi_note_hz),
                     cents_deviation: tuning_info.map(|info| info.cents_deviation),
+                    root_target_f0_hz: root_target_f0_hz(plugin.patch(), summary),
                 }
             })
             .collect(),
@@ -90,9 +98,24 @@ pub(super) fn apply_source_summary_payload(
             slice.start_sample = source_slice.start_sample;
             slice.end_sample = source_slice.end_sample;
             slice.detected_f0_hz = source_slice.detected_f0_hz;
+            slice.detected_midi_note = source_slice.detected_midi_note;
+            slice.nearest_midi_note = source_slice.nearest_midi_note;
+            slice.nearest_scale_midi_note = source_slice.nearest_scale_midi_note;
+            slice.nearest_midi_note_hz = source_slice.nearest_midi_note_hz;
+            slice.nearest_scale_midi_note_hz = source_slice.nearest_scale_midi_note_hz;
             slice.cents_deviation = source_slice.cents_deviation;
+            slice.root_target_f0_hz = source_slice.root_target_f0_hz;
         }
     }
+}
+
+fn root_target_f0_hz(
+    patch: &LinnodPatch,
+    summary: &lindelion_pitch_shift::PitchShiftSliceSummary,
+) -> Option<f32> {
+    let detected_f0_hz = summary.detected_f0_hz?;
+    let slice = patch.slice(summary.slice_index)?;
+    Some(detected_f0_hz * slice.pitch.ratio())
 }
 
 fn source_label(patch: &LinnodPatch) -> String {
@@ -212,7 +235,13 @@ fn editor_slice((index, slice): (usize, &crate::SliceParams)) -> LinnodEditorSli
         start_offset_ms: slice.start_offset_ms,
         end_offset_ms: slice.end_offset_ms,
         detected_f0_hz: None,
+        detected_midi_note: None,
+        nearest_midi_note: None,
+        nearest_scale_midi_note: None,
+        nearest_midi_note_hz: None,
+        nearest_scale_midi_note_hz: None,
         cents_deviation: None,
+        root_target_f0_hz: None,
         gain_db: slice.gain_db,
         pan: slice.pan,
         pitch_semitones: slice.pitch.semitones,

@@ -232,34 +232,82 @@ fn selected_slice_range(summary: Signal<LinnodEditorPatchSummary>) -> Memo<Strin
     })
 }
 
-fn selected_slice_trim_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+fn selected_slice_start_offset_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).start_offset_ms)
+}
+
+fn selected_slice_end_offset_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).end_offset_ms)
+}
+
+fn selected_slice_start_offset_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
     Memo::new(move |_| {
         let slice = selected_slice(&summary.get());
-        format!(
-            "Start {:+.1} ms / End {:+.1} ms",
-            slice.start_offset_ms, -slice.end_offset_ms
-        )
+        format!("{:+.1} ms", slice.start_offset_ms)
     })
 }
 
-fn selected_pitch_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+fn selected_slice_end_offset_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
     Memo::new(move |_| {
         let slice = selected_slice(&summary.get());
-        let detected = slice
-            .detected_f0_hz
-            .map(|frequency| format!(" / {frequency:.1} Hz"))
-            .unwrap_or_default();
-        format!(
-            "{} st / {:+.0} ct{}",
-            slice.pitch_semitones, slice.pitch_cents, detected
-        )
+        format!("{:+.1} ms", -slice.end_offset_ms)
     })
 }
 
-fn selected_gain_pan_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+fn selected_slice_semitone_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).pitch_semitones as f32)
+}
+
+fn selected_slice_cent_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).pitch_cents)
+}
+
+fn selected_slice_semitone_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
     Memo::new(move |_| {
         let slice = selected_slice(&summary.get());
-        format!("{:+.1} dB / pan {:+.2}", slice.gain_db, slice.pan)
+        format!("{:+} st", slice.pitch_semitones)
+    })
+}
+
+fn selected_slice_cent_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+    Memo::new(move |_| {
+        let slice = selected_slice(&summary.get());
+        format!("{:+.1} ct", slice.pitch_cents)
+    })
+}
+
+fn selected_pitch_diagnostic_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+    Memo::new(move |_| {
+        let summary = summary.get();
+        let slice = selected_slice(&summary);
+        let detected = detected_pitch_text(&slice);
+        let target = selected_pitch_target_text_for_slice(&slice, summary.tuning_reference_hz);
+        let pad = selected_pad(&summary)
+            .map(|pad| format!("MIDI {}", pad.midi_note))
+            .unwrap_or_else(|| "MIDI --".to_string());
+        format!("{detected} -> {target} / {pad}")
+    })
+}
+
+fn selected_slice_gain_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).gain_db)
+}
+
+fn selected_slice_pan_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).pan)
+}
+
+fn selected_slice_gain_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+    Memo::new(move |_| {
+        let slice = selected_slice(&summary.get());
+        format!("{:+.1} dB", slice.gain_db)
+    })
+}
+
+fn selected_slice_pan_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
+    Memo::new(move |_| {
+        let slice = selected_slice(&summary.get());
+        format!("{:+.2}", slice.pan)
     })
 }
 
@@ -270,12 +318,89 @@ fn selected_filter_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<Strin
     })
 }
 
+fn selected_filter_octave_value(summary: Signal<LinnodEditorPatchSummary>) -> Memo<f32> {
+    Memo::new(move |_| selected_slice(&summary.get()).filter_cutoff_hz.max(20.0).log2())
+}
+
 fn selected_pad_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
     Memo::new(move |_| {
-        selected_pad(&summary.get())
-            .map(|pad| format!("Pad {} / Slice {}", pad.pad.0, pad.slice_index + 1))
+        let summary = summary.get();
+        let prefix = match summary.trigger_mode {
+            LinnodEditorTriggerMode::Pad => "Pad",
+            LinnodEditorTriggerMode::Chromatic => "Root pad",
+        };
+        selected_pad(&summary)
+            .map(|pad| {
+                format!(
+                    "{prefix} {} / MIDI {} / Slice {}",
+                    pad.pad.0,
+                    pad.midi_note,
+                    pad.slice_index + 1
+                )
+            })
             .unwrap_or_else(|| "No pad".to_string())
     })
+}
+
+fn detected_pitch_text(slice: &LinnodEditorSliceSummary) -> String {
+    match (slice.detected_f0_hz, slice.detected_midi_note) {
+        (Some(frequency), Some(note)) => format!("det {frequency:.1} Hz {}", midi_note_text(note)),
+        (Some(frequency), None) => format!("det {frequency:.1} Hz"),
+        _ => "det --".to_string(),
+    }
+}
+
+fn selected_pitch_target_text_for_slice(
+    slice: &LinnodEditorSliceSummary,
+    reference_hz: f32,
+) -> String {
+    match slice.root_target_f0_hz {
+        Some(frequency) => format!(
+            "target {frequency:.1} Hz {}",
+            midi_note_text(midi_note_from_frequency(frequency, reference_hz))
+        ),
+        None => "target --".to_string(),
+    }
+}
+
+fn midi_note_text(note: f32) -> String {
+    if !note.is_finite() {
+        return "--".to_string();
+    }
+    let rounded = note.round().clamp(0.0, 127.0) as i32;
+    let cents = (note - rounded as f32) * 100.0;
+    let name = match rounded.rem_euclid(12) {
+        0 => "C",
+        1 => "C#",
+        2 => "D",
+        3 => "D#",
+        4 => "E",
+        5 => "F",
+        6 => "F#",
+        7 => "G",
+        8 => "G#",
+        9 => "A",
+        10 => "A#",
+        _ => "B",
+    };
+    let octave = rounded / 12 - 1;
+    if cents.abs() < 0.5 {
+        format!("{name}{octave}")
+    } else {
+        format!("{name}{octave}{cents:+.0}ct")
+    }
+}
+
+fn midi_note_from_frequency(frequency_hz: f32, reference_hz: f32) -> f32 {
+    if frequency_hz > 0.0
+        && frequency_hz.is_finite()
+        && reference_hz > 0.0
+        && reference_hz.is_finite()
+    {
+        69.0 + 12.0 * (frequency_hz / reference_hz).log2()
+    } else {
+        f32::NAN
+    }
 }
 
 fn selected_slice(summary: &LinnodEditorPatchSummary) -> LinnodEditorSliceSummary {
@@ -310,13 +435,30 @@ fn source_span_samples(summary: &LinnodEditorPatchSummary) -> usize {
         .map(|slice| slice.end_sample)
         .max()
         .unwrap_or(0);
-    marker_max
-        .max(slice_max)
-        .max(summary.source_sample_rate as usize)
-        .max(1)
+    let source_span = marker_max.max(slice_max);
+    let source_span = if source_span > 0 {
+        source_span
+    } else {
+        summary.source_sample_rate as usize
+    };
+    source_span.max(1)
 }
 
 fn slice_bounds(summary: &LinnodEditorPatchSummary, index: usize) -> Option<(usize, usize)> {
+    if let Some(start) = summary
+        .markers
+        .get(index)
+        .map(|marker| marker.position_samples)
+    {
+        let end = summary
+            .markers
+            .get(index + 1)
+            .map(|marker| marker.position_samples)
+            .unwrap_or_else(|| source_span_samples(summary));
+        if end > start {
+            return Some((start, end));
+        }
+    }
     if let Some(slice) = summary
         .slices
         .get(index)
@@ -324,17 +466,7 @@ fn slice_bounds(summary: &LinnodEditorPatchSummary, index: usize) -> Option<(usi
     {
         return Some((slice.start_sample, slice.end_sample));
     }
-    let start = summary
-        .markers
-        .get(index)
-        .map(|marker| marker.position_samples)
-        .unwrap_or(0);
-    let end = summary
-        .markers
-        .get(index + 1)
-        .map(|marker| marker.position_samples)
-        .unwrap_or_else(|| source_span_samples(summary));
-    (end > start).then_some((start, end))
+    None
 }
 
 fn effective_slice_bounds(

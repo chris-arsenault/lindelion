@@ -6,7 +6,6 @@ use std::{
     ptr,
 };
 
-use lindelion_onset_detect::{MarkerKind, SliceMarker, normalize_markers};
 use lindelion_plugin_shell::vst3::{
     Vst3ParameterInfo, Vst3ParameterMirror, Vst3PeerConnection, fill_vst3_parameter_info,
     notify_vst3_patch_update, parse_vst3_plain_value_string, read_plugin_state_from_stream,
@@ -41,7 +40,10 @@ use super::{
         LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
         LinnodSliceEditMessage, LinnodSourceSummaryPayload, LinnodTelemetryPayload,
     },
-    patch_edits::{apply_detection_edit_message, apply_pad_edit_message, apply_slice_edit_message},
+    patch_edits::{
+        apply_detection_edit_message, apply_marker_edit_message, apply_pad_edit_message,
+        apply_slice_edit_message,
+    },
 };
 
 pub(super) struct LinnodVst3Controller {
@@ -185,20 +187,7 @@ impl LinnodVst3Controller {
 
     pub(super) fn apply_marker_edit(&self, edit: LinnodMarkerEditMessage) -> tresult {
         let mut patch = self.patch.borrow().clone();
-        match edit {
-            LinnodMarkerEditMessage::AddUser { position_samples } => {
-                patch.markers.push(SliceMarker {
-                    position_samples,
-                    kind: MarkerKind::User,
-                });
-            }
-            LinnodMarkerEditMessage::RemoveAt { position_samples } => {
-                patch.markers.retain(|marker| {
-                    marker.position_samples != position_samples || marker.kind != MarkerKind::User
-                });
-            }
-        }
-        patch.markers = normalize_markers(patch.markers, 1, usize::MAX);
+        apply_marker_edit_message(&mut patch, edit, usize::MAX);
         self.replace_patch_mirror(patch);
         self.peer
             .notify(LinnodPluginMessage::MarkerEdit(edit.encode()).into_com_message())
@@ -271,11 +260,11 @@ impl LinnodVst3Controller {
     }
 
     fn replace_patch_mirror(&self, patch: LinnodPatch) {
-        let analysis_inputs_changed = {
+        let source_summary_must_clear = {
             let current = self.patch.borrow();
-            source_analysis_inputs_changed(&current, &patch)
+            source_summary_cache_must_clear(&current, &patch)
         };
-        if analysis_inputs_changed {
+        if source_summary_must_clear {
             self.source_summary.replace(None);
         }
         self.values.replace(parameter_values_from_patch(&patch));
@@ -497,10 +486,8 @@ impl IEditControllerTrait for LinnodVst3Controller {
     }
 }
 
-fn source_analysis_inputs_changed(current: &LinnodPatch, next: &LinnodPatch) -> bool {
-    current.source_sample != next.source_sample
-        || current.detection != next.detection
-        || current.markers != next.markers
+fn source_summary_cache_must_clear(current: &LinnodPatch, next: &LinnodPatch) -> bool {
+    current.source_sample != next.source_sample || current.detection != next.detection
 }
 
 pub(super) fn default_parameter_values() -> [f64; VST3_PARAMETER_COUNT] {

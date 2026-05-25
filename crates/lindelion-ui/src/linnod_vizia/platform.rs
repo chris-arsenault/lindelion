@@ -22,10 +22,11 @@ use super::{
     LINNOD_EDITOR_HEIGHT, LINNOD_EDITOR_PARAMETER_BINDING_COUNT, LINNOD_EDITOR_WIDTH,
     LinnodEditorCommand, LinnodEditorCommandRequest, LinnodEditorControlKind,
     LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit, LinnodEditorHost,
-    LinnodEditorPadEdit, LinnodEditorPadSummary, LinnodEditorParameterBinding,
-    LinnodEditorPatchSummary, LinnodEditorPlaybackMode, LinnodEditorSliceEdit,
-    LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorStatus,
-    LinnodEditorSurfaceSlot, LinnodEditorTelemetry, LinnodEditorTriggerMode,
+    LinnodEditorMarker, LinnodEditorMarkerEdit, LinnodEditorMarkerKind, LinnodEditorPadEdit,
+    LinnodEditorPadSummary, LinnodEditorParameterBinding, LinnodEditorPatchSummary,
+    LinnodEditorPlaybackMode, LinnodEditorSliceEdit, LinnodEditorSliceSummary,
+    LinnodEditorSourceStatus, LinnodEditorStatus, LinnodEditorSurfaceSlot, LinnodEditorTelemetry,
+    LinnodEditorTriggerMode,
 };
 use crate::{PadId, WaveformPoint};
 
@@ -37,6 +38,9 @@ include!("platform_layout.rs");
 include!("platform_controls.rs");
 include!("platform_detection_controls.rs");
 include!("platform_text.rs");
+include!("platform_waveform.rs");
+include!("platform_waveform_geometry.rs");
+include!("platform_waveform_drawing.rs");
 include!("platform_drawing.rs");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

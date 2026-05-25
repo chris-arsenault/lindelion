@@ -17,9 +17,7 @@ fn linnod_detection_controls(cx: &mut Context, signals: EditorSignals) {
         })
         .height(Pixels(34.0))
         .horizontal_gap(Pixels(8.0));
-        detection_min_slice_row(cx, signals.summary);
-        detection_primary_row(cx, signals.summary);
-        detection_secondary_row(cx, signals.summary);
+        detection_value_controls(cx, signals.summary);
         HStack::new(cx, move |cx| {
             linnod_command_button(
                 cx,
@@ -67,89 +65,59 @@ fn detection_algorithm_button(
     .height(Stretch(1.0));
 }
 
-fn detection_min_slice_row(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    detection_nudge_row(
-        cx,
-        "min slice",
-        detection_min_slice_text(summary),
-        move |cx| {
-            let value = (summary.get().detection.min_slice_ms - 5.0).max(0.0);
-            cx.emit(EditorEvent::DetectionEdit(
-                LinnodEditorDetectionEdit::MinSliceMs { min_slice_ms: value },
-            ));
-        },
-        move |cx| {
-            let value = (summary.get().detection.min_slice_ms + 5.0).min(2_000.0);
-            cx.emit(EditorEvent::DetectionEdit(
-                LinnodEditorDetectionEdit::MinSliceMs { min_slice_ms: value },
-            ));
-        },
-    );
-}
-
-fn detection_primary_row(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    detection_nudge_row(
-        cx,
-        "primary",
-        detection_primary_param_text(summary),
-        move |cx| cx.emit(EditorEvent::DetectionEdit(primary_detection_edit(summary, -1))),
-        move |cx| cx.emit(EditorEvent::DetectionEdit(primary_detection_edit(summary, 1))),
-    );
-}
-
-fn detection_secondary_row(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    detection_nudge_row(
-        cx,
-        "detail",
-        detection_secondary_param_text(summary),
-        move |cx| cx.emit(EditorEvent::DetectionEdit(secondary_detection_edit(summary, -1))),
-        move |cx| cx.emit(EditorEvent::DetectionEdit(secondary_detection_edit(summary, 1))),
-    );
-}
-
-fn detection_nudge_row<T, Down, Up>(
-    cx: &mut Context,
-    label: &'static str,
-    value: T,
-    down: Down,
-    up: Up,
-) where
-    T: Res<String> + Clone + 'static,
-    Down: Fn(&mut EventContext) + Copy + Send + Sync + 'static,
-    Up: Fn(&mut EventContext) + Copy + Send + Sync + 'static,
-{
+fn detection_value_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
     HStack::new(cx, move |cx| {
-        Label::new(cx, label)
-            .class("ll-control-label")
-            .width(Pixels(58.0));
-        Button::new(cx, |cx| {
-            Svg::new(cx, ICON_MINUS)
-                .class("toolbar-icon")
-                .class("ll-toolbar-icon")
-        })
-        .on_press(down)
-        .class("toolbar-button")
-        .class("ll-tool-button")
-        .width(Pixels(28.0))
-        .height(Pixels(24.0));
-        Label::new(cx, value.clone())
-            .class("ll-control-value")
-            .width(Stretch(1.0))
-            .alignment(Alignment::Center);
-        Button::new(cx, |cx| {
-            Svg::new(cx, ICON_PLUS)
-                .class("toolbar-icon")
-                .class("ll-toolbar-icon")
-        })
-        .on_press(up)
-        .class("toolbar-button")
-        .class("ll-tool-button")
-        .width(Pixels(28.0))
-        .height(Pixels(24.0));
+        crate::vizia_controls::dynamic_drag_value(
+            cx,
+            "MIN",
+            detection_min_slice_text(summary),
+            move || summary.get().detection.min_slice_ms,
+            || {
+                crate::vizia_controls::DragValueSpec::new(
+                    0.0,
+                    2_000.0,
+                    50.0,
+                    5.0,
+                    1.0,
+                    92.0,
+                    crate::vizia_controls::Accent::Audio,
+                )
+            },
+            move |cx, value| {
+                cx.emit(EditorEvent::DetectionEdit(
+                    LinnodEditorDetectionEdit::MinSliceMs {
+                        min_slice_ms: value,
+                    },
+                ));
+            },
+        );
+        crate::vizia_controls::dynamic_drag_value(
+            cx,
+            "PRIMARY",
+            detection_primary_param_text(summary),
+            move || primary_detection_value(summary),
+            move || primary_detection_spec(summary),
+            move |cx, value| {
+                cx.emit(EditorEvent::DetectionEdit(primary_detection_edit_from_value(
+                    summary, value,
+                )));
+            },
+        );
+        crate::vizia_controls::dynamic_drag_value(
+            cx,
+            "DETAIL",
+            detection_secondary_param_text(summary),
+            move || secondary_detection_value(summary),
+            move || secondary_detection_spec(summary),
+            move |cx, value| {
+                cx.emit(EditorEvent::DetectionEdit(secondary_detection_edit_from_value(
+                    summary, value,
+                )));
+            },
+        );
     })
-    .height(Pixels(26.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(5.0));
+    .height(Pixels(44.0))
+    .horizontal_gap(Pixels(6.0));
 }
 
 fn detection_metric<T>(cx: &mut Context, label: &'static str, value: T)
@@ -170,122 +138,196 @@ fn algorithm_for_index(index: usize) -> LinnodEditorDetectionAlgorithm {
     }
 }
 
-fn primary_detection_edit(
+fn primary_detection_value(summary: Signal<LinnodEditorPatchSummary>) -> f32 {
+    let detection = summary.get().detection;
+    match detection.algorithm {
+        LinnodEditorDetectionAlgorithm::SuperFlux
+        | LinnodEditorDetectionAlgorithm::ComplexFlux => detection.lookback_frames as f32,
+        LinnodEditorDetectionAlgorithm::SpectralSparsity => {
+            (detection.spectral_window_size.max(1) as f32).log2()
+        }
+        LinnodEditorDetectionAlgorithm::PitchStability => {
+            detection.pitch_stability_threshold_cents
+        }
+        LinnodEditorDetectionAlgorithm::EnergyTransient => {
+            (detection.energy_frame_size.max(1) as f32).log2()
+        }
+        LinnodEditorDetectionAlgorithm::ManualGrid => detection.manual_grid_divisions as f32,
+    }
+}
+
+fn secondary_detection_value(summary: Signal<LinnodEditorPatchSummary>) -> f32 {
+    let detection = summary.get().detection;
+    match detection.algorithm {
+        LinnodEditorDetectionAlgorithm::SuperFlux => detection.max_filter_radius as f32,
+        LinnodEditorDetectionAlgorithm::ComplexFlux => detection.group_delay_weight,
+        LinnodEditorDetectionAlgorithm::SpectralSparsity => detection.lookback_frames as f32,
+        LinnodEditorDetectionAlgorithm::PitchStability => {
+            detection.pitch_stability_duration_ms
+        }
+        LinnodEditorDetectionAlgorithm::EnergyTransient => {
+            (detection.energy_frame_size.max(1) as f32).log2()
+        }
+        LinnodEditorDetectionAlgorithm::ManualGrid => detection.manual_grid_offset_ms,
+    }
+}
+
+fn primary_detection_spec(
     summary: Signal<LinnodEditorPatchSummary>,
-    direction: i32,
+) -> crate::vizia_controls::DragValueSpec {
+    let detection = summary.get().detection;
+    match detection.algorithm {
+        LinnodEditorDetectionAlgorithm::SuperFlux
+        | LinnodEditorDetectionAlgorithm::ComplexFlux => {
+            drag_spec(1.0, 32.0, 3.0, 1.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+        LinnodEditorDetectionAlgorithm::SpectralSparsity => drag_spec(
+            64.0_f32.log2(),
+            8_192.0_f32.log2(),
+            1_024.0_f32.log2(),
+            1.0,
+            1.0,
+            crate::vizia_controls::Accent::Audio,
+        ),
+        LinnodEditorDetectionAlgorithm::PitchStability => {
+            drag_spec(1.0, 2_400.0, 120.0, 10.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+        LinnodEditorDetectionAlgorithm::EnergyTransient => drag_spec(
+            32.0_f32.log2(),
+            8_192.0_f32.log2(),
+            512.0_f32.log2(),
+            1.0,
+            1.0,
+            crate::vizia_controls::Accent::Audio,
+        ),
+        LinnodEditorDetectionAlgorithm::ManualGrid => {
+            drag_spec(1.0, 16.0, 16.0, 1.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+    }
+}
+
+fn secondary_detection_spec(
+    summary: Signal<LinnodEditorPatchSummary>,
+) -> crate::vizia_controls::DragValueSpec {
+    let detection = summary.get().detection;
+    match detection.algorithm {
+        LinnodEditorDetectionAlgorithm::SuperFlux => {
+            drag_spec(0.0, 32.0, 3.0, 1.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+        LinnodEditorDetectionAlgorithm::ComplexFlux => {
+            drag_spec(0.0, 8.0, 1.0, 0.1, 0.01, crate::vizia_controls::Accent::Audio)
+        }
+        LinnodEditorDetectionAlgorithm::SpectralSparsity => {
+            drag_spec(1.0, 32.0, 3.0, 1.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+        LinnodEditorDetectionAlgorithm::PitchStability => {
+            drag_spec(1.0, 5_000.0, 64.0, 5.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+        LinnodEditorDetectionAlgorithm::EnergyTransient => drag_spec(
+            32.0_f32.log2(),
+            8_192.0_f32.log2(),
+            512.0_f32.log2(),
+            1.0,
+            1.0,
+            crate::vizia_controls::Accent::Audio,
+        ),
+        LinnodEditorDetectionAlgorithm::ManualGrid => {
+            drag_spec(0.0, 60_000.0, 0.0, 5.0, 1.0, crate::vizia_controls::Accent::Audio)
+        }
+    }
+}
+
+fn primary_detection_edit_from_value(
+    summary: Signal<LinnodEditorPatchSummary>,
+    value: f32,
 ) -> LinnodEditorDetectionEdit {
     let detection = summary.get().detection;
     match detection.algorithm {
         LinnodEditorDetectionAlgorithm::SuperFlux
         | LinnodEditorDetectionAlgorithm::ComplexFlux => {
-            let next = offset_u32(detection.lookback_frames, direction, 1, 32);
             LinnodEditorDetectionEdit::LookbackFrames {
-                lookback_frames: next,
+                lookback_frames: value.round().clamp(1.0, 32.0) as u32,
             }
         }
         LinnodEditorDetectionAlgorithm::SpectralSparsity => {
             LinnodEditorDetectionEdit::SpectralWindowSize {
-                window_size: scale_pow2(detection.spectral_window_size, direction, 64, 8192),
+                window_size: pow2_from_log2(value, 64, 8192),
             }
         }
         LinnodEditorDetectionAlgorithm::PitchStability => {
             LinnodEditorDetectionEdit::PitchStabilityThresholdCents {
-                threshold_cents: offset_f32(
-                    detection.pitch_stability_threshold_cents,
-                    direction,
-                    10.0,
-                    1.0,
-                    2_400.0,
-                ),
+                threshold_cents: value,
             }
         }
         LinnodEditorDetectionAlgorithm::EnergyTransient => {
             LinnodEditorDetectionEdit::EnergyFrameSize {
-                frame_size: scale_pow2(detection.energy_frame_size, direction, 32, 8192),
+                frame_size: pow2_from_log2(value, 32, 8192),
             }
         }
         LinnodEditorDetectionAlgorithm::ManualGrid => LinnodEditorDetectionEdit::ManualGridDivisions {
-            divisions: offset_usize(detection.manual_grid_divisions, direction, 1, 16),
+            divisions: value.round().clamp(1.0, 16.0) as usize,
         },
     }
 }
 
-fn secondary_detection_edit(
+fn secondary_detection_edit_from_value(
     summary: Signal<LinnodEditorPatchSummary>,
-    direction: i32,
+    value: f32,
 ) -> LinnodEditorDetectionEdit {
     let detection = summary.get().detection;
     match detection.algorithm {
         LinnodEditorDetectionAlgorithm::SuperFlux => {
             LinnodEditorDetectionEdit::MaxFilterRadius {
-                max_filter_radius: offset_u32(detection.max_filter_radius, direction, 0, 32),
+                max_filter_radius: value.round().clamp(0.0, 32.0) as u32,
             }
         }
         LinnodEditorDetectionAlgorithm::ComplexFlux => {
             LinnodEditorDetectionEdit::GroupDelayWeight {
-                group_delay_weight: offset_f32(
-                    detection.group_delay_weight,
-                    direction,
-                    0.1,
-                    0.0,
-                    8.0,
-                ),
+                group_delay_weight: value,
             }
         }
         LinnodEditorDetectionAlgorithm::SpectralSparsity => {
             LinnodEditorDetectionEdit::LookbackFrames {
-                lookback_frames: offset_u32(detection.lookback_frames, direction, 1, 32),
+                lookback_frames: value.round().clamp(1.0, 32.0) as u32,
             }
         }
         LinnodEditorDetectionAlgorithm::PitchStability => {
             LinnodEditorDetectionEdit::PitchStabilityDurationMs {
-                duration_ms: offset_f32(
-                    detection.pitch_stability_duration_ms,
-                    direction,
-                    5.0,
-                    1.0,
-                    5_000.0,
-                ),
+                duration_ms: value,
             }
         }
         LinnodEditorDetectionAlgorithm::EnergyTransient => {
             LinnodEditorDetectionEdit::EnergyFrameSize {
-                frame_size: scale_pow2(detection.energy_frame_size, direction, 32, 8192),
+                frame_size: pow2_from_log2(value, 32, 8192),
             }
         }
         LinnodEditorDetectionAlgorithm::ManualGrid => {
             LinnodEditorDetectionEdit::ManualGridOffsetMs {
-                offset_ms: offset_f32(detection.manual_grid_offset_ms, direction, 5.0, 0.0, 60_000.0),
+                offset_ms: value,
             }
         }
     }
 }
 
-fn offset_u32(value: u32, direction: i32, min: u32, max: u32) -> u32 {
-    if direction < 0 {
-        value.saturating_sub(1).max(min)
-    } else {
-        value.saturating_add(1).min(max)
-    }
+fn drag_spec(
+    min: f32,
+    max: f32,
+    default: f32,
+    coarse_step: f32,
+    fine_step: f32,
+    accent: crate::vizia_controls::Accent,
+) -> crate::vizia_controls::DragValueSpec {
+    crate::vizia_controls::DragValueSpec::new(
+        min,
+        max,
+        default,
+        coarse_step,
+        fine_step,
+        92.0,
+        accent,
+    )
 }
 
-fn offset_usize(value: usize, direction: i32, min: usize, max: usize) -> usize {
-    if direction < 0 {
-        value.saturating_sub(1).max(min)
-    } else {
-        value.saturating_add(1).min(max)
-    }
-}
-
-fn offset_f32(value: f32, direction: i32, step: f32, min: f32, max: f32) -> f32 {
-    let signed_step = if direction < 0 { -step } else { step };
-    (value + signed_step).clamp(min, max)
-}
-
-fn scale_pow2(value: usize, direction: i32, min: usize, max: usize) -> usize {
-    if direction < 0 {
-        (value / 2).max(min)
-    } else {
-        value.saturating_mul(2).min(max)
-    }
+fn pow2_from_log2(value: f32, min: usize, max: usize) -> usize {
+    (2.0_f32.powf(value.round()) as usize).clamp(min, max)
 }

@@ -11,6 +11,7 @@ pub struct PitchShiftSourceCache {
     pub source_len_samples: usize,
     pub config: PitchShiftAnalysisConfig,
     pub frames: Vec<PitchShiftFrameAnalysis>,
+    pub epoch_samples: Vec<usize>,
     pub voicing_segments: Vec<VoicingSegment>,
     pub slice_summaries: Vec<PitchShiftSliceSummary>,
 }
@@ -62,6 +63,7 @@ pub struct PitchShiftFrameAnalysis {
     pub confidence: f32,
     pub voiced: bool,
     pub rms: f32,
+    pub harmonic_magnitudes: Vec<f32>,
     pub spectral_envelope: SpectralEnvelope,
     pub residual: ResidualEnergyDescriptor,
 }

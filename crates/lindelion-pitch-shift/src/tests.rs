@@ -161,6 +161,52 @@ fn synthesis_shifts_pitch_while_preserving_envelope_peak() {
 }
 
 #[test]
+fn synthesis_shifts_sine_to_expected_output_frequency() {
+    let sample_rate = 48_000;
+    let source_f0_hz = 220.0;
+    let audio = sine_wave(source_f0_hz, sample_rate, sample_rate as usize / 2);
+    let contour = constant_pitch_contour(sample_rate, source_f0_hz, audio.len());
+    let source_cache = PitchShiftAnalyzer::new(PitchShiftAnalysisConfig {
+        frame_size: 4096,
+        envelope_points: 128,
+        ..PitchShiftAnalysisConfig::default()
+    })
+    .analyze(&audio, sample_rate, &contour, &markers(&[0]))
+    .unwrap();
+
+    for (semitones, expected_hz) in [(-12.0, 110.0), (7.0, 329.63), (12.0, 440.0)] {
+        let pitch_ratio = PitchShiftRatios::from_semitones_cents(semitones, 0.0).pitch_ratio;
+        let rendered = PitchShiftEngine
+            .render_slice(
+                &audio,
+                &source_cache,
+                PitchShiftSliceRenderRequest {
+                    slice_index: 0,
+                    config: PitchShiftRenderConfig {
+                        ratios: PitchShiftRatios {
+                            pitch_ratio,
+                            formant_ratio: Some(pitch_ratio),
+                        },
+                        residual_policy: ResidualMixPolicy::Muted,
+                        ..PitchShiftRenderConfig::default()
+                    },
+                },
+            )
+            .unwrap();
+
+        let estimated_hz = lindelion_dsp_utils::analysis::estimate_frequency_zero_crossings(
+            &rendered[2_048..],
+            sample_rate as f32,
+        )
+        .unwrap();
+        assert!(
+            (estimated_hz - expected_hz).abs() < 2.0,
+            "expected {expected_hz:.2} Hz from {semitones:+.0} st, got {estimated_hz:.2} Hz"
+        );
+    }
+}
+
+#[test]
 fn formant_ratio_moves_envelope_when_requested() {
     let analyzer = PitchShiftAnalyzer::new(PitchShiftAnalysisConfig {
         frame_size: 4096,
@@ -274,6 +320,21 @@ fn pitch_contour(sample_rate: u32, f0_values: &[Option<f32>]) -> PitchContour {
             .copied()
             .enumerate()
             .map(|(index, f0_hz)| pitch_frame(index, index * 2_400, f0_hz, sample_rate))
+            .collect(),
+    }
+}
+
+fn constant_pitch_contour(sample_rate: u32, f0_hz: f32, len: usize) -> PitchContour {
+    PitchContour {
+        source_sample_rate: sample_rate,
+        analysis_sample_rate: sample_rate,
+        hop_size: 1_200,
+        frames: (0..len)
+            .step_by(1_200)
+            .enumerate()
+            .map(|(index, source_sample_position)| {
+                pitch_frame(index, source_sample_position, Some(f0_hz), sample_rate)
+            })
             .collect(),
     }
 }

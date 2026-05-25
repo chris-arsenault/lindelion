@@ -188,7 +188,13 @@ pub(super) struct LinnodSourceSlicePayload {
     pub(super) start_sample: usize,
     pub(super) end_sample: usize,
     pub(super) detected_f0_hz: Option<f32>,
+    pub(super) detected_midi_note: Option<f32>,
+    pub(super) nearest_midi_note: Option<u8>,
+    pub(super) nearest_scale_midi_note: Option<u8>,
+    pub(super) nearest_midi_note_hz: Option<f32>,
+    pub(super) nearest_scale_midi_note_hz: Option<f32>,
     pub(super) cents_deviation: Option<f32>,
+    pub(super) root_target_f0_hz: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

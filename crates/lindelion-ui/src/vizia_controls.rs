@@ -1,4 +1,10 @@
 use vizia::prelude::*;
+
+#[path = "vizia_controls/drag_value.rs"]
+mod drag_value;
+
+pub(crate) use drag_value::{DragValueSpec, drag_value, dynamic_drag_value};
+
 pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
     .ll-shell {
         background-color: #111517;
@@ -90,15 +96,34 @@ pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
         font-size: 11px;
     }
     .ll-control-row:hover .ll-control-label,
+    .ll-drag-value:hover .ll-control-label,
     .ll-knob-cell:hover .ll-control-label,
     .ll-stepper:hover .ll-control-label {
         color: #c4cec8;
     }
     .ll-control-row:hover .ll-control-value,
+    .ll-drag-value:hover .ll-control-value,
     .ll-knob-cell:hover .ll-control-value,
     .ll-stepper:hover .ll-control-value {
         color: #f6fbf7;
     }
+    .ll-drag-value {
+        background-color: #111719;
+        border-width: 1px;
+        border-color: #303b3f;
+        border-radius: 5px;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+    .ll-drag-value:hover {
+        background-color: #1d2528;
+        border-color: #59b6d8;
+    }
+    .ll-drag-value-audio:hover { border-color: #59b6d8; }
+    .ll-drag-value-tone:hover { border-color: #7ed06d; }
+    .ll-drag-value-slice:hover { border-color: #f2a84b; }
+    .ll-drag-value-mod:hover { border-color: #9a78ff; }
+    .ll-drag-value-transport:hover { border-color: #ef6f88; }
     knob.ll-knob {
         width: 42px;
         height: 42px;
@@ -300,6 +325,7 @@ pub(crate) fn parameter_knob<V, F>(
     .vertical_gap(Pixels(2.0))
     .tooltip(|cx| tooltip(cx, KNOB_HELP));
 }
+
 pub(crate) fn parameter_stepper<V, F>(
     cx: &mut Context,
     label: &'static str,

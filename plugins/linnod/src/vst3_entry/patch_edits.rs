@@ -1,8 +1,11 @@
+use lindelion_onset_detect::{MarkerKind, SliceMarker, normalize_markers};
+
 use crate::{
     DetectionEdit, LinnodPatch, SliceEdit,
     patch::PlaybackMode,
     vst3_entry::messages::{
-        LinnodDetectionEditMessage, LinnodPadEditMessage, LinnodSliceEditMessage,
+        LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
+        LinnodSliceEditMessage,
     },
 };
 
@@ -47,6 +50,27 @@ pub(super) fn apply_detection_edit_message(
             DetectionEdit::ManualGridOffsetMs(offset_ms)
         }
     })
+}
+
+pub(super) fn apply_marker_edit_message(
+    patch: &mut LinnodPatch,
+    edit: LinnodMarkerEditMessage,
+    source_len: usize,
+) {
+    match edit {
+        LinnodMarkerEditMessage::AddUser { position_samples } => {
+            patch.markers.push(SliceMarker {
+                position_samples,
+                kind: MarkerKind::User,
+            });
+        }
+        LinnodMarkerEditMessage::RemoveAt { position_samples } => {
+            patch
+                .markers
+                .retain(|marker| marker.position_samples != position_samples);
+        }
+    }
+    patch.markers = normalize_markers(std::mem::take(&mut patch.markers), 1, source_len);
 }
 
 pub(super) fn apply_slice_edit_message(

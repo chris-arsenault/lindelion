@@ -1,6 +1,6 @@
 use super::*;
-use crate::patch::{ChokeGroupId, PadAssignment, PadId};
-use lindelion_dsp_utils::analysis::assert_all_finite;
+use crate::patch::{ChokeGroupId, PadAssignment, PadId, PitchOffset};
+use lindelion_dsp_utils::analysis::{assert_all_finite, estimate_frequency_zero_crossings};
 use lindelion_onset_detect::{MarkerKind, SliceMarker};
 use lindelion_pitch_detect::{PitchContour, PitchFrame};
 use lindelion_pitch_shift::PitchShiftAnalyzer;
@@ -133,6 +133,43 @@ fn chromatic_mode_resolves_selected_pad_and_pitch_delta() {
 
     assert_eq!(resolved.slice_index, 7);
     assert_eq!(resolved.chromatic_semitones, 12.0);
+}
+
+#[test]
+fn pad_mode_renders_pitch_offset_sine_at_requested_frequency() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.slices[0].pitch = PitchOffset::from_frequency_ratio(2.0);
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+
+    let detected_f0_hz = fixture
+        .analysis
+        .pitch_shift_cache
+        .slice_summary(trigger.slice_index)
+        .and_then(|summary| summary.detected_f0_hz)
+        .unwrap();
+    assert_eq!(trigger.slice_index, 0);
+    assert!((detected_f0_hz * trigger.ratios.pitch_ratio - 440.0).abs() < 0.01);
+    assert_eq!(
+        trigger.ratios.formant_ratio,
+        Some(trigger.ratios.pitch_ratio)
+    );
+
+    let mut left = [0.0; 4_096];
+    let mut right = [0.0; 4_096];
+    fixture.processor.process(
+        &fixture.patch,
+        Some(&fixture.analysis),
+        &[note_on(0, 36, 1.0)],
+        &mut left,
+        &mut right,
+    );
+
+    let estimated_hz = estimate_frequency_zero_crossings(&left[512..], 48_000.0).unwrap();
+    assert!(
+        (estimated_hz - 440.0).abs() < 3.0,
+        "expected 440 Hz pad output, got {estimated_hz:.2} Hz"
+    );
 }
 
 #[test]

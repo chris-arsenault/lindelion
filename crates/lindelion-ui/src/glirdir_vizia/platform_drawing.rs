@@ -124,8 +124,15 @@ fn draw_waveform(
     let center_y = bounds.y + bounds.h * 0.5;
     let scale_y = bounds.h * 0.38;
     let width = (right - left).max(1.0);
-    for (index, point) in preview.points.iter().enumerate() {
-        let x = left + index as f32 / preview.points.len().max(1) as f32 * width;
+    let points = crate::waveform_points_for_view(
+        &preview.points,
+        0.0,
+        1.0,
+        width.ceil().clamp(16.0, 2048.0) as usize,
+    );
+    let denominator = points.len().saturating_sub(1).max(1) as f32;
+    for (index, point) in points.iter().enumerate() {
+        let x = left + index as f32 / denominator * width;
         draw_waveform_point(canvas, x, center_y, scale_y, point);
     }
 }

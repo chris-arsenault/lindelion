@@ -41,6 +41,31 @@ pub fn waveform_points_from_samples(samples: &[f32], max_points: usize) -> Vec<W
         .collect()
 }
 
+pub fn waveform_points_for_view(
+    points: &[WaveformPoint],
+    start_ratio: f32,
+    end_ratio: f32,
+    max_points: usize,
+) -> Vec<WaveformPoint> {
+    if points.is_empty() || max_points == 0 {
+        return Vec::new();
+    }
+    let start_ratio = finite_ratio(start_ratio);
+    let end_ratio = finite_ratio(end_ratio).max(start_ratio);
+    let source_start = start_ratio * points.len() as f32;
+    let source_end = (end_ratio * points.len() as f32).max(source_start + 1.0);
+    let output_len = max_points.max(1);
+    (0..output_len)
+        .map(|index| {
+            let start =
+                source_start + (source_end - source_start) * index as f32 / output_len as f32;
+            let end =
+                source_start + (source_end - source_start) * (index + 1) as f32 / output_len as f32;
+            waveform_point_from_points(points, start, end)
+        })
+        .collect()
+}
+
 fn waveform_point_from_samples(samples: &[f32]) -> WaveformPoint {
     let mut min = 0.0_f32;
     let mut max = 0.0_f32;
@@ -56,6 +81,42 @@ fn waveform_point_from_samples(samples: &[f32]) -> WaveformPoint {
         max,
         rms: (sum_squares / samples.len().max(1) as f32).sqrt(),
     }
+}
+
+fn waveform_point_from_points(points: &[WaveformPoint], start: f32, end: f32) -> WaveformPoint {
+    let first = start.floor().max(0.0) as usize;
+    let last = end.ceil().max(first as f32 + 1.0) as usize;
+    let mut min = 0.0_f32;
+    let mut max = 0.0_f32;
+    let mut sum_squares = 0.0_f32;
+    let mut count = 0usize;
+    for point in &points[first.min(points.len())..last.min(points.len())] {
+        min = min.min(finite_sample(point.min));
+        max = max.max(finite_sample(point.max));
+        let rms = finite_sample(point.rms).abs();
+        sum_squares += rms * rms;
+        count += 1;
+    }
+    if count == 0 {
+        return WaveformPoint::silence();
+    }
+    WaveformPoint {
+        min,
+        max,
+        rms: (sum_squares / count as f32).sqrt(),
+    }
+}
+
+fn finite_ratio(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn finite_sample(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
 #[derive(Debug, Clone, PartialEq)]

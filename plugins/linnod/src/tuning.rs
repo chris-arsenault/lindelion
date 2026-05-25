@@ -13,6 +13,8 @@ pub struct SliceTuningInfo {
     pub detected_midi_note: f32,
     pub nearest_midi_note: u8,
     pub nearest_scale_midi_note: u8,
+    pub nearest_midi_note_hz: f32,
+    pub nearest_scale_midi_note_hz: f32,
     pub cents_deviation: f32,
 }
 
@@ -108,11 +110,22 @@ fn tuning_info_from_summary(
         detected_midi_note,
         nearest_midi_note,
         nearest_scale_midi_note: nearest_scale,
+        nearest_midi_note_hz: hz_from_midi_note_with_reference(
+            nearest_midi_note as f32,
+            tuning.reference_hz,
+        ),
+        nearest_scale_midi_note_hz: hz_from_midi_note_with_reference(
+            nearest_scale as f32,
+            tuning.reference_hz,
+        ),
         cents_deviation: (detected_midi_note - nearest_midi_note as f32) * 100.0,
     })
 }
 
-fn midi_note_from_hz_with_reference(frequency_hz: f32, reference_hz: f32) -> Option<f32> {
+pub(crate) fn midi_note_from_hz_with_reference(
+    frequency_hz: f32,
+    reference_hz: f32,
+) -> Option<f32> {
     let reference_hz = sanitized_reference_hz(reference_hz);
     if frequency_hz > 0.0 && frequency_hz.is_finite() {
         Some(69.0 + 12.0 * (frequency_hz / reference_hz).log2())
@@ -121,7 +134,7 @@ fn midi_note_from_hz_with_reference(frequency_hz: f32, reference_hz: f32) -> Opt
     }
 }
 
-fn hz_from_midi_note_with_reference(note: f32, reference_hz: f32) -> f32 {
+pub(crate) fn hz_from_midi_note_with_reference(note: f32, reference_hz: f32) -> f32 {
     sanitized_reference_hz(reference_hz) * 2.0_f32.powf((note - 69.0) / 12.0)
 }
 
@@ -148,6 +161,7 @@ mod tests {
         let info = slice_tuning_info(&cache, 0, &TuningConfig::default()).unwrap();
 
         assert_eq!(info.nearest_midi_note, 69);
+        assert!((info.nearest_midi_note_hz - 440.0).abs() < 0.01);
         assert!((info.cents_deviation - 11.76).abs() < 0.1);
     }
 
@@ -197,6 +211,7 @@ mod tests {
             source_len_samples: 4_800,
             config: PitchShiftAnalysisConfig::default(),
             frames: Vec::new(),
+            epoch_samples: Vec::new(),
             voicing_segments: vec![lindelion_pitch_shift::VoicingSegment {
                 kind: VoicingKind::Voiced,
                 start_sample: 0,

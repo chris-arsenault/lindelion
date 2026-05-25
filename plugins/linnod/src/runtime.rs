@@ -329,10 +329,13 @@ impl LinnodVoice {
             self.finish_playback();
             return 0.0;
         };
+        let pitch_bend_ratio = semitones_to_ratio(self.expression.stream.pitch_bend);
         let ratios = PitchShiftRatios {
-            pitch_ratio: self.ratios.pitch_ratio
-                * semitones_to_ratio(self.expression.stream.pitch_bend),
-            formant_ratio: self.ratios.formant_ratio,
+            pitch_ratio: self.ratios.pitch_ratio * pitch_bend_ratio,
+            formant_ratio: self
+                .ratios
+                .formant_ratio
+                .map(|formant_ratio| formant_ratio * pitch_bend_ratio),
         };
         if is_identity_pitch_request(ratios) {
             return direct_slice_sample(analysis, self.slice_index, offset);
@@ -444,6 +447,7 @@ fn voice_trigger_from_note(
         return None;
     }
 
+    let pitch_ratio = slice.pitch.ratio() * semitones_to_ratio(resolved.chromatic_semitones);
     Some(LinnodVoiceTrigger {
         slice_index: resolved.slice_index,
         cursor: PlaybackCursor::new(
@@ -458,8 +462,8 @@ fn voice_trigger_from_note(
             matches!(slice.playback_mode, PlaybackMode::Looped),
         ),
         ratios: PitchShiftRatios {
-            pitch_ratio: slice.pitch.ratio() * semitones_to_ratio(resolved.chromatic_semitones),
-            formant_ratio: None,
+            pitch_ratio,
+            formant_ratio: Some(pitch_ratio),
         },
         playback_mode: slice.playback_mode,
         choke_group: resolved.choke_group,

@@ -4,7 +4,6 @@ use std::{
     path::PathBuf,
 };
 
-use lindelion_onset_detect::{MarkerKind, SliceMarker, normalize_markers};
 use lindelion_plugin_shell::{
     AudioPlugin, MidiControllerRoute, MidiEvent, MidiEventNormalizer, ParameterId,
     ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
@@ -30,7 +29,7 @@ use super::{
         LinnodMarkerEditMessage, LinnodPadEditMessage, LinnodSliceEditMessage,
         LinnodTelemetryPayload,
     },
-    patch_edits::{apply_pad_edit_message, apply_slice_edit_message},
+    patch_edits::{apply_marker_edit_message, apply_pad_edit_message, apply_slice_edit_message},
     processor_helpers::empty_midi_event,
     processor_notifications::send_source_summary_update,
 };
@@ -181,24 +180,11 @@ impl LinnodVst3Processor {
             return kResultFalse;
         };
         let mut patch = plugin.patch().clone();
-        match edit {
-            LinnodMarkerEditMessage::AddUser { position_samples } => {
-                patch.markers.push(SliceMarker {
-                    position_samples,
-                    kind: MarkerKind::User,
-                });
-            }
-            LinnodMarkerEditMessage::RemoveAt { position_samples } => {
-                patch.markers.retain(|marker| {
-                    marker.position_samples != position_samples || marker.kind != MarkerKind::User
-                });
-            }
-        }
         let source_len = plugin
             .source_audio()
             .map(|audio| audio.samples().len())
             .unwrap_or(usize::MAX);
-        patch.markers = normalize_markers(patch.markers, 1, source_len);
+        apply_marker_edit_message(&mut patch, edit, source_len);
         plugin.set_patch(patch);
         drop(plugin);
         self.send_patch_update()

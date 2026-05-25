@@ -266,6 +266,7 @@ enum EditorEvent {
     SavePatchDialog,
     LoadPatchDialog,
     ExportPatchDialog,
+    MarkerEdit(LinnodEditorMarkerEdit),
     DetectionEdit(LinnodEditorDetectionEdit),
     SliceEdit(LinnodEditorSliceEdit),
     PadEdit(LinnodEditorPadEdit),
@@ -309,6 +310,10 @@ impl Model for EditorModel {
             }
             EditorEvent::DetectionEdit(edit) => unsafe {
                 self.host.edit_detection(*edit);
+                sync_after_edit(self.host, self.signals, None);
+            },
+            EditorEvent::MarkerEdit(edit) => unsafe {
+                self.host.edit_marker(*edit);
                 sync_after_edit(self.host, self.signals, None);
             },
             EditorEvent::SliceEdit(edit) => unsafe {

@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 use crate::{PitchShiftFrameAnalysis, PitchShiftSourceCache};
 
 pub const DEFAULT_MAX_HARMONICS: usize = 96;
+const FORMANT_RATIO_MATCH_EPSILON: f32 = 1.0e-4;
+const HARMONIC_MAGNITUDE_FLOOR_RATIO: f32 = 0.001;
+const FORMANT_PRESERVE_MAGNITUDE_FLOOR_RATIO: f32 = 0.03;
+const PSOLA_CENTER_SEARCH_RADIUS: isize = 4;
+const PSOLA_MIN_WINDOW_RADIUS_SAMPLES: f32 = 32.0;
+const PSOLA_MAX_WINDOW_RADIUS_SAMPLES: f32 = 4096.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PitchShiftRatios {
@@ -201,6 +207,7 @@ impl PitchShiftEngine {
             source,
             cache,
             slice.start_sample,
+            slice.end_sample,
             request.config.sanitized(),
             output,
         );
@@ -232,6 +239,7 @@ impl PitchShiftEngine {
             source,
             cache,
             slice.start_sample,
+            slice.end_sample,
             offset,
             request.config.sanitized(),
         ))
@@ -252,11 +260,19 @@ fn render_region_to(
     source: &[f32],
     cache: &PitchShiftSourceCache,
     start_sample: usize,
+    end_sample: usize,
     config: PitchShiftRenderConfig,
     output: &mut [f32],
 ) {
     for (offset, sample) in output.iter_mut().enumerate() {
-        *sample = render_sample_at_offset(source, cache, start_sample, offset as f32, config);
+        *sample = render_sample_at_offset(
+            source,
+            cache,
+            start_sample,
+            end_sample,
+            offset as f32,
+            config,
+        );
     }
 }
 
@@ -264,10 +280,28 @@ fn render_sample_at_offset(
     source: &[f32],
     cache: &PitchShiftSourceCache,
     start_sample: usize,
+    end_sample: usize,
     offset_samples: f32,
     config: PitchShiftRenderConfig,
 ) -> f32 {
     let source_position = start_sample as f32 + offset_samples;
+    let ratios = config.ratios.sanitized();
+    if is_identity_pitch_request(ratios) {
+        return interpolation::linear(source, source_position);
+    }
+    if formant_ratio_tracks_pitch(ratios)
+        && let Some(sample) = pitch_synchronous_sample(
+            source,
+            cache,
+            start_sample,
+            end_sample,
+            offset_samples,
+            config,
+        )
+    {
+        return snap_to_zero(sample);
+    }
+
     let source_index = source_position
         .floor()
         .clamp(0.0, source.len().saturating_sub(1) as f32) as usize;
@@ -276,6 +310,107 @@ fn render_sample_at_offset(
     let harmonic = voiced_harmonic_sample(frame, offset_samples, cache.sample_rate as f32, config);
     let residual = residual_sample(source_sample, frame, config);
     snap_to_zero(harmonic + residual)
+}
+
+fn pitch_synchronous_sample(
+    source: &[f32],
+    cache: &PitchShiftSourceCache,
+    start_sample: usize,
+    end_sample: usize,
+    offset_samples: f32,
+    config: PitchShiftRenderConfig,
+) -> Option<f32> {
+    let absolute_position = start_sample as f32 + offset_samples;
+    let frame = frame_at_position(&cache.frames, absolute_position as usize);
+    let Some(f0_hz) = frame.f0_hz.filter(|f0| frame.voiced && *f0 > 0.0) else {
+        return Some(interpolation::linear(source, absolute_position) * config.unvoiced_level);
+    };
+    if cache.epoch_samples.is_empty() {
+        return None;
+    }
+    let ratios = config.ratios.sanitized();
+    let source_period = cache.sample_rate as f32 / f0_hz;
+    let target_period = source_period / ratios.pitch_ratio;
+    if source_period <= 0.0
+        || target_period <= 0.0
+        || !source_period.is_finite()
+        || !target_period.is_finite()
+    {
+        return None;
+    }
+
+    let origin = psola_origin_offset(cache, start_sample)?;
+    let nearest_center = ((offset_samples - origin) / target_period).round() as isize;
+    let window_radius = psola_window_radius(source_period, target_period);
+    let mut weighted_sum = 0.0;
+    let mut weight_sum = 0.0;
+    for center_index in
+        nearest_center - PSOLA_CENTER_SEARCH_RADIUS..=nearest_center + PSOLA_CENTER_SEARCH_RADIUS
+    {
+        let synth_center = origin + center_index as f32 * target_period;
+        let distance = offset_samples - synth_center;
+        if distance.abs() > window_radius {
+            continue;
+        }
+        let source_center = nearest_epoch_sample(cache, start_sample as f32 + synth_center)?;
+        let source_position = source_center as f32 + distance * ratios.pitch_ratio;
+        if source_position < start_sample as f32
+            || source_position >= end_sample.saturating_sub(1) as f32
+        {
+            continue;
+        }
+        let weight = raised_cosine_window(distance / window_radius);
+        weighted_sum += interpolation::linear(source, source_position) * weight;
+        weight_sum += weight;
+    }
+
+    (weight_sum > f32::EPSILON).then_some(weighted_sum / weight_sum * config.harmonic_level)
+}
+
+fn psola_origin_offset(cache: &PitchShiftSourceCache, start_sample: usize) -> Option<f32> {
+    nearest_epoch_sample(cache, start_sample as f32).map(|epoch| epoch as f32 - start_sample as f32)
+}
+
+fn nearest_epoch_sample(cache: &PitchShiftSourceCache, position_samples: f32) -> Option<usize> {
+    if cache.epoch_samples.is_empty() {
+        return None;
+    }
+    let position = position_samples.round().max(0.0) as usize;
+    let right = cache
+        .epoch_samples
+        .partition_point(|epoch| *epoch < position);
+    let left = right.saturating_sub(1);
+    match (
+        cache.epoch_samples.get(left),
+        cache.epoch_samples.get(right),
+    ) {
+        (Some(left), Some(right)) => {
+            if position.saturating_sub(*left) <= right.saturating_sub(position) {
+                Some(*left)
+            } else {
+                Some(*right)
+            }
+        }
+        (Some(left), None) => Some(*left),
+        (None, Some(right)) => Some(*right),
+        (None, None) => None,
+    }
+}
+
+fn psola_window_radius(source_period: f32, target_period: f32) -> f32 {
+    (source_period * 1.5).max(target_period * 0.75).clamp(
+        PSOLA_MIN_WINDOW_RADIUS_SAMPLES,
+        PSOLA_MAX_WINDOW_RADIUS_SAMPLES,
+    )
+}
+
+fn raised_cosine_window(normalized_distance: f32) -> f32 {
+    let distance = normalized_distance.abs();
+    if distance >= 1.0 {
+        0.0
+    } else {
+        0.5 + 0.5 * (std::f32::consts::PI * distance).cos()
+    }
 }
 
 fn frame_at_position(
@@ -304,16 +439,25 @@ fn voiced_harmonic_sample(
 
     let harmonic_count = ((nyquist / target_f0) as usize).min(config.max_harmonics);
     let formant_ratio = ratios.effective_formant_ratio();
-    let magnitude_floor = frame.spectral_envelope.peak_magnitude() * 0.03;
+    let use_source_harmonics = formant_ratio_tracks_pitch(ratios);
+    let peak_magnitude = frame.spectral_envelope.peak_magnitude();
+    let skip_floor = peak_magnitude * HARMONIC_MAGNITUDE_FLOOR_RATIO;
+    let preserve_floor = peak_magnitude * FORMANT_PRESERVE_MAGNITUDE_FLOOR_RATIO;
     let mut sample = 0.0;
     let mut magnitude_sum = 0.0;
     for harmonic in 1..=harmonic_count {
         let frequency = target_f0 * harmonic as f32;
         let envelope_frequency = frequency / formant_ratio;
-        let magnitude = frame
-            .spectral_envelope
-            .magnitude_at(envelope_frequency)
-            .max(magnitude_floor);
+        let magnitude =
+            harmonic_magnitude(frame, harmonic, envelope_frequency, use_source_harmonics);
+        if use_source_harmonics && magnitude <= skip_floor {
+            continue;
+        }
+        let magnitude = if use_source_harmonics {
+            magnitude
+        } else {
+            magnitude.max(preserve_floor)
+        };
         let phase = std::f32::consts::TAU * frequency * offset_samples / sample_rate;
         sample += phase.sin() * magnitude;
         magnitude_sum += magnitude.abs();
@@ -324,6 +468,36 @@ fn voiced_harmonic_sample(
     } else {
         sample / magnitude_sum * frame.rms * config.harmonic_level
     }
+}
+
+fn harmonic_magnitude(
+    frame: &PitchShiftFrameAnalysis,
+    harmonic: usize,
+    envelope_frequency: f32,
+    use_source_harmonics: bool,
+) -> f32 {
+    if use_source_harmonics {
+        frame
+            .harmonic_magnitudes
+            .get(harmonic.saturating_sub(1))
+            .copied()
+            .unwrap_or_else(|| frame.spectral_envelope.magnitude_at(envelope_frequency))
+    } else {
+        frame.spectral_envelope.magnitude_at(envelope_frequency)
+    }
+}
+
+fn formant_ratio_tracks_pitch(ratios: PitchShiftRatios) -> bool {
+    ratios.formant_ratio.is_some_and(|formant_ratio| {
+        (formant_ratio - ratios.pitch_ratio).abs() <= FORMANT_RATIO_MATCH_EPSILON
+    })
+}
+
+fn is_identity_pitch_request(ratios: PitchShiftRatios) -> bool {
+    (ratios.pitch_ratio - 1.0).abs() <= FORMANT_RATIO_MATCH_EPSILON
+        && ratios
+            .formant_ratio
+            .is_none_or(|ratio| (ratio - 1.0).abs() <= FORMANT_RATIO_MATCH_EPSILON)
 }
 
 fn residual_sample(

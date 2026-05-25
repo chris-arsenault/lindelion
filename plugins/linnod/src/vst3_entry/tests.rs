@@ -122,6 +122,18 @@ fn controller_applies_source_summary_and_preserves_it_across_patch_updates() {
     assert_eq!(controller.summary.borrow().source_label, "source.wav");
     assert_eq!(controller.summary.borrow().waveform.len(), 2);
     assert_eq!(controller.summary.borrow().slices[0].end_sample, 4_800);
+    assert_eq!(
+        controller.summary.borrow().slices[0].detected_midi_note,
+        Some(57.0)
+    );
+    assert_eq!(
+        controller.summary.borrow().slices[0].nearest_midi_note,
+        Some(57)
+    );
+    assert_eq!(
+        controller.summary.borrow().slices[0].root_target_f0_hz,
+        Some(220.0)
+    );
 
     patch.trigger_mode = crate::patch::TriggerMode::Chromatic;
     notify_controller(
@@ -155,6 +167,36 @@ fn controller_clears_source_summary_when_analysis_inputs_change() {
         &controller,
         LinnodPluginMessage::SourceSummaryResponse(source_summary_payload().encode().unwrap()),
     );
+    patch.detection.min_slice_ms += 25.0;
+
+    notify_controller(
+        &controller,
+        LinnodPluginMessage::patch_update(patch_payload(&patch)),
+    );
+
+    assert_eq!(controller.summary.borrow().source_label, "source.wav");
+    assert!(controller.summary.borrow().waveform.is_empty());
+    assert_eq!(controller.summary.borrow().slices[0].end_sample, 0);
+}
+
+#[test]
+fn controller_preserves_source_summary_when_markers_change() {
+    let controller = LinnodVst3Controller::new();
+    let mut patch = LinnodPatch {
+        source_sample: Some(lindelion_sample_library::SampleReference::new(
+            "hash",
+            "Samples/source.wav",
+        )),
+        ..LinnodPatch::default()
+    };
+    notify_controller(
+        &controller,
+        LinnodPluginMessage::patch_update(patch_payload(&patch)),
+    );
+    notify_controller(
+        &controller,
+        LinnodPluginMessage::SourceSummaryResponse(source_summary_payload().encode().unwrap()),
+    );
     patch.markers.push(lindelion_onset_detect::SliceMarker {
         position_samples: 2_400,
         kind: lindelion_onset_detect::MarkerKind::User,
@@ -166,8 +208,11 @@ fn controller_clears_source_summary_when_analysis_inputs_change() {
     );
 
     assert_eq!(controller.summary.borrow().source_label, "source.wav");
-    assert!(controller.summary.borrow().waveform.is_empty());
-    assert_eq!(controller.summary.borrow().slices[0].end_sample, 0);
+    assert_eq!(controller.summary.borrow().waveform.len(), 2);
+    assert!(controller.summary.borrow().markers.iter().any(|marker| {
+        marker.position_samples == 2_400
+            && marker.kind == lindelion_ui::linnod_vizia::LinnodEditorMarkerKind::User
+    }));
 }
 
 #[test]
@@ -220,6 +265,53 @@ fn controller_applies_pad_edit_through_typed_message_surface() {
     assert_eq!(
         controller.summary.borrow().pads[2].choke_group,
         Some(ChokeGroupId(2).0)
+    );
+}
+
+#[test]
+fn controller_applies_marker_edit_through_typed_message_surface() {
+    let controller = LinnodVst3Controller::new();
+    controller.patch.borrow_mut().markers = vec![
+        lindelion_onset_detect::SliceMarker {
+            position_samples: 0,
+            kind: lindelion_onset_detect::MarkerKind::Auto,
+        },
+        lindelion_onset_detect::SliceMarker {
+            position_samples: 120,
+            kind: lindelion_onset_detect::MarkerKind::Auto,
+        },
+        lindelion_onset_detect::SliceMarker {
+            position_samples: 240,
+            kind: lindelion_onset_detect::MarkerKind::User,
+        },
+    ];
+
+    assert_eq!(
+        controller.apply_marker_edit(LinnodMarkerEditMessage::RemoveAt {
+            position_samples: 120
+        }),
+        kResultFalse
+    );
+    assert_eq!(
+        controller.apply_marker_edit(LinnodMarkerEditMessage::AddUser {
+            position_samples: 360
+        }),
+        kResultFalse
+    );
+
+    let patch = controller.patch.borrow();
+    assert!(
+        patch
+            .markers
+            .iter()
+            .all(|marker| marker.position_samples != 120)
+    );
+    assert!(patch.markers.iter().any(|marker| {
+        marker.position_samples == 360 && marker.kind == lindelion_onset_detect::MarkerKind::User
+    }));
+    assert_eq!(
+        controller.summary.borrow().markers.len(),
+        patch.markers.len()
     );
 }
 
@@ -324,6 +416,47 @@ fn processor_notify_applies_pad_edit_payload() {
     );
 }
 
+#[test]
+fn processor_notify_applies_marker_edit_payload() {
+    let processor = LinnodVst3Processor::new();
+    let patch = LinnodPatch {
+        markers: vec![
+            lindelion_onset_detect::SliceMarker {
+                position_samples: 0,
+                kind: lindelion_onset_detect::MarkerKind::Auto,
+            },
+            lindelion_onset_detect::SliceMarker {
+                position_samples: 120,
+                kind: lindelion_onset_detect::MarkerKind::Auto,
+            },
+        ],
+        ..LinnodPatch::default()
+    };
+    processor.plugin.borrow_mut().set_patch(patch);
+    let message = LinnodPluginMessage::MarkerEdit(
+        LinnodMarkerEditMessage::RemoveAt {
+            position_samples: 120,
+        }
+        .encode(),
+    )
+    .into_com_message()
+    .to_com_ptr::<IMessage>()
+    .unwrap();
+
+    let result = unsafe { processor.notify(message.as_ptr()) };
+
+    assert_eq!(result, kResultOk);
+    assert!(
+        processor
+            .plugin
+            .borrow()
+            .patch()
+            .markers
+            .iter()
+            .all(|marker| marker.position_samples != 120)
+    );
+}
+
 fn assert_message_roundtrip(message: LinnodPluginMessage) {
     let encoded = message
         .clone()
@@ -377,7 +510,13 @@ fn source_summary_payload() -> LinnodSourceSummaryPayload {
             start_sample: 0,
             end_sample: 4_800,
             detected_f0_hz: Some(220.0),
+            detected_midi_note: Some(57.0),
+            nearest_midi_note: Some(57),
+            nearest_scale_midi_note: Some(57),
+            nearest_midi_note_hz: Some(220.0),
+            nearest_scale_midi_note_hz: Some(220.0),
             cents_deviation: Some(0.0),
+            root_target_f0_hz: Some(220.0),
         }],
     }
 }
