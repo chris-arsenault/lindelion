@@ -14,12 +14,13 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `crates/lindelion-audio-expression` | Host-neutral streaming audio-note and audio-expression bridge that maps pitch, onset, loudness, and brightness into plugin-shell note/expression surfaces. |
 | `crates/lindelion-onset-detect` | Batch and streaming onset detection interfaces, detector configuration, and pitch-aware onset input DTOs used by pitch-aware products. |
 | `crates/lindelion-pitch-detect` | SwiftF0 ONNX pitch detection, streaming pitch tracking, confidence filtering, resampling, and shared pitch-contour DTOs. |
+| `crates/lindelion-pitch-shift` | Shared formant-preserving pitch-shift analysis cache: pitch-adaptive spectral envelopes, voiced/unvoiced segmentation, residual descriptors, and per-slice pitch summaries. |
+| `crates/lindelion-plugin-metadata` | Product VST3 bundle metadata shared by plugin factories, moduleinfo generation, and bundle/validation automation. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics, and phrase-analysis results shared by captured-phrase workflows. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, and Standard MIDI File emission. |
-| `crates/lindelion-psola` | Pitch-analysis and PSOLA boundary types for future melodic sample manipulation. |
 | `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, and product Vizia editor surfaces. |
 | `plugins/lamath` | Breath-excited resonator VST3 instrument. |
-| `plugins/linnod` | Melodic sample-slicer scaffold with descriptor, parameters, patch model, and silent plugin implementation. |
+| `plugins/linnod` | Melodic sample-slicer VST3 instrument with source analysis, patch model, realtime slice playback, editor bridge, and bundle metadata. |
 | `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: shared capture composition, phrase analysis, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
@@ -68,7 +69,7 @@ These principles govern plugin reuse, shared crate boundaries, parameter managem
 - UI commands are typed `UiCommand` values. Primitive encodings such as float command codes are allowed only behind one adapter layer required by the UI/host bridge.
 - Patch save/load/export, sample ingest, sample-slot assignment, slot clearing, and telemetry requests flow through reusable editor services. File-dialog selection may remain host/UI-specific, but action handling should be shared.
 - Product VST3 editors should be thin host adapters: attach/detach lifecycle, controller callback projection, and DTO conversion. Vizia application code belongs in `lindelion-ui` or a future UI crate.
-- `lindelion-ui` may contain product-specific surfaces while there are few products. After Linnod or Glirdir ships, revisit whether common widgets/services and product compositions should split into separate crates.
+- `lindelion-ui` may contain product-specific surfaces while there are few products. As the Lamath, Glirdir, and Linnod editors converge, promote repeated widgets and services into shared UI modules.
 
 ### Module Boundaries
 
@@ -106,7 +107,7 @@ These principles govern plugin reuse, shared crate boundaries, parameter managem
 
 ## VST3 Product Boundaries
 
-Lamath and Glirdir are the current bundleable VST3 products. Their plugin crates keep host ABI code under `plugins/*/src/vst3_entry/` and keep audio/runtime code outside that boundary:
+Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plugin crates keep host ABI code under `plugins/*/src/vst3_entry/` and keep audio/runtime code outside that boundary:
 
 | Module | Role |
 | ---- | ---- |
@@ -119,6 +120,8 @@ Lamath and Glirdir are the current bundleable VST3 products. Their plugin crates
 | Glirdir `patch.rs` | Product patch state plus Glirdir-specific scratchpad MIDI context layered on shared scratchpad audio. |
 | Glirdir `audition.rs` | Local MIDI audition engine; optional shared extraction only when a second consumer exists. |
 | Glirdir `midi_export.rs` / `sample_library.rs` | SMF drag/export payloads and shared sample-library scratchpad ingest. |
+| Linnod `analysis.rs` / `analysis_job.rs` / `worker.rs` | Product orchestration around source-sample loading, SwiftF0 pitch detection, onset markers, and pitch-shift cache preparation. |
+| Linnod `runtime.rs` | Source-backed slice playback, voice ownership, pitch-shift rendering, envelopes, filtering, panning, and output limiting. |
 
 ## Real-Time Rule
 

@@ -383,15 +383,31 @@ fn make_notes_monophonic(mut notes: Vec<QuantizedNote>, ppq: u16) -> Vec<Quantiz
 }
 
 fn snap_midi_note(note: f32, settings: &QuantizeSettings) -> u8 {
+    snap_midi_note_to_scale(
+        note,
+        settings.root,
+        &settings.scale,
+        settings.snap_mode,
+        settings.soft_snap_cents,
+    )
+}
+
+pub fn snap_midi_note_to_scale(
+    note: f32,
+    root: RootNote,
+    scale: &Scale,
+    snap_mode: SnapMode,
+    soft_snap_cents: f32,
+) -> u8 {
     let chromatic = note.round().clamp(0.0, 127.0) as i16;
-    match settings.snap_mode {
+    match snap_mode {
         SnapMode::None => chromatic as u8,
-        SnapMode::Hard => nearest_scale_degree(note, settings) as u8,
+        SnapMode::Hard => nearest_scale_midi_note(note, root, scale),
         SnapMode::Soft => {
-            let scale_note = nearest_scale_degree(note, settings);
+            let scale_note = nearest_scale_midi_note(note, root, scale);
             let scale_cents = (note - scale_note as f32).abs() * 100.0;
-            if scale_cents <= settings.soft_snap_cents {
-                scale_note as u8
+            if scale_cents <= soft_snap_cents {
+                scale_note
             } else {
                 chromatic as u8
             }
@@ -399,9 +415,13 @@ fn snap_midi_note(note: f32, settings: &QuantizeSettings) -> u8 {
     }
 }
 
-fn nearest_scale_degree(note: f32, settings: &QuantizeSettings) -> i16 {
-    let root = settings.root.pitch_class();
-    let intervals = settings.scale.intervals();
+pub fn nearest_scale_midi_note(note: f32, root: RootNote, scale: &Scale) -> u8 {
+    nearest_scale_degree(note, root, scale) as u8
+}
+
+fn nearest_scale_degree(note: f32, root: RootNote, scale: &Scale) -> i16 {
+    let root = root.pitch_class();
+    let intervals = scale.intervals();
     let rounded = note.round() as i16;
     let mut best_note = rounded;
     let mut best_distance = f32::MAX;
@@ -501,88 +521,4 @@ const fn default_time_signature_denominator() -> u8 {
 mod midi_export_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hard_snap_moves_to_scale_degree() {
-        let settings = QuantizeSettings {
-            root: RootNote::C,
-            scale: Scale::Major,
-            snap_mode: SnapMode::Hard,
-            ..QuantizeSettings::default()
-        };
-
-        assert_eq!(snap_midi_note(66.0, &settings), 65);
-    }
-
-    #[test]
-    fn soft_snap_preserves_out_of_key_chromatic_note() {
-        let settings = QuantizeSettings {
-            root: RootNote::C,
-            scale: Scale::Major,
-            snap_mode: SnapMode::Soft,
-            soft_snap_cents: 25.0,
-            ..QuantizeSettings::default()
-        };
-
-        assert_eq!(snap_midi_note(66.0, &settings), 66);
-    }
-
-    #[test]
-    fn quantize_strength_moves_timing_partway_to_grid() {
-        let settings = QuantizeSettings {
-            timing_strength: 0.5,
-            grid: TimingGrid::Quarter,
-            sample_rate: 48_000,
-            bpm: 120.0,
-            ppq: 960,
-            ..QuantizeSettings::default()
-        };
-        let note = DetectedNote {
-            start_sample: 12_000,
-            end_sample: 36_000,
-            pitch_hz: 440.0,
-            peak_rms: 0.5,
-            mean_rms: 0.3,
-        };
-
-        let notes = quantize_notes(&[note], &settings);
-
-        assert_eq!(notes[0].start_tick, 720);
-    }
-
-    #[test]
-    fn smf_contains_header_for_empty_clip() {
-        let bytes = MidiClip::empty(120).to_smf_bytes().unwrap();
-
-        assert!(bytes.starts_with(b"MThd"));
-    }
-
-    #[test]
-    fn velocity_amount_zero_is_constant() {
-        let settings = QuantizeSettings::default();
-        let notes = quantize_notes(
-            &[
-                DetectedNote {
-                    start_sample: 0,
-                    end_sample: 1_000,
-                    pitch_hz: 440.0,
-                    peak_rms: 0.01,
-                    mean_rms: 0.01,
-                },
-                DetectedNote {
-                    start_sample: 1_000,
-                    end_sample: 2_000,
-                    pitch_hz: 440.0,
-                    peak_rms: 1.0,
-                    mean_rms: 0.5,
-                },
-            ],
-            &settings,
-        );
-
-        assert_eq!(notes[0].velocity, 100);
-        assert_eq!(notes[1].velocity, 100);
-    }
-}
+mod tests;

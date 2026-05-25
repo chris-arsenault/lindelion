@@ -10,7 +10,6 @@ This file tracks work that is not part of the current implemented Lamath spec in
 - Confirm Ableton scans Lamath, loads it as an instrument, opens and closes the editor repeatedly, and saves/reloads project state.
 - Validate the optional sidechain path in Ableton with the sidechain routed and unrouted.
 - Record Apple Silicon latency and CPU numbers for the all-enabled sidechain path.
-- Integrate a validator runner into `xtask` so bundle build validation can fail on conformance regressions when the Steinberg SDK tools are available.
 
 ---
 

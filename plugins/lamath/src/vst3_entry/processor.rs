@@ -47,7 +47,12 @@ impl Class for ResonatorVst3Processor {
 }
 
 impl ResonatorVst3Processor {
-    pub(super) const CID: TUID = uid(0x4B410E03, 0x80AD49B6, 0x9B7D5479, 0xF4A9B0D1);
+    pub(super) const CID: TUID = uid(
+        crate::VST3_BUNDLE_METADATA.processor_cid[0],
+        crate::VST3_BUNDLE_METADATA.processor_cid[1],
+        crate::VST3_BUNDLE_METADATA.processor_cid[2],
+        crate::VST3_BUNDLE_METADATA.processor_cid[3],
+    );
 
     pub(super) fn new() -> Self {
         let setup = ShellProcessSetup::default();

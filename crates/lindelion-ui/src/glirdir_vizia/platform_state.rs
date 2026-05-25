@@ -126,10 +126,6 @@ const STYLE: &str = r#"
         height: 18px;
     }
 
-    select {
-        width: 100%;
-    }
-
     .tooltip {
         background-color: #202827;
         border-width: 1px;
@@ -266,6 +262,10 @@ impl EditorParameterControl {
         let signal = self.signal;
         Memo::new(move |_| unsafe { host.parameter_value_text(id, f64::from(signal.get())) })
     }
+
+    fn default_normalized(self) -> f32 {
+        unsafe { self.host.default_normalized(self.id) }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -287,12 +287,19 @@ impl EditorSignals {
 struct EditorModel {
     host: GlirdirEditorHost,
     signals: EditorSignals,
+    pending_export: Option<PendingMidiExport>,
+}
+
+struct PendingMidiExport {
+    source: PathBuf,
+    dialog: crate::vizia_file_dialogs::PendingFileDialog,
 }
 
 enum EditorEvent {
     SetParameter { id: u32, normalized: f32 },
     Command(GlirdirEditorCommand),
     ExportMidiFile,
+    SyncFromController,
 }
 
 impl Model for EditorModel {
@@ -311,12 +318,38 @@ impl Model for EditorModel {
                 self.signals.command_status.set(Some(*command));
             },
             EditorEvent::ExportMidiFile => unsafe {
-                let _ = export_midi_file(self.host);
-                self.host.request_status();
-                sync_from_host(self.host, self.signals);
+                self.pending_export = start_midi_export(self.host, self.signals.parent_view);
+                if self.pending_export.is_none() {
+                    self.host.request_status();
+                    sync_from_host(self.host, self.signals);
+                }
                 self.signals.command_status.set(Some(GlirdirEditorCommand::ExportMidi));
             },
+            EditorEvent::SyncFromController => unsafe {
+                self.complete_pending_export();
+                self.host.request_status();
+                sync_from_host(self.host, self.signals);
+            },
         });
+    }
+}
+
+impl EditorModel {
+    fn complete_pending_export(&mut self) {
+        let Some(pending) = self.pending_export.as_mut() else {
+            return;
+        };
+        let std::task::Poll::Ready(selection) = pending.dialog.poll_path() else {
+            return;
+        };
+        let pending = self.pending_export.take().expect("pending export");
+        if let Some(target) = selection {
+            let _ = std::fs::copy(pending.source, target);
+            unsafe {
+                self.host.request_status();
+                sync_from_host(self.host, self.signals);
+            }
+        }
     }
 }
 
@@ -354,16 +387,17 @@ unsafe fn sync_from_host(host: GlirdirEditorHost, signals: EditorSignals) {
     }
 }
 
-unsafe fn export_midi_file(host: GlirdirEditorHost) -> bool {
+unsafe fn start_midi_export(
+    host: GlirdirEditorHost,
+    parent_view: usize,
+) -> Option<PendingMidiExport> {
     let GlirdirEditorMidiDrag::Ready { path } = (unsafe { host.prepare_midi_drag() }) else {
-        return false;
+        return None;
     };
-    let Some(target) = rfd::FileDialog::new()
-        .add_filter("MIDI", &["mid", "midi"])
-        .set_file_name("glirdir-scratch.mid")
-        .save_file()
-    else {
-        return true;
-    };
-    std::fs::copy(path, target).is_ok()
+    let parent = crate::vizia_file_dialogs::DialogParent::from_ns_view(parent_view);
+    let dialog = crate::vizia_file_dialogs::midi_save_file_dialog("glirdir-scratch.mid", parent);
+    Some(PendingMidiExport {
+        source: path,
+        dialog: crate::vizia_file_dialogs::PendingFileDialog::save_file(dialog),
+    })
 }

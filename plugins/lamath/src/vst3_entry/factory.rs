@@ -1,11 +1,11 @@
 use lindelion_plugin_shell::vst3::{Vst3ClassRegistration, Vst3PluginFactory};
 use vst3::{ComPtr, ComWrapper, Steinberg::*};
 
-use crate::DESCRIPTOR;
+use crate::{DESCRIPTOR, VST3_BUNDLE_METADATA};
 
 use super::{ResonatorVst3Controller, ResonatorVst3Processor, SUBCATEGORY};
 
-const CONTROLLER_NAME: &str = "Lamath Controller";
+const CONTROLLER_NAME: &str = VST3_BUNDLE_METADATA.controller_name;
 
 const RESONATOR_VST3_CLASSES: &[Vst3ClassRegistration] = &[
     Vst3ClassRegistration::audio_processor(

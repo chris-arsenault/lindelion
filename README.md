@@ -9,7 +9,7 @@ Lindelion is a Rust workspace for audio instruments and shared plugin infrastruc
 | Plugin | Meaning | Description | Links |
 | ---- | ---- | ---- | ---- |
 | Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs | [README](plugins/lamath/README.md), [spec](docs/plugins/lamath.md), [backlog](docs/plugins/lamath-backlog.md) |
-| Linnod | Sindarin measured verse unit, from the `lind`/`lin-` song root | Cargo scaffold and patch model | [README](plugins/linnod/README.md), [spec](docs/plugins/linnod.md), [backlog](docs/plugins/linnod-backlog.md) |
+| Linnod | Sindarin measured verse unit, from the `lind`/`lin-` song root | VST3 melodic slicer instrument with source analysis, slice playback, editor surface, and bundle support | [README](plugins/linnod/README.md), [spec](docs/plugins/linnod.md), [backlog](docs/plugins/linnod-backlog.md) |
 | Glirdir | Sindarin `glir-` + `-dir`, "singer" or "song-bearer" | VST3 sing-to-MIDI scratchpad with editor, drag/export, sample-library save, and bundle support | [README](plugins/glirdir/README.md), [spec](docs/plugins/glirdir.md), [backlog](docs/plugins/glirdir-backlog.md) |
 
 ## Docs

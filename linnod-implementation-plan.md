@@ -13,7 +13,7 @@ This plan reconciles the Linnod current spec and backlog with the repository as 
 
 1. `plugins/linnod` is currently a silent monolithic scaffold in `src/lib.rs`.
 2. The current Linnod patch structs are not yet serde-backed and do not roundtrip through `TomlPatchFormat`.
-3. `lindelion-psola` is currently placeholder-level and should not be the pitch-shift engine for Linnod. A non-PSOLA implementation should live behind a correctly named shared surface, not inside an algorithm-specific crate name that now describes the wrong design.
+3. The old placeholder PSOLA crate should not be the pitch-shift engine for Linnod. Non-PSOLA behavior must live behind a correctly named shared surface, not inside an algorithm-specific crate name that describes the wrong design.
 4. `lindelion-pitch-detect`, `lindelion-onset-detect`, `lindelion-phrase-analysis`, `lindelion-midi`, `lindelion-sample-library`, `lindelion-plugin-shell`, and `lindelion-ui` already provide shared surfaces the old spec treated as future work.
 5. `ComplexFlux` and `SpectralSparsity` currently fall through to SuperFlux behavior in `ConfiguredOnsetDetector`; making them distinct algorithms is required Linnod implementation work and should extend `lindelion-onset-detect` rather than live locally in the plugin.
 6. The sample library currently decodes mono WAV data and preserves source sample rate. Linnod should be sample-rate-aware rather than assuming every loaded source has been converted to 48 kHz unless a shared resampling utility is deliberately added.
@@ -41,7 +41,7 @@ ML alternatives should be treated as research or optional future backends, not t
    Extend `lindelion-onset-detect` with real ComplexFlux and spectral-sparsity implementations instead of local Linnod copies. Keep SuperFlux, pitch-stability, energy/transient, and manual grid reusable. Implement marker sorting, dedupe, auto-marker replacement, user-marker merge/replace/cancel policy, zero-crossing snap, slice duration calculation, pad assignment validation, selected-slice lookup, and source-bound clamping as tested pure functions.
 
 5. Build the shared formant-preserving pitch-shift engine.
-   Introduce `lindelion-pitch-shift` or an equivalent correctly named shared crate rather than expanding `lindelion-psola` with non-PSOLA behavior. Use SwiftF0 as the authoritative F0 contour input, derive pitch-adaptive spectral envelopes, voiced/unvoiced segmentation, aperiodic or residual-energy descriptors, per-slice pitch summaries, and deterministic source-derived caches.
+   Use `lindelion-pitch-shift` or an equivalent correctly named shared crate rather than reviving PSOLA with non-PSOLA behavior. Use SwiftF0 as the authoritative F0 contour input, derive pitch-adaptive spectral envelopes, voiced/unvoiced segmentation, aperiodic or residual-energy descriptors, per-slice pitch summaries, and deterministic source-derived caches.
 
 6. Implement pitch-shift synthesis and tuning behavior.
    Render shifted harmonic excitation through the unshifted spectral envelope, preserve slice duration, mix unvoiced/residual content with documented policy, and expose pitch ratio plus optional formant ratio through the engine contract. SwiftF0-backed analysis also drives detected fundamental display, cents deviation, tune-one, tune-all, and scale snap. Add tests that verify pitch changes while spectral-envelope peaks stay near their original frequencies.

@@ -1,0 +1,13 @@
+[package]
+name = "lindelion-pitch-shift"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-onset-detect.workspace = true
+lindelion-pitch-detect.workspace = true
+realfft.workspace = true
+serde.workspace = true

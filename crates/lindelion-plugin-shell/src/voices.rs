@@ -35,6 +35,15 @@ pub struct VoiceRenderStatus {
     pub idle: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct VoiceSlotView<'a, V: VoiceLike> {
+    pub state: VoiceSlotState,
+    pub channel: Option<u8>,
+    pub note: Option<u8>,
+    pub last_level: f32,
+    pub voice: &'a V,
+}
+
 pub struct VoiceManager<const N: usize, V: VoiceLike> {
     slots: [VoiceSlot<V>; N],
     voice_limit: usize,
@@ -148,6 +157,51 @@ impl<const N: usize, V: VoiceLike> VoiceManager<N, V> {
         let was_active = slot.state == VoiceSlotState::Active;
         release_slot(slot, released_at);
         was_active
+    }
+
+    pub fn clear_voice(&mut self, voice_id: usize) -> bool {
+        if voice_id >= self.voice_limit {
+            return false;
+        }
+        let slot = &mut self.slots[voice_id];
+        let was_live = slot.state != VoiceSlotState::Idle;
+        slot.clear();
+        was_live
+    }
+
+    pub fn clear_note_for_channel(&mut self, channel: u8, note: u8) {
+        let channel = sanitize_channel(channel);
+        self.clear_voices_where(|slot| slot.channel == Some(channel) && slot.note == Some(note));
+    }
+
+    pub fn clear_voices_where(
+        &mut self,
+        mut matches: impl FnMut(VoiceSlotView<'_, V>) -> bool,
+    ) -> usize {
+        let mut cleared = 0;
+        for slot in self.live_slots_mut() {
+            if slot.state == VoiceSlotState::Idle {
+                continue;
+            }
+            let view = VoiceSlotView {
+                state: slot.state,
+                channel: slot.channel,
+                note: slot.note,
+                last_level: slot.last_level,
+                voice: &slot.voice,
+            };
+            if matches(view) {
+                slot.clear();
+                cleared += 1;
+            }
+        }
+        cleared
+    }
+
+    pub fn clear_all(&mut self) {
+        for slot in self.live_slots_mut() {
+            slot.clear();
+        }
     }
 
     pub fn release_all(&mut self) {
@@ -447,148 +501,5 @@ fn sanitize_unit(value: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Debug, Clone, Copy, Default, PartialEq)]
-    struct TestExpression {
-        stream: ExpressionStream,
-        mod_wheel: f32,
-    }
-
-    impl TestExpression {
-        fn active(pressure: f32) -> Self {
-            Self {
-                stream: ExpressionStream {
-                    pressure,
-                    velocity: 1.0,
-                    gate: true,
-                    ..ExpressionStream::default()
-                },
-                mod_wheel: 0.0,
-            }
-        }
-    }
-
-    impl ManagedVoiceExpression for TestExpression {
-        fn sanitized(self) -> Self {
-            Self {
-                stream: self.stream.sanitized(),
-                mod_wheel: sanitize_unit(self.mod_wheel),
-            }
-        }
-
-        fn stream(self) -> ExpressionStream {
-            self.stream
-        }
-
-        fn set_stream(&mut self, stream: ExpressionStream) {
-            self.stream = stream;
-        }
-
-        fn set_mod_wheel(&mut self, mod_wheel: f32) {
-            self.mod_wheel = mod_wheel;
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct TestVoice {
-        expression: TestExpression,
-        clear_count: usize,
-    }
-
-    impl VoiceLike for TestVoice {
-        type Expression = TestExpression;
-
-        fn set_expression(&mut self, expression: Self::Expression) {
-            self.expression = expression;
-        }
-
-        fn clear(&mut self) {
-            self.clear_count += 1;
-            self.expression = TestExpression::default();
-        }
-    }
-
-    #[test]
-    fn steals_oldest_released_voice_before_sustaining_voices() {
-        let mut manager = manager::<3>();
-
-        manager.start_voice(0, 60, TestExpression::active(0.0), true, |_| {});
-        manager.start_voice(0, 64, TestExpression::active(0.0), true, |_| {});
-        manager.start_voice(0, 67, TestExpression::active(0.0), true, |_| {});
-        manager.release_note(64);
-        manager.release_note(60);
-
-        let stolen = manager.start_voice(0, 72, TestExpression::active(0.0), true, |_| {});
-
-        assert_eq!(stolen, 1);
-        assert_eq!(manager.slot_note(0), Some(60));
-        assert_eq!(manager.slot_note(1), Some(72));
-        assert_eq!(manager.slot_note(2), Some(67));
-    }
-
-    #[test]
-    fn retrigger_off_reuses_released_note_but_not_sustaining_note() {
-        let mut manager = manager::<2>();
-
-        let active_slot = manager.start_voice(0, 60, TestExpression::active(0.0), false, |_| {});
-        let sustaining_retrigger =
-            manager.start_voice(0, 60, TestExpression::active(0.0), false, |_| {});
-
-        assert_eq!(active_slot, 0);
-        assert_eq!(sustaining_retrigger, 1);
-
-        manager.release_note_for_channel(0, 60);
-        let released_retrigger =
-            manager.start_voice(0, 60, TestExpression::active(0.0), false, |_| {});
-
-        assert_eq!(released_retrigger, 0);
-    }
-
-    #[test]
-    fn release_voice_releases_only_the_addressed_slot() {
-        let mut manager = manager::<3>();
-        let slot_a = manager.start_voice(0, 60, TestExpression::active(0.2), true, |_| {});
-        let slot_b = manager.start_voice(0, 60, TestExpression::active(0.7), true, |_| {});
-
-        assert!(manager.release_voice(slot_b));
-
-        assert_eq!(slot_a, 0);
-        assert_eq!(slot_b, 1);
-        assert_eq!(manager.slot_state(slot_a), Some(VoiceSlotState::Active));
-        assert_eq!(manager.slot_state(slot_b), Some(VoiceSlotState::Released));
-        assert!(manager.slot_expression(slot_a).unwrap().stream().gate);
-        assert!(!manager.slot_expression(slot_b).unwrap().stream().gate);
-    }
-
-    #[test]
-    fn per_channel_pressure_reaches_only_voices_on_that_channel() {
-        let mut manager = manager::<3>();
-        let channel_one = manager.start_voice(1, 60, TestExpression::active(0.0), true, |_| {});
-        let channel_two = manager.start_voice(2, 60, TestExpression::active(0.0), true, |_| {});
-
-        manager.set_expression_controls_for_channel(2, 0.0, 0.7, 0.0, 0.0);
-
-        assert_eq!(
-            manager
-                .slot_expression(channel_one)
-                .unwrap()
-                .stream
-                .pressure,
-            0.0
-        );
-        assert_eq!(
-            manager
-                .slot_expression(channel_two)
-                .unwrap()
-                .stream
-                .pressure,
-            0.7
-        );
-    }
-
-    fn manager<const N: usize>() -> VoiceManager<N, TestVoice> {
-        VoiceManager::new(N, TestVoice::default)
-    }
-}
+#[path = "voices_tests.rs"]
+mod tests;

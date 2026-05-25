@@ -9,8 +9,9 @@ members = [
     "crates/lindelion-onset-detect",
     "crates/lindelion-phrase-analysis",
     "crates/lindelion-pitch-detect",
+    "crates/lindelion-pitch-shift",
+    "crates/lindelion-plugin-metadata",
     "crates/lindelion-plugin-shell",
-    "crates/lindelion-psola",
     "crates/lindelion-sample-library",
     "crates/lindelion-ui",
     "plugins/glirdir",
@@ -35,8 +36,9 @@ lindelion-midi = { path = "crates/lindelion-midi" }
 lindelion-onset-detect = { path = "crates/lindelion-onset-detect" }
 lindelion-phrase-analysis = { path = "crates/lindelion-phrase-analysis" }
 lindelion-pitch-detect = { path = "crates/lindelion-pitch-detect" }
+lindelion-pitch-shift = { path = "crates/lindelion-pitch-shift" }
+lindelion-plugin-metadata = { path = "crates/lindelion-plugin-metadata" }
 lindelion-plugin-shell = { path = "crates/lindelion-plugin-shell" }
-lindelion-psola = { path = "crates/lindelion-psola" }
 lindelion-sample-library = { path = "crates/lindelion-sample-library", default-features = false }
 lindelion-ui = { path = "crates/lindelion-ui" }
 midly = "0.5.3"

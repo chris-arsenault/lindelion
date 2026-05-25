@@ -4,25 +4,26 @@ use std::{
     ffi::c_char,
     fs, io,
     path::{Path, PathBuf},
-    ptr, slice,
+    ptr,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use lindelion_plugin_shell::vst3::{
-    Vst3PeerConnection, copy_wstring, len_wstring, read_plugin_state_from_stream,
-    write_plugin_state_to_stream,
+    Vst3ParameterInfo, Vst3ParameterMirror, Vst3PeerConnection, fill_vst3_parameter_info,
+    parse_vst3_plain_value_string, read_plugin_state_from_stream, write_plugin_state_to_stream,
+    write_vst3_parameter_string,
 };
 use lindelion_ui::glirdir_vizia::GlirdirEditorMidiDrag;
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
+use crate::parameters::PARAMETER_REGISTRY;
 use crate::{
-    GlirdirPatch, PARAMETER_BINDING_COUNT, apply_parameter_normalized,
-    denormalized_parameter_value, format_parameter_plain_value,
+    GlirdirPatch, apply_parameter_normalized, denormalized_parameter_value,
+    format_parameter_plain_value,
     midi_export::{MidiExportPayload, empty_midi_export},
     normalized_parameter_value as registry_normalized_parameter_value, parameter_binding_by_index,
-    parameter_binding_index, parameter_default_normalized_value_by_index, parameter_info, patch_io,
-    patch_parameter_normalized_value,
+    parameter_binding_index, parameter_info, patch_io,
     sample_library::{SampleLibrarySavePayload, SampleLibrarySaveStatus},
 };
 
@@ -32,7 +33,7 @@ pub(super) const MAX_MIDI_DRAG_FILES: usize = 8;
 static MIDI_DRAG_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct GlirdirVst3Controller {
-    pub(super) values: Cell<[f64; VST3_PARAMETER_COUNT]>,
+    pub(super) values: Vst3ParameterMirror<VST3_PARAMETER_COUNT>,
     pub(super) patch: RefCell<GlirdirPatch>,
     pub(super) status: Cell<GlirdirStatusPayload>,
     pub(super) sample_library_status: Cell<SampleLibrarySaveStatus>,
@@ -47,11 +48,16 @@ impl Class for GlirdirVst3Controller {
 }
 
 impl GlirdirVst3Controller {
-    pub(super) const CID: TUID = uid(0x0D0466D2, 0x53E446E5, 0x8E90CF13, 0x25B5E241);
+    pub(super) const CID: TUID = uid(
+        crate::VST3_BUNDLE_METADATA.controller_cid[0],
+        crate::VST3_BUNDLE_METADATA.controller_cid[1],
+        crate::VST3_BUNDLE_METADATA.controller_cid[2],
+        crate::VST3_BUNDLE_METADATA.controller_cid[3],
+    );
 
     pub(super) fn new() -> Self {
         Self {
-            values: Cell::new(default_parameter_values()),
+            values: Vst3ParameterMirror::new(default_parameter_values()),
             patch: RefCell::new(GlirdirPatch::default()),
             status: Cell::new(GlirdirStatusPayload::default()),
             sample_library_status: Cell::new(SampleLibrarySaveStatus::Idle),
@@ -66,12 +72,15 @@ impl GlirdirVst3Controller {
         let Some(index) = parameter_index(id) else {
             return kInvalidArgument;
         };
-        let mut values = self.values.get();
-        values[index] = sanitize_normalized(normalized, default_parameter_values()[index]);
-        self.values.set(values);
+        let Some(value) =
+            self.values
+                .set_normalized(index, normalized, default_parameter_values()[index])
+        else {
+            return kInvalidArgument;
+        };
 
         if !matches!(
-            apply_parameter_normalized(&mut self.patch.borrow_mut(), id, values[index] as f32),
+            apply_parameter_normalized(&mut self.patch.borrow_mut(), id, value as f32),
             crate::ParameterApplyKind::Ignored
         ) {
             self.clear_midi_export_cache();
@@ -125,10 +134,6 @@ impl GlirdirVst3Controller {
         self.notify_peer(GlirdirPluginMessage::status_request())
     }
 
-    pub(super) fn request_telemetry(&self) -> tresult {
-        self.notify_peer(GlirdirPluginMessage::telemetry_request())
-    }
-
     pub(super) fn request_midi_export(&self) -> tresult {
         self.notify_peer(GlirdirPluginMessage::midi_export_request())
     }
@@ -154,26 +159,10 @@ impl GlirdirVst3Controller {
         }
     }
 
-    pub(super) fn send_patch_to_processor(&self) -> tresult {
-        let Ok(payload) = patch_io::to_toml_string(&self.patch.borrow()) else {
-            return kResultFalse;
-        };
-        self.notify_peer(GlirdirPluginMessage::patch_update(payload.into_bytes()))
-    }
-
     fn replace_patch_mirror(&self, patch: GlirdirPatch) {
-        self.values.set(parameter_values_from_patch(&patch));
+        self.values.replace(parameter_values_from_patch(&patch));
         self.patch.replace(patch);
         self.clear_midi_export_cache();
-    }
-
-    fn notify_parameter_values_changed(&self) {
-        let Some(handler) = (unsafe { ComRef::from_raw(self.handler.get()) }) else {
-            return;
-        };
-        unsafe {
-            handler.restartComponent(RestartFlags_::kParamValuesChanged);
-        }
     }
 
     fn notify_peer(&self, message: GlirdirPluginMessage) -> tresult {
@@ -354,18 +343,7 @@ impl IEditControllerTrait for GlirdirVst3Controller {
         let Some(binding) = parameter_binding_by_index(param_index as usize) else {
             return kInvalidArgument;
         };
-        let parameter = binding.info();
-
-        let info = &mut *info;
-        info.id = parameter.id.0;
-        copy_wstring(parameter.name, &mut info.title);
-        copy_wstring(parameter.name, &mut info.shortTitle);
-        copy_wstring(parameter.units, &mut info.units);
-        info.stepCount = parameter.step_count.map_or(0, |steps| steps as i32);
-        info.defaultNormalizedValue = parameter.range.normalize(parameter.range.default) as f64;
-        info.unitId = 0;
-        info.flags = ParameterInfo_::ParameterFlags_::kCanAutomate;
-        kResultOk
+        fill_vst3_parameter_info(Vst3ParameterInfo::from_parameter(binding.info()), info)
     }
 
     unsafe fn getParamStringByValue(
@@ -381,8 +359,7 @@ impl IEditControllerTrait for GlirdirVst3Controller {
             return kInvalidArgument;
         };
         let plain = parameter.range.denormalize(value_normalized as f32);
-        copy_wstring(&format_parameter_plain_value(id, plain), &mut *string);
-        kResultOk
+        write_vst3_parameter_string(&format_parameter_plain_value(id, plain), string)
     }
 
     unsafe fn getParamValueByString(
@@ -394,11 +371,7 @@ impl IEditControllerTrait for GlirdirVst3Controller {
         if string.is_null() || value_normalized.is_null() {
             return kInvalidArgument;
         }
-        let len = len_wstring(string as *const TChar);
-        let Ok(text) = String::from_utf16(slice::from_raw_parts(string as *const u16, len)) else {
-            return kInvalidArgument;
-        };
-        let Ok(value) = text.trim().parse::<f32>() else {
+        let Some(value) = parse_vst3_plain_value_string(string) else {
             return kInvalidArgument;
         };
         let Some(normalized) = registry_normalized_parameter_value(id, value) else {
@@ -420,7 +393,7 @@ impl IEditControllerTrait for GlirdirVst3Controller {
 
     unsafe fn getParamNormalized(&self, id: u32) -> f64 {
         parameter_index(id)
-            .map(|index| self.values.get()[index])
+            .and_then(|index| self.values.value(index))
             .unwrap_or(0.0)
     }
 
@@ -439,30 +412,11 @@ impl IEditControllerTrait for GlirdirVst3Controller {
 }
 
 pub(super) fn default_parameter_values() -> [f64; VST3_PARAMETER_COUNT] {
-    let mut values = [0.0; VST3_PARAMETER_COUNT];
-    for (index, binding) in (0..PARAMETER_BINDING_COUNT)
-        .filter_map(parameter_binding_by_index)
-        .enumerate()
-    {
-        values[index] = parameter_default_normalized_value_by_index(index).unwrap_or_else(|| {
-            let parameter = binding.info();
-            parameter.range.normalize(parameter.range.default)
-        }) as f64;
-    }
-    values
+    PARAMETER_REGISTRY.default_normalized_values::<VST3_PARAMETER_COUNT>()
 }
 
 pub(super) fn parameter_values_from_patch(patch: &GlirdirPatch) -> [f64; VST3_PARAMETER_COUNT] {
-    let mut values = default_parameter_values();
-    for binding in (0..PARAMETER_BINDING_COUNT).filter_map(parameter_binding_by_index) {
-        let parameter = binding.info();
-        if let Some(normalized) = patch_parameter_normalized_value(patch, parameter.id.0)
-            && let Some(index) = parameter_index(parameter.id.0)
-        {
-            values[index] = normalized as f64;
-        }
-    }
-    values
+    PARAMETER_REGISTRY.normalized_patch_values(patch, default_parameter_values())
 }
 
 pub(super) fn parameter_index(id: u32) -> Option<usize> {
@@ -473,12 +427,4 @@ pub(super) fn normalized_parameter_value(id: u32, plain: f32) -> f64 {
     registry_normalized_parameter_value(id, plain)
         .map(f64::from)
         .unwrap_or(0.0)
-}
-
-fn sanitize_normalized(value: f64, fallback: f64) -> f64 {
-    if value.is_finite() {
-        value.clamp(0.0, 1.0)
-    } else {
-        fallback
-    }
 }

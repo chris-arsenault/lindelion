@@ -369,6 +369,15 @@ where
             .map(|range| range.normalize(range.default))
     }
 
+    pub fn default_normalized_values<const N: usize>(self) -> [f64; N] {
+        let mut values = [0.0; N];
+        for (index, binding) in self.bindings.iter().enumerate().take(N) {
+            let range = binding.info().range;
+            values[index] = f64::from(range.normalize(range.default));
+        }
+        values
+    }
+
     pub fn normalized_value(self, id: u32, plain: f32) -> Option<f32> {
         self.info(id)
             .map(|parameter| parameter.range.normalize(plain))
@@ -428,6 +437,21 @@ where
     {
         let binding = self.binding(id)?;
         Some(binding.info().range.normalize(binding.plain_value(patch)))
+    }
+
+    pub fn normalized_patch_values<Patch, const N: usize>(
+        self,
+        patch: &Patch,
+        mut values: [f64; N],
+    ) -> [f64; N]
+    where
+        Path: ParameterPatchPath<Patch>,
+    {
+        for (index, binding) in self.bindings.iter().enumerate().take(N) {
+            let binding = *binding;
+            values[index] = f64::from(binding.info().range.normalize(binding.plain_value(patch)));
+        }
+        values
     }
 
     pub fn apply_plain<Patch>(self, patch: &mut Patch, id: u32, value: f32) -> Option<ApplyKind>

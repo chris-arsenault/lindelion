@@ -1,3 +1,4 @@
+pub mod async_jobs;
 pub mod events;
 pub mod parameters;
 pub mod patch_io;
@@ -6,6 +7,7 @@ pub mod state;
 pub mod voices;
 pub mod vst3;
 
+pub use async_jobs::{AsyncJobSequence, SequencedAsyncCache, advance_async_job_sequence};
 pub use events::{
     ControlEvent, ExpressionSource, ExpressionStream, HostMidiEvent, MIDI_CHANNEL_COUNT,
     ManualExpressionSource, MidiControllerRoute, MidiEvent, MidiEventNormalizer,

@@ -18,11 +18,10 @@ mod registry;
 pub use registry::PARAMETERS;
 
 pub(crate) use registry::{
-    PARAMETER_BINDING_COUNT, ParameterApplyKind, apply_parameter_normalized,
+    PARAMETER_BINDING_COUNT, PARAMETER_REGISTRY, ParameterApplyKind, apply_parameter_normalized,
     denormalized_parameter_value, dispatch_parameter_normalized, editor_parameter_bindings,
     format_parameter_plain_value, normalized_parameter_value, parameter_binding,
-    parameter_binding_by_index, parameter_binding_index,
-    parameter_default_normalized_value_by_index, parameter_info, patch_parameter_normalized_value,
+    parameter_binding_by_index, parameter_binding_index, parameter_info,
 };
 
 #[cfg(test)]

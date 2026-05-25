@@ -34,7 +34,7 @@ fn plugin_message_roundtrips_controller_payloads() {
         has_analysis: true,
     };
 
-    assert_message_roundtrip(GlirdirPluginMessage::patch_update(b"patch".to_vec()));
+    assert_message_roundtrip(GlirdirPluginMessage::PatchUpdate(b"patch".to_vec()));
     assert_message_roundtrip(GlirdirPluginMessage::arm_capture());
     assert_message_roundtrip(GlirdirPluginMessage::clear_scratchpad());
     assert_message_roundtrip(GlirdirPluginMessage::finalize_capture_request());
@@ -50,7 +50,7 @@ fn plugin_message_roundtrips_controller_payloads() {
     assert_message_roundtrip(GlirdirPluginMessage::MidiExportResponse(b"midi".to_vec()));
     assert_message_roundtrip(GlirdirPluginMessage::status_request());
     assert_message_roundtrip(GlirdirPluginMessage::StatusResponse(status));
-    assert_message_roundtrip(GlirdirPluginMessage::telemetry_request());
+    assert_message_roundtrip(GlirdirPluginMessage::TelemetryRequest);
     assert_message_roundtrip(GlirdirPluginMessage::TelemetryResponse(status));
     assert_message_roundtrip(GlirdirPluginMessage::AnalysisStatusResponse(status));
 }
@@ -100,7 +100,10 @@ fn controller_patch_mirror_tracks_parameter_edits() {
 
     assert_eq!(controller.patch.borrow().quantize.timing_strength, 0.25);
     assert_eq!(
-        controller.values.get()[parameter_index(TIMING_STRENGTH_PARAMETER_ID).unwrap()],
+        controller
+            .values
+            .value(parameter_index(TIMING_STRENGTH_PARAMETER_ID).unwrap())
+            .unwrap(),
         0.25
     );
 }
@@ -150,7 +153,7 @@ fn processor_notify_applies_patch_payload() {
         ..GlirdirPatch::default()
     };
     let payload = patch_io::to_toml_string(&patch).unwrap().into_bytes();
-    let message = GlirdirPluginMessage::patch_update(payload)
+    let message = GlirdirPluginMessage::PatchUpdate(payload)
         .into_com_message()
         .to_com_ptr::<IMessage>()
         .unwrap();

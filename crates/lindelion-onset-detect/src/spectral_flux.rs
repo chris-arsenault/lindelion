@@ -1,10 +1,13 @@
 use std::{fmt, sync::Arc};
 
-use lindelion_dsp_utils::{analysis, math::ms_to_samples};
+use lindelion_dsp_utils::{
+    analysis,
+    math::{finite_clamp, ms_to_samples},
+};
 use realfft::{RealFftPlanner, RealToComplex};
 
 use crate::{
-    DetectionConfig, MarkerKind, OnsetDetectionInput, OnsetDetector, SliceMarker,
+    AlgorithmParams, DetectionConfig, MarkerKind, OnsetDetectionInput, OnsetDetector, SliceMarker,
     StreamingOnsetDetector, dedupe_markers, onset_profile,
 };
 
@@ -24,22 +27,75 @@ impl OnsetDetector for SuperFluxDetector {
         let hop_size = 256usize;
         let min_gap = ms_to_samples(config.min_slice_ms, input.sample_rate);
         let flux = spectral_flux(input.audio, frame_size, hop_size, max_filter_radius);
-        let positions = pick_flux_peaks(
+        markers_from_novelty(
             &flux,
             hop_size,
             config.sensitivity,
             min_gap,
             lookback_frames,
-        );
-        dedupe_markers(
-            positions
-                .into_iter()
-                .map(|position_samples| SliceMarker {
-                    position_samples,
-                    kind: MarkerKind::Auto,
-                })
-                .collect(),
+            input.audio.len(),
+        )
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ComplexFluxDetector;
+
+impl OnsetDetector for ComplexFluxDetector {
+    fn detect(&self, input: OnsetDetectionInput<'_>, config: DetectionConfig) -> Vec<SliceMarker> {
+        if input.audio.is_empty() || input.sample_rate == 0 {
+            return Vec::new();
+        }
+
+        let profile = onset_profile(config);
+        let (lookback_frames, group_delay_weight) = match config.params {
+            AlgorithmParams::ComplexFlux {
+                lookback_frames,
+                group_delay_weight,
+            } => (
+                lookback_frames.clamp(1, 32) as usize,
+                finite_clamp(group_delay_weight, 0.0, 8.0, 1.0),
+            ),
+            _ => (profile.lookback_frames as usize, 1.0),
+        };
+        let frame_size = 1024usize;
+        let hop_size = 256usize;
+        let min_gap = ms_to_samples(config.min_slice_ms, input.sample_rate);
+        let flux = complex_flux(input.audio, frame_size, hop_size, group_delay_weight);
+        markers_from_novelty(
+            &flux,
+            hop_size,
+            config.sensitivity,
             min_gap,
+            lookback_frames,
+            input.audio.len(),
+        )
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SpectralSparsityDetector;
+
+impl OnsetDetector for SpectralSparsityDetector {
+    fn detect(&self, input: OnsetDetectionInput<'_>, config: DetectionConfig) -> Vec<SliceMarker> {
+        if input.audio.is_empty() || input.sample_rate == 0 {
+            return Vec::new();
+        }
+
+        let profile = onset_profile(config);
+        let window_size = match config.params {
+            AlgorithmParams::SpectralSparsity { window_size } => window_size.clamp(64, 8192),
+            _ => 1024,
+        };
+        let hop_size = (window_size / 4).max(1);
+        let min_gap = ms_to_samples(config.min_slice_ms, input.sample_rate);
+        let flux = spectral_sparsity_novelty(input.audio, window_size, hop_size);
+        markers_from_novelty(
+            &flux,
+            hop_size,
+            config.sensitivity,
+            min_gap,
+            profile.lookback_frames as usize,
             input.audio.len(),
         )
     }
@@ -288,6 +344,173 @@ fn spectral_flux(
     flux.extend(stream.finish().iter().map(|frame| frame.flux));
     normalize_flux(&mut flux);
     flux
+}
+
+fn markers_from_novelty(
+    novelty: &[f32],
+    hop_size: usize,
+    sensitivity: f32,
+    min_gap_samples: usize,
+    lookback_frames: usize,
+    audio_len: usize,
+) -> Vec<SliceMarker> {
+    let positions = pick_flux_peaks(
+        novelty,
+        hop_size,
+        sensitivity,
+        min_gap_samples,
+        lookback_frames,
+    );
+    dedupe_markers(
+        positions
+            .into_iter()
+            .map(|position_samples| SliceMarker {
+                position_samples,
+                kind: MarkerKind::Auto,
+            })
+            .collect(),
+        min_gap_samples,
+        audio_len,
+    )
+}
+
+fn complex_flux(
+    audio: &[f32],
+    frame_size: usize,
+    hop_size: usize,
+    group_delay_weight: f32,
+) -> Vec<f32> {
+    let frame_size = frame_size.max(2);
+    let hop_size = hop_size.max(1);
+    let mut planner = RealFftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(frame_size);
+    let bin_count = frame_size / 2 + 1;
+    let mut previous_magnitudes = vec![0.0; bin_count];
+    let mut previous_phases = vec![0.0; bin_count];
+    let mut previous_previous_phases = vec![0.0; bin_count];
+    let mut novelty = Vec::new();
+
+    for (frame_index, frame_start) in frame_starts(audio.len(), frame_size, hop_size).enumerate() {
+        let spectrum = spectrum_at(audio, frame_start, frame_size, &*fft);
+        let mut frame_flux = 0.0;
+
+        for (bin, value) in spectrum.iter().enumerate() {
+            let magnitude = value.norm_sqr().sqrt();
+            let phase = value.im.atan2(value.re);
+            if frame_index > 0 {
+                let predicted_phase = 2.0 * previous_phases[bin] - previous_previous_phases[bin];
+                let phase_error = wrap_phase(phase - predicted_phase);
+                let phase_distance =
+                    (magnitude.mul_add(
+                        magnitude,
+                        previous_magnitudes[bin] * previous_magnitudes[bin],
+                    ) - 2.0 * magnitude * previous_magnitudes[bin] * phase_error.cos())
+                    .max(0.0)
+                    .sqrt();
+                frame_flux += (magnitude - previous_magnitudes[bin]).max(0.0)
+                    + group_delay_weight * phase_distance;
+            }
+            previous_previous_phases[bin] = previous_phases[bin];
+            previous_phases[bin] = phase;
+            previous_magnitudes[bin] = magnitude;
+        }
+
+        novelty.push(frame_flux);
+    }
+
+    normalize_flux(&mut novelty);
+    novelty
+}
+
+fn spectral_sparsity_novelty(audio: &[f32], frame_size: usize, hop_size: usize) -> Vec<f32> {
+    let frame_size = frame_size.max(2);
+    let hop_size = hop_size.max(1);
+    let mut planner = RealFftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(frame_size);
+    let mut previous_sparsity = 0.0;
+    let mut novelty = Vec::new();
+
+    for (frame_index, frame_start) in frame_starts(audio.len(), frame_size, hop_size).enumerate() {
+        let spectrum = spectrum_at(audio, frame_start, frame_size, &*fft);
+        let magnitudes = spectrum
+            .iter()
+            .map(|bin| bin.norm_sqr().sqrt())
+            .collect::<Vec<_>>();
+        let sparsity = hoyer_sparsity(&magnitudes);
+        novelty.push(if frame_index == 0 {
+            0.0
+        } else {
+            (sparsity - previous_sparsity).abs()
+        });
+        previous_sparsity = sparsity;
+    }
+
+    normalize_flux(&mut novelty);
+    novelty
+}
+
+fn spectrum_at(
+    audio: &[f32],
+    frame_start: usize,
+    frame_size: usize,
+    fft: &dyn RealToComplex<f32>,
+) -> Vec<realfft::num_complex::Complex32> {
+    let mut frame = fft.make_input_vec();
+    for (index, sample) in frame.iter_mut().enumerate() {
+        let source = audio.get(frame_start + index).copied().unwrap_or(0.0);
+        *sample = if source.is_finite() { source } else { 0.0 } * hann(index, frame_size);
+    }
+
+    let mut spectrum = fft.make_output_vec();
+    if fft.process(&mut frame, &mut spectrum).is_err() {
+        return Vec::new();
+    }
+    spectrum
+}
+
+fn frame_starts(
+    audio_len: usize,
+    frame_size: usize,
+    hop_size: usize,
+) -> impl Iterator<Item = usize> {
+    let frame_size = frame_size.max(1);
+    let hop_size = hop_size.max(1);
+    let mut next = 0usize;
+    std::iter::from_fn(move || {
+        if audio_len == 0 || next >= audio_len {
+            return None;
+        }
+        let current = next;
+        next = next.saturating_add(hop_size);
+        if current == 0 || current.saturating_add(frame_size / 2) < audio_len + frame_size {
+            Some(current)
+        } else {
+            None
+        }
+    })
+}
+
+fn hoyer_sparsity(magnitudes: &[f32]) -> f32 {
+    if magnitudes.len() < 2 {
+        return 0.0;
+    }
+    let l1 = magnitudes.iter().copied().sum::<f32>();
+    let l2 = magnitudes
+        .iter()
+        .copied()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    if l2 <= f32::EPSILON {
+        return 0.0;
+    }
+    let n = magnitudes.len() as f32;
+    ((n.sqrt() - l1 / l2) / (n.sqrt() - 1.0)).clamp(0.0, 1.0)
+}
+
+fn wrap_phase(phase: f32) -> f32 {
+    let two_pi = 2.0 * std::f32::consts::PI;
+    (phase + std::f32::consts::PI).rem_euclid(two_pi) - std::f32::consts::PI
 }
 
 fn pick_flux_peaks(

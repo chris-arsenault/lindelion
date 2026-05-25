@@ -47,7 +47,12 @@ impl Class for GlirdirVst3Processor {
 }
 
 impl GlirdirVst3Processor {
-    pub(super) const CID: TUID = uid(0x7C2E2B8A, 0xB1C44F0D, 0xA6F92427, 0x6C9E0D5B);
+    pub(super) const CID: TUID = uid(
+        crate::VST3_BUNDLE_METADATA.processor_cid[0],
+        crate::VST3_BUNDLE_METADATA.processor_cid[1],
+        crate::VST3_BUNDLE_METADATA.processor_cid[2],
+        crate::VST3_BUNDLE_METADATA.processor_cid[3],
+    );
 
     pub(super) fn new() -> Self {
         Self::with_worker(Box::new(GlirdirWorker::new()))

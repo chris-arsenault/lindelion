@@ -12,23 +12,17 @@ Per-product backlogs cover product-specific work:
 
 ## Host integration
 
-- Validate Lamath and Glirdir as VST3 bundles in Ableton and Logic on macOS.
-- Add a CLAP adapter for Lamath and Glirdir alongside the existing VST3 entry points.
-- Add an AU adapter for Lamath and Glirdir for Logic Pro X.
-
-## Linnod product
-
-- Implement the Linnod melodic sample-slicer product.
+- Validate Lamath, Glirdir, and Linnod as VST3 bundles in Ableton and Logic on macOS.
+- Add a CLAP adapter for Lamath, Glirdir, and Linnod alongside the existing VST3 entry points.
+- Add an AU adapter for Lamath, Glirdir, and Linnod for Logic Pro X.
 
 ## Shared infrastructure
 
-- Extract a shared VST3 controller plumbing layer once three consumers exist (Lamath, Glirdir, Linnod): default normalized arrays, patch mirrors, parameter info formatting, plain/string conversion, handler restart, and patch-to-processor message flow.
-- Extend `lindelion-onset-detect` so `ComplexFlux` and `SpectralSparsity` are distinct algorithms in `ConfiguredOnsetDetector` rather than falling through to `SuperFlux` behavior.
+- Extract more VST3 controller plumbing when a repeated shape has at least two active consumers beyond the current shared parameter mirror, parameter formatting, state, factory, and message helpers.
 
 ## Performance and CI
 
 - Add a self-hosted Linux runner for `make bench` with baseline storage and regression diffs.
-- Wire `bench-smoke` into the regular `make ci` path so bench files cannot rot without paying the full Criterion runtime.
 
 ## DSP documentation
 

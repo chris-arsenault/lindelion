@@ -1,4 +1,4 @@
-use lindelion_dsp_utils::{db_to_gain, interpolation};
+use lindelion_dsp_utils::{db_to_gain, playback::SamplePlayback};
 
 pub const MAX_EXCITATION_LAYERS: usize = 4;
 const LIVE_EXCITATION_MIN_GAIN_DB: f32 = -60.0;
@@ -320,92 +320,7 @@ impl ActiveExcitationLayer<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExcitationPlayback<'a> {
-    samples: &'a [f32],
-    cursor: ExcitationCursor,
-}
-
-impl<'a> ExcitationPlayback<'a> {
-    pub fn new(
-        samples: &'a [f32],
-        source_sample_rate: f32,
-        output_sample_rate: f32,
-        pitch_ratio: f32,
-        start_offset_samples: f32,
-        looped: bool,
-    ) -> Self {
-        let increment = if source_sample_rate > 0.0 && output_sample_rate > 0.0 {
-            source_sample_rate / output_sample_rate * pitch_ratio.max(0.0)
-        } else {
-            1.0
-        };
-
-        Self {
-            samples,
-            cursor: ExcitationCursor::new(samples.len(), start_offset_samples, increment, looped),
-        }
-    }
-
-    pub const fn is_finished(&self) -> bool {
-        self.cursor.is_finished()
-    }
-
-    pub fn next_sample(&mut self) -> f32 {
-        self.cursor.next_sample(self.samples)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct ExcitationCursor {
-    cursor: f32,
-    increment: f32,
-    looped: bool,
-    finished: bool,
-}
-
-impl ExcitationCursor {
-    const fn finished() -> Self {
-        Self {
-            cursor: 0.0,
-            increment: 1.0,
-            looped: false,
-            finished: true,
-        }
-    }
-
-    fn new(sample_count: usize, start_offset_samples: f32, increment: f32, looped: bool) -> Self {
-        Self {
-            cursor: start_offset_samples.max(0.0),
-            increment,
-            looped,
-            finished: sample_count == 0,
-        }
-    }
-
-    const fn is_finished(&self) -> bool {
-        self.finished
-    }
-
-    fn next_sample(&mut self, samples: &[f32]) -> f32 {
-        if self.finished || samples.is_empty() {
-            return 0.0;
-        }
-
-        let output = interpolation::linear(samples, self.cursor);
-        self.cursor += self.increment;
-
-        if self.cursor >= samples.len() as f32 {
-            if self.looped {
-                self.cursor = self.cursor.rem_euclid(samples.len() as f32);
-            } else {
-                self.finished = true;
-            }
-        }
-
-        output
-    }
-}
+pub type ExcitationPlayback<'a> = SamplePlayback<'a>;
 
 fn layer_from_slot<'a>(slot: &RuntimeExcitationSlot<'a>, velocity: f32) -> ExcitationLayer<'a> {
     ExcitationLayer {

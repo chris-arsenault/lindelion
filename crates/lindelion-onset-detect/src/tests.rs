@@ -90,6 +90,55 @@ fn superflux_detects_soft_sine_entry() {
 }
 
 #[test]
+fn configured_complex_flux_detects_phase_discontinuous_articulation() {
+    let audio = phase_reset_sine(48_000, 440.0, 5_000);
+    let config = DetectionConfig {
+        algorithm: DetectionAlgorithm::ComplexFlux,
+        sensitivity: 0.35,
+        min_slice_ms: 40.0,
+        profile: OnsetDetectionProfile::default(),
+        params: AlgorithmParams::ComplexFlux {
+            lookback_frames: 2,
+            group_delay_weight: 1.0,
+        },
+    };
+
+    let markers = ConfiguredOnsetDetector.detect(OnsetDetectionInput::new(&audio, 48_000), config);
+
+    assert!(
+        markers
+            .iter()
+            .any(|marker| marker.position_samples > 3_600 && marker.position_samples < 6_000)
+    );
+}
+
+#[test]
+fn configured_spectral_sparsity_detects_noise_to_tone_change() {
+    let mut audio = (0..4_800)
+        .map(|index| if index % 2 == 0 { 0.35 } else { -0.35 })
+        .collect::<Vec<_>>();
+    audio.extend((0..4_800).map(|index| {
+        let phase = 2.0 * std::f32::consts::PI * 880.0 * index as f32 / 48_000.0;
+        phase.sin() * 0.5
+    }));
+    let config = DetectionConfig {
+        algorithm: DetectionAlgorithm::SpectralSparsity,
+        sensitivity: 0.4,
+        min_slice_ms: 40.0,
+        profile: OnsetDetectionProfile::default(),
+        params: AlgorithmParams::SpectralSparsity { window_size: 512 },
+    };
+
+    let markers = ConfiguredOnsetDetector.detect(OnsetDetectionInput::new(&audio, 48_000), config);
+
+    assert!(
+        markers
+            .iter()
+            .any(|marker| marker.position_samples > 3_600 && marker.position_samples < 6_000)
+    );
+}
+
+#[test]
 fn streaming_spectral_flux_carries_state_across_blocks() {
     let audio = (0..4_096)
         .map(|index| {
@@ -113,6 +162,213 @@ fn streaming_spectral_flux_carries_state_across_blocks() {
             .all(|pair| pair[1].position_samples - pair[0].position_samples == 256)
     );
     assert!(frames.iter().all(|frame| frame.flux.is_finite()));
+}
+
+#[test]
+fn marker_reconciliation_supports_merge_replace_and_cancel() {
+    let auto = [SliceMarker {
+        position_samples: 2_400,
+        kind: MarkerKind::Auto,
+    }];
+    let existing = [SliceMarker {
+        position_samples: 2_450,
+        kind: MarkerKind::User,
+    }];
+
+    assert_eq!(
+        reconcile_markers(
+            auto,
+            &existing,
+            MarkerReconcilePolicy::CancelIfUserMarkers,
+            256,
+            4_800,
+        ),
+        MarkerReconcileOutcome::Cancelled
+    );
+    assert_eq!(
+        reconcile_markers(
+            auto,
+            &existing,
+            MarkerReconcilePolicy::ReplaceUserMarkers,
+            256,
+            4_800,
+        ),
+        MarkerReconcileOutcome::Applied(vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 2_400,
+                kind: MarkerKind::Auto,
+            }
+        ])
+    );
+    assert_eq!(
+        reconcile_markers(
+            auto,
+            &existing,
+            MarkerReconcilePolicy::MergeUserMarkers,
+            256,
+            4_800,
+        ),
+        MarkerReconcileOutcome::Applied(vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 2_450,
+                kind: MarkerKind::User,
+            }
+        ])
+    );
+}
+
+#[test]
+fn slice_regions_and_selection_are_source_bounded() {
+    let markers = normalize_markers(
+        [
+            SliceMarker {
+                position_samples: 900,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 100,
+                kind: MarkerKind::User,
+            },
+            SliceMarker {
+                position_samples: 1_200,
+                kind: MarkerKind::Auto,
+            },
+        ],
+        50,
+        1_000,
+    );
+
+    assert_eq!(
+        markers,
+        vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 100,
+                kind: MarkerKind::User,
+            },
+            SliceMarker {
+                position_samples: 900,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 999,
+                kind: MarkerKind::Auto,
+            }
+        ]
+    );
+    let regions = slice_regions_from_markers(&markers, 1_000);
+    assert_eq!(regions[1].duration_samples(), 800);
+    assert_eq!(
+        slice_region_at_sample(&markers, 1_000, 950).unwrap(),
+        SliceRegion {
+            index: 2,
+            start_sample: 900,
+            end_sample: 999
+        }
+    );
+}
+
+#[test]
+fn marker_positions_snap_to_nearest_zero_crossing() {
+    let audio = [-0.5, -0.25, 0.1, 0.5, 0.25, -0.1, -0.4];
+
+    assert_eq!(snap_position_to_nearest_zero_crossing(&audio, 3, 2), 2);
+    assert_eq!(snap_position_to_nearest_zero_crossing(&audio, 6, 1), 5);
+}
+
+#[test]
+fn strongest_marker_selection_keeps_start_and_loudest_candidates() {
+    let mut audio = vec![0.0; 1_000];
+    audio[120] = 0.25;
+    audio[360] = 0.9;
+    audio[720] = 0.6;
+    let markers = [
+        SliceMarker {
+            position_samples: 120,
+            kind: MarkerKind::Auto,
+        },
+        SliceMarker {
+            position_samples: 360,
+            kind: MarkerKind::Auto,
+        },
+        SliceMarker {
+            position_samples: 720,
+            kind: MarkerKind::Auto,
+        },
+    ];
+
+    let selected = select_strongest_markers(markers, &audio, 3, 32);
+
+    assert_eq!(
+        selected,
+        vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 360,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 720,
+                kind: MarkerKind::Auto,
+            },
+        ]
+    );
+}
+
+#[test]
+fn strongest_marker_selection_preserves_user_markers_before_auto_markers() {
+    let mut audio = vec![0.0; 1_000];
+    audio[200] = 0.1;
+    audio[500] = 1.0;
+    audio[800] = 0.9;
+    let markers = [
+        SliceMarker {
+            position_samples: 200,
+            kind: MarkerKind::User,
+        },
+        SliceMarker {
+            position_samples: 500,
+            kind: MarkerKind::Auto,
+        },
+        SliceMarker {
+            position_samples: 800,
+            kind: MarkerKind::Auto,
+        },
+    ];
+
+    let selected = select_strongest_markers(markers, &audio, 3, 32);
+
+    assert_eq!(
+        selected,
+        vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 200,
+                kind: MarkerKind::User,
+            },
+            SliceMarker {
+                position_samples: 500,
+                kind: MarkerKind::Auto,
+            },
+        ]
+    );
 }
 
 #[test]
@@ -243,6 +499,49 @@ fn onset_profile_sanitizes_non_finite_thresholds() {
     );
 }
 
+#[test]
+fn detection_config_switches_algorithms_with_matching_default_params() {
+    let config = DetectionConfig::default().with_algorithm(DetectionAlgorithm::ComplexFlux);
+
+    assert_eq!(config.algorithm, DetectionAlgorithm::ComplexFlux);
+    assert_eq!(
+        config.params,
+        AlgorithmParams::ComplexFlux {
+            lookback_frames: DEFAULT_SUPERFLUX_LOOKBACK_FRAMES,
+            group_delay_weight: DEFAULT_COMPLEX_FLUX_GROUP_DELAY_WEIGHT,
+        }
+    );
+
+    let config = config.with_algorithm(DetectionAlgorithm::ManualGrid);
+
+    assert_eq!(
+        config.params,
+        AlgorithmParams::ManualGrid {
+            divisions: DEFAULT_MANUAL_GRID_DIVISIONS,
+            offset_ms: DEFAULT_MANUAL_GRID_OFFSET_MS,
+        }
+    );
+}
+
+#[test]
+fn detection_config_sanitizes_algorithm_specific_params() {
+    let config = DetectionConfig {
+        algorithm: DetectionAlgorithm::SpectralSparsity,
+        sensitivity: f32::INFINITY,
+        min_slice_ms: f32::NAN,
+        profile: OnsetDetectionProfile::default(),
+        params: AlgorithmParams::SpectralSparsity { window_size: 1 },
+    }
+    .sanitized();
+
+    assert_eq!(config.sensitivity, DEFAULT_ONSET_SENSITIVITY);
+    assert_eq!(config.min_slice_ms, DEFAULT_MIN_SLICE_MS);
+    assert_eq!(
+        config.params,
+        AlgorithmParams::SpectralSparsity { window_size: 64 }
+    );
+}
+
 fn synthetic_pitch_jump_track() -> Vec<PitchFrame> {
     (0..64)
         .map(|index| PitchFrame {
@@ -254,6 +553,21 @@ fn synthetic_pitch_jump_track() -> Vec<PitchFrame> {
             confidence: 0.95,
             voiced: true,
             rms: 0.2,
+        })
+        .collect()
+}
+
+fn phase_reset_sine(sample_rate: u32, frequency: f32, reset_position: usize) -> Vec<f32> {
+    (0..9_600)
+        .map(|index| {
+            let phase_index = if index < reset_position {
+                index
+            } else {
+                index - reset_position
+            };
+            let phase =
+                2.0 * std::f32::consts::PI * frequency * phase_index as f32 / sample_rate as f32;
+            phase.sin() * 0.5
         })
         .collect()
 }

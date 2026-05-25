@@ -136,7 +136,7 @@ mod macos {
         let Some(index) = parameter_index(parameter_id) else {
             return unsafe { default_normalized(context, parameter_id) };
         };
-        controller.values.get()[index] as f32
+        controller.values.value(index).unwrap_or_default() as f32
     }
 
     unsafe fn set_parameter(context: usize, parameter_id: u32, normalized: f64) {

@@ -21,6 +21,8 @@ In Rust, that rule is meaningful: ordinary stack values, slices, fixed-size arra
   counts allocations during `note_on`, block render, and voice stealing.
 - `lamath::plugin_tests::audio_plugin_process_does_not_allocate` covers the plugin process path.
 - `lamath::plugin_tests::loaded_excitation_buffers_render_without_audio_thread_allocations` covers sample-backed excitation rendering.
+- `linnod::runtime::tests::{note_trigger,note_release,pad_choke_retrigger,block_render}_does_not_allocate`
+  cover source-backed slice triggering, release, pad choking, and steady block rendering.
 - `lindelion-dsp-utils` and `lamath` tests assert finite output, bounded peaks, frequency behavior, filter behavior, and sweep stability.
 - `make ci` runs the canonical workspace formatting, lint, file-size, and test checks.
 
@@ -29,6 +31,7 @@ In Rust, that rule is meaningful: ordinary stack values, slices, fixed-size arra
 - `docs/perf/lindelion-dsp-utils.md` records host-free Criterion numbers for shared DSP utilities.
 - `docs/perf/lamath.md` records host-free Criterion numbers for Lamath modal, waveguide, and engine DSP paths.
 - `docs/perf/glirdir.md` records host-free Criterion throughput for Glirdir's offline analysis job.
+- `docs/perf/linnod.md` records the Linnod runtime benchmark scope and release-measurement procedure.
 - `make bench-smoke` compiles all workspace benches without running Criterion measurements.
 - `make bench` runs the full workspace Criterion suite. Use pinned-core Linux runs for numbers that will be cited in realtime contracts.
 

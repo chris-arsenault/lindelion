@@ -2,7 +2,7 @@
 
 *Sindarin **Linnod**: a measured Elvish verse unit, a half-line of 4+3 syllables forming a distinct portion of a larger song. From `lind`/`lin-`, the Sindarin song/music root, plus a verse marker; pronounced LIN-nod.*
 
-Linnod is Lindelion's melodic sample-slicer scaffold.
+Linnod is Lindelion's melodic sample-slicer instrument. The crate implements source loading and analysis, shared onset marker/slice handling, SwiftF0-backed tuning, source-filter pitch shifting, allocation-free slice playback, a typed VST3 adapter, the Linnod editor host surface, and macOS VST3 bundle support.
 
 ## Links
 

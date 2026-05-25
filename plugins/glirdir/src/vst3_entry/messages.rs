@@ -64,20 +64,12 @@ impl GlirdirPluginMessage {
         Self::SampleLibrarySaveRequest
     }
 
-    pub(super) fn patch_update(payload: Vec<u8>) -> Self {
-        Self::PatchUpdate(payload)
-    }
-
     pub(super) fn midi_export_request() -> Self {
         Self::MidiExportRequest
     }
 
     pub(super) fn status_request() -> Self {
         Self::StatusRequest
-    }
-
-    pub(super) fn telemetry_request() -> Self {
-        Self::TelemetryRequest
     }
 }
 

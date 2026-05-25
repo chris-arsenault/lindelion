@@ -3,21 +3,25 @@ use std::{
     ffi::c_char,
     fs, io,
     path::{Path, PathBuf},
-    ptr, slice,
+    ptr,
 };
 
-use lindelion_plugin_shell::vst3::{Vst3PeerConnection, copy_wstring, len_wstring};
+use lindelion_plugin_shell::vst3::{
+    Vst3ParameterInfo, Vst3ParameterMirror, Vst3PeerConnection, fill_vst3_parameter_info,
+    notify_vst3_patch_update, parse_vst3_plain_value_string, restart_vst3_parameter_values_changed,
+    write_vst3_parameter_string,
+};
 use lindelion_sample_library::{
     FileSampleLibrary, LibraryPaths, SampleLibrary, SampleMetadata, SampleReference,
     SampleWaveformPreview,
 };
-use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
+use vst3::{Class, Steinberg::Vst::*, Steinberg::*, uid};
 
+use crate::parameters::PARAMETER_REGISTRY;
 use crate::{
-    PARAMETER_BINDING_COUNT, ResonatorSynthPatch, ResonatorTelemetry,
+    ResonatorSynthPatch, ResonatorTelemetry,
     normalized_parameter_value as registry_normalized_parameter_value, parameter_binding_by_index,
-    parameter_binding_index, parameter_default_normalized_value_by_index, parameter_info, patch_io,
-    patch_parameter_normalized_value,
+    parameter_binding_index, parameter_info, patch_io,
 };
 
 use super::{

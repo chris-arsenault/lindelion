@@ -7,13 +7,13 @@ use lindelion_plugin_shell::vst3::{
     FixedSizePlugView, FixedSizePlugViewDelegate, FixedSizePlugViewSize,
 };
 use lindelion_ui::{
-    WaveformPoint,
     glirdir_vizia::{
         GLIRDIR_EDITOR_HEIGHT, GLIRDIR_EDITOR_WIDTH, GlirdirEditorAnalysisStatus,
         GlirdirEditorCallbacks, GlirdirEditorCaptureState, GlirdirEditorCommand, GlirdirEditorHost,
         GlirdirEditorLibraryStatus, GlirdirEditorPianoRollPreview, GlirdirEditorPreview,
         GlirdirEditorStatus, GlirdirEditorWaveformPreview,
     },
+    waveform_points_from_samples,
 };
 use vst3::{ComWrapper, Steinberg::*};
 
@@ -114,7 +114,7 @@ unsafe fn parameter_value(context: usize, parameter_id: u32) -> f32 {
     let Some(index) = parameter_index(parameter_id) else {
         return unsafe { default_normalized(context, parameter_id) };
     };
-    controller.values.get()[index] as f32
+    controller.values.value(index).unwrap_or_default() as f32
 }
 
 unsafe fn set_parameter(context: usize, parameter_id: u32, normalized: f64) {
@@ -284,39 +284,9 @@ fn waveform_preview(patch: &GlirdirPatch) -> GlirdirEditorWaveformPreview {
         };
     };
 
-    let points = waveform_points(&scratchpad.samples, WAVEFORM_PREVIEW_POINTS);
     GlirdirEditorWaveformPreview {
         sample_rate: scratchpad.sample_rate,
-        points,
-    }
-}
-
-fn waveform_points(samples: &[f32], max_points: usize) -> Vec<WaveformPoint> {
-    if samples.is_empty() || max_points == 0 {
-        return Vec::new();
-    }
-    let chunk_len = samples.len().div_ceil(max_points).max(1);
-    samples
-        .chunks(chunk_len)
-        .take(max_points)
-        .map(waveform_point)
-        .collect()
-}
-
-fn waveform_point(samples: &[f32]) -> WaveformPoint {
-    let mut min = 0.0_f32;
-    let mut max = 0.0_f32;
-    let mut sum_squares = 0.0_f32;
-    for sample in samples {
-        let sample = if sample.is_finite() { *sample } else { 0.0 };
-        min = min.min(sample);
-        max = max.max(sample);
-        sum_squares += sample * sample;
-    }
-    WaveformPoint {
-        min,
-        max,
-        rms: (sum_squares / samples.len().max(1) as f32).sqrt(),
+        points: waveform_points_from_samples(&scratchpad.samples, WAVEFORM_PREVIEW_POINTS),
     }
 }
 

@@ -188,28 +188,6 @@ impl View for ResonatorBadge {
     }
 }
 
-struct MeterTrack {
-    amount: f32,
-    color: Color,
-}
-
-impl MeterTrack {
-    fn new(cx: &mut Context, amount: f32, color: Color) -> Handle<'_, Self> {
-        Self {
-            amount: amount.clamp(0.0, 1.0),
-            color,
-        }
-        .build(cx, |_| {})
-    }
-}
-
-impl View for MeterTrack {
-    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
-        let bounds = cx.bounds();
-        draw_meter_track(bounds, canvas, self.amount, self.color);
-    }
-}
-
 struct LevelMeter {
     left_peak: Signal<f32>,
     right_peak: Signal<f32>,
@@ -256,59 +234,6 @@ impl View for LevelMeter {
                 canvas,
                 vg::Rect::new(x, y, x + 5.0, bounds.y + bounds.h - 6.0),
                 color,
-            );
-        }
-    }
-}
-
-struct ActivationBars {
-    active_voices: Signal<f32>,
-    left_rms: Signal<f32>,
-    right_rms: Signal<f32>,
-}
-
-impl ActivationBars {
-    fn new(
-        cx: &mut Context,
-        active_voices: Signal<f32>,
-        left_rms: Signal<f32>,
-        right_rms: Signal<f32>,
-    ) -> Handle<'_, Self> {
-        Self {
-            active_voices,
-            left_rms,
-            right_rms,
-        }
-        .build(cx, |_| {})
-        .bind(active_voices, |mut view| view.needs_redraw())
-        .bind(left_rms, |mut view| view.needs_redraw())
-        .bind(right_rms, |mut view| view.needs_redraw())
-    }
-}
-
-impl View for ActivationBars {
-    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
-        let bounds = cx.bounds();
-        let voice_amount = (self.active_voices.get() / 8.0).clamp(0.0, 1.0);
-        let rms_amount = meter_amount((self.left_rms.get() + self.right_rms.get()) * 0.5);
-        for index in 0..12 {
-            let t = index as f32 / 11.0;
-            let amount = (rms_amount * 0.7 + voice_amount * 0.3).clamp(0.0, 1.0);
-            let h = bounds.h * (0.18 + (t * 5.4).sin().abs() * 0.72 * amount);
-            let x = bounds.x + index as f32 * (bounds.w / 12.0) + 2.0;
-            draw_rect(
-                canvas,
-                vg::Rect::new(
-                    x,
-                    bounds.y + bounds.h - h,
-                    x + bounds.w / 18.0,
-                    bounds.y + bounds.h,
-                ),
-                if t < amount {
-                    Color::rgb(124, 188, 148)
-                } else {
-                    Color::rgba(71, 84, 90, 130)
-                },
             );
         }
     }

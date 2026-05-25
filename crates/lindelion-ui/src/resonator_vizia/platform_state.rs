@@ -231,8 +231,11 @@ impl ResonatorViziaEditor {
         size: ResonatorEditorSize,
     ) -> Self {
         unsafe { host.refresh_library() };
+        let parent_view = parent as usize;
         let parent = ParentWindow(parent);
-        let window = unsafe { build_resonator_application(host, size) }.open_parented(&parent);
+        let window =
+            unsafe { build_resonator_application_with_parent(host, size, parent_view) }
+                .open_parented(&parent);
         Self { window }
     }
 }
@@ -371,6 +374,7 @@ impl EditorParameterControl {
 #[derive(Clone, Copy)]
 struct EditorSignals {
     host: ResonatorEditorHost,
+    dialog_parent: Option<crate::vizia_file_dialogs::DialogParent>,
     parameters: EditorParameterSignals,
     selected_slot: Signal<f32>,
     selected_sample: Signal<f32>,
@@ -401,6 +405,51 @@ struct EditorModel {
     signals: EditorSignals,
     command_bus: EditorCommandBus,
     selected_library_sample: Option<usize>,
+    pending_dialog: Option<PendingEditorDialog>,
+}
+
+struct PendingEditorDialog {
+    command: UiCommand,
+    selected_sample: Option<usize>,
+    dialog: crate::vizia_file_dialogs::PendingFileDialog,
+}
+
+impl PendingEditorDialog {
+    fn pick_file(
+        command: UiCommand,
+        selected_sample: Option<usize>,
+        dialog: FileDialog,
+    ) -> Self {
+        Self {
+            command,
+            selected_sample,
+            dialog: crate::vizia_file_dialogs::PendingFileDialog::pick_file(dialog),
+        }
+    }
+
+    fn pick_folder(
+        command: UiCommand,
+        selected_sample: Option<usize>,
+        dialog: FileDialog,
+    ) -> Self {
+        Self {
+            command,
+            selected_sample,
+            dialog: crate::vizia_file_dialogs::PendingFileDialog::pick_folder(dialog),
+        }
+    }
+
+    fn save_file(
+        command: UiCommand,
+        selected_sample: Option<usize>,
+        dialog: FileDialog,
+    ) -> Self {
+        Self {
+            command,
+            selected_sample,
+            dialog: crate::vizia_file_dialogs::PendingFileDialog::save_file(dialog),
+        }
+    }
 }
 
 enum EditorEvent {
@@ -425,13 +474,23 @@ impl Model for EditorModel {
                 if let Some(slot) = dispatch.selected_slot {
                     self.signals.selected_slot.set(f32::from(slot.0 - 1));
                 }
-                handle_editor_command(
+                if let Some(pending) = start_editor_dialog(
                     self.host,
-                    Some(dispatch.command),
+                    self.signals.dialog_parent,
+                    dispatch.command,
                     self.selected_library_sample,
-                );
-                unsafe {
-                    sync_summary_from_controller(self.host, self.signals);
+                ) {
+                    self.pending_dialog = Some(pending);
+                } else {
+                    handle_editor_command(
+                        self.host,
+                        Some(dispatch.command),
+                        self.selected_library_sample,
+                        None,
+                    );
+                    unsafe {
+                        sync_summary_from_controller(self.host, self.signals);
+                    }
                 }
                 self.signals.command_status.set(Some(dispatch.command));
             }
@@ -440,6 +499,7 @@ impl Model for EditorModel {
                 self.signals.selected_sample.set(*index as f32);
             }
             EditorEvent::SyncFromController => unsafe {
+                self.complete_pending_dialog();
                 request_telemetry_from_controller(self.host);
                 sync_signals_from_controller(self.host, self.signals);
                 sync_telemetry_from_controller(self.host, self.signals);
@@ -448,10 +508,41 @@ impl Model for EditorModel {
     }
 }
 
+impl EditorModel {
+    fn complete_pending_dialog(&mut self) {
+        let Some(pending) = self.pending_dialog.as_mut() else {
+            return;
+        };
+        let std::task::Poll::Ready(selection) = pending.dialog.poll_path() else {
+            return;
+        };
+        let pending = self.pending_dialog.take().expect("pending dialog");
+        if let Some(path) = selection {
+            handle_editor_command(
+                self.host,
+                Some(pending.command),
+                pending.selected_sample,
+                Some(&path),
+            );
+            unsafe {
+                sync_summary_from_controller(self.host, self.signals);
+            }
+        }
+    }
+}
+
 pub unsafe fn build_resonator_application(
     host: ResonatorEditorHost,
     size: ResonatorEditorSize,
 ) -> vizia::Application<impl Fn(&mut Context) + Send + 'static> {
+    unsafe { build_resonator_application_with_parent(host, size, 0) }
+}
+
+unsafe fn build_resonator_application_with_parent(
+    host: ResonatorEditorHost,
+    size: ResonatorEditorSize,
+    parent_view: usize,
+) -> vizia::Application<impl Fn(&mut Context) + Send + 'static> {
     let values = unsafe { EditorValues::from_host(host) };
-    build_application(host, values, size)
+    build_application(host, values, size, parent_view)
 }

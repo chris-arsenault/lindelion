@@ -1,6 +1,6 @@
 # Onset detection
 
-Five onset-detection algorithms plus a hybrid configuration, sharing the `OnsetDetector` trait and a streaming counterpart. Used by Glirdir for sing-to-MIDI phrase capture and reserved for Linnod's slicing pipeline.
+Five onset-detection algorithms plus a hybrid configuration, sharing the `OnsetDetector` trait and a streaming counterpart. Used by Glirdir for sing-to-MIDI phrase capture and by Linnod's slicing pipeline.
 
 ## 1. Purpose
 
@@ -53,16 +53,16 @@ The dispatch path:
 
 ```rust
 match config.algorithm {
-    DetectionAlgorithm::SuperFlux
-    | DetectionAlgorithm::ComplexFlux
-    | DetectionAlgorithm::SpectralSparsity => SuperFluxDetector.detect(input, config),
+    DetectionAlgorithm::SuperFlux => SuperFluxDetector.detect(input, config),
+    DetectionAlgorithm::ComplexFlux => ComplexFluxDetector.detect(input, config),
+    DetectionAlgorithm::SpectralSparsity => SpectralSparsityDetector.detect(input, config),
     DetectionAlgorithm::EnergyTransient => EnergyTransientDetector.detect(input, config),
     DetectionAlgorithm::ManualGrid => ManualGridDetector.detect(input, config),
     DetectionAlgorithm::PitchStability => PitchStabilityDetector.detect(input, config),
 }
 ```
 
-`ComplexFlux` and `SpectralSparsity` currently fall through to `SuperFluxDetector` (documented as a Linnod backlog item — they need distinct implementations).
+`ComplexFlux` and `SpectralSparsity` are distinct offline novelty detectors. SuperFlux remains the default melodic onset detector, while complex flux adds phase/group-delay weighting and spectral sparsity tracks frame-to-frame concentration changes.
 
 Streaming form (`StreamingEnergyTransientDetector` example): buffers `frame_size` samples, computes RMS², compares to last frame's energy, emits a marker when the delta crosses threshold and the position is at least `min_gap_samples` past the previous marker.
 
@@ -162,6 +162,6 @@ let markers = detector.next_block(&audio_block);
 - Sebastian Böck, Florian Krebs, Markus Schedl — *Evaluating the Online Capabilities of Onset Detection Methods* (ISMIR 2012). SuperFlux algorithm.
 - Norberto Degara et al. — *Reliable Onset Detection Based on Spectral Phase and Magnitude* (DAFx 2009). Complex-flux family.
 - Source: [`crates/lindelion-onset-detect/`](../../crates/lindelion-onset-detect/).
-- Consumers: Glirdir analysis worker (`plugins/glirdir/src/analysis.rs`), planned Linnod slice detection (`docs/plugins/linnod-backlog.md`).
+- Consumers: Glirdir analysis worker (`plugins/glirdir/src/analysis.rs`) and Linnod source analysis (`plugins/linnod/src/analysis.rs`).
 - Related: [`PitchDetector`](pitch-detect.md), [`PhraseAnalyzer`](phrase-analysis.md).
 - ADR-0003: [Shared-core extraction policy](../adr/0003-shared-core-extraction.md).

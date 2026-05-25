@@ -1,10 +1,10 @@
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
 use lindelion_plugin_shell::{PluginState, TomlPatchError, TomlPatchFormat};
-use lindelion_sample_library::LibraryPaths;
+use lindelion_sample_library::{LibraryPaths, save_library_patch_to_path};
 
 use crate::patch::{GlirdirPatch, ScratchpadAudio, ScratchpadMetadata};
 
@@ -108,35 +108,11 @@ pub fn save_library_patch(
     paths: &LibraryPaths,
     patch: &GlirdirPatch,
 ) -> Result<PathBuf, PatchIoError> {
-    fs::create_dir_all(&paths.patches)?;
-    let path = paths
-        .patches
-        .join(format!("{}.toml", sanitize_patch_name(&patch.name)));
-    save_patch(&path, patch)?;
-    Ok(path)
+    save_library_patch_to_path(paths, &patch.name, |path| save_patch(path, patch))
 }
 
 pub fn load_library_patch(path: impl AsRef<Path>) -> Result<GlirdirPatch, PatchIoError> {
     load_patch(path)
-}
-
-fn sanitize_patch_name(name: &str) -> String {
-    let sanitized = name
-        .chars()
-        .map(|character| match character {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
-            character if character.is_control() => '-',
-            character => character,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string();
-
-    if sanitized.is_empty() {
-        "Untitled".to_string()
-    } else {
-        sanitized
-    }
 }
 
 fn patch_settings_only(patch: &GlirdirPatch) -> GlirdirPatch {

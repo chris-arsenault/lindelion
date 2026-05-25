@@ -7,6 +7,7 @@ use lindelion_dsp_utils::{
 use lindelion_midi::DetectedNote;
 use lindelion_onset_detect::{
     DetectionConfig, HybridOnsetDetector, OnsetDetectionInput, OnsetDetector, SliceMarker,
+    slice_regions_from_markers,
 };
 use lindelion_pitch_detect::{
     PitchContour, PitchDetectionConfig, PitchDetectionError, PitchDetector, PitchFrame,
@@ -287,19 +288,11 @@ impl NoteSegmenter {
         }
 
         let min_samples = ms_to_samples(self.config.min_note_ms, sample_rate);
-        let mut positions = markers
-            .iter()
-            .map(|marker| marker.position_samples.min(audio.len()))
-            .collect::<Vec<_>>();
-        positions.push(audio.len());
-        positions.sort_unstable();
-        positions.dedup();
-
         let mut notes = Vec::new();
         let mut previous_pitch = None;
-        for window in positions.windows(2) {
-            let start = window[0];
-            let end = window[1].min(audio.len());
+        for region in slice_regions_from_markers(markers, audio.len()) {
+            let start = region.start_sample;
+            let end = region.end_sample;
             if end.saturating_sub(start) < min_samples.max(1) {
                 continue;
             }

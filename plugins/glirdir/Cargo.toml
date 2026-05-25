@@ -15,6 +15,7 @@ lindelion-midi.workspace = true
 lindelion-onset-detect.workspace = true
 lindelion-phrase-analysis.workspace = true
 lindelion-pitch-detect.workspace = true
+lindelion-plugin-metadata.workspace = true
 lindelion-plugin-shell.workspace = true
 lindelion-sample-library = { workspace = true, features = ["file-library"] }
 lindelion-ui.workspace = true

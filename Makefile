@@ -1,21 +1,24 @@
-PLUGIN ?= lamath
+DEFAULT_PLUGIN ?= lamath
+PLUGINS ?= lamath glirdir linnod
+ifeq ($(origin PLUGIN), undefined)
+BUILD_PLUGINS ?= $(PLUGINS)
+PLUGIN ?= $(DEFAULT_PLUGIN)
+else
+BUILD_PLUGINS ?= $(PLUGIN)
+endif
 MACOS_TARGET ?= aarch64-apple-darwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
-ifeq ($(PLUGIN),glirdir)
-DEFAULT_BUNDLE_NAME := Glirdir.vst3
-else
-DEFAULT_BUNDLE_NAME := Lamath.vst3
-endif
-BUNDLE_NAME ?= $(DEFAULT_BUNDLE_NAME)
+BUNDLE_NAME ?= $(shell CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$(PLUGIN)" --field bundle-file)
+VST3_VALIDATOR ?= validator
 VST3_STAGING_DIR ?= $(CACHE_DIR)/bundles
 VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test check bench bench-smoke macos-check build bundle-macos inspect-vst3 cache-dir docs
+.PHONY: ci fmt fmt-check clippy test check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
-ci: check bench-smoke
+ci: check host-macos-check bench-smoke
 
 cache-dir:
 	@mkdir -p "$(CACHE_DIR)" "$(LINDELION_CARGO_TARGET_DIR)" "$(VST3_STAGING_DIR)"
@@ -71,8 +74,23 @@ docs:
 	python3 tools/dsp-plot/plot_markers.py docs/plots/data/onset_signal.csv docs/plots/data/onset_markers.csv docs/plots/onset_detection.svg --title "EnergyTransientDetector on synthetic tone bursts (sensitivity=0.7)"
 	python3 tools/dsp-plot/plot_time.py docs/plots/data/pitch_tracking.csv docs/plots/pitch_tracking.svg --title "SwiftF0Detector tracking synthetic frequency sweep" --ylabel "Frequency (Hz)"
 
+host-macos-check:
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		$(MAKE) macos-check; \
+	else \
+		echo "Skipping macOS-target check on non-macOS host; Apple C toolchain is required."; \
+	fi
+
 macos-check:
-	cargo check -p lamath --target aarch64-apple-darwin
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "macos-check must be run on macOS; Apple C toolchain is required."; \
+		exit 2; \
+	fi
+	@rustup target list --installed | grep -qx "$(MACOS_TARGET)" || rustup target add "$(MACOS_TARGET)"
+	RUSTFLAGS="$(RUSTFLAGS) -D warnings" cargo check --workspace --target "$(MACOS_TARGET)"
+
+plugin-info:
+	CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -p xtask -- plugin-info "$(PLUGIN)"
 
 build: cache-dir
 	@if [ "$$(uname -s)" != "Darwin" ]; then \
@@ -80,16 +98,22 @@ build: cache-dir
 		exit 2; \
 	fi
 	@rustup target list --installed | grep -qx "$(MACOS_TARGET)" || rustup target add "$(MACOS_TARGET)"
-	CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
-	CARGO_INCREMENTAL=1 \
-	LINDELION_BUNDLE_DIR="$(VST3_STAGING_DIR)" \
-	cargo run -p xtask -- bundle "$(PLUGIN)" --target "$(MACOS_TARGET)"
-	@echo "Installing VST3 bundle to: $(VST3_INSTALLED_BUNDLE)"
-	@sudo mkdir -p "$(VST3_DIR)"
-	@sudo rm -rf "$(VST3_INSTALLED_BUNDLE)"
-	@sudo ditto "$(VST3_STAGED_BUNDLE)" "$(VST3_INSTALLED_BUNDLE)"
-	@sudo xattr -dr com.apple.quarantine "$(VST3_INSTALLED_BUNDLE)" 2>/dev/null || true
-	@echo "Published VST3 bundle in: $(VST3_INSTALLED_BUNDLE)"
+	@for plugin in $(BUILD_PLUGINS); do \
+		bundle_name="$$(CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$$plugin" --field bundle-file)"; \
+		staged_bundle="$(VST3_STAGING_DIR)/$$bundle_name"; \
+		installed_bundle="$(VST3_DIR)/$$bundle_name"; \
+		echo "Building VST3 bundle for $$plugin..."; \
+		CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
+		CARGO_INCREMENTAL=1 \
+		LINDELION_BUNDLE_DIR="$(VST3_STAGING_DIR)" \
+		cargo run -p xtask -- bundle "$$plugin" --target "$(MACOS_TARGET)" || exit 1; \
+		echo "Installing VST3 bundle to: $$installed_bundle"; \
+		sudo mkdir -p "$(VST3_DIR)"; \
+		sudo rm -rf "$$installed_bundle"; \
+		sudo ditto "$$staged_bundle" "$$installed_bundle"; \
+		sudo xattr -dr com.apple.quarantine "$$installed_bundle" 2>/dev/null || true; \
+		echo "Published VST3 bundle in: $$installed_bundle"; \
+	done
 	@echo "Use Ableton's VST3 system folders; no custom folder is required."
 
 bundle-macos: build
@@ -108,3 +132,9 @@ inspect-vst3:
 	@nm -gU "$(VST3_INSTALLED_BUNDLE)/Contents/MacOS/$$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$(VST3_INSTALLED_BUNDLE)/Contents/Info.plist")" | egrep 'GetPluginFactory|bundleEntry|bundleExit|BundleEntry|BundleExit'
 	@echo "Code signature:"
 	@codesign --verify --deep --strict --verbose=4 "$(VST3_INSTALLED_BUNDLE)"
+
+validate-vst3: inspect-vst3
+	CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
+	cargo run -p xtask -- validator "$(PLUGIN)" \
+		--bundle "$(VST3_INSTALLED_BUNDLE)" \
+		--validator "$(VST3_VALIDATOR)"

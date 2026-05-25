@@ -1,9 +1,6 @@
-use lindelion_dsp_utils::db_to_gain;
+use lindelion_dsp_utils::{db_to_gain, interpolation, playback::PlaybackCursor};
 
-use super::{
-    ExcitationCursor, LIVE_EXCITATION_MAX_GAIN_DB, LIVE_EXCITATION_MIN_GAIN_DB,
-    sanitize_live_sample,
-};
+use super::{LIVE_EXCITATION_MAX_GAIN_DB, LIVE_EXCITATION_MIN_GAIN_DB, sanitize_live_sample};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LiveExcitationLatchCapture<'a> {
@@ -225,19 +222,19 @@ impl VoiceLiveExcitationLatch {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct BufferedExcitationPlayback {
-    cursor: ExcitationCursor,
+    cursor: PlaybackCursor,
 }
 
 impl BufferedExcitationPlayback {
     const fn finished() -> Self {
         Self {
-            cursor: ExcitationCursor::finished(),
+            cursor: PlaybackCursor::finished(),
         }
     }
 
     fn new(sample_count: usize) -> Self {
         Self {
-            cursor: ExcitationCursor::new(sample_count, 0.0, 1.0, false),
+            cursor: PlaybackCursor::forward(sample_count, 0.0, 1.0, false),
         }
     }
 
@@ -246,6 +243,9 @@ impl BufferedExcitationPlayback {
     }
 
     fn next_sample(&mut self, samples: &[f32]) -> f32 {
-        self.cursor.next_sample(samples)
+        self.cursor
+            .next_position()
+            .map(|position| interpolation::linear(samples, position))
+            .unwrap_or(0.0)
     }
 }

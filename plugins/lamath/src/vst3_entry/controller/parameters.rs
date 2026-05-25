@@ -1,14 +1,5 @@
 pub(super) fn default_parameter_values() -> [f64; VST3_PARAMETER_COUNT] {
-    let mut values = [0.0; VST3_PARAMETER_COUNT];
-    for (index, binding) in (0..PARAMETER_BINDING_COUNT)
-        .filter_map(parameter_binding_by_index)
-        .enumerate()
-    {
-        values[index] = parameter_default_normalized_value_by_index(index).unwrap_or_else(|| {
-            let parameter = binding.info();
-            parameter.range.normalize(parameter.range.default)
-        }) as f64;
-    }
+    let mut values = PARAMETER_REGISTRY.default_normalized_values::<VST3_PARAMETER_COUNT>();
     values[PITCH_BEND_PARAMETER_INDEX] = 0.5;
     values
 }
@@ -16,16 +7,7 @@ pub(super) fn default_parameter_values() -> [f64; VST3_PARAMETER_COUNT] {
 pub(super) fn parameter_values_from_patch(
     patch: &crate::ResonatorSynthPatch,
 ) -> [f64; VST3_PARAMETER_COUNT] {
-    let mut values = default_parameter_values();
-    for binding in (0..PARAMETER_BINDING_COUNT).filter_map(parameter_binding_by_index) {
-        let parameter = binding.info();
-        if let Some(normalized) = patch_parameter_normalized_value(patch, parameter.id.0)
-            && let Some(index) = parameter_index(parameter.id.0)
-        {
-            values[index] = normalized as f64;
-        }
-    }
-    values
+    PARAMETER_REGISTRY.normalized_patch_values(patch, default_parameter_values())
 }
 
 pub(super) fn parameter_index(id: u32) -> Option<usize> {

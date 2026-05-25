@@ -1218,6 +1218,7 @@ dependencies = [
  "lindelion-onset-detect",
  "lindelion-phrase-analysis",
  "lindelion-pitch-detect",
+ "lindelion-plugin-metadata",
  "lindelion-plugin-shell",
  "lindelion-sample-library",
  "lindelion-test-allocator",
@@ -1610,6 +1611,7 @@ dependencies = [
  "lindelion-midi",
  "lindelion-phrase-analysis",
  "lindelion-pitch-detect",
+ "lindelion-plugin-metadata",
  "lindelion-plugin-shell",
  "lindelion-sample-library",
  "lindelion-test-allocator",
@@ -1746,6 +1748,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lindelion-pitch-shift"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-onset-detect",
+ "lindelion-pitch-detect",
+ "realfft",
+ "serde",
+]
+
+[[package]]
+name = "lindelion-plugin-metadata"
+version = "0.3.0"
+dependencies = [
+ "lindelion-plugin-shell",
+]
+
+[[package]]
 name = "lindelion-plugin-shell"
 version = "0.3.0"
 dependencies = [
@@ -1753,15 +1773,6 @@ dependencies = [
  "serde",
  "toml 0.9.12+spec-1.1.0",
  "vst3",
-]
-
-[[package]]
-name = "lindelion-psola"
-version = "0.3.0"
-dependencies = [
- "criterion",
- "rand 0.8.6",
- "rand_pcg",
 ]
 
 [[package]]
@@ -1782,9 +1793,11 @@ version = "0.3.0"
 name = "lindelion-ui"
 version = "0.3.0"
 dependencies = [
+ "dispatch2",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "raw-window-handle 0.5.2",
  "rfd",
  "vizia",
 ]
@@ -1793,12 +1806,20 @@ dependencies = [
 name = "linnod"
 version = "0.3.0"
 dependencies = [
+ "criterion",
  "lindelion-dsp-utils",
+ "lindelion-midi",
  "lindelion-onset-detect",
+ "lindelion-pitch-detect",
+ "lindelion-pitch-shift",
+ "lindelion-plugin-metadata",
  "lindelion-plugin-shell",
- "lindelion-psola",
  "lindelion-sample-library",
+ "lindelion-test-allocator",
  "lindelion-ui",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+ "vst3",
 ]
 
 [[package]]
@@ -4327,6 +4348,9 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 [[package]]
 name = "xtask"
 version = "0.3.0"
+dependencies = [
+ "lindelion-plugin-metadata",
+]
 
 [[package]]
 name = "yoke"

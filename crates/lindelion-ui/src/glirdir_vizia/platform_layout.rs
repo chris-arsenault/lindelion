@@ -1,3 +1,34 @@
+fn build_editor(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        glirdir_top_strip(cx, signals);
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                glirdir_capture_section(cx, signals);
+                glirdir_detection_section(cx, signals);
+            })
+            .width(Pixels(280.0))
+            .height(Stretch(1.0))
+            .vertical_gap(Pixels(10.0));
+            glirdir_preview_section(cx, signals);
+            VStack::new(cx, move |cx| {
+                glirdir_quantize_section(cx, signals);
+                glirdir_audition_section(cx, signals);
+            })
+            .width(Pixels(280.0))
+            .height(Stretch(1.0))
+            .vertical_gap(Pixels(10.0));
+        })
+        .height(Stretch(1.0))
+        .horizontal_gap(Pixels(10.0));
+    })
+    .class("root")
+    .class("ll-shell")
+    .padding(Pixels(12.0))
+    .width(Stretch(1.0))
+    .height(Stretch(1.0))
+    .vertical_gap(Pixels(10.0));
+}
+
 fn build_application(
     host: GlirdirEditorHost,
     values: EditorValues,
@@ -6,11 +37,11 @@ fn build_application(
 ) -> vizia::Application<impl Fn(&mut Context) + Send + 'static> {
     let width = size.width.max(GLIRDIR_EDITOR_WIDTH) as u32;
     let height = size.height.max(GLIRDIR_EDITOR_HEIGHT) as u32;
-
     vizia::Application::new(move |cx| {
         cx.add_stylesheet(STYLE)
             .expect("failed to add glirdir editor style");
-
+        cx.add_stylesheet(crate::vizia_controls::COMMON_CONTROL_STYLE)
+            .expect("failed to add common control style");
         let signals = EditorSignals {
             host,
             parent_view,
@@ -19,7 +50,18 @@ fn build_application(
             preview: Signal::new(values.preview.clone()),
             command_status: Signal::new(values.command_status),
         };
-        EditorModel { host, signals }.build(cx);
+        EditorModel {
+            host,
+            signals,
+            pending_export: None,
+        }
+        .build(cx);
+        let sync_timer = cx.add_timer(Duration::from_millis(66), None, |cx, action| {
+            if matches!(action, TimerAction::Tick(_)) {
+                cx.emit(EditorEvent::SyncFromController);
+            }
+        });
+        cx.start_timer(sync_timer);
         build_editor(cx, signals);
     })
     .ignore_default_theme()
@@ -28,167 +70,225 @@ fn build_application(
     .with_scale_policy(WindowScalePolicy::ScaleFactor(1.0))
 }
 
-fn build_editor(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, |cx| {
-        top_bar(cx, signals);
-        HStack::new(cx, |cx| {
-            left_column(cx, signals);
-            preview_column(cx, signals);
+fn glirdir_top_strip(cx: &mut Context, signals: EditorSignals) {
+    HStack::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            Label::new(cx, "GLIRDIR").class("title");
+            Label::new(cx, command_status_text(signals.command_status)).class("muted");
         })
-        .height(Pixels(542.0))
-        .horizontal_gap(Pixels(12.0));
-    })
-    .class("root")
-    .size(Stretch(1.0))
-    .padding(Pixels(14.0))
-    .vertical_gap(Pixels(10.0));
-}
-
-fn top_bar(cx: &mut Context, signals: EditorSignals) {
-    HStack::new(cx, |cx| {
-        VStack::new(cx, |cx| {
-            Label::new(cx, "Glirdir").class("title");
-            Label::new(cx, status_summary(signals.status)).class("muted");
-        })
-        .width(Pixels(238.0))
+        .width(Stretch(1.0))
         .vertical_gap(Pixels(2.0));
-
-        status_chip(cx, "Capture", capture_status_text(signals.status));
-        status_chip(cx, "Analysis", analysis_status_text(signals.status));
-        Spacer::new(cx);
-        icon_button(cx, ICON_LIBRARY, "Save scratchpad", GlirdirEditorCommand::SaveScratchpadToLibrary);
-        export_file_button(cx, ICON_DOWNLOAD, "Export MIDI file");
+        glirdir_status_chip(cx, capture_state_text(signals.status));
+        glirdir_status_chip(cx, analysis_state_text(signals.status));
+        glirdir_status_chip(cx, library_state_text(signals.status));
+        HStack::new(cx, move |cx| {
+            glirdir_tool_button(cx, ICON_MICROPHONE, "Arm capture", GlirdirEditorCommand::ArmCapture);
+            glirdir_tool_button(cx, ICON_TRASH, "Clear scratchpad", GlirdirEditorCommand::ClearScratchpad);
+            glirdir_tool_button(cx, ICON_DEVICE_FLOPPY, "Save scratchpad to library", GlirdirEditorCommand::SaveScratchpadToLibrary);
+            glirdir_export_button(cx);
+        })
+        .horizontal_gap(Pixels(5.0));
     })
     .class("topbar")
+    .class("ll-top-strip")
     .height(Pixels(58.0))
     .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(14.0));
+    .horizontal_gap(Pixels(8.0));
 }
 
-fn left_column(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, |cx| {
-        capture_panel(cx, signals);
-        quantize_panel(cx, signals);
-        audition_panel(cx, signals);
-        detection_panel(cx, signals);
-    })
-    .width(Pixels(300.0))
-    .height(Stretch(1.0))
-    .vertical_gap(Pixels(12.0));
-}
-
-fn preview_column(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, |cx| {
-        HStack::new(cx, |cx| {
-            Svg::new(cx, ICON_WAVE_SINE).class("toolbar-icon");
-            Label::new(cx, "Audio + MIDI Preview").class("section-title");
-            Spacer::new(cx);
-            export_file_button(cx, ICON_FILE_MUSIC, "Export MIDI file");
-        })
-        .height(Pixels(24.0))
-        .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(8.0));
-
-        WaveformPreviewView::new(cx, signals.preview)
-            .class("preview")
-            .height(Pixels(204.0))
-            .width(Stretch(1.0));
-        PianoRollPreviewView::new(cx, signals.preview, signals.host, signals.parent_view)
-            .class("preview")
-            .height(Pixels(244.0))
-            .width(Stretch(1.0));
-
-        HStack::new(cx, |cx| {
-            command_status(cx, signals.command_status, signals.status);
-            Spacer::new(cx);
-            Label::new(cx, midi_preview_text(signals.preview)).class("muted");
-        })
-        .height(Pixels(28.0))
-        .alignment(Alignment::Center);
-    })
-    .class("panel")
-    .width(Pixels(620.0))
-    .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
-}
-
-fn capture_panel(cx: &mut Context, signals: EditorSignals) {
-    panel(cx, "Transport / Capture", ICON_MICROPHONE, |cx| {
-        HStack::new(cx, |cx| {
-            icon_button(cx, ICON_ACTIVITY, "Arm capture", GlirdirEditorCommand::ArmCapture);
-            icon_button(cx, ICON_ADJUSTMENTS_HORIZONTAL, "Analyze", GlirdirEditorCommand::FinalizeCapture);
-            icon_button(cx, ICON_TRASH, "Clear", GlirdirEditorCommand::ClearScratchpad);
-        })
-        .height(Pixels(32.0))
-        .horizontal_gap(Pixels(8.0));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::CaptureBars));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::SyncMode));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::CountIn));
-    })
-    .height(Pixels(150.0));
-}
-
-fn quantize_panel(cx: &mut Context, signals: EditorSignals) {
-    panel(cx, "Quantize", ICON_ADJUSTMENTS_HORIZONTAL, |cx| {
-        HStack::new(cx, |cx| {
-            parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Root));
-            parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Scale));
-        })
-        .height(Pixels(42.0))
-        .horizontal_gap(Pixels(8.0));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Snap));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Grid));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::TimingStrength));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::VelocityAmount));
-    })
-    .height(Pixels(202.0));
-}
-
-fn audition_panel(cx: &mut Context, signals: EditorSignals) {
-    panel(cx, "Audition", ICON_VOLUME_2, |cx| {
-        HStack::new(cx, |cx| {
-            icon_button(cx, ICON_PLAYER_PLAY, "Play audition", GlirdirEditorCommand::PlayAudition);
-            icon_button(cx, ICON_PLAYER_STOP, "Stop audition", GlirdirEditorCommand::StopAudition);
-            icon_button(cx, ICON_REPEAT, "Toggle loop", GlirdirEditorCommand::ToggleLoop);
-            icon_button(cx, ICON_ACTIVITY, "Toggle live edit", GlirdirEditorCommand::ToggleLiveEdit);
-        })
-        .height(Pixels(32.0))
-        .horizontal_gap(Pixels(8.0));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::AuditionVolume));
-    })
-    .height(Pixels(98.0));
-}
-
-fn detection_panel(cx: &mut Context, signals: EditorSignals) {
-    panel(cx, "Detection", ICON_FILTER, |cx| {
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Confidence));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::OnsetSensitivity));
-        parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::MinNote));
-    })
-    .height(Pixels(116.0));
-}
-
-fn panel<'a, F>(
-    cx: &'a mut Context,
-    title: &'static str,
-    icon: &'static str,
-    content: F,
-) -> Handle<'a, VStack>
-where
-    F: FnOnce(&mut Context),
-{
+fn glirdir_capture_section(cx: &mut Context, signals: EditorSignals) {
     VStack::new(cx, move |cx| {
-        HStack::new(cx, |cx| {
-            Svg::new(cx, icon).class("toolbar-icon");
-            Label::new(cx, title).class("section-title");
-            Spacer::new(cx);
+        crate::vizia_controls::static_section_header(
+            cx,
+            "Capture",
+            "host sync and scratch input",
+            crate::vizia_controls::Accent::Transport,
+        );
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::CaptureBars));
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::SyncMode));
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::CountIn));
+        HStack::new(cx, move |cx| {
+            glirdir_tool_button(cx, ICON_PLAYER_PLAY, "Finalize capture", GlirdirEditorCommand::FinalizeCapture);
+            glirdir_tool_button(cx, ICON_ACTIVITY, "Toggle live edit", GlirdirEditorCommand::ToggleLiveEdit);
+            glirdir_tool_button(cx, ICON_REPEAT, "Toggle audition loop", GlirdirEditorCommand::ToggleLoop);
         })
-        .height(Pixels(20.0))
-        .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(8.0));
-        content(cx);
+        .horizontal_gap(Pixels(5.0));
     })
     .class("panel")
+    .class("ll-panel")
+    .class("ll-panel-transport")
+    .height(Pixels(178.0))
+    .vertical_gap(Pixels(8.0));
+}
+
+fn glirdir_detection_section(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        crate::vizia_controls::static_section_header(
+            cx,
+            "Detection",
+            "confidence, onset, length",
+            crate::vizia_controls::Accent::Audio,
+        );
+        HStack::new(cx, move |cx| {
+            glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Confidence));
+            glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::OnsetSensitivity));
+            glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::MinNote));
+        })
+        .horizontal_gap(Pixels(4.0));
+    })
+    .class("panel")
+    .class("ll-panel")
+    .class("ll-panel-audio")
+    .height(Pixels(148.0))
+    .vertical_gap(Pixels(8.0));
+}
+
+fn glirdir_preview_section(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        crate::vizia_controls::section_header(
+            cx,
+            "Preview",
+            preview_detail_text(signals.preview),
+            crate::vizia_controls::Accent::Audio,
+        );
+        VStack::new(cx, move |cx| {
+            WaveformPreviewView::new(cx, signals.preview)
+                .class("preview")
+                .class("ll-visual-frame")
+                .class("ll-visual-audio")
+                .height(Pixels(178.0));
+            PianoRollPreviewView::new(cx, signals.preview, signals.host, signals.parent_view)
+                .class("preview")
+                .class("ll-visual-frame")
+                .class("ll-visual-mod")
+                .height(Stretch(1.0));
+        })
+        .vertical_gap(Pixels(8.0))
+        .height(Stretch(1.0));
+    })
+    .class("panel")
+    .class("ll-panel")
+    .class("ll-panel-audio")
     .width(Stretch(1.0))
-    .vertical_gap(Pixels(8.0))
+    .height(Stretch(1.0))
+    .vertical_gap(Pixels(8.0));
+}
+
+fn glirdir_quantize_section(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        crate::vizia_controls::static_section_header(
+            cx,
+            "Quantize",
+            "key, grid, timing",
+            crate::vizia_controls::Accent::Mod,
+        );
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Root));
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Scale));
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Snap));
+        glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::Grid));
+        HStack::new(cx, move |cx| {
+            glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::TimingStrength));
+            glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::VelocityAmount));
+        })
+        .horizontal_gap(Pixels(4.0));
+    })
+    .class("panel")
+    .class("ll-panel")
+    .class("ll-panel-mod")
+    .height(Pixels(336.0))
+    .vertical_gap(Pixels(7.0));
+}
+
+fn glirdir_audition_section(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        crate::vizia_controls::static_section_header(
+            cx,
+            "Audition / Export",
+            "listen and move MIDI",
+            crate::vizia_controls::Accent::Transport,
+        );
+        HStack::new(cx, move |cx| {
+            glirdir_parameter_control(cx, signals.parameter(GlirdirEditorSurfaceSlot::AuditionVolume));
+            VStack::new(cx, move |cx| {
+                HStack::new(cx, move |cx| {
+                    glirdir_tool_button(cx, ICON_PLAYER_PLAY, "Play audition", GlirdirEditorCommand::PlayAudition);
+                    glirdir_tool_button(cx, ICON_PLAYER_STOP, "Stop audition", GlirdirEditorCommand::StopAudition);
+                    glirdir_export_button(cx);
+                })
+                .horizontal_gap(Pixels(5.0));
+                Label::new(cx, "drag piano roll or export")
+                    .class("ll-section-subtitle")
+                    .height(Pixels(18.0));
+            })
+            .width(Stretch(1.0))
+            .vertical_gap(Pixels(8.0));
+        })
+        .horizontal_gap(Pixels(8.0));
+    })
+    .class("panel")
+    .class("ll-panel")
+    .class("ll-panel-transport")
+    .height(Stretch(1.0))
+    .vertical_gap(Pixels(8.0));
+}
+
+fn capture_state_text(status: Signal<GlirdirEditorStatus>) -> Memo<String> {
+    Memo::new(move |_| match status.get().capture_state {
+        GlirdirEditorCaptureState::Idle => "capture idle",
+        GlirdirEditorCaptureState::Armed => "capture armed",
+        GlirdirEditorCaptureState::CountIn => "count-in",
+        GlirdirEditorCaptureState::Capturing => "capturing",
+        GlirdirEditorCaptureState::Captured => "captured",
+    }
+    .to_string())
+}
+
+fn analysis_state_text(status: Signal<GlirdirEditorStatus>) -> Memo<String> {
+    Memo::new(move |_| match status.get().analysis_status {
+        GlirdirEditorAnalysisStatus::Idle => "analysis idle",
+        GlirdirEditorAnalysisStatus::Capturing => "input live",
+        GlirdirEditorAnalysisStatus::CapturedPendingAnalysis => "pending analysis",
+        GlirdirEditorAnalysisStatus::Analyzing => "analyzing",
+        GlirdirEditorAnalysisStatus::Ready => "midi ready",
+        GlirdirEditorAnalysisStatus::Error => "analysis error",
+    }
+    .to_string())
+}
+
+fn library_state_text(status: Signal<GlirdirEditorStatus>) -> Memo<String> {
+    Memo::new(move |_| match status.get().library_status {
+        GlirdirEditorLibraryStatus::Idle => "library idle",
+        GlirdirEditorLibraryStatus::Saving => "saving",
+        GlirdirEditorLibraryStatus::Saved => "saved",
+        GlirdirEditorLibraryStatus::EmptyScratchpad => "empty scratchpad",
+        GlirdirEditorLibraryStatus::Error => "library error",
+    }
+    .to_string())
+}
+
+fn command_status_text(command: Signal<Option<GlirdirEditorCommand>>) -> Memo<String> {
+    Memo::new(move |_| match command.get() {
+        Some(GlirdirEditorCommand::ArmCapture) => "Arm requested",
+        Some(GlirdirEditorCommand::ClearScratchpad) => "Scratchpad cleared",
+        Some(GlirdirEditorCommand::FinalizeCapture) => "Capture finalized",
+        Some(GlirdirEditorCommand::PlayAudition) => "Audition playing",
+        Some(GlirdirEditorCommand::StopAudition) => "Audition stopped",
+        Some(GlirdirEditorCommand::ToggleLoop) => "Loop toggled",
+        Some(GlirdirEditorCommand::ToggleLiveEdit) => "Live edit toggled",
+        Some(GlirdirEditorCommand::SaveScratchpadToLibrary) => "Scratchpad saved",
+        Some(GlirdirEditorCommand::ExportMidi) => "MIDI export requested",
+        None => "Scratch audio, analyze melody, drag MIDI",
+    }
+    .to_string())
+}
+
+fn preview_detail_text(preview: Signal<GlirdirEditorPreview>) -> Memo<String> {
+    Memo::new(move |_| {
+        let preview = preview.get();
+        format!(
+            "{} waveform points / {} notes",
+            preview.waveform.points.len(),
+            preview.piano_roll.notes.len()
+        )
+    })
 }

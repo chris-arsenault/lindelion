@@ -1,9 +1,9 @@
-use std::{cell::Cell, ptr};
+use std::{cell::Cell, ptr, slice};
 
-use crate::ProcessSetup as ShellProcessSetup;
+use crate::{ParameterInfo as ShellParameterInfo, ProcessSetup as ShellProcessSetup};
 use vst3::{ComRef, ComWrapper, Steinberg::Vst::*, Steinberg::*};
 
-use super::{PluginMessage, PluginMessageType, TypedPluginMessage, copy_wstring};
+use super::{PluginMessage, PluginMessageType, TypedPluginMessage, copy_wstring, len_wstring};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vst3ParameterChange {
@@ -48,6 +48,142 @@ pub unsafe fn for_each_vst3_parameter_change(
             });
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vst3ParameterInfo {
+    pub id: u32,
+    pub title: &'static str,
+    pub short_title: &'static str,
+    pub units: &'static str,
+    pub step_count: i32,
+    pub default_normalized_value: f64,
+    pub flags: i32,
+}
+
+impl Vst3ParameterInfo {
+    pub fn from_parameter(parameter: ShellParameterInfo) -> Self {
+        Self {
+            id: parameter.id.0,
+            title: parameter.name,
+            short_title: parameter.name,
+            units: parameter.units,
+            step_count: parameter.step_count.map_or(0, |steps| steps as i32),
+            default_normalized_value: f64::from(parameter.range.normalize(parameter.range.default)),
+            flags: ParameterInfo_::ParameterFlags_::kCanAutomate,
+        }
+    }
+
+    pub const fn hidden(mut self) -> Self {
+        self.flags |= ParameterInfo_::ParameterFlags_::kIsHidden;
+        self
+    }
+}
+
+/// Fill a VST3 `ParameterInfo` from shared parameter metadata.
+///
+/// # Safety
+/// `info` must be either null or a valid writable VST3 `ParameterInfo` pointer.
+pub unsafe fn fill_vst3_parameter_info(
+    spec: Vst3ParameterInfo,
+    info: *mut ParameterInfo,
+) -> tresult {
+    if info.is_null() {
+        return kInvalidArgument;
+    }
+
+    let info = &mut *info;
+    info.id = spec.id;
+    copy_wstring(spec.title, &mut info.title);
+    copy_wstring(spec.short_title, &mut info.shortTitle);
+    copy_wstring(spec.units, &mut info.units);
+    info.stepCount = spec.step_count;
+    info.defaultNormalizedValue = spec.default_normalized_value;
+    info.unitId = 0;
+    info.flags = spec.flags;
+    kResultOk
+}
+
+/// Parse a VST3 UTF-16 parameter string as a plain f32 value.
+///
+/// # Safety
+/// `string` must be either null or point to readable memory containing a null terminator.
+pub unsafe fn parse_vst3_plain_value_string(string: *mut TChar) -> Option<f32> {
+    if string.is_null() {
+        return None;
+    }
+    let len = len_wstring(string as *const TChar);
+    String::from_utf16(slice::from_raw_parts(string as *const u16, len))
+        .ok()?
+        .trim()
+        .parse::<f32>()
+        .ok()
+}
+
+/// Write a VST3 UTF-16 parameter display string.
+///
+/// # Safety
+/// `string` must be either null or a valid writable VST3 `String128` pointer.
+pub unsafe fn write_vst3_parameter_string(value: &str, string: *mut String128) -> tresult {
+    if string.is_null() {
+        return kInvalidArgument;
+    }
+    copy_wstring(value, &mut *string);
+    kResultOk
+}
+
+pub fn sanitize_normalized_f64(value: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        fallback
+    }
+}
+
+#[derive(Debug)]
+pub struct Vst3ParameterMirror<const N: usize> {
+    values: Cell<[f64; N]>,
+}
+
+impl<const N: usize> Vst3ParameterMirror<N> {
+    pub const fn new(values: [f64; N]) -> Self {
+        Self {
+            values: Cell::new(values),
+        }
+    }
+
+    pub fn values(&self) -> [f64; N] {
+        self.values.get()
+    }
+
+    pub fn replace(&self, values: [f64; N]) {
+        self.values.set(values);
+    }
+
+    pub fn value(&self, index: usize) -> Option<f64> {
+        self.values.get().get(index).copied()
+    }
+
+    pub fn set_normalized(&self, index: usize, normalized: f64, fallback: f64) -> Option<f64> {
+        let mut values = self.values.get();
+        let value = values.get_mut(index)?;
+        *value = sanitize_normalized_f64(normalized, fallback);
+        let sanitized = *value;
+        self.values.set(values);
+        Some(sanitized)
+    }
+}
+
+/// Notify a VST3 component handler that parameter values changed.
+///
+/// # Safety
+/// `handler` must be either null or a valid VST3 `IComponentHandler` pointer for the duration of
+/// the call.
+pub unsafe fn restart_vst3_parameter_values_changed(handler: *mut IComponentHandler) {
+    let Some(handler) = ComRef::from_raw(handler) else {
+        return;
+    };
+    handler.restartComponent(RestartFlags_::kParamValuesChanged);
 }
 
 pub fn process_setup_from_vst(setup: &ProcessSetup) -> ShellProcessSetup {
@@ -239,4 +375,16 @@ impl Vst3PeerConnection {
     pub fn notify_typed<M: PluginMessageType>(&self, message: TypedPluginMessage<M>) -> tresult {
         self.notify(PluginMessage::from_typed(message))
     }
+}
+
+pub fn notify_vst3_patch_update<P, E>(
+    peer: &Vst3PeerConnection,
+    patch: &P,
+    encode_patch: impl FnOnce(&P) -> Result<String, E>,
+    message: impl FnOnce(Vec<u8>) -> ComWrapper<PluginMessage>,
+) -> tresult {
+    let Ok(payload) = encode_patch(patch) else {
+        return kResultFalse;
+    };
+    peer.notify(message(payload.into_bytes()))
 }

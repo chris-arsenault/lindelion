@@ -104,6 +104,20 @@ fn slot_command_payloads_preserve_slot_identity() {
 }
 
 #[test]
+fn waveform_points_from_samples_are_bounded_and_sanitized() {
+    let points = waveform_points_from_samples(&[-0.5, f32::NAN, 0.25, 1.0], 2);
+
+    assert_eq!(points.len(), 2);
+    assert_eq!(points[0].min, -0.5);
+    assert_eq!(points[0].max, 0.0);
+    assert_eq!(points[1].min, 0.0);
+    assert_eq!(points[1].max, 1.0);
+    assert!(points.iter().all(|point| point.rms.is_finite()));
+    assert!(waveform_points_from_samples(&[], 2).is_empty());
+    assert!(waveform_points_from_samples(&[1.0], 0).is_empty());
+}
+
+#[test]
 fn command_handler_invokes_patch_io_services() {
     let mut patch_io = MockPatchIoService::default();
     let mut sample_slots = MockSampleSlotService::default();

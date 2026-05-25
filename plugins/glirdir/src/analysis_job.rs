@@ -1,11 +1,12 @@
 use lindelion_midi::QuantizeSettings;
+use lindelion_plugin_shell::{AsyncJobSequence, SequencedAsyncCache};
 
 use crate::{
     analysis::{AnalysisError, AnalysisResult, GlirdirAnalyzer, requantize_result},
     patch::{AnalysisSettings, ScratchpadAudio, apply_scratchpad_midi_context},
 };
 
-pub type AnalysisSequence = u64;
+pub type AnalysisSequence = AsyncJobSequence;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalysisStatus {
@@ -92,97 +93,66 @@ impl AnalysisJobResult {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalysisResultCache {
-    sequence: AnalysisSequence,
-    status: AnalysisStatus,
-    result: Option<AnalysisResult>,
-    error: Option<AnalysisError>,
+    inner: SequencedAsyncCache<AnalysisStatus, AnalysisResult, AnalysisError>,
 }
 
 impl Default for AnalysisResultCache {
     fn default() -> Self {
         Self {
-            sequence: 0,
-            status: AnalysisStatus::Idle,
-            result: None,
-            error: None,
+            inner: SequencedAsyncCache::new(AnalysisStatus::Idle),
         }
     }
 }
 
 impl AnalysisResultCache {
     pub const fn sequence(&self) -> AnalysisSequence {
-        self.sequence
+        self.inner.sequence()
     }
 
     pub const fn status(&self) -> AnalysisStatus {
-        self.status
+        self.inner.status()
     }
 
-    pub const fn result(&self) -> Option<&AnalysisResult> {
-        self.result.as_ref()
+    pub fn result(&self) -> Option<&AnalysisResult> {
+        self.inner.output()
     }
 
-    pub const fn error(&self) -> Option<&AnalysisError> {
-        self.error.as_ref()
+    pub fn error(&self) -> Option<&AnalysisError> {
+        self.inner.error()
     }
 
     pub fn mark_idle(&mut self, sequence: AnalysisSequence) {
-        self.sequence = sequence;
-        self.status = AnalysisStatus::Idle;
-        self.result = None;
-        self.error = None;
+        self.inner.mark_empty(sequence, AnalysisStatus::Idle);
     }
 
     pub fn mark_capturing(&mut self, sequence: AnalysisSequence) {
-        self.sequence = sequence;
-        self.status = AnalysisStatus::Capturing;
-        self.result = None;
-        self.error = None;
+        self.inner.mark_empty(sequence, AnalysisStatus::Capturing);
     }
 
     pub fn mark_captured_pending_analysis(&mut self, sequence: AnalysisSequence) {
-        self.sequence = sequence;
-        self.status = AnalysisStatus::CapturedPendingAnalysis;
-        self.result = None;
-        self.error = None;
+        self.inner
+            .mark_empty(sequence, AnalysisStatus::CapturedPendingAnalysis);
     }
 
     pub fn mark_analyzing(&mut self, sequence: AnalysisSequence) {
-        self.sequence = sequence;
-        self.status = AnalysisStatus::Analyzing;
-        self.result = None;
-        self.error = None;
+        self.inner.mark_empty(sequence, AnalysisStatus::Analyzing);
     }
 
     pub fn mark_requantizing(&mut self, sequence: AnalysisSequence) {
-        self.sequence = sequence;
-        self.status = AnalysisStatus::Analyzing;
-        self.error = None;
+        self.inner.mark_pending(sequence, AnalysisStatus::Analyzing);
     }
 
     pub fn publish_result(&mut self, job_result: AnalysisJobResult) -> bool {
-        if job_result.sequence != self.sequence {
-            return false;
-        }
-
-        match job_result.result {
-            Ok(result) => {
-                self.result = Some(result);
-                self.error = None;
-                self.status = AnalysisStatus::Ready;
-            }
-            Err(error) => {
-                self.result = None;
-                self.error = Some(error);
-                self.status = AnalysisStatus::Error;
-            }
-        }
-
-        true
+        self.inner.publish_result(
+            job_result.sequence,
+            job_result.result,
+            AnalysisStatus::Ready,
+            AnalysisStatus::Error,
+        )
     }
 
     pub fn requantize_current(&mut self, quantize_settings: &QuantizeSettings) -> bool {
-        let Some(result) = self.result.as_mut() else {
+        let Some(result) = self.inner.output_mut() else {
             return false;
         };
         requantize_result(result, quantize_settings);

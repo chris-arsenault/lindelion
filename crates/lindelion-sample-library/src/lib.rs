@@ -1,7 +1,10 @@
-use std::path::PathBuf;
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 #[cfg(feature = "wav-decoder")]
-use std::{fmt, io};
+use std::fmt;
 
 use lindelion_dsp_utils::analysis::sanitize_audio_in_place;
 use serde::{Deserialize, Serialize};
@@ -13,6 +16,7 @@ pub use file_library::{FileSampleLibrary, SampleLibraryError};
 
 pub const DEFAULT_AUDIO_SAMPLE_RATE_HZ: u32 = 48_000;
 pub const MAX_RUNTIME_AUDIO_SAMPLE_RATE_HZ: f32 = 384_000.0;
+pub const DEFAULT_WAVEFORM_PREVIEW_POINTS: usize = 128;
 
 pub trait IntoAudioSampleRateHz {
     fn into_audio_sample_rate_hz(self) -> u32;
@@ -264,6 +268,54 @@ pub struct SampleMetadata {
     pub waveform_preview: SampleWaveformPreview,
 }
 
+impl SampleMetadata {
+    #[cfg(feature = "wav-decoder")]
+    pub fn from_decoded(
+        reference: SampleReference,
+        source_path: &Path,
+        audio: &DecodedSample,
+        preview_points: usize,
+    ) -> Self {
+        let peak = audio
+            .samples
+            .iter()
+            .copied()
+            .map(f32::abs)
+            .fold(0.0, f32::max);
+        let sum_squares = audio
+            .samples
+            .iter()
+            .copied()
+            .map(|sample| sample * sample)
+            .sum::<f32>();
+        let rms = if audio.samples.is_empty() {
+            0.0
+        } else {
+            (sum_squares / audio.samples.len() as f32).sqrt()
+        };
+        let duration_ms = if audio.sample_rate == 0 {
+            0
+        } else {
+            (audio.samples.len() as u64 * 1_000) / u64::from(audio.sample_rate)
+        };
+
+        Self {
+            reference,
+            filename: source_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("sample")
+                .to_string(),
+            duration_ms,
+            sample_rate: audio.sample_rate,
+            channels: audio.channels,
+            rms_db: amplitude_db(rms),
+            peak_db: amplitude_db(peak),
+            waveform_preview: SampleWaveformPreview::from_samples(&audio.samples, preview_points),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SampleWaveformPoint {
     pub min: f32,
@@ -362,6 +414,65 @@ impl LibraryPaths {
             index_db: root.join("index.db"),
             root,
         }
+    }
+
+    pub fn patch_file_path(&self, patch_name: &str) -> PathBuf {
+        self.patches
+            .join(format!("{}.toml", sanitize_library_patch_name(patch_name)))
+    }
+}
+
+pub fn music_library_root(directory_name: &str) -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Music")
+        .join(directory_name)
+}
+
+pub fn music_library_paths(directory_name: &str) -> LibraryPaths {
+    LibraryPaths::from_root(music_library_root(directory_name))
+}
+
+pub fn save_library_patch_to_path<E>(
+    paths: &LibraryPaths,
+    patch_name: &str,
+    save_patch: impl FnOnce(&Path) -> Result<(), E>,
+) -> Result<PathBuf, E>
+where
+    E: From<io::Error>,
+{
+    fs::create_dir_all(&paths.patches)?;
+    let path = paths.patch_file_path(patch_name);
+    save_patch(&path)?;
+    Ok(path)
+}
+
+pub fn sanitize_library_patch_name(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            character if character.is_control() => '-',
+            character => character,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string();
+
+    if sanitized.is_empty() {
+        "Untitled".to_string()
+    } else {
+        sanitized
+    }
+}
+
+#[cfg(feature = "wav-decoder")]
+fn amplitude_db(value: f32) -> Option<f32> {
+    if value.is_finite() && value > 0.0 {
+        Some(20.0 * value.log10())
+    } else {
+        None
     }
 }
 

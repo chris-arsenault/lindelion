@@ -9,6 +9,10 @@ use vst3::{Class, ComPtr, ComWrapper, Interface, Steinberg::Vst::*, Steinberg::*
 
 #[path = "vst3_tests/messages.rs"]
 mod messages;
+#[path = "vst3_tests/parameters.rs"]
+mod parameters;
+#[path = "vst3_tests/view.rs"]
+mod view;
 
 #[test]
 fn string_helpers_null_terminate_truncated_strings() {
@@ -399,29 +403,6 @@ fn factory_dispatches_class_creation_by_cid() {
     assert!(missing.is_null());
 }
 
-#[test]
-fn fixed_size_plug_view_reports_and_enforces_declared_size() {
-    let view = FixedSizePlugView::new(TestPlugViewDelegate, FixedSizePlugViewSize::new(320, 180));
-
-    let mut size = unsafe { std::mem::zeroed::<ViewRect>() };
-    assert_eq!(unsafe { view.getSize(&mut size) }, kResultOk);
-    assert_rect(size, 0, 0, 320, 180);
-
-    let mut requested = rect(12, 24, 640, 480);
-    assert_eq!(unsafe { view.onSize(&mut requested) }, kResultOk);
-    assert_eq!(unsafe { view.getSize(&mut size) }, kResultOk);
-    assert_rect(size, 12, 24, 332, 204);
-
-    assert_eq!(unsafe { view.canResize() }, kResultFalse);
-
-    let mut constrained = rect(8, 16, 100, 100);
-    assert_eq!(
-        unsafe { view.checkSizeConstraint(&mut constrained) },
-        kResultOk
-    );
-    assert_rect(constrained, 0, 0, 320, 180);
-}
-
 static TEST_DESCRIPTOR: PluginDescriptor =
     PluginDescriptor::instrument("Lindelion Test", *b"lindelion_test!!");
 
@@ -465,14 +446,6 @@ impl IPluginBaseTrait for TestPluginBase {
     }
 
     unsafe fn terminate(&self) -> tresult {
-        kResultOk
-    }
-}
-
-struct TestPlugViewDelegate;
-
-impl FixedSizePlugViewDelegate for TestPlugViewDelegate {
-    unsafe fn attached(&self, _parent: *mut c_void, _size: ViewRect) -> tresult {
         kResultOk
     }
 }

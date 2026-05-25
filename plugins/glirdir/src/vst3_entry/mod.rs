@@ -18,7 +18,7 @@ mod tests;
 use crate::PARAMETER_BINDING_COUNT;
 
 const VST3_PARAMETER_COUNT: usize = PARAMETER_BINDING_COUNT;
-const SUBCATEGORY: &str = "Fx";
+const SUBCATEGORY: &str = crate::VST3_BUNDLE_METADATA.vst3_sub_categories;
 
 use controller::GlirdirVst3Controller;
 use messages::{GlirdirPluginMessage, GlirdirStatusPayload};

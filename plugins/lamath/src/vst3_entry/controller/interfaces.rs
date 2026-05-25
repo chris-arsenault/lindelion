@@ -40,34 +40,26 @@ impl IEditControllerTrait for ResonatorVst3Controller {
         if info.is_null() {
             return kInvalidArgument;
         }
-        let info = &mut *info;
         if param_index as usize == PITCH_BEND_PARAMETER_INDEX {
-            info.id = PITCH_BEND_PARAMETER_ID;
-            copy_wstring("Pitch Bend", &mut info.title);
-            copy_wstring("Pitch", &mut info.shortTitle);
-            copy_wstring("st", &mut info.units);
-            info.stepCount = 0;
-            info.defaultNormalizedValue = 0.5;
-            info.unitId = 0;
-            info.flags = ParameterInfo_::ParameterFlags_::kCanAutomate
-                | ParameterInfo_::ParameterFlags_::kIsHidden;
-            return kResultOk;
+            return fill_vst3_parameter_info(
+                Vst3ParameterInfo {
+                    id: PITCH_BEND_PARAMETER_ID,
+                    title: "Pitch Bend",
+                    short_title: "Pitch",
+                    units: "st",
+                    step_count: 0,
+                    default_normalized_value: 0.5,
+                    flags: ParameterInfo_::ParameterFlags_::kCanAutomate,
+                }
+                .hidden(),
+                info,
+            );
         }
 
         let Some(binding) = parameter_binding_by_index(param_index as usize) else {
             return kInvalidArgument;
         };
-        let parameter = binding.info();
-
-        info.id = parameter.id.0;
-        copy_wstring(parameter.name, &mut info.title);
-        copy_wstring(parameter.name, &mut info.shortTitle);
-        copy_wstring(parameter.units, &mut info.units);
-        info.stepCount = parameter.step_count.map_or(0, |steps| steps as i32);
-        info.defaultNormalizedValue = parameter.range.normalize(parameter.range.default) as f64;
-        info.unitId = 0;
-        info.flags = ParameterInfo_::ParameterFlags_::kCanAutomate;
-        kResultOk
+        fill_vst3_parameter_info(Vst3ParameterInfo::from_parameter(binding.info()), info)
     }
 
     unsafe fn getParamStringByValue(
@@ -80,21 +72,19 @@ impl IEditControllerTrait for ResonatorVst3Controller {
             return kInvalidArgument;
         }
         if id == PITCH_BEND_PARAMETER_ID {
-            copy_wstring(
+            return write_vst3_parameter_string(
                 &lindelion_plugin_shell::format_plain_value(
                     pitch_bend_plain_from_normalized(value_normalized) as f32,
                 ),
-                &mut *string,
+                string,
             );
-            return kResultOk;
         }
 
         let Some(parameter) = parameter_by_id(id) else {
             return kInvalidArgument;
         };
         let plain = parameter.range.denormalize(value_normalized as f32);
-        copy_wstring(&format_parameter_plain_value(id, plain), &mut *string);
-        kResultOk
+        write_vst3_parameter_string(&format_parameter_plain_value(id, plain), string)
     }
 
     unsafe fn getParamValueByString(
@@ -106,11 +96,7 @@ impl IEditControllerTrait for ResonatorVst3Controller {
         if string.is_null() || value_normalized.is_null() {
             return kInvalidArgument;
         }
-        let len = len_wstring(string as *const TChar);
-        let Ok(text) = String::from_utf16(slice::from_raw_parts(string as *const u16, len)) else {
-            return kInvalidArgument;
-        };
-        let Ok(value) = text.trim().parse::<f32>() else {
+        let Some(value) = parse_vst3_plain_value_string(string) else {
             return kInvalidArgument;
         };
         if id == PITCH_BEND_PARAMETER_ID {
@@ -147,7 +133,7 @@ impl IEditControllerTrait for ResonatorVst3Controller {
         let Some(index) = parameter_index(id) else {
             return 0.0;
         };
-        self.values.get()[index]
+        self.values.value(index).unwrap_or_default()
     }
 
     unsafe fn setParamNormalized(&self, id: u32, value: f64) -> tresult {

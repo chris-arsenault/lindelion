@@ -131,11 +131,7 @@ impl SampleLibrarySaveJob {
 }
 
 fn default_library_root() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Music")
-        .join(DEFAULT_LIBRARY_DIR)
+    lindelion_sample_library::music_library_root(DEFAULT_LIBRARY_DIR)
 }
 
 fn sample_file_name(patch: &GlirdirPatch, scratchpad: &ScratchpadAudio) -> String {

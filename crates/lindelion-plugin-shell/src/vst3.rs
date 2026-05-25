@@ -17,9 +17,12 @@ mod process;
 mod view;
 
 pub use component::{
-    Vst3BusInfo, Vst3ParameterChange, Vst3PeerConnection, can_process_32_bit_sample_size,
-    fill_vst3_bus_info, for_each_vst3_parameter_change,
-    mono_or_stereo_speaker_arrangement_supported, process_setup_from_vst, vst3_bus_count,
+    Vst3BusInfo, Vst3ParameterChange, Vst3ParameterInfo, Vst3ParameterMirror, Vst3PeerConnection,
+    can_process_32_bit_sample_size, fill_vst3_bus_info, fill_vst3_parameter_info,
+    for_each_vst3_parameter_change, mono_or_stereo_speaker_arrangement_supported,
+    notify_vst3_patch_update, parse_vst3_plain_value_string, process_setup_from_vst,
+    restart_vst3_parameter_values_changed, sanitize_normalized_f64, vst3_bus_count,
+    write_vst3_parameter_string,
 };
 pub use factory::{
     Vst3ClassRegistration, Vst3CreateInstance, Vst3PluginFactory, plugin_factory_ptr,
@@ -33,7 +36,23 @@ pub use process::{
     stereo_output_buffers_from_vst_process_data, transport_context_from_vst_process_context,
     vst_event_to_host_midi, vst_event_to_midi, write_plugin_state_to_stream,
 };
-pub use view::{FixedSizePlugView, FixedSizePlugViewDelegate, FixedSizePlugViewSize};
+pub use view::{
+    FixedSizePlugView, FixedSizePlugViewDelegate, FixedSizePlugViewSize, PlugViewKeyEvent,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Vst3BundleMetadata {
+    pub package: &'static str,
+    pub bundle_name: &'static str,
+    pub executable_name: &'static str,
+    pub bundle_identifier: &'static str,
+    pub library_stem: &'static str,
+    pub vst3_sub_categories: &'static str,
+    pub module_sub_categories: &'static [&'static str],
+    pub processor_cid: [u32; 4],
+    pub controller_cid: [u32; 4],
+    pub controller_name: &'static str,
+}
 
 pub fn copy_cstring(src: &str, dst: &mut [c_char]) {
     let c_string = StdCString::new(src).unwrap_or_default();

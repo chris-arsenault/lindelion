@@ -35,6 +35,48 @@ impl FixedSizePlugViewSize {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlugViewKeyEvent {
+    pub key: char16,
+    pub key_code: int16,
+    pub modifiers: int16,
+}
+
+impl PlugViewKeyEvent {
+    pub const fn new(key: char16, key_code: int16, modifiers: int16) -> Self {
+        Self {
+            key,
+            key_code,
+            modifiers,
+        }
+    }
+
+    pub fn is_plain_paste_shortcut(self) -> bool {
+        self.is_v_key()
+            && self.has_primary_paste_modifier()
+            && !self.has_modifier(KeyModifier_::kAlternateKey)
+            && !self.has_modifier(KeyModifier_::kShiftKey)
+    }
+
+    fn is_v_key(self) -> bool {
+        matches!(self.key, KEY_V_LOWER | KEY_V_UPPER)
+            || matches!(self.key_code, MACOS_KEY_CODE_V | WINDOWS_VIRTUAL_KEY_V)
+    }
+
+    fn has_primary_paste_modifier(self) -> bool {
+        self.has_modifier(KeyModifier_::kCommandKey) || self.has_modifier(KeyModifier_::kControlKey)
+    }
+
+    fn has_modifier(self, modifier: KeyModifier) -> bool {
+        (u32::from(self.modifiers as u16) & modifier) != 0
+    }
+}
+
+const KEY_V_LOWER: char16 = b'v' as u16;
+const KEY_V_UPPER: char16 = b'V' as u16;
+const MACOS_KEY_CODE_V: int16 = 0x09;
+const WINDOWS_VIRTUAL_KEY_V: int16 = 0x56;
+
 pub trait FixedSizePlugViewDelegate {
     /// # Safety
     /// `parent` must be a valid platform view pointer for the host platform and `size` must
@@ -46,6 +88,13 @@ pub trait FixedSizePlugViewDelegate {
     /// view.
     unsafe fn removed(&self) -> tresult {
         kResultOk
+    }
+
+    /// # Safety
+    /// The host must call this only for key events targeted at this plug view. Implementations
+    /// must return `kResultTrue` only when the key was actually handled.
+    unsafe fn key_down(&self, _event: PlugViewKeyEvent) -> tresult {
+        kResultFalse
     }
 }
 
@@ -117,8 +166,9 @@ impl<D: FixedSizePlugViewDelegate> IPlugViewTrait for FixedSizePlugView<D> {
         kNotImplemented
     }
 
-    unsafe fn onKeyDown(&self, _key: char16, _keyCode: int16, _modifiers: int16) -> tresult {
-        kNotImplemented
+    unsafe fn onKeyDown(&self, key: char16, keyCode: int16, modifiers: int16) -> tresult {
+        self.delegate
+            .key_down(PlugViewKeyEvent::new(key, keyCode, modifiers))
     }
 
     unsafe fn onKeyUp(&self, _key: char16, _keyCode: int16, _modifiers: int16) -> tresult {

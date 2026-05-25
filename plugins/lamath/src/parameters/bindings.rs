@@ -172,12 +172,12 @@ impl EditorParameterBinding {
         self.order
     }
 
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const fn label(self) -> &'static str {
         self.label
     }
 
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const fn control(self) -> EditorControlKind {
         self.control
     }

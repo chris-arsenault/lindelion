@@ -34,7 +34,7 @@ Agent guide for sessions in the Lindelion repository.
 | ---- | ---- | ---- |
 | Lindelion | Quenya `lindelë` + `-ion`, bearer of the art of music | Workspace/project |
 | Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs |
-| Linnod | Sindarin measured verse unit | Cargo scaffold and patch model |
+| Linnod | Sindarin measured verse unit | Melodic slicer VST3 instrument |
 | Glirdir | Sindarin `glir-` + `-dir`, singer/song-bearer | VST3 sing-to-MIDI scratchpad |
 
 ## Code Map
@@ -49,12 +49,13 @@ Agent guide for sessions in the Lindelion repository.
 | `crates/lindelion-audio-expression` | Host-neutral streaming audio-note and audio-expression bridge from pitch/onset/loudness/brightness. |
 | `crates/lindelion-onset-detect` | Batch and streaming onset detection, configuration, and pitch-aware onset DTOs. |
 | `crates/lindelion-pitch-detect` | SwiftF0 ONNX pitch detection, streaming pitch tracking, confidence filtering, resampling. |
+| `crates/lindelion-pitch-shift` | Shared formant-preserving pitch-shift analysis cache and source-filter descriptors. |
+| `crates/lindelion-plugin-metadata` | Shared VST3 bundle metadata consumed by plugin factories and `xtask`. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, SMF emission. |
-| `crates/lindelion-psola` | Pitch-analysis and PSOLA boundary types for future melodic sample manipulation. |
 | `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, product Vizia editors. |
 | `plugins/lamath` | Lamath patch model, DSP runtime, VST3 adapter, tests. |
-| `plugins/linnod` | Linnod descriptor, parameters, patch model, scaffold plugin. |
+| `plugins/linnod` | Linnod source analysis, patch model, runtime, VST3 adapter, editor bridge, and tests. |
 | `plugins/glirdir` | Glirdir capture, analysis, audition, VST3 adapter, editor, drag/export, sample-library save, bundle metadata. |
 | `xtask` | Workspace checks and macOS VST3 bundle automation. |
 
@@ -63,7 +64,10 @@ Agent guide for sessions in the Lindelion repository.
 | Command | Purpose |
 | ---- | ---- |
 | `make ci` | Canonical and default local verification path; use this instead of composing separate lower-level checks. |
-| `make build` | Build and install the default Lamath VST3 bundle on macOS. |
-| `make build PLUGIN=glirdir` | Build and install the Glirdir VST3 bundle on macOS. |
+| `make build` | Build and install all bundleable VST3 plugins on macOS. |
+| `make build PLUGIN=lamath` | Build and install only the Lamath VST3 bundle on macOS. |
+| `make build PLUGIN=glirdir` | Build and install only the Glirdir VST3 bundle on macOS. |
+| `make build PLUGIN=linnod` | Build and install only the Linnod VST3 bundle on macOS. |
+| `make validate-vst3 PLUGIN=linnod` | Inspect and run Steinberg validator against the installed Linnod bundle on macOS. |
 | `make bench` | Run the full workspace Criterion benchmark suite. |
 | `make bench-smoke` | Compile workspace benches without running Criterion measurements. |

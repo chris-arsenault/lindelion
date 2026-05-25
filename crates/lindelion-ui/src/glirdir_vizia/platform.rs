@@ -1,11 +1,10 @@
-use std::ffi::c_void;
+use std::{ffi::c_void, path::PathBuf, time::Duration};
 
 use vizia::{
     ParentWindow, WindowHandle, WindowScalePolicy,
     icons::{
-        ICON_ACTIVITY, ICON_ADJUSTMENTS_HORIZONTAL, ICON_DEVICE_FLOPPY, ICON_DOWNLOAD,
-        ICON_FILE_MUSIC, ICON_FILTER, ICON_LIBRARY, ICON_MICROPHONE, ICON_PLAYER_PLAY,
-        ICON_PLAYER_STOP, ICON_REPEAT, ICON_TRASH, ICON_VOLUME_2, ICON_WAVE_SINE,
+        ICON_ACTIVITY, ICON_DEVICE_FLOPPY, ICON_DOWNLOAD, ICON_MICROPHONE, ICON_PLAYER_PLAY,
+        ICON_PLAYER_STOP, ICON_REPEAT, ICON_TRASH,
     },
     prelude::*,
     vg,

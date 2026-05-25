@@ -116,6 +116,7 @@ fn parameter_registry_finds_bindings_and_applies_patch_paths() {
     assert_eq!(REGISTRY.binding_by_index(0).unwrap().id(), ParameterId(7));
     assert_eq!(REGISTRY.info(7).unwrap().name, "Gain");
     assert_eq!(REGISTRY.default_normalized_value_by_index(0), Some(0.5));
+    assert_eq!(REGISTRY.default_normalized_values::<2>(), [0.5, 0.0]);
     assert_eq!(REGISTRY.normalized_value(7, 6.0), Some(0.75));
     assert_eq!(REGISTRY.denormalized_value(7, 0.25), Some(-6.0));
     assert_eq!(REGISTRY.patch_plain_value(&patch, 7), Some(0.0));
@@ -123,6 +124,10 @@ fn parameter_registry_finds_bindings_and_applies_patch_paths() {
     assert_eq!(patch.gain, 12.0);
     assert_eq!(binding.plain_value(&patch), 12.0);
     assert_eq!(REGISTRY.normalized_patch_value(&patch, 7), Some(1.0));
+    assert_eq!(
+        REGISTRY.normalized_patch_values(&patch, [0.0; 2]),
+        [1.0, 0.0]
+    );
     assert_eq!(binding.format_plain_value(12.0), "12.0");
     assert_eq!(REGISTRY.formatted_plain_value(7, 12.0), "12.0");
     assert_eq!(

@@ -2,7 +2,15 @@ use std::path::Path;
 
 pub mod editor_surface;
 pub mod glirdir_vizia;
+pub mod linnod_vizia;
 pub mod resonator_vizia;
+
+#[cfg(target_os = "macos")]
+mod vizia_clipboard;
+#[cfg(target_os = "macos")]
+mod vizia_controls;
+#[cfg(target_os = "macos")]
+mod vizia_file_dialogs;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WaveformPoint {
@@ -18,6 +26,35 @@ impl WaveformPoint {
             max: 0.0,
             rms: 0.0,
         }
+    }
+}
+
+pub fn waveform_points_from_samples(samples: &[f32], max_points: usize) -> Vec<WaveformPoint> {
+    if samples.is_empty() || max_points == 0 {
+        return Vec::new();
+    }
+    let chunk_len = samples.len().div_ceil(max_points).max(1);
+    samples
+        .chunks(chunk_len)
+        .take(max_points)
+        .map(waveform_point_from_samples)
+        .collect()
+}
+
+fn waveform_point_from_samples(samples: &[f32]) -> WaveformPoint {
+    let mut min = 0.0_f32;
+    let mut max = 0.0_f32;
+    let mut sum_squares = 0.0_f32;
+    for sample in samples {
+        let sample = if sample.is_finite() { *sample } else { 0.0 };
+        min = min.min(sample);
+        max = max.max(sample);
+        sum_squares += sample * sample;
+    }
+    WaveformPoint {
+        min,
+        max,
+        rms: (sum_squares / samples.len().max(1) as f32).sqrt(),
     }
 }
 

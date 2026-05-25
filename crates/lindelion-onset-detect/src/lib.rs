@@ -1,13 +1,21 @@
 mod energy;
 mod manual_grid;
+mod markers;
 mod pitch_stability;
 mod spectral_flux;
 
 pub use energy::{EnergyTransientDetector, StreamingEnergyTransientDetector};
 pub use manual_grid::ManualGridDetector;
+pub use markers::{
+    MarkerReconcileOutcome, MarkerReconcilePolicy, SliceRegion, normalize_markers,
+    reconcile_markers, select_strongest_markers, slice_region_at_sample,
+    slice_regions_from_markers, snap_markers_to_zero_crossings,
+    snap_position_to_nearest_zero_crossing,
+};
 pub use pitch_stability::{PitchStabilityDetector, pitch_stability_markers_from_track};
 pub use spectral_flux::{
-    StreamingFluxFrame, StreamingSpectralFlux, StreamingSuperFluxDetector, SuperFluxDetector,
+    ComplexFluxDetector, SpectralSparsityDetector, StreamingFluxFrame, StreamingSpectralFlux,
+    StreamingSuperFluxDetector, SuperFluxDetector,
 };
 
 use lindelion_dsp_utils::math::{finite_clamp, ms_to_samples};
@@ -18,8 +26,13 @@ pub const DEFAULT_ONSET_SENSITIVITY: f32 = 0.5;
 pub const DEFAULT_MIN_SLICE_MS: f32 = 50.0;
 pub const DEFAULT_SUPERFLUX_LOOKBACK_FRAMES: u32 = 3;
 pub const DEFAULT_SUPERFLUX_MAX_FILTER_RADIUS: u32 = 3;
+pub const DEFAULT_COMPLEX_FLUX_GROUP_DELAY_WEIGHT: f32 = 1.0;
+pub const DEFAULT_SPECTRAL_SPARSITY_WINDOW_SIZE: usize = 1024;
 pub const DEFAULT_PITCH_STABILITY_THRESHOLD_CENTS: f32 = 120.0;
 pub const DEFAULT_PITCH_STABILITY_DURATION_MS: f32 = 64.0;
+pub const DEFAULT_ENERGY_TRANSIENT_FRAME_SIZE: usize = 512;
+pub const DEFAULT_MANUAL_GRID_DIVISIONS: usize = 16;
+pub const DEFAULT_MANUAL_GRID_OFFSET_MS: f32 = 0.0;
 pub const ENERGY_TRANSIENT_BASE_THRESHOLD: f32 = 0.02;
 pub const ENERGY_TRANSIENT_SENSITIVITY_RANGE: f32 = 0.18;
 
@@ -31,6 +44,17 @@ pub enum DetectionAlgorithm {
     PitchStability,
     EnergyTransient,
     ManualGrid,
+}
+
+impl DetectionAlgorithm {
+    pub const ALL: [Self; 6] = [
+        Self::SuperFlux,
+        Self::ComplexFlux,
+        Self::SpectralSparsity,
+        Self::PitchStability,
+        Self::EnergyTransient,
+        Self::ManualGrid,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +93,120 @@ pub enum AlgorithmParams {
         divisions: usize,
         offset_ms: f32,
     },
+}
+
+impl AlgorithmParams {
+    pub const fn algorithm(self) -> DetectionAlgorithm {
+        match self {
+            Self::SuperFlux { .. } => DetectionAlgorithm::SuperFlux,
+            Self::ComplexFlux { .. } => DetectionAlgorithm::ComplexFlux,
+            Self::SpectralSparsity { .. } => DetectionAlgorithm::SpectralSparsity,
+            Self::PitchStability { .. } => DetectionAlgorithm::PitchStability,
+            Self::EnergyTransient { .. } => DetectionAlgorithm::EnergyTransient,
+            Self::ManualGrid { .. } => DetectionAlgorithm::ManualGrid,
+        }
+    }
+
+    pub fn default_for_algorithm(
+        algorithm: DetectionAlgorithm,
+        profile: OnsetDetectionProfile,
+    ) -> Self {
+        let profile = profile.sanitized();
+        match algorithm {
+            DetectionAlgorithm::SuperFlux => profile.superflux_params(),
+            DetectionAlgorithm::ComplexFlux => Self::ComplexFlux {
+                lookback_frames: profile.lookback_frames,
+                group_delay_weight: DEFAULT_COMPLEX_FLUX_GROUP_DELAY_WEIGHT,
+            },
+            DetectionAlgorithm::SpectralSparsity => Self::SpectralSparsity {
+                window_size: DEFAULT_SPECTRAL_SPARSITY_WINDOW_SIZE,
+            },
+            DetectionAlgorithm::PitchStability => profile.pitch_stability_params(),
+            DetectionAlgorithm::EnergyTransient => Self::EnergyTransient {
+                frame_size: DEFAULT_ENERGY_TRANSIENT_FRAME_SIZE,
+            },
+            DetectionAlgorithm::ManualGrid => Self::ManualGrid {
+                divisions: DEFAULT_MANUAL_GRID_DIVISIONS,
+                offset_ms: DEFAULT_MANUAL_GRID_OFFSET_MS,
+            },
+        }
+    }
+
+    pub fn sanitized_for_algorithm(
+        self,
+        algorithm: DetectionAlgorithm,
+        profile: OnsetDetectionProfile,
+    ) -> Self {
+        let profile = profile.sanitized();
+        match (algorithm, self) {
+            (
+                DetectionAlgorithm::SuperFlux,
+                Self::SuperFlux {
+                    lookback_frames,
+                    max_filter_radius,
+                },
+            ) => Self::SuperFlux {
+                lookback_frames: lookback_frames.clamp(1, 32),
+                max_filter_radius: max_filter_radius.min(32),
+            },
+            (
+                DetectionAlgorithm::ComplexFlux,
+                Self::ComplexFlux {
+                    lookback_frames,
+                    group_delay_weight,
+                },
+            ) => Self::ComplexFlux {
+                lookback_frames: lookback_frames.clamp(1, 32),
+                group_delay_weight: finite_clamp(
+                    group_delay_weight,
+                    0.0,
+                    8.0,
+                    DEFAULT_COMPLEX_FLUX_GROUP_DELAY_WEIGHT,
+                ),
+            },
+            (DetectionAlgorithm::SpectralSparsity, Self::SpectralSparsity { window_size }) => {
+                Self::SpectralSparsity {
+                    window_size: window_size.clamp(64, 8192),
+                }
+            }
+            (
+                DetectionAlgorithm::PitchStability,
+                Self::PitchStability {
+                    threshold_cents,
+                    min_stable_duration_ms,
+                },
+            ) => Self::PitchStability {
+                threshold_cents: finite_clamp(
+                    threshold_cents,
+                    1.0,
+                    2_400.0,
+                    DEFAULT_PITCH_STABILITY_THRESHOLD_CENTS,
+                ),
+                min_stable_duration_ms: finite_clamp(
+                    min_stable_duration_ms,
+                    1.0,
+                    5_000.0,
+                    DEFAULT_PITCH_STABILITY_DURATION_MS,
+                ),
+            },
+            (DetectionAlgorithm::EnergyTransient, Self::EnergyTransient { frame_size }) => {
+                Self::EnergyTransient {
+                    frame_size: frame_size.clamp(32, 8192),
+                }
+            }
+            (
+                DetectionAlgorithm::ManualGrid,
+                Self::ManualGrid {
+                    divisions,
+                    offset_ms,
+                },
+            ) => Self::ManualGrid {
+                divisions: divisions.clamp(1, 1024),
+                offset_ms: finite_clamp(offset_ms, 0.0, 60_000.0, DEFAULT_MANUAL_GRID_OFFSET_MS),
+            },
+            _ => Self::default_for_algorithm(algorithm, profile),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -178,6 +316,34 @@ impl DetectionConfig {
             profile,
             params: profile.superflux_params(),
         }
+        .sanitized()
+    }
+
+    pub fn with_algorithm(self, algorithm: DetectionAlgorithm) -> Self {
+        let profile = self.effective_profile();
+        Self {
+            algorithm,
+            profile,
+            params: self.params.sanitized_for_algorithm(algorithm, profile),
+            ..self
+        }
+        .sanitized()
+    }
+
+    pub fn effective_profile(self) -> OnsetDetectionProfile {
+        onset_profile(self)
+    }
+
+    pub fn sanitized(self) -> Self {
+        let profile = self.profile.sanitized();
+        let algorithm = self.algorithm;
+        Self {
+            algorithm,
+            sensitivity: finite_clamp(self.sensitivity, 0.0, 1.0, DEFAULT_ONSET_SENSITIVITY),
+            min_slice_ms: finite_clamp(self.min_slice_ms, 0.0, 60_000.0, DEFAULT_MIN_SLICE_MS),
+            profile,
+            params: self.params.sanitized_for_algorithm(algorithm, profile),
+        }
     }
 }
 
@@ -245,9 +411,9 @@ pub struct ConfiguredOnsetDetector;
 impl OnsetDetector for ConfiguredOnsetDetector {
     fn detect(&self, input: OnsetDetectionInput<'_>, config: DetectionConfig) -> Vec<SliceMarker> {
         match config.algorithm {
-            DetectionAlgorithm::SuperFlux
-            | DetectionAlgorithm::ComplexFlux
-            | DetectionAlgorithm::SpectralSparsity => SuperFluxDetector.detect(input, config),
+            DetectionAlgorithm::SuperFlux => SuperFluxDetector.detect(input, config),
+            DetectionAlgorithm::ComplexFlux => ComplexFluxDetector.detect(input, config),
+            DetectionAlgorithm::SpectralSparsity => SpectralSparsityDetector.detect(input, config),
             DetectionAlgorithm::EnergyTransient => EnergyTransientDetector.detect(input, config),
             DetectionAlgorithm::ManualGrid => ManualGridDetector.detect(input, config),
             DetectionAlgorithm::PitchStability => PitchStabilityDetector.detect(input, config),
@@ -285,41 +451,11 @@ impl OnsetDetector for HybridOnsetDetector {
 }
 
 pub(crate) fn dedupe_markers(
-    mut markers: Vec<SliceMarker>,
+    markers: Vec<SliceMarker>,
     min_gap_samples: usize,
     audio_len: usize,
 ) -> Vec<SliceMarker> {
-    if audio_len == 0 {
-        return Vec::new();
-    }
-
-    markers.sort_by_key(|marker| marker.position_samples);
-    let mut deduped: Vec<SliceMarker> = Vec::new();
-    for mut marker in markers {
-        marker.position_samples = marker.position_samples.min(audio_len - 1);
-        let far_enough = deduped
-            .last()
-            .map(|last| {
-                marker
-                    .position_samples
-                    .saturating_sub(last.position_samples)
-                    >= min_gap_samples
-            })
-            .unwrap_or(true);
-        if far_enough {
-            deduped.push(marker);
-        }
-    }
-    if deduped.first().map(|marker| marker.position_samples) != Some(0) {
-        deduped.insert(
-            0,
-            SliceMarker {
-                position_samples: 0,
-                kind: MarkerKind::Auto,
-            },
-        );
-    }
-    deduped
+    normalize_markers(markers, min_gap_samples, audio_len)
 }
 
 pub(crate) fn onset_profile(config: DetectionConfig) -> OnsetDetectionProfile {

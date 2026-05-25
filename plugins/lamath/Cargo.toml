@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 lindelion-audio-expression.workspace = true
 lindelion-dsp-utils.workspace = true
+lindelion-plugin-metadata.workspace = true
 lindelion-plugin-shell.workspace = true
 lindelion-sample-library = { workspace = true, features = ["file-library"] }
 lindelion-ui.workspace = true

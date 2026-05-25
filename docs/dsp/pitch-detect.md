@@ -4,7 +4,7 @@ ONNX-backed SwiftF0 pitch tracker plus a lightweight zero-crossing fallback, sha
 
 ## 1. Purpose
 
-Estimate fundamental frequency over time for monophonic audio. Used by Glirdir (sing-to-MIDI capture) and reserved for Linnod (slice tuning and scale snap). Two implementations:
+Estimate fundamental frequency over time for monophonic audio. Used by Glirdir for sing-to-MIDI capture and by Linnod for slice analysis, tuning, scale snap, and pitch-shift cache preparation. Two implementations:
 
 - **`SwiftF0Detector`** — wraps the SwiftF0 ONNX model (Lars Heller-Christiansen, 2023). The default detector; produces `PitchFrame` output at the model's frame rate (`16 kHz`, 256-sample hop, 1024-sample window) with confidence and voiced flags per frame.
 - **`ZeroCrossingStreamingPitchTracker`** — single-frame zero-crossing pitch estimator. No model, no FFT, no allocation per block. Useful as a streaming fallback and as a sanity check.
@@ -140,6 +140,6 @@ for block in audio.chunks(512) {
 
 - Lars Heller-Christiansen — [SwiftF0](https://github.com/lars76/swift-f0) ONNX pitch tracker.
 - Source: [`crates/lindelion-pitch-detect/`](../../crates/lindelion-pitch-detect/).
-- Consumers: Glirdir analysis worker, planned Linnod tuning.
+- Consumers: Glirdir analysis worker and Linnod source analysis/tuning.
 - Related: [`OnsetDetector`](onset-detect.md), [`PhraseAnalyzer`](phrase-analysis.md).
 - ADR-0003: [Shared-core extraction policy](../adr/0003-shared-core-extraction.md).

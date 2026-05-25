@@ -1,6 +1,6 @@
 use lindelion_plugin_shell::{
     AudioPlugin, ParameterApplyDispatcher, ParameterApplyOutcome, ParameterId, ParameterInfo,
-    PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
+    PluginDescriptor, PluginState, ProcessContext, ProcessSetup, advance_async_job_sequence,
 };
 
 use crate::{
@@ -112,8 +112,7 @@ fn mark_scratchpad_pending_or_idle(
 }
 
 fn advance_analysis_sequence(next_analysis_sequence: &mut AnalysisSequence) -> AnalysisSequence {
-    *next_analysis_sequence = (*next_analysis_sequence).saturating_add(1);
-    *next_analysis_sequence
+    advance_async_job_sequence(next_analysis_sequence)
 }
 
 impl Glirdir {
@@ -252,8 +251,7 @@ impl Glirdir {
     }
 
     fn advance_analysis_sequence(&mut self) -> AnalysisSequence {
-        self.next_analysis_sequence = self.next_analysis_sequence.saturating_add(1);
-        self.next_analysis_sequence
+        advance_async_job_sequence(&mut self.next_analysis_sequence)
     }
 }
 

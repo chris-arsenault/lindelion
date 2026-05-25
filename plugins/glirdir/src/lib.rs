@@ -39,8 +39,7 @@ pub(crate) use parameters::{
     PARAMETER_BINDING_COUNT, ParameterApplyKind, apply_parameter_normalized,
     denormalized_parameter_value, editor_parameter_bindings, format_parameter_plain_value,
     normalized_parameter_value, parameter_binding, parameter_binding_by_index,
-    parameter_binding_index, parameter_default_normalized_value_by_index, parameter_info,
-    patch_parameter_normalized_value,
+    parameter_binding_index, parameter_info,
 };
 pub use patch::{
     AnalysisSettings, AuditionSettings, DEFAULT_ANALYSIS_CONFIDENCE_THRESHOLD,
@@ -61,3 +60,5 @@ pub(crate) use lindelion_test_allocator::assert_no_allocations;
 
 #[cfg(test)]
 lindelion_test_allocator::install_test_allocator!();
+
+pub use lindelion_plugin_metadata::GLIRDIR_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;

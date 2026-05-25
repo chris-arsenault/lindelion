@@ -65,8 +65,7 @@ pub(crate) use parameters::{
     MASTER_PAN_PARAMETER_ID, PARALLEL_MIX_A_PARAMETER_ID, PARALLEL_MIX_B_PARAMETER_ID,
     PARAMETER_BINDING_COUNT, RuntimeParameterTarget, SATURATION_PARAMETER_ID,
     apply_parameter_normalized_for_controller, normalized_parameter_value, parameter_binding,
-    parameter_binding_by_index, parameter_binding_index,
-    parameter_default_normalized_value_by_index, parameter_info, patch_parameter_normalized_value,
+    parameter_binding_by_index, parameter_binding_index, parameter_info,
     smoothed_runtime_parameter,
 };
 #[cfg(test)]
@@ -77,6 +76,7 @@ mod test_support;
 
 pub const DESCRIPTOR: PluginDescriptor =
     PluginDescriptor::instrument("Lamath", *b"lamath_resonator");
+pub use lindelion_plugin_metadata::LAMATH_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;
 
 pub(crate) const RESONATOR_MOD_WHEEL_CONTROLLER: u8 = 1;
 pub(crate) const RESONATOR_BRIGHTNESS_CONTROLLER: u8 = 74;

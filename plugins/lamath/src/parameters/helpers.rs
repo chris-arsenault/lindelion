@@ -17,10 +17,6 @@ pub(crate) fn parameter_info(id: u32) -> Option<ParameterInfo> {
     PARAMETER_REGISTRY.info(id)
 }
 
-pub(crate) fn parameter_default_normalized_value_by_index(index: usize) -> Option<f32> {
-    PARAMETER_REGISTRY.default_normalized_value_by_index(index)
-}
-
 pub(crate) fn normalized_parameter_value(id: u32, plain: f32) -> Option<f32> {
     PARAMETER_REGISTRY.normalized_value(id, plain)
 }
@@ -85,13 +81,6 @@ pub(crate) fn editor_parameter_bindings_for_group(
 #[cfg(test)]
 pub(crate) fn patch_parameter_plain_value(patch: &ResonatorSynthPatch, id: u32) -> Option<f32> {
     PARAMETER_REGISTRY.patch_plain_value(patch, id)
-}
-
-pub(crate) fn patch_parameter_normalized_value(
-    patch: &ResonatorSynthPatch,
-    id: u32,
-) -> Option<f32> {
-    PARAMETER_REGISTRY.normalized_patch_value(patch, id)
 }
 
 pub(crate) fn format_parameter_plain_value(id: u32, value: f32) -> String {

@@ -19,6 +19,54 @@ fn owned_mono_audio_buffer_sanitizes_samples_and_rate() {
 }
 
 #[test]
+fn library_patch_file_path_sanitizes_patch_names() {
+    let paths = LibraryPaths::from_root("Library");
+
+    assert_eq!(
+        paths.patch_file_path("Lead/Pad:01"),
+        PathBuf::from("Library/Patches/Lead-Pad-01.toml")
+    );
+    assert_eq!(
+        paths.patch_file_path("   "),
+        PathBuf::from("Library/Patches/Untitled.toml")
+    );
+}
+
+#[test]
+fn save_library_patch_to_path_uses_shared_patch_path_policy() {
+    let root = temp_root("library-patch-save");
+    let paths = LibraryPaths::from_root(root.join("Library"));
+
+    let path = save_library_patch_to_path(&paths, "Lead/Pad:01", |path| {
+        fs::write(path, b"patch").map_err(SampleDecodeError::Io)
+    })
+    .unwrap();
+
+    assert!(path.ends_with("Lead-Pad-01.toml"));
+    assert_eq!(fs::read(&path).unwrap(), b"patch");
+}
+
+#[test]
+fn decoded_sample_metadata_uses_shared_preview_and_level_policy() {
+    let audio = DecodedSample {
+        samples: vec![0.0, 0.5, -0.5, 0.25],
+        sample_rate: 1_000,
+        channels: 1,
+    };
+    let metadata = SampleMetadata::from_decoded(
+        SampleReference::new("hash", "Samples/source.wav"),
+        Path::new("source.wav"),
+        &audio,
+        2,
+    );
+
+    assert_eq!(metadata.filename, "source.wav");
+    assert_eq!(metadata.duration_ms, 4);
+    assert_eq!(metadata.peak_db, Some(-6.0206003));
+    assert_eq!(metadata.waveform_preview.points.len(), 2);
+}
+
+#[test]
 fn referenced_sample_loader_resolves_slots_and_reports_missing_samples() {
     struct StaticLibrary {
         found_path: PathBuf,

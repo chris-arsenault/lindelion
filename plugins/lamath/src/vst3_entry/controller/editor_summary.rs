@@ -101,15 +101,11 @@ fn bool_value(value: &str) -> Option<bool> {
 }
 
 pub(super) fn default_library_paths() -> LibraryPaths {
-    LibraryPaths::from_root(default_library_root())
+    lindelion_sample_library::music_library_paths(DEFAULT_LIBRARY_DIR)
 }
 
 fn default_library_root() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Music")
-        .join(DEFAULT_LIBRARY_DIR)
+    lindelion_sample_library::music_library_root(DEFAULT_LIBRARY_DIR)
 }
 
 fn open_default_sample_library()

@@ -5,6 +5,7 @@ pub mod filters;
 pub mod interpolation;
 pub mod math;
 pub mod params;
+pub mod playback;
 pub mod smoothing;
 
 pub fn db_to_gain(db: f32) -> f32 {

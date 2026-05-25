@@ -287,7 +287,7 @@ lindelion_plugin_shell::define_parameter_bindings! {
         editor: Some(EditorParameterMetadata::new(
             GlirdirEditorSurfaceSlot::Confidence,
             "Confidence",
-            GlirdirEditorControlKind::Slider { width: 216.0 },
+            GlirdirEditorControlKind::Knob,
         )),
     },
     ParameterInfo::continuous(
@@ -306,7 +306,7 @@ lindelion_plugin_shell::define_parameter_bindings! {
         editor: Some(EditorParameterMetadata::new(
             GlirdirEditorSurfaceSlot::OnsetSensitivity,
             "Onset",
-            GlirdirEditorControlKind::Slider { width: 216.0 },
+            GlirdirEditorControlKind::Knob,
         )),
     },
     ParameterInfo::continuous(
@@ -325,7 +325,7 @@ lindelion_plugin_shell::define_parameter_bindings! {
         editor: Some(EditorParameterMetadata::new(
             GlirdirEditorSurfaceSlot::MinNote,
             "Min Note",
-            GlirdirEditorControlKind::Slider { width: 216.0 },
+            GlirdirEditorControlKind::Knob,
         )),
     },
     ParameterInfo::stepped(
@@ -471,10 +471,6 @@ pub(crate) fn parameter_info(id: u32) -> Option<ParameterInfo> {
     PARAMETER_REGISTRY.info(id)
 }
 
-pub(crate) fn parameter_default_normalized_value_by_index(index: usize) -> Option<f32> {
-    PARAMETER_REGISTRY.default_normalized_value_by_index(index)
-}
-
 pub(crate) fn normalized_parameter_value(id: u32, plain: f32) -> Option<f32> {
     PARAMETER_REGISTRY.normalized_value(id, plain)
 }
@@ -485,10 +481,6 @@ pub(crate) fn denormalized_parameter_value(id: u32, normalized: f32) -> Option<f
 
 pub(crate) fn editor_parameter_bindings() -> impl Iterator<Item = GlirdirEditorParameterBinding> {
     PARAMETER_REGISTRY.projected_editor_bindings()
-}
-
-pub(crate) fn patch_parameter_normalized_value(patch: &GlirdirPatch, id: u32) -> Option<f32> {
-    PARAMETER_REGISTRY.normalized_patch_value(patch, id)
 }
 
 pub(crate) fn dispatch_parameter_normalized<Dispatcher>(

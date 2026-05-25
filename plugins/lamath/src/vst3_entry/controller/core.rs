@@ -1,5 +1,5 @@
 pub(super) struct ResonatorVst3Controller {
-    pub(super) values: Cell<[f64; VST3_PARAMETER_COUNT]>,
+    pub(super) values: Vst3ParameterMirror<VST3_PARAMETER_COUNT>,
     pub(super) handler: Cell<*mut IComponentHandler>,
     pub(super) editor_summary: RefCell<EditorPatchSummary>,
     pub(super) patch: RefCell<ResonatorSynthPatch>,
@@ -13,11 +13,16 @@ impl Class for ResonatorVst3Controller {
 }
 
 impl ResonatorVst3Controller {
-    pub(super) const CID: TUID = uid(0x15C8B012, 0xF4B64F5E, 0x93D9AA38, 0x69383E3B);
+    pub(super) const CID: TUID = uid(
+        crate::VST3_BUNDLE_METADATA.controller_cid[0],
+        crate::VST3_BUNDLE_METADATA.controller_cid[1],
+        crate::VST3_BUNDLE_METADATA.controller_cid[2],
+        crate::VST3_BUNDLE_METADATA.controller_cid[3],
+    );
 
     pub(super) fn new() -> Self {
         Self {
-            values: Cell::new(default_parameter_values()),
+            values: Vst3ParameterMirror::new(default_parameter_values()),
             handler: Cell::new(ptr::null_mut()),
             editor_summary: RefCell::new(EditorPatchSummary::from_patch(
                 &crate::ResonatorSynthPatch::default(),
@@ -33,18 +38,17 @@ impl ResonatorVst3Controller {
         let Some(index) = parameter_index(id) else {
             return kInvalidArgument;
         };
-        let mut values = self.values.get();
-        values[index] = if normalized.is_finite() {
-            normalized.clamp(0.0, 1.0)
-        } else {
-            default_parameter_values()[index]
+        let Some(value) =
+            self.values
+                .set_normalized(index, normalized, default_parameter_values()[index])
+        else {
+            return kInvalidArgument;
         };
-        self.values.set(values);
         if id != PITCH_BEND_PARAMETER_ID
             && crate::apply_parameter_normalized_for_controller(
                 &mut self.patch.borrow_mut(),
                 id,
-                values[index] as f32,
+                value as f32,
             )
         {
             self.editor_summary
@@ -65,7 +69,7 @@ impl ResonatorVst3Controller {
     }
 
     fn replace_patch_mirror(&self, patch: ResonatorSynthPatch) {
-        self.values.set(parameter_values_from_patch(&patch));
+        self.values.replace(parameter_values_from_patch(&patch));
         self.patch.replace(patch);
         self.editor_summary
             .replace(EditorPatchSummary::from_patch_and_library(
@@ -75,21 +79,19 @@ impl ResonatorVst3Controller {
     }
 
     fn notify_parameter_values_changed(&self) {
-        let Some(handler) = (unsafe { ComRef::from_raw(self.handler.get()) }) else {
-            return;
-        };
         unsafe {
-            handler.restartComponent(RestartFlags_::kParamValuesChanged);
+            restart_vst3_parameter_values_changed(self.handler.get());
         }
     }
 
     fn send_patch_to_processor(&self) -> tresult {
         let payload_patch = processor_patch_from_controller_patch(&self.patch.borrow());
-        let Ok(payload) = patch_io::to_toml_string(&payload_patch) else {
-            return kResultFalse;
-        };
-        self.peer
-            .notify(ResonatorPluginMessage::patch_update(payload.into_bytes()).into_com_message())
+        notify_vst3_patch_update(
+            &self.peer,
+            &payload_patch,
+            patch_io::to_toml_string,
+            |payload| ResonatorPluginMessage::patch_update(payload).into_com_message(),
+        )
     }
 
     pub(super) fn request_telemetry(&self) {

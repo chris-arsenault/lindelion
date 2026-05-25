@@ -6,8 +6,9 @@ use std::{
 use rusqlite::{Connection, params};
 
 use crate::{
-    DecodedSample, LibraryPaths, SampleDecodeError, SampleHash, SampleLibrary, SampleMetadata,
-    SampleReference, SampleResolution, SampleWaveformPreview, decode_wav_mono,
+    DEFAULT_WAVEFORM_PREVIEW_POINTS, DecodedSample, LibraryPaths, SampleDecodeError, SampleHash,
+    SampleLibrary, SampleMetadata, SampleReference, SampleResolution, SampleWaveformPreview,
+    decode_wav_mono,
 };
 
 #[derive(Debug)]
@@ -95,7 +96,10 @@ impl FileSampleLibrary {
         let Some(audio) = self.decode(reference)? else {
             return Ok(SampleWaveformPreview { points: Vec::new() });
         };
-        Ok(SampleWaveformPreview::from_samples(&audio.samples, 128))
+        Ok(SampleWaveformPreview::from_samples(
+            &audio.samples,
+            DEFAULT_WAVEFORM_PREVIEW_POINTS,
+        ))
     }
 
     pub fn list_samples(&self) -> Result<Vec<SampleMetadata>, SampleLibraryError> {
@@ -156,46 +160,15 @@ impl FileSampleLibrary {
         source_path: &Path,
     ) -> Result<SampleMetadata, SampleLibraryError> {
         let audio = decode_wav_mono(source_path)?;
-        let peak = audio
-            .samples
-            .iter()
-            .copied()
-            .map(f32::abs)
-            .fold(0.0, f32::max);
-        let sum_squares = audio
-            .samples
-            .iter()
-            .copied()
-            .map(|sample| sample * sample)
-            .sum::<f32>();
-        let rms = if audio.samples.is_empty() {
-            0.0
-        } else {
-            (sum_squares / audio.samples.len() as f32).sqrt()
-        };
-        let duration_ms = if audio.sample_rate == 0 {
-            0
-        } else {
-            (audio.samples.len() as u64 * 1_000) / u64::from(audio.sample_rate)
-        };
-
-        Ok(SampleMetadata {
-            reference: SampleReference {
+        Ok(SampleMetadata::from_decoded(
+            SampleReference {
                 blake3_hash: SampleHash(hash),
                 last_known_path: relative_path,
             },
-            filename: source_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("sample")
-                .to_string(),
-            duration_ms,
-            sample_rate: audio.sample_rate,
-            channels: audio.channels,
-            rms_db: amplitude_db(rms),
-            peak_db: amplitude_db(peak),
-            waveform_preview: SampleWaveformPreview::from_samples(&audio.samples, 128),
-        })
+            source_path,
+            &audio,
+            DEFAULT_WAVEFORM_PREVIEW_POINTS,
+        ))
     }
 
     fn insert_metadata(&self, metadata: &SampleMetadata) -> Result<(), SampleLibraryError> {
@@ -351,12 +324,4 @@ fn find_matching_file_by_hash(
 
 fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
-}
-
-fn amplitude_db(value: f32) -> Option<f32> {
-    if value.is_finite() && value > 0.0 {
-        Some(20.0 * value.log10())
-    } else {
-        None
-    }
 }
