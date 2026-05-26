@@ -1,11 +1,10 @@
 use lindelion_onset_detect::{MarkerKind, SliceMarker, normalize_markers};
 
 use crate::{
-    DetectionEdit, LinnodPatch, SliceEdit,
-    patch::PlaybackMode,
+    DetectionEdit, LinnodPatch, PlaybackEdit, SliceEdit,
     vst3_entry::messages::{
         LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodSliceEditMessage,
+        LinnodPlaybackEditMessage, LinnodSliceEditMessage,
     },
 };
 
@@ -49,6 +48,16 @@ pub(super) fn apply_detection_edit_message(
         LinnodDetectionEditMessage::ManualGridOffsetMs(offset_ms) => {
             DetectionEdit::ManualGridOffsetMs(offset_ms)
         }
+    })
+}
+
+pub(super) fn apply_playback_edit_message(
+    patch: &mut LinnodPatch,
+    edit: LinnodPlaybackEditMessage,
+) -> bool {
+    patch.apply_playback_edit(match edit {
+        LinnodPlaybackEditMessage::Mode(mode) => PlaybackEdit::Mode(mode),
+        LinnodPlaybackEditMessage::Envelope(envelope) => PlaybackEdit::Envelope(envelope),
     })
 }
 
@@ -101,15 +110,17 @@ pub(super) fn apply_slice_edit_message(
             slice_index,
             reverse,
         } => patch.apply_slice_edit(slice_index, SliceEdit::Reverse(reverse)),
+        LinnodSliceEditMessage::PlaybackOverride {
+            slice_index,
+            enabled,
+        } => patch.apply_slice_edit(slice_index, SliceEdit::PlaybackOverride(enabled)),
         LinnodSliceEditMessage::PlaybackMode { slice_index, mode } => {
-            let mode = match mode {
-                0 => PlaybackMode::OneShot,
-                1 => PlaybackMode::Gated,
-                2 => PlaybackMode::Looped,
-                _ => return false,
-            };
             patch.apply_slice_edit(slice_index, SliceEdit::PlaybackMode(mode))
         }
+        LinnodSliceEditMessage::Envelope {
+            slice_index,
+            envelope,
+        } => patch.apply_slice_edit(slice_index, SliceEdit::Envelope(envelope)),
         LinnodSliceEditMessage::Offsets {
             slice_index,
             start_offset_ms,

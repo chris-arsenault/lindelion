@@ -2,7 +2,7 @@ use lindelion_plugin_shell::vst3::{PluginMessageDecodeError, PluginMessagePayloa
 use lindelion_ui::WaveformPoint;
 use serde::{Deserialize, Serialize};
 
-use crate::{ChokeGroupId, PadEdit, PadId, SourceAnalysisStatus};
+use crate::{ChokeGroupId, EnvelopeConfig, PadEdit, PadId, PlaybackMode, SourceAnalysisStatus};
 
 lindelion_plugin_shell::define_vst3_plugin_messages! {
     pub(super) enum LinnodMessageKind;
@@ -26,6 +26,7 @@ lindelion_plugin_shell::define_vst3_plugin_messages! {
             SourceSummaryResponse(Vec<u8>) => "source_summary_response",
             MarkerEdit(Vec<u8>) => "marker_edit",
             PadEdit(Vec<u8>) => "pad_edit",
+            PlaybackEdit(Vec<u8>) => "playback_edit",
             DetectionEdit(Vec<u8>) => "detection_edit",
             SliceEdit(Vec<u8>) => "slice_edit",
             StatusResponse(LinnodStatusPayload) => "status_response",
@@ -270,46 +271,7 @@ impl LinnodMarkerEditMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) enum LinnodSliceEditMessage {
-    Select {
-        slice_index: usize,
-    },
-    Name {
-        slice_index: usize,
-        name: String,
-    },
-    GainDb {
-        slice_index: usize,
-        gain_db: f32,
-    },
-    Pan {
-        slice_index: usize,
-        pan: f32,
-    },
-    Pitch {
-        slice_index: usize,
-        semitones: i32,
-        cents: f32,
-    },
-    Reverse {
-        slice_index: usize,
-        reverse: bool,
-    },
-    PlaybackMode {
-        slice_index: usize,
-        mode: u8,
-    },
-    Offsets {
-        slice_index: usize,
-        start_offset_ms: f32,
-        end_offset_ms: f32,
-    },
-    FilterCutoff {
-        slice_index: usize,
-        cutoff_hz: f32,
-    },
-}
+include!("messages_slice_edit.rs");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LinnodPadEditMessage {
@@ -317,6 +279,12 @@ pub(super) enum LinnodPadEditMessage {
         pad: PadId,
         group: Option<ChokeGroupId>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum LinnodPlaybackEditMessage {
+    Mode(PlaybackMode),
+    Envelope(EnvelopeConfig),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -424,89 +392,21 @@ impl LinnodDetectionEditMessage {
     }
 }
 
-impl LinnodSliceEditMessage {
-    pub(super) fn encode(&self) -> Vec<u8> {
+impl LinnodPlaybackEditMessage {
+    pub(super) fn encode(self) -> Vec<u8> {
         match self {
-            Self::Select { slice_index } => format!("select\n{slice_index}\n"),
-            Self::Name { slice_index, name } => format!("name\n{slice_index}\n{name}"),
-            Self::GainDb {
-                slice_index,
-                gain_db,
-            } => format!("gain_db\n{slice_index}\n{gain_db:.8}"),
-            Self::Pan { slice_index, pan } => format!("pan\n{slice_index}\n{pan:.8}"),
-            Self::Pitch {
-                slice_index,
-                semitones,
-                cents,
-            } => format!("pitch\n{slice_index}\n{semitones},{cents:.8}"),
-            Self::Reverse {
-                slice_index,
-                reverse,
-            } => format!("reverse\n{slice_index}\n{}", u8::from(*reverse)),
-            Self::PlaybackMode { slice_index, mode } => {
-                format!("playback_mode\n{slice_index}\n{mode}")
-            }
-            Self::Offsets {
-                slice_index,
-                start_offset_ms,
-                end_offset_ms,
-            } => format!("offsets\n{slice_index}\n{start_offset_ms:.8},{end_offset_ms:.8}"),
-            Self::FilterCutoff {
-                slice_index,
-                cutoff_hz,
-            } => format!("filter_cutoff\n{slice_index}\n{cutoff_hz:.8}"),
+            Self::Mode(mode) => format!("mode\n{}", playback_mode_id(mode)),
+            Self::Envelope(envelope) => format!("envelope\n{}", encode_envelope(envelope)),
         }
         .into_bytes()
     }
 
     pub(super) fn decode(payload: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(payload).ok()?;
-        let mut parts = text.splitn(3, '\n');
-        let kind = parts.next()?;
-        let slice_index = parts.next()?.parse().ok()?;
-        let value = parts.next().unwrap_or_default();
+        let (kind, value) = text.split_once('\n')?;
         match kind {
-            "select" => Some(Self::Select { slice_index }),
-            "name" => Some(Self::Name {
-                slice_index,
-                name: value.to_string(),
-            }),
-            "gain_db" => Some(Self::GainDb {
-                slice_index,
-                gain_db: value.parse().ok()?,
-            }),
-            "pan" => Some(Self::Pan {
-                slice_index,
-                pan: value.parse().ok()?,
-            }),
-            "pitch" => {
-                let (semitones, cents) = value.split_once(',')?;
-                Some(Self::Pitch {
-                    slice_index,
-                    semitones: semitones.parse().ok()?,
-                    cents: cents.parse().ok()?,
-                })
-            }
-            "reverse" => Some(Self::Reverse {
-                slice_index,
-                reverse: bool_from_id(value)?,
-            }),
-            "playback_mode" => Some(Self::PlaybackMode {
-                slice_index,
-                mode: value.parse().ok()?,
-            }),
-            "offsets" => {
-                let (start, end) = value.split_once(',')?;
-                Some(Self::Offsets {
-                    slice_index,
-                    start_offset_ms: start.parse().ok()?,
-                    end_offset_ms: end.parse().ok()?,
-                })
-            }
-            "filter_cutoff" => Some(Self::FilterCutoff {
-                slice_index,
-                cutoff_hz: value.parse().ok()?,
-            }),
+            "mode" => playback_mode_from_id(value.parse().ok()?).map(Self::Mode),
+            "envelope" => decode_envelope(value).map(Self::Envelope),
             _ => None,
         }
     }
@@ -549,6 +449,45 @@ fn bool_from_id(id: &str) -> Option<bool> {
         "1" => Some(true),
         _ => None,
     }
+}
+
+pub(super) fn playback_mode_id(mode: PlaybackMode) -> u8 {
+    match mode {
+        PlaybackMode::OneShot => 0,
+        PlaybackMode::Gated => 1,
+        PlaybackMode::Looped => 2,
+        PlaybackMode::Continue => 3,
+    }
+}
+
+pub(super) fn playback_mode_from_id(id: u8) -> Option<PlaybackMode> {
+    match id {
+        0 => Some(PlaybackMode::OneShot),
+        1 => Some(PlaybackMode::Gated),
+        2 => Some(PlaybackMode::Looped),
+        3 => Some(PlaybackMode::Continue),
+        _ => None,
+    }
+}
+
+fn encode_envelope(envelope: EnvelopeConfig) -> String {
+    let envelope = envelope.sanitized();
+    format!(
+        "{:.8},{:.8},{:.8},{:.8}",
+        envelope.attack_ms, envelope.decay_ms, envelope.sustain, envelope.release_ms
+    )
+}
+
+fn decode_envelope(value: &str) -> Option<EnvelopeConfig> {
+    let mut parts = value.split(',');
+    let envelope = EnvelopeConfig {
+        attack_ms: parts.next()?.parse().ok()?,
+        decay_ms: parts.next()?.parse().ok()?,
+        sustain: parts.next()?.parse().ok()?,
+        release_ms: parts.next()?.parse().ok()?,
+    }
+    .sanitized();
+    parts.next().is_none().then_some(envelope)
 }
 
 fn detection_algorithm_id(algorithm: lindelion_onset_detect::DetectionAlgorithm) -> &'static str {

@@ -21,20 +21,22 @@ use vizia::{
 use super::{
     LINNOD_EDITOR_HEIGHT, LINNOD_EDITOR_PARAMETER_BINDING_COUNT, LINNOD_EDITOR_WIDTH,
     LinnodEditorCommand, LinnodEditorCommandRequest, LinnodEditorControlKind,
-    LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit, LinnodEditorHost,
-    LinnodEditorMarker, LinnodEditorMarkerEdit, LinnodEditorMarkerKind, LinnodEditorPadEdit,
-    LinnodEditorPadSummary, LinnodEditorParameterBinding, LinnodEditorPatchSummary,
-    LinnodEditorPlaybackMode, LinnodEditorSliceEdit, LinnodEditorSliceSummary,
-    LinnodEditorSourceStatus, LinnodEditorStatus, LinnodEditorSurfaceSlot, LinnodEditorTelemetry,
-    LinnodEditorTriggerMode,
+    LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit, LinnodEditorEnvelope,
+    LinnodEditorHost, LinnodEditorMarker, LinnodEditorMarkerEdit, LinnodEditorMarkerKind,
+    LinnodEditorPadEdit, LinnodEditorPadSummary, LinnodEditorParameterBinding,
+    LinnodEditorPatchSummary, LinnodEditorPlaybackEdit, LinnodEditorPlaybackMode,
+    LinnodEditorSliceEdit, LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorStatus,
+    LinnodEditorSurfaceSlot, LinnodEditorTelemetry, LinnodEditorTriggerMode,
 };
 use crate::{PadId, WaveformPoint};
 
 #[path = "platform_drop.rs"]
 mod platform_drop;
 
+include!("platform_style.rs");
 include!("platform_state.rs");
 include!("platform_layout.rs");
+include!("platform_playback_controls.rs");
 include!("platform_controls.rs");
 include!("platform_detection_controls.rs");
 include!("platform_text.rs");

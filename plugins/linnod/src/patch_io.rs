@@ -43,8 +43,8 @@ pub fn from_plugin_state(state: PluginState) -> Result<LinnodPatch, PatchIoError
 mod tests {
     use super::*;
     use crate::patch::{
-        ChokeGroupId, EnvelopeConfig, PadEdit, PadId, PitchOffset, PlaybackMode, SLICE_COUNT,
-        SliceEdit, TriggerMode,
+        ChokeGroupId, EnvelopeConfig, PadEdit, PadId, PitchOffset, PlaybackEdit, PlaybackMode,
+        SLICE_COUNT, SliceEdit, TriggerMode,
     };
     use lindelion_midi::{RootNote, Scale};
 
@@ -68,6 +68,13 @@ mod tests {
         };
         patch.tuning.scale = Scale::PentatonicMinor;
         patch.tuning.root = RootNote::FSharp;
+        patch.apply_playback_edit(PlaybackEdit::Mode(PlaybackMode::Continue));
+        patch.apply_playback_edit(PlaybackEdit::Envelope(EnvelopeConfig {
+            attack_ms: 2.0,
+            decay_ms: 15.0,
+            sustain: 0.9,
+            release_ms: 160.0,
+        }));
         patch.apply_slice_edit(
             2,
             SliceEdit::Pitch(PitchOffset {
@@ -75,6 +82,7 @@ mod tests {
                 cents: -12.5,
             }),
         );
+        patch.apply_slice_edit(2, SliceEdit::PlaybackOverride(true));
         patch.apply_slice_edit(2, SliceEdit::PlaybackMode(PlaybackMode::Looped));
         patch.apply_pad_edit(PadId(3), PadEdit::ChokeGroup(Some(ChokeGroupId(2))));
         patch.apply_slice_edit(
@@ -91,6 +99,7 @@ mod tests {
 
     fn assert_encoded_schema(encoded: &str) {
         assert!(encoded.contains("format_version = 1"));
+        assert!(encoded.contains("[patch.playback]"));
         assert!(encoded.contains("[patch.tuning]"));
         assert!(encoded.contains("choke_group"));
         assert!(!encoded.contains("analysis"));
@@ -99,6 +108,8 @@ mod tests {
     fn assert_decoded_patch_header(decoded: &LinnodPatch) {
         assert_eq!(decoded.name, "Roundtrip");
         assert_eq!(decoded.trigger_mode, TriggerMode::Chromatic);
+        assert_eq!(decoded.playback.mode, PlaybackMode::Continue);
+        assert_eq!(decoded.playback.envelope.release_ms, 160.0);
         assert_eq!(decoded.tuning.scale, Scale::PentatonicMinor);
         assert_eq!(decoded.tuning.root, RootNote::FSharp);
         assert_eq!(decoded.pad_map[2].choke_group, Some(ChokeGroupId(2)));
@@ -106,6 +117,7 @@ mod tests {
 
     fn assert_decoded_slice_state(decoded: &LinnodPatch) {
         assert_eq!(decoded.slices[2].pitch.semitones, 7);
+        assert!(decoded.slices[2].use_playback_override);
         assert_eq!(decoded.slices[2].playback_mode, PlaybackMode::Looped);
         assert_eq!(decoded.slices.len(), SLICE_COUNT);
     }

@@ -8,8 +8,8 @@ use super::{
     controller::{normalized_parameter_value, parameter_index},
     messages::{
         LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodSliceEditMessage, LinnodSourceSlicePayload, LinnodSourceSummaryPayload,
-        LinnodTelemetryPayload, LinnodWaveformPointPayload,
+        LinnodPlaybackEditMessage, LinnodSliceEditMessage, LinnodSourceSlicePayload,
+        LinnodSourceSummaryPayload, LinnodTelemetryPayload, LinnodWaveformPointPayload,
     },
 };
 use crate::{
@@ -43,6 +43,9 @@ fn plugin_messages_roundtrip_typed_payloads() {
             group: Some(ChokeGroupId(2)),
         }
         .encode(),
+    ));
+    assert_message_roundtrip(LinnodPluginMessage::PlaybackEdit(
+        LinnodPlaybackEditMessage::Mode(crate::PlaybackMode::Continue).encode(),
     ));
     assert_message_roundtrip(LinnodPluginMessage::DetectionEdit(
         LinnodDetectionEditMessage::Algorithm(
@@ -269,6 +272,39 @@ fn controller_applies_pad_edit_through_typed_message_surface() {
 }
 
 #[test]
+fn controller_applies_playback_edit_through_typed_message_surface() {
+    let controller = LinnodVst3Controller::new();
+
+    assert_eq!(
+        controller.apply_playback_edit(LinnodPlaybackEditMessage::Mode(
+            crate::PlaybackMode::Continue
+        )),
+        kResultFalse
+    );
+    assert_eq!(
+        controller.apply_playback_edit(LinnodPlaybackEditMessage::Envelope(
+            crate::EnvelopeConfig {
+                attack_ms: 10.0,
+                decay_ms: 20.0,
+                sustain: 0.5,
+                release_ms: 30.0,
+            }
+        )),
+        kResultFalse
+    );
+
+    assert_eq!(
+        controller.patch.borrow().playback.mode,
+        crate::PlaybackMode::Continue
+    );
+    assert_eq!(controller.patch.borrow().playback.envelope.sustain, 0.5);
+    assert_eq!(
+        controller.summary.borrow().playback.mode,
+        lindelion_ui::linnod_vizia::LinnodEditorPlaybackMode::Continue
+    );
+}
+
+#[test]
 fn controller_applies_marker_edit_through_typed_message_surface() {
     let controller = LinnodVst3Controller::new();
     controller.patch.borrow_mut().markers = vec![
@@ -413,6 +449,25 @@ fn processor_notify_applies_pad_edit_payload() {
     assert_eq!(
         processor.plugin.borrow().patch().pad_map[2].choke_group,
         Some(ChokeGroupId(2))
+    );
+}
+
+#[test]
+fn processor_notify_applies_playback_edit_payload() {
+    let processor = LinnodVst3Processor::new();
+    let message = LinnodPluginMessage::PlaybackEdit(
+        LinnodPlaybackEditMessage::Mode(crate::PlaybackMode::Continue).encode(),
+    )
+    .into_com_message()
+    .to_com_ptr::<IMessage>()
+    .unwrap();
+
+    let result = unsafe { processor.notify(message.as_ptr()) };
+
+    assert_eq!(result, kResultOk);
+    assert_eq!(
+        processor.plugin.borrow().patch().playback.mode,
+        crate::PlaybackMode::Continue
     );
 }
 

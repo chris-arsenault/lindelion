@@ -137,6 +137,33 @@ impl PitchShiftSliceSampleRequest {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PitchShiftRegionSampleRequest {
+    pub start_sample: usize,
+    pub end_sample: usize,
+    pub offset_samples: f32,
+    pub config: PitchShiftRenderConfig,
+}
+
+impl PitchShiftRegionSampleRequest {
+    pub fn new(
+        start_sample: usize,
+        end_sample: usize,
+        offset_samples: f32,
+        ratios: PitchShiftRatios,
+    ) -> Self {
+        Self {
+            start_sample,
+            end_sample,
+            offset_samples,
+            config: PitchShiftRenderConfig {
+                ratios,
+                ..PitchShiftRenderConfig::default()
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PitchShiftRenderError {
     EmptySource,
@@ -229,7 +256,33 @@ impl PitchShiftEngine {
         let slice = cache
             .slice_summary(request.slice_index)
             .ok_or(PitchShiftRenderError::MissingSlice)?;
-        let duration = slice.end_sample.saturating_sub(slice.start_sample) as f32;
+        self.render_region_sample(
+            source,
+            cache,
+            PitchShiftRegionSampleRequest {
+                start_sample: slice.start_sample,
+                end_sample: slice.end_sample,
+                offset_samples: request.offset_samples,
+                config: request.config,
+            },
+        )
+    }
+
+    pub fn render_region_sample(
+        &self,
+        source: &[f32],
+        cache: &PitchShiftSourceCache,
+        request: PitchShiftRegionSampleRequest,
+    ) -> Result<f32, PitchShiftRenderError> {
+        if source.is_empty() {
+            return Err(PitchShiftRenderError::EmptySource);
+        }
+        if cache.sample_rate == 0 || cache.frames.is_empty() {
+            return Err(PitchShiftRenderError::InvalidCache);
+        }
+        let start_sample = request.start_sample.min(source.len());
+        let end_sample = request.end_sample.min(source.len()).max(start_sample);
+        let duration = end_sample.saturating_sub(start_sample) as f32;
         let offset = finite_clamp(request.offset_samples, 0.0, duration, 0.0);
         if offset >= duration {
             return Ok(0.0);
@@ -238,8 +291,8 @@ impl PitchShiftEngine {
         Ok(render_sample_at_offset(
             source,
             cache,
-            slice.start_sample,
-            slice.end_sample,
+            start_sample,
+            end_sample,
             offset,
             request.config.sanitized(),
         ))

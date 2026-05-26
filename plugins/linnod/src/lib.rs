@@ -18,9 +18,9 @@ pub use analysis_job::{
 pub use parameters::PARAMETERS;
 pub use patch::{
     ChokeGroupId, DetectionEdit, EnvelopeConfig, LinnodPatch, OutputConfig, PadAssignment, PadEdit,
-    PadId, PitchOffset, PlaybackMode, SliceEdit, SliceParams, TriggerMode, TuningConfig,
-    default_pad_assignments, normalize_pad_assignments, pad_assignment_for_note,
-    slice_index_for_pad,
+    PadId, PitchOffset, PlaybackConfig, PlaybackEdit, PlaybackMode, SliceEdit, SliceParams,
+    TriggerMode, TuningConfig, default_pad_assignments, normalize_pad_assignments,
+    pad_assignment_for_note, slice_index_for_pad,
 };
 pub use plugin::{DESCRIPTOR, Linnod};
 pub use tuning::{

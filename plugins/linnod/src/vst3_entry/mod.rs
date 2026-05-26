@@ -7,6 +7,7 @@
 mod controller;
 mod controller_helpers;
 mod editor;
+mod editor_codecs;
 mod factory;
 mod messages;
 mod patch_edits;

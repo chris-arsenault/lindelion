@@ -33,7 +33,7 @@ fn runtime_triggers_pad_voice_and_renders_audio() {
 #[test]
 fn pad_mode_retrigger_chokes_existing_owned_voice() {
     let mut fixture = RuntimeFixture::new();
-    fixture.patch.slices[0].playback_mode = PlaybackMode::Looped;
+    fixture.patch.playback.mode = PlaybackMode::Looped;
     let mut left = [0.0; 64];
     let mut right = [0.0; 64];
 
@@ -66,7 +66,7 @@ fn pad_mode_choke_group_clears_other_pad_voice() {
         },
     ];
     fixture.patch.normalize_layout();
-    fixture.patch.slices[0].playback_mode = PlaybackMode::Looped;
+    fixture.patch.playback.mode = PlaybackMode::Looped;
     let mut left = [0.0; 64];
     let mut right = [0.0; 64];
 
@@ -99,7 +99,7 @@ fn pad_mode_distinct_choke_groups_can_overlap() {
         },
     ];
     fixture.patch.normalize_layout();
-    fixture.patch.slices[0].playback_mode = PlaybackMode::Looped;
+    fixture.patch.playback.mode = PlaybackMode::Looped;
     let mut left = [0.0; 64];
     let mut right = [0.0; 64];
 
@@ -177,7 +177,7 @@ fn identity_pitch_playback_reads_source_samples_directly() {
     let fixture = RuntimeFixture::new();
     let source = fixture.analysis.audio.samples();
 
-    let sample = direct_slice_sample(&fixture.analysis, 0, 37.0);
+    let sample = direct_region_sample(&fixture.analysis, 0, source.len(), 37.0);
 
     assert_eq!(sample, source[37]);
     assert!(is_identity_pitch_request(PitchShiftRatios::identity()));
@@ -202,7 +202,7 @@ fn note_trigger_does_not_allocate() {
 #[test]
 fn note_release_does_not_allocate() {
     let mut fixture = RuntimeFixture::new();
-    fixture.patch.slices[0].playback_mode = PlaybackMode::Gated;
+    fixture.patch.playback.mode = PlaybackMode::Gated;
     let mut left = [0.0; 128];
     let mut right = [0.0; 128];
     fixture.processor.process(
@@ -224,7 +224,7 @@ fn note_release_does_not_allocate() {
 #[test]
 fn pad_choke_retrigger_does_not_allocate() {
     let mut fixture = RuntimeFixture::new();
-    fixture.patch.slices[0].playback_mode = PlaybackMode::Looped;
+    fixture.patch.playback.mode = PlaybackMode::Looped;
     let mut left = [0.0; 128];
     let mut right = [0.0; 128];
     fixture.processor.process(
@@ -243,6 +243,64 @@ fn pad_choke_retrigger_does_not_allocate() {
     );
 
     assert_eq!(fixture.processor.active_voice_count(), 1);
+}
+
+#[test]
+fn global_playback_config_drives_slices_without_override() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.playback.mode = PlaybackMode::Looped;
+    fixture.patch.playback.envelope.attack_ms = 12.0;
+    fixture.patch.slices[0].playback_mode = PlaybackMode::OneShot;
+    fixture.patch.slices[0].envelope.attack_ms = 0.0;
+
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+
+    assert_eq!(trigger.playback_mode, PlaybackMode::Looped);
+    assert_eq!(trigger.envelope.attack_ms, 12.0);
+}
+
+#[test]
+fn slice_playback_override_supersedes_global_config() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.playback.mode = PlaybackMode::Gated;
+    fixture.patch.playback.envelope.release_ms = 250.0;
+    fixture.patch.slices[0].use_playback_override = true;
+    fixture.patch.slices[0].playback_mode = PlaybackMode::Continue;
+    fixture.patch.slices[0].envelope.release_ms = 20.0;
+
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+
+    assert_eq!(trigger.playback_mode, PlaybackMode::Continue);
+    assert_eq!(trigger.envelope.release_ms, 20.0);
+}
+
+#[test]
+fn continue_mode_extends_playback_to_source_end() {
+    let mut fixture = RuntimeFixture::with_markers(vec![
+        SliceMarker {
+            position_samples: 0,
+            kind: MarkerKind::Auto,
+        },
+        SliceMarker {
+            position_samples: 128,
+            kind: MarkerKind::Auto,
+        },
+    ]);
+    fixture.patch.playback.mode = PlaybackMode::Continue;
+
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+    let source = fixture.analysis.audio.samples();
+
+    assert_eq!(trigger.source_start_sample, 0);
+    assert_eq!(trigger.source_end_sample, source.len());
+    assert_eq!(
+        direct_region_sample(&fixture.analysis, 0, trigger.source_end_sample, 192.0),
+        source[192]
+    );
+    assert_eq!(direct_region_sample(&fixture.analysis, 0, 128, 192.0), 0.0);
 }
 
 #[test]
@@ -271,10 +329,17 @@ struct RuntimeFixture {
 
 impl RuntimeFixture {
     fn new() -> Self {
+        Self::with_markers(vec![SliceMarker {
+            position_samples: 0,
+            kind: MarkerKind::Auto,
+        }])
+    }
+
+    fn with_markers(markers: Vec<SliceMarker>) -> Self {
         Self {
             processor: LinnodProcessor::new(48_000.0),
             patch: LinnodPatch::default(),
-            analysis: source_analysis(),
+            analysis: source_analysis(markers),
         }
     }
 
@@ -294,7 +359,7 @@ impl RuntimeFixture {
     }
 }
 
-fn source_analysis() -> SourceAnalysis {
+fn source_analysis(markers: Vec<SliceMarker>) -> SourceAnalysis {
     let sample_rate = 48_000;
     let samples = sine_wave(220.0, sample_rate, 4_800);
     let owned_audio = OwnedMonoAudioBuffer::new(samples.clone(), sample_rate);
@@ -309,10 +374,6 @@ fn source_analysis() -> SourceAnalysis {
             pitch_frame(3, 3_600, Some(220.0)),
         ],
     };
-    let markers = vec![SliceMarker {
-        position_samples: 0,
-        kind: MarkerKind::Auto,
-    }];
     let pitch_shift_cache = PitchShiftAnalyzer::default()
         .analyze(&samples, sample_rate, &pitch_contour, &markers)
         .unwrap();

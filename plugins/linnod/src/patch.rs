@@ -29,6 +29,8 @@ pub struct LinnodPatch {
     #[serde(default)]
     pub output: OutputConfig,
     #[serde(default)]
+    pub playback: PlaybackConfig,
+    #[serde(default)]
     pub source_sample: Option<SampleReference>,
     #[serde(default)]
     pub detection: DetectionConfig,
@@ -51,6 +53,7 @@ impl Default for LinnodPatch {
         Self {
             name: "Default".to_string(),
             output: OutputConfig::default(),
+            playback: PlaybackConfig::default(),
             source_sample: None,
             detection: DetectionConfig::default(),
             markers: Vec::new(),
@@ -85,7 +88,20 @@ impl LinnodPatch {
         true
     }
 
+    pub fn apply_playback_edit(&mut self, edit: PlaybackEdit) -> bool {
+        self.playback.apply_edit(edit);
+        true
+    }
+
+    pub fn effective_playback_config(&self, slice_index: usize) -> PlaybackConfig {
+        let global = self.playback.sanitized();
+        self.slice(slice_index)
+            .map(|slice| slice.effective_playback_config(global))
+            .unwrap_or(global)
+    }
+
     pub fn normalize_layout(&mut self) {
+        self.playback = self.playback.sanitized();
         if self.slices.len() < SLICE_COUNT {
             let start = self.slices.len() + 1;
             self.slices
@@ -210,6 +226,8 @@ pub struct SliceParams {
     pub gain_db: f32,
     pub pan: f32,
     pub reverse: bool,
+    #[serde(default = "loaded_slice_uses_playback_override")]
+    pub use_playback_override: bool,
     pub playback_mode: PlaybackMode,
     pub envelope: EnvelopeConfig,
     pub filter_cutoff: f32,
@@ -225,6 +243,7 @@ impl SliceParams {
             gain_db: 0.0,
             pan: 0.0,
             reverse: false,
+            use_playback_override: false,
             playback_mode: PlaybackMode::OneShot,
             envelope: EnvelopeConfig::default(),
             filter_cutoff: DEFAULT_FILTER_CUTOFF_HZ,
@@ -247,6 +266,7 @@ impl SliceParams {
             }
             SliceEdit::Pan(pan) => self.pan = finite_clamp(pan, -1.0, 1.0, 0.0),
             SliceEdit::Reverse(reverse) => self.reverse = reverse,
+            SliceEdit::PlaybackOverride(enabled) => self.use_playback_override = enabled,
             SliceEdit::PlaybackMode(playback_mode) => self.playback_mode = playback_mode,
             SliceEdit::Envelope(envelope) => self.envelope = envelope.sanitized(),
             SliceEdit::FilterCutoff(cutoff) => {
@@ -257,6 +277,18 @@ impl SliceParams {
                     DEFAULT_FILTER_CUTOFF_HZ,
                 );
             }
+        }
+    }
+
+    pub fn effective_playback_config(&self, global: PlaybackConfig) -> PlaybackConfig {
+        if self.use_playback_override {
+            PlaybackConfig {
+                mode: self.playback_mode,
+                envelope: self.envelope,
+            }
+            .sanitized()
+        } else {
+            global
         }
     }
 }
@@ -272,9 +304,16 @@ pub enum SliceEdit {
     GainDb(f32),
     Pan(f32),
     Reverse(bool),
+    PlaybackOverride(bool),
     PlaybackMode(PlaybackMode),
     Envelope(EnvelopeConfig),
     FilterCutoff(f32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlaybackEdit {
+    Mode(PlaybackMode),
+    Envelope(EnvelopeConfig),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,6 +365,40 @@ pub enum PlaybackMode {
     OneShot,
     Gated,
     Looped,
+    Continue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackConfig {
+    #[serde(default)]
+    pub mode: PlaybackMode,
+    #[serde(default)]
+    pub envelope: EnvelopeConfig,
+}
+
+impl PlaybackConfig {
+    pub fn sanitized(self) -> Self {
+        Self {
+            mode: self.mode,
+            envelope: self.envelope.sanitized(),
+        }
+    }
+
+    pub fn apply_edit(&mut self, edit: PlaybackEdit) {
+        match edit {
+            PlaybackEdit::Mode(mode) => self.mode = mode,
+            PlaybackEdit::Envelope(envelope) => self.envelope = envelope.sanitized(),
+        }
+    }
+}
+
+impl Default for PlaybackConfig {
+    fn default() -> Self {
+        Self {
+            mode: PlaybackMode::OneShot,
+            envelope: EnvelopeConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -379,6 +452,10 @@ fn default_slices() -> Vec<SliceParams> {
     (1..=SLICE_COUNT)
         .map(SliceParams::default_for_index)
         .collect()
+}
+
+fn loaded_slice_uses_playback_override() -> bool {
+    true
 }
 
 pub fn default_pad_assignments() -> Vec<PadAssignment> {

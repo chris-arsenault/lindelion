@@ -247,7 +247,7 @@ fn linnod_slice_section(cx: &mut Context, signals: EditorSignals) {
         slice_pitch_controls(cx, signals.summary);
         slice_gain_pan_controls(cx, signals.summary);
         slice_filter_controls(cx, signals.summary);
-        slice_playback_controls(cx, signals.summary);
+        linnod_playback_panel(cx, signals);
         HStack::new(cx, move |cx| {
             linnod_command_button(
                 cx,
@@ -438,39 +438,6 @@ fn slice_filter_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSumm
     .height(Pixels(44.0));
 }
 
-fn slice_playback_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
-    HStack::new(cx, move |cx| {
-        playback_button(cx, summary, "one", LinnodEditorPlaybackMode::OneShot);
-        playback_button(cx, summary, "gate", LinnodEditorPlaybackMode::Gated);
-        playback_button(cx, summary, "loop", LinnodEditorPlaybackMode::Looped);
-        crate::vizia_controls::compact_text_button(cx, "rev", "Toggle reverse")
-        .on_press(move |cx| cx.emit(slice_reverse_event(summary)))
-        .height(Pixels(24.0));
-    })
-    .height(Pixels(27.0))
-    .horizontal_gap(Pixels(5.0));
-}
-
-fn playback_button(
-    cx: &mut Context,
-    summary: Signal<LinnodEditorPatchSummary>,
-    label: &'static str,
-    mode: LinnodEditorPlaybackMode,
-) {
-    Button::new(cx, move |cx| {
-        Label::new(cx, label).alignment(Alignment::Center)
-    })
-    .on_press(move |cx| cx.emit(slice_playback_event(summary, mode)))
-    .class("seg-button")
-    .class("ll-seg-button")
-    .toggle_class(
-        "ll-seg-active",
-        summary.map(move |summary| selected_slice(summary).playback_mode == mode),
-    )
-    .width(Stretch(1.0))
-    .height(Stretch(1.0));
-}
-
 #[derive(Clone, Copy)]
 enum ChokeChange {
     Clear,
@@ -559,16 +526,5 @@ fn slice_reverse_event(summary: Signal<LinnodEditorPatchSummary>) -> EditorEvent
     EditorEvent::SliceEdit(LinnodEditorSliceEdit::Reverse {
         slice_index: slice.index,
         reverse: !slice.reverse,
-    })
-}
-
-fn slice_playback_event(
-    summary: Signal<LinnodEditorPatchSummary>,
-    mode: LinnodEditorPlaybackMode,
-) -> EditorEvent {
-    let slice = selected_slice(&summary.get());
-    EditorEvent::SliceEdit(LinnodEditorSliceEdit::PlaybackMode {
-        slice_index: slice.index,
-        mode,
     })
 }

@@ -36,6 +36,8 @@ use super::{
 
 #[path = "processor_detection.rs"]
 mod processor_detection;
+#[path = "processor_playback.rs"]
+mod processor_playback;
 
 const DEFAULT_PITCH_BEND_RANGE_SEMITONES: f32 = 2.0;
 const LINNOD_BUSES: [Vst3BusInfo; 2] = [
@@ -561,6 +563,7 @@ impl IConnectionPointTrait for LinnodVst3Processor {
             LinnodPluginMessage::SnapAllSlicesToScale => self.snap_all_slices(),
             LinnodPluginMessage::MarkerEdit(payload) => self.apply_marker_edit(&payload),
             LinnodPluginMessage::PadEdit(payload) => self.apply_pad_edit(&payload),
+            LinnodPluginMessage::PlaybackEdit(payload) => self.apply_playback_edit(&payload),
             LinnodPluginMessage::DetectionEdit(payload) => self.apply_detection_edit(&payload),
             LinnodPluginMessage::SliceEdit(payload) => self.apply_slice_edit(&payload),
             LinnodPluginMessage::StatusRequest => {

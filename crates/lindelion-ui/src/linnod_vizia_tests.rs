@@ -15,6 +15,7 @@ fn callbacks() -> LinnodEditorCallbacks {
         handle_command,
         edit_marker,
         edit_pad,
+        edit_playback,
         edit_detection,
         edit_slice,
     }
@@ -75,6 +76,8 @@ unsafe fn handle_command(_context: usize, _request: LinnodEditorCommandRequest<'
 unsafe fn edit_marker(_context: usize, _edit: LinnodEditorMarkerEdit) {}
 
 unsafe fn edit_pad(_context: usize, _edit: LinnodEditorPadEdit) {}
+
+unsafe fn edit_playback(_context: usize, _edit: LinnodEditorPlaybackEdit) {}
 
 unsafe fn edit_detection(_context: usize, _edit: LinnodEditorDetectionEdit) {}
 

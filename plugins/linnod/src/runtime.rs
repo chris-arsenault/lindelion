@@ -8,7 +8,7 @@ use lindelion_dsp_utils::{
     playback::{PlaybackCursor, PlaybackDirection, PlaybackRegion, playback_increment},
     soft_saturate,
 };
-use lindelion_pitch_shift::{PitchShiftEngine, PitchShiftRatios, PitchShiftSliceSampleRequest};
+use lindelion_pitch_shift::{PitchShiftEngine, PitchShiftRatios, PitchShiftRegionSampleRequest};
 use lindelion_plugin_shell::{
     ControlEvent, MidiEvent, MidiExpressionSource, MidiExpressionUpdate, MidiVoiceExpression,
     NoteEvent, VoiceLike, VoiceManager, VoiceRenderStatus,
@@ -250,6 +250,8 @@ impl LinnodEngine {
 #[derive(Debug, Clone, Copy)]
 struct LinnodVoiceTrigger {
     slice_index: usize,
+    source_start_sample: usize,
+    source_end_sample: usize,
     cursor: PlaybackCursor,
     ratios: PitchShiftRatios,
     playback_mode: PlaybackMode,
@@ -264,6 +266,8 @@ struct LinnodVoiceTrigger {
 struct LinnodVoice {
     sample_rate: f32,
     slice_index: usize,
+    source_start_sample: usize,
+    source_end_sample: usize,
     cursor: PlaybackCursor,
     ratios: PitchShiftRatios,
     playback_mode: PlaybackMode,
@@ -282,6 +286,8 @@ impl LinnodVoice {
         Self {
             sample_rate,
             slice_index: 0,
+            source_start_sample: 0,
+            source_end_sample: 0,
             cursor: PlaybackCursor::finished(),
             ratios: PitchShiftRatios::identity(),
             playback_mode: PlaybackMode::OneShot,
@@ -298,6 +304,8 @@ impl LinnodVoice {
 
     fn trigger(&mut self, trigger: LinnodVoiceTrigger) {
         self.slice_index = trigger.slice_index;
+        self.source_start_sample = trigger.source_start_sample;
+        self.source_end_sample = trigger.source_end_sample;
         self.cursor = trigger.cursor;
         self.ratios = trigger.ratios.sanitized();
         self.playback_mode = trigger.playback_mode;
@@ -338,11 +346,21 @@ impl LinnodVoice {
                 .map(|formant_ratio| formant_ratio * pitch_bend_ratio),
         };
         if is_identity_pitch_request(ratios) {
-            return direct_slice_sample(analysis, self.slice_index, offset);
+            return direct_region_sample(
+                analysis,
+                self.source_start_sample,
+                self.source_end_sample,
+                offset,
+            );
         }
-        let request = PitchShiftSliceSampleRequest::new(self.slice_index, offset, ratios);
+        let request = PitchShiftRegionSampleRequest::new(
+            self.source_start_sample,
+            self.source_end_sample,
+            offset,
+            ratios,
+        );
         PitchShiftEngine
-            .render_slice_sample(
+            .render_region_sample(
                 analysis.audio.samples(),
                 &analysis.pitch_shift_cache,
                 request,
@@ -402,18 +420,20 @@ impl VoiceLike for LinnodVoice {
     }
 }
 
-fn direct_slice_sample(analysis: &SourceAnalysis, slice_index: usize, offset_samples: f32) -> f32 {
-    let Some(summary) = analysis.pitch_shift_cache.slice_summary(slice_index) else {
-        return 0.0;
-    };
-    let duration = summary.end_sample.saturating_sub(summary.start_sample) as f32;
+fn direct_region_sample(
+    analysis: &SourceAnalysis,
+    source_start_sample: usize,
+    source_end_sample: usize,
+    offset_samples: f32,
+) -> f32 {
+    let source = analysis.audio.samples();
+    let source_start_sample = source_start_sample.min(source.len());
+    let source_end_sample = source_end_sample.min(source.len()).max(source_start_sample);
+    let duration = source_end_sample.saturating_sub(source_start_sample) as f32;
     if offset_samples < 0.0 || offset_samples >= duration {
         return 0.0;
     }
-    interpolation::linear(
-        analysis.audio.samples(),
-        summary.start_sample as f32 + offset_samples,
-    )
+    interpolation::linear(source, source_start_sample as f32 + offset_samples)
 }
 
 fn is_identity_pitch_request(ratios: PitchShiftRatios) -> bool {
@@ -437,10 +457,18 @@ fn voice_trigger_from_note(
         .slice_summary(resolved.slice_index)
         .copied()?;
     let source_sample_rate = analysis.audio.sample_rate();
+    let playback = patch.effective_playback_config(resolved.slice_index);
+    let source_start_sample = summary.start_sample;
+    let source_end_sample = slice_playback_end_sample(
+        playback.mode,
+        summary.end_sample,
+        analysis.audio.samples().len(),
+    );
     let region = slice_playback_region(
         slice,
-        summary.start_sample,
-        summary.end_sample,
+        playback.mode,
+        source_start_sample,
+        source_end_sample,
         analysis.pitch_shift_cache.sample_rate,
     );
     if region.is_empty() {
@@ -450,6 +478,8 @@ fn voice_trigger_from_note(
     let pitch_ratio = slice.pitch.ratio() * semitones_to_ratio(resolved.chromatic_semitones);
     Some(LinnodVoiceTrigger {
         slice_index: resolved.slice_index,
+        source_start_sample,
+        source_end_sample,
         cursor: PlaybackCursor::new(
             region,
             0.0,
@@ -459,15 +489,15 @@ fn voice_trigger_from_note(
             } else {
                 PlaybackDirection::Forward
             },
-            matches!(slice.playback_mode, PlaybackMode::Looped),
+            matches!(playback.mode, PlaybackMode::Looped),
         ),
         ratios: PitchShiftRatios {
             pitch_ratio,
             formant_ratio: Some(pitch_ratio),
         },
-        playback_mode: slice.playback_mode,
+        playback_mode: playback.mode,
         choke_group: resolved.choke_group,
-        envelope: slice.envelope,
+        envelope: playback.envelope,
         gain: db_to_gain(slice.gain_db),
         pan: slice.pan,
         filter_cutoff: slice.filter_cutoff,
@@ -511,18 +541,34 @@ fn resolve_note_trigger(patch: &LinnodPatch, note: u8) -> Option<NoteTriggerReso
 
 fn slice_playback_region(
     slice: &SliceParams,
+    playback_mode: PlaybackMode,
     start_sample: usize,
     end_sample: usize,
     source_sample_rate: u32,
 ) -> PlaybackRegion {
     let duration = end_sample.saturating_sub(start_sample);
     let start_offset = ms_to_samples(slice.start_offset_ms, source_sample_rate).min(duration);
-    let end_offset =
-        ms_to_samples(slice.end_offset_ms, source_sample_rate).min(duration - start_offset);
+    let end_offset = if matches!(playback_mode, PlaybackMode::Continue) {
+        0
+    } else {
+        ms_to_samples(slice.end_offset_ms, source_sample_rate).min(duration - start_offset)
+    };
     PlaybackRegion::new(
         start_offset as f32,
         duration.saturating_sub(end_offset) as f32,
     )
+}
+
+fn slice_playback_end_sample(
+    playback_mode: PlaybackMode,
+    slice_end_sample: usize,
+    source_len: usize,
+) -> usize {
+    if matches!(playback_mode, PlaybackMode::Continue) {
+        source_len
+    } else {
+        slice_end_sample
+    }
 }
 
 fn apply_master_output(patch: &LinnodPatch, left: &mut [f32], right: &mut [f32]) {

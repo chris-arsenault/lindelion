@@ -6,21 +6,19 @@ use lindelion_ui::{
     linnod_vizia::{
         LinnodEditorDetectionAlgorithm, LinnodEditorDetectionConfig, LinnodEditorMarker,
         LinnodEditorMarkerKind, LinnodEditorPadSummary, LinnodEditorPatchSummary,
-        LinnodEditorPlaybackMode, LinnodEditorSliceSummary, LinnodEditorSourceStatus,
-        LinnodEditorTriggerMode,
+        LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorTriggerMode,
     },
     waveform_points_from_samples,
 };
 
 const LINNOD_WAVEFORM_PREVIEW_POINTS: usize = 16_384;
 
-use crate::{
-    LinnodPatch,
-    patch::{PlaybackMode, TriggerMode},
-    tuning::slice_tuning_info,
-};
+use crate::{LinnodPatch, patch::TriggerMode, tuning::slice_tuning_info};
 
-use super::messages::{LinnodSourceSlicePayload, LinnodSourceSummaryPayload};
+use super::{
+    editor_codecs::{editor_envelope, editor_playback_config, editor_playback_mode},
+    messages::{LinnodSourceSlicePayload, LinnodSourceSummaryPayload},
+};
 
 pub(super) fn editor_summary_from_patch(patch: &LinnodPatch) -> LinnodEditorPatchSummary {
     LinnodEditorPatchSummary {
@@ -35,6 +33,7 @@ pub(super) fn editor_summary_from_patch(patch: &LinnodPatch) -> LinnodEditorPatc
             .map(|pad| editor_pad(patch, pad))
             .collect(),
         slices: patch.slices.iter().enumerate().map(editor_slice).collect(),
+        playback: editor_playback_config(patch.playback),
         detection: editor_detection(patch.detection),
         trigger_mode: editor_trigger_mode(patch.trigger_mode),
         tuning_reference_hz: patch.tuning.reference_hz,
@@ -247,7 +246,9 @@ fn editor_slice((index, slice): (usize, &crate::SliceParams)) -> LinnodEditorSli
         pitch_semitones: slice.pitch.semitones,
         pitch_cents: slice.pitch.cents,
         reverse: slice.reverse,
+        use_playback_override: slice.use_playback_override,
         playback_mode: editor_playback_mode(slice.playback_mode),
+        envelope: editor_envelope(slice.envelope),
         filter_cutoff_hz: slice.filter_cutoff,
     }
 }
@@ -256,14 +257,6 @@ fn editor_trigger_mode(mode: TriggerMode) -> LinnodEditorTriggerMode {
     match mode {
         TriggerMode::Pad => LinnodEditorTriggerMode::Pad,
         TriggerMode::Chromatic => LinnodEditorTriggerMode::Chromatic,
-    }
-}
-
-fn editor_playback_mode(mode: PlaybackMode) -> LinnodEditorPlaybackMode {
-    match mode {
-        PlaybackMode::OneShot => LinnodEditorPlaybackMode::OneShot,
-        PlaybackMode::Gated => LinnodEditorPlaybackMode::Gated,
-        PlaybackMode::Looped => LinnodEditorPlaybackMode::Looped,
     }
 }
 

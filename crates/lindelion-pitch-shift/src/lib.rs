@@ -10,8 +10,9 @@ pub use cache::{
     VoicingSegment,
 };
 pub use synthesis::{
-    PitchShiftEngine, PitchShiftRatios, PitchShiftRenderConfig, PitchShiftRenderError,
-    PitchShiftSliceRenderRequest, PitchShiftSliceSampleRequest, ResidualMixPolicy,
+    PitchShiftEngine, PitchShiftRatios, PitchShiftRegionSampleRequest, PitchShiftRenderConfig,
+    PitchShiftRenderError, PitchShiftSliceRenderRequest, PitchShiftSliceSampleRequest,
+    ResidualMixPolicy,
 };
 
 #[cfg(test)]

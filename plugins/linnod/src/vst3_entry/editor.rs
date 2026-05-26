@@ -10,7 +10,7 @@ use lindelion_ui::linnod_vizia::{
     LINNOD_EDITOR_HEIGHT, LINNOD_EDITOR_WIDTH, LinnodEditorCallbacks, LinnodEditorCommand,
     LinnodEditorCommandRequest, LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit,
     LinnodEditorDirectories, LinnodEditorHost, LinnodEditorMarkerEdit, LinnodEditorPadEdit,
-    LinnodEditorSliceEdit, LinnodEditorTelemetry,
+    LinnodEditorPlaybackEdit, LinnodEditorSliceEdit, LinnodEditorTelemetry,
 };
 use vst3::{ComWrapper, Steinberg::*};
 
@@ -20,9 +20,10 @@ use super::{
     LinnodVst3Controller,
     controller::parameter_index,
     controller_helpers::editor_source_status,
+    editor_codecs::{envelope_from_editor, playback_mode_from_editor},
     messages::{
         LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodSliceEditMessage,
+        LinnodPlaybackEditMessage, LinnodSliceEditMessage,
     },
 };
 
@@ -126,6 +127,7 @@ pub(super) fn linnod_editor_host(controller: *const LinnodVst3Controller) -> Lin
             handle_command,
             edit_marker,
             edit_pad,
+            edit_playback,
             edit_detection,
             edit_slice,
         },
@@ -311,11 +313,29 @@ unsafe fn edit_pad(context: usize, edit: LinnodEditorPadEdit) {
     }
 }
 
+unsafe fn edit_playback(context: usize, edit: LinnodEditorPlaybackEdit) {
+    let Some(controller) = (unsafe { controller(context) }) else {
+        return;
+    };
+    controller.apply_playback_edit(playback_edit_message(edit));
+}
+
 unsafe fn edit_detection(context: usize, edit: LinnodEditorDetectionEdit) {
     let Some(controller) = (unsafe { controller(context) }) else {
         return;
     };
     controller.apply_detection_edit(detection_edit_message(edit));
+}
+
+fn playback_edit_message(edit: LinnodEditorPlaybackEdit) -> LinnodPlaybackEditMessage {
+    match edit {
+        LinnodEditorPlaybackEdit::Mode { mode } => {
+            LinnodPlaybackEditMessage::Mode(playback_mode_from_editor(mode))
+        }
+        LinnodEditorPlaybackEdit::Envelope { envelope } => {
+            LinnodPlaybackEditMessage::Envelope(envelope_from_editor(envelope))
+        }
+    }
 }
 
 unsafe fn controller<'a>(context: usize) -> Option<&'a LinnodVst3Controller> {
@@ -443,16 +463,26 @@ fn slice_edit_message(edit: LinnodEditorSliceEdit) -> Option<LinnodSliceEditMess
             slice_index,
             reverse,
         }),
+        LinnodEditorSliceEdit::PlaybackOverride {
+            slice_index,
+            enabled,
+        } => Some(LinnodSliceEditMessage::PlaybackOverride {
+            slice_index,
+            enabled,
+        }),
         LinnodEditorSliceEdit::PlaybackMode { slice_index, mode } => {
             Some(LinnodSliceEditMessage::PlaybackMode {
                 slice_index,
-                mode: match mode {
-                    lindelion_ui::linnod_vizia::LinnodEditorPlaybackMode::OneShot => 0,
-                    lindelion_ui::linnod_vizia::LinnodEditorPlaybackMode::Gated => 1,
-                    lindelion_ui::linnod_vizia::LinnodEditorPlaybackMode::Looped => 2,
-                },
+                mode: playback_mode_from_editor(mode),
             })
         }
+        LinnodEditorSliceEdit::Envelope {
+            slice_index,
+            envelope,
+        } => Some(LinnodSliceEditMessage::Envelope {
+            slice_index,
+            envelope: envelope_from_editor(envelope),
+        }),
         LinnodEditorSliceEdit::FilterCutoff {
             slice_index,
             cutoff_hz,

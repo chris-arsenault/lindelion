@@ -10,6 +10,8 @@ fn default_patch_has_sixteen_slices_and_pad_assignments() {
     assert_eq!(patch.pad_map.len(), SLICE_COUNT);
     assert_eq!(patch.pad_map[0].midi_note, 36);
     assert_eq!(patch.pad_map[15].midi_note, 51);
+    assert_eq!(patch.playback.mode, PlaybackMode::OneShot);
+    assert!(!patch.slices[0].use_playback_override);
 }
 
 #[test]
@@ -23,7 +25,7 @@ fn patch_uses_shared_midi_tuning_types() {
 }
 
 #[test]
-fn slice_edit_mutates_patch_native_slice_state() {
+fn slice_edit_sanitizes_gain_and_envelope_state() {
     let mut patch = LinnodPatch::default();
 
     assert!(patch.apply_slice_edit(0, SliceEdit::GainDb(f32::INFINITY)));
@@ -36,7 +38,6 @@ fn slice_edit_mutates_patch_native_slice_state() {
             release_ms: f32::NAN,
         }),
     ));
-    assert!(!patch.apply_slice_edit(SLICE_COUNT, SliceEdit::Reverse(true)));
 
     let slice = patch.slice(0).unwrap();
     assert_eq!(slice.gain_db, 0.0);
@@ -44,6 +45,63 @@ fn slice_edit_mutates_patch_native_slice_state() {
     assert_eq!(slice.envelope.decay_ms, 2.0);
     assert_eq!(slice.envelope.sustain, 1.0);
     assert_eq!(slice.envelope.release_ms, 0.0);
+}
+
+#[test]
+fn slice_edit_updates_playback_override_and_rejects_invalid_index() {
+    let mut patch = LinnodPatch::default();
+
+    assert!(patch.apply_slice_edit(0, SliceEdit::PlaybackOverride(true)));
+    assert!(!patch.apply_slice_edit(SLICE_COUNT, SliceEdit::Reverse(true)));
+
+    let slice = patch.slice(0).unwrap();
+    assert!(slice.use_playback_override);
+}
+
+#[test]
+fn playback_edit_and_effective_config_use_global_then_slice_override() {
+    let mut patch = LinnodPatch::default();
+
+    assert!(patch.apply_playback_edit(PlaybackEdit::Mode(PlaybackMode::Continue)));
+    assert!(
+        patch.apply_playback_edit(PlaybackEdit::Envelope(EnvelopeConfig {
+            attack_ms: 5.0,
+            decay_ms: 10.0,
+            sustain: 0.5,
+            release_ms: 120.0,
+        }))
+    );
+
+    assert_eq!(
+        patch.effective_playback_config(0),
+        PlaybackConfig {
+            mode: PlaybackMode::Continue,
+            envelope: EnvelopeConfig {
+                attack_ms: 5.0,
+                decay_ms: 10.0,
+                sustain: 0.5,
+                release_ms: 120.0,
+            },
+        }
+    );
+
+    patch.apply_slice_edit(0, SliceEdit::PlaybackOverride(true));
+    patch.apply_slice_edit(0, SliceEdit::PlaybackMode(PlaybackMode::Looped));
+    patch.apply_slice_edit(
+        0,
+        SliceEdit::Envelope(EnvelopeConfig {
+            attack_ms: 1.0,
+            decay_ms: 2.0,
+            sustain: 0.75,
+            release_ms: 3.0,
+        }),
+    );
+
+    assert_eq!(
+        patch.effective_playback_config(0).mode,
+        PlaybackMode::Looped
+    );
+    assert_eq!(patch.effective_playback_config(0).envelope.attack_ms, 1.0);
 }
 
 #[test]

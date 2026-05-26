@@ -310,6 +310,39 @@ fn synthesis_sample_api_matches_full_slice_render() {
     }
 }
 
+#[test]
+fn synthesis_region_sample_api_can_extend_beyond_slice_boundary() {
+    let analyzer = PitchShiftAnalyzer::default();
+    let audio = sine_wave(220.0, 48_000, 4_800);
+    let contour = pitch_contour(48_000, &[Some(220.0), Some(220.0), Some(220.0)]);
+    let cache = analyzer
+        .analyze(&audio, 48_000, &contour, &markers(&[0, 1_200]))
+        .unwrap();
+
+    let sample = PitchShiftEngine
+        .render_region_sample(
+            &audio,
+            &cache,
+            PitchShiftRegionSampleRequest::new(
+                0,
+                audio.len(),
+                1_500.0,
+                PitchShiftRatios::identity(),
+            ),
+        )
+        .unwrap();
+    let slice_sample = PitchShiftEngine
+        .render_slice_sample(
+            &audio,
+            &cache,
+            PitchShiftSliceSampleRequest::new(0, 1_500.0, PitchShiftRatios::identity()),
+        )
+        .unwrap();
+
+    assert_eq!(sample, audio[1_500]);
+    assert_eq!(slice_sample, 0.0);
+}
+
 fn pitch_contour(sample_rate: u32, f0_values: &[Option<f32>]) -> PitchContour {
     PitchContour {
         source_sample_rate: sample_rate,

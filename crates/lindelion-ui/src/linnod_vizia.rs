@@ -87,6 +87,32 @@ pub enum LinnodEditorPlaybackMode {
     OneShot,
     Gated,
     Looped,
+    Continue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinnodEditorEnvelope {
+    pub attack_ms: f32,
+    pub decay_ms: f32,
+    pub sustain: f32,
+    pub release_ms: f32,
+}
+
+impl Default for LinnodEditorEnvelope {
+    fn default() -> Self {
+        Self {
+            attack_ms: 0.0,
+            decay_ms: 0.0,
+            sustain: 1.0,
+            release_ms: 50.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LinnodEditorPlaybackConfig {
+    pub mode: LinnodEditorPlaybackMode,
+    pub envelope: LinnodEditorEnvelope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +148,9 @@ pub struct LinnodEditorSliceSummary {
     pub pitch_semitones: i32,
     pub pitch_cents: f32,
     pub reverse: bool,
+    pub use_playback_override: bool,
     pub playback_mode: LinnodEditorPlaybackMode,
+    pub envelope: LinnodEditorEnvelope,
     pub filter_cutoff_hz: f32,
 }
 
@@ -148,7 +176,9 @@ impl LinnodEditorSliceSummary {
             pitch_semitones: 0,
             pitch_cents: 0.0,
             reverse: false,
+            use_playback_override: false,
             playback_mode: LinnodEditorPlaybackMode::OneShot,
+            envelope: LinnodEditorEnvelope::default(),
             filter_cutoff_hz: 20_000.0,
         }
     }
@@ -216,6 +246,7 @@ pub struct LinnodEditorPatchSummary {
     pub markers: Vec<LinnodEditorMarker>,
     pub pads: Vec<LinnodEditorPadSummary>,
     pub slices: Vec<LinnodEditorSliceSummary>,
+    pub playback: LinnodEditorPlaybackConfig,
     pub detection: LinnodEditorDetectionConfig,
     pub trigger_mode: LinnodEditorTriggerMode,
     pub tuning_reference_hz: f32,
@@ -234,6 +265,7 @@ impl Default for LinnodEditorPatchSummary {
             markers: Vec::new(),
             pads: Vec::new(),
             slices: (0..16).map(LinnodEditorSliceSummary::empty).collect(),
+            playback: LinnodEditorPlaybackConfig::default(),
             detection: LinnodEditorDetectionConfig::default(),
             trigger_mode: LinnodEditorTriggerMode::Pad,
             tuning_reference_hz: 440.0,
@@ -284,6 +316,12 @@ pub enum LinnodEditorMarkerEdit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinnodEditorPadEdit {
     ChokeGroup { pad: PadId, group: Option<u8> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LinnodEditorPlaybackEdit {
+    Mode { mode: LinnodEditorPlaybackMode },
+    Envelope { envelope: LinnodEditorEnvelope },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -354,9 +392,17 @@ pub enum LinnodEditorSliceEdit {
         slice_index: usize,
         reverse: bool,
     },
+    PlaybackOverride {
+        slice_index: usize,
+        enabled: bool,
+    },
     PlaybackMode {
         slice_index: usize,
         mode: LinnodEditorPlaybackMode,
+    },
+    Envelope {
+        slice_index: usize,
+        envelope: LinnodEditorEnvelope,
     },
     FilterCutoff {
         slice_index: usize,
@@ -394,6 +440,7 @@ pub struct LinnodEditorCallbacks {
     pub handle_command: for<'a> unsafe fn(usize, LinnodEditorCommandRequest<'a>),
     pub edit_marker: unsafe fn(usize, LinnodEditorMarkerEdit),
     pub edit_pad: unsafe fn(usize, LinnodEditorPadEdit),
+    pub edit_playback: unsafe fn(usize, LinnodEditorPlaybackEdit),
     pub edit_detection: unsafe fn(usize, LinnodEditorDetectionEdit),
     pub edit_slice: unsafe fn(usize, LinnodEditorSliceEdit),
 }
@@ -504,6 +551,12 @@ impl LinnodEditorHost {
     /// The callback context must still reference a live host object owned by the plugin editor.
     pub unsafe fn edit_pad(self, edit: LinnodEditorPadEdit) {
         unsafe { (self.callbacks.edit_pad)(self.context, edit) }
+    }
+
+    /// # Safety
+    /// The callback context must still reference a live host object owned by the plugin editor.
+    pub unsafe fn edit_playback(self, edit: LinnodEditorPlaybackEdit) {
+        unsafe { (self.callbacks.edit_playback)(self.context, edit) }
     }
 
     /// # Safety

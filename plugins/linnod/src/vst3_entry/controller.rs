@@ -38,11 +38,12 @@ use super::{
     editor,
     messages::{
         LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodSliceEditMessage, LinnodSourceSummaryPayload, LinnodTelemetryPayload,
+        LinnodPlaybackEditMessage, LinnodSliceEditMessage, LinnodSourceSummaryPayload,
+        LinnodTelemetryPayload,
     },
     patch_edits::{
         apply_detection_edit_message, apply_marker_edit_message, apply_pad_edit_message,
-        apply_slice_edit_message,
+        apply_playback_edit_message, apply_slice_edit_message,
     },
 };
 
@@ -216,6 +217,17 @@ impl LinnodVst3Controller {
             .notify(LinnodPluginMessage::PadEdit(payload).into_com_message())
     }
 
+    pub(super) fn apply_playback_edit(&self, edit: LinnodPlaybackEditMessage) -> tresult {
+        let payload = edit.encode();
+        let mut patch = self.patch.borrow().clone();
+        if !apply_playback_edit_message(&mut patch, edit) {
+            return kInvalidArgument;
+        }
+        self.replace_patch_mirror(patch);
+        self.peer
+            .notify(LinnodPluginMessage::PlaybackEdit(payload).into_com_message())
+    }
+
     pub(super) fn apply_detection_edit(&self, edit: LinnodDetectionEditMessage) -> tresult {
         let payload = edit.encode();
         let mut patch = self.patch.borrow().clone();
@@ -361,6 +373,7 @@ impl IConnectionPointTrait for LinnodVst3Controller {
             | LinnodPluginMessage::SnapAllSlicesToScale
             | LinnodPluginMessage::MarkerEdit(_)
             | LinnodPluginMessage::PadEdit(_)
+            | LinnodPluginMessage::PlaybackEdit(_)
             | LinnodPluginMessage::DetectionEdit(_)
             | LinnodPluginMessage::SliceEdit(_)
             | LinnodPluginMessage::StatusRequest
