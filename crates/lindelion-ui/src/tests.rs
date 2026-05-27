@@ -151,6 +151,39 @@ fn waveform_points_for_view_aggregates_visible_bins() {
 }
 
 #[test]
+fn waveform_display_normalization_gain_uses_full_waveform_peak() {
+    let points = vec![
+        WaveformPoint {
+            min: -0.125,
+            max: 0.25,
+            rms: 0.1,
+        },
+        WaveformPoint {
+            min: -0.5,
+            max: 0.375,
+            rms: 0.2,
+        },
+    ];
+
+    let gain = waveform_display_normalization_gain(&points);
+
+    assert_eq!(gain, 2.0);
+}
+
+#[test]
+fn waveform_display_normalization_gain_keeps_silence_unscaled() {
+    assert_eq!(waveform_display_normalization_gain(&[]), 1.0);
+    assert_eq!(
+        waveform_display_normalization_gain(&[WaveformPoint {
+            min: f32::NAN,
+            max: 0.0,
+            rms: 0.0,
+        }]),
+        1.0
+    );
+}
+
+#[test]
 fn command_handler_invokes_patch_io_services() {
     let mut patch_io = MockPatchIoService::default();
     let mut sample_slots = MockSampleSlotService::default();

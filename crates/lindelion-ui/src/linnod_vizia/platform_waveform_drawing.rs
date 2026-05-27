@@ -40,18 +40,25 @@ fn draw_waveform_body(
     let end = range.end as f32 / source_span;
     let target_points = rect.w.ceil().clamp(16.0, 2048.0) as usize;
     let points = crate::waveform_points_for_view(waveform, start, end, target_points);
-    draw_peak_area(rect, canvas, &points, compact);
-    draw_rms_area(rect, canvas, &points, compact);
-    draw_waveform_outline(rect, canvas, &points, compact);
+    let gain = crate::waveform_display_normalization_gain(waveform);
+    draw_peak_area(rect, canvas, &points, gain, compact);
+    draw_rms_area(rect, canvas, &points, gain, compact);
+    draw_waveform_outline(rect, canvas, &points, gain, compact);
 }
 
-fn draw_peak_area(rect: WaveformRect, canvas: &Canvas, points: &[WaveformPoint], compact: bool) {
+fn draw_peak_area(
+    rect: WaveformRect,
+    canvas: &Canvas,
+    points: &[WaveformPoint],
+    gain: f32,
+    compact: bool,
+) {
     let mut path = vg::PathBuilder::new();
     let center_y = rect.y + rect.h * 0.5;
-    let scale_y = rect.h * if compact { 0.34 } else { 0.42 };
+    let scale_y = rect.h * 0.5;
     for (index, point) in points.iter().enumerate() {
         let x = waveform_point_x(rect, index, points.len());
-        let y = center_y - point.max.clamp(-1.0, 1.0) * scale_y;
+        let y = center_y - normalized_waveform_value(point.max, gain) * scale_y;
         if index == 0 {
             path.move_to((x, y));
         } else {
@@ -60,7 +67,7 @@ fn draw_peak_area(rect: WaveformRect, canvas: &Canvas, points: &[WaveformPoint],
     }
     for (index, point) in points.iter().enumerate().rev() {
         let x = waveform_point_x(rect, index, points.len());
-        let y = center_y - point.min.clamp(-1.0, 1.0) * scale_y;
+        let y = center_y - normalized_waveform_value(point.min, gain) * scale_y;
         path.line_to((x, y));
     }
     let mut paint = vg::Paint::default();
@@ -74,13 +81,19 @@ fn draw_peak_area(rect: WaveformRect, canvas: &Canvas, points: &[WaveformPoint],
     canvas.draw_path(&path.detach(), &paint);
 }
 
-fn draw_rms_area(rect: WaveformRect, canvas: &Canvas, points: &[WaveformPoint], compact: bool) {
+fn draw_rms_area(
+    rect: WaveformRect,
+    canvas: &Canvas,
+    points: &[WaveformPoint],
+    gain: f32,
+    compact: bool,
+) {
     let mut path = vg::PathBuilder::new();
     let center_y = rect.y + rect.h * 0.5;
     let scale_y = rect.h * if compact { 0.28 } else { 0.34 };
     for (index, point) in points.iter().enumerate() {
         let x = waveform_point_x(rect, index, points.len());
-        let y = center_y - point.rms.abs().clamp(0.0, 1.0) * scale_y;
+        let y = center_y - normalized_waveform_value(point.rms.abs(), gain) * scale_y;
         if index == 0 {
             path.move_to((x, y));
         } else {
@@ -89,7 +102,7 @@ fn draw_rms_area(rect: WaveformRect, canvas: &Canvas, points: &[WaveformPoint], 
     }
     for (index, point) in points.iter().enumerate().rev() {
         let x = waveform_point_x(rect, index, points.len());
-        let y = center_y + point.rms.abs().clamp(0.0, 1.0) * scale_y;
+        let y = center_y + normalized_waveform_value(point.rms.abs(), gain) * scale_y;
         path.line_to((x, y));
     }
     let mut paint = vg::Paint::default();
@@ -107,26 +120,28 @@ fn draw_waveform_outline(
     rect: WaveformRect,
     canvas: &Canvas,
     points: &[WaveformPoint],
+    gain: f32,
     compact: bool,
 ) {
-    draw_waveform_edge(rect, canvas, points, true, compact);
-    draw_waveform_edge(rect, canvas, points, false, compact);
+    draw_waveform_edge(rect, canvas, points, gain, true, compact);
+    draw_waveform_edge(rect, canvas, points, gain, false, compact);
 }
 
 fn draw_waveform_edge(
     rect: WaveformRect,
     canvas: &Canvas,
     points: &[WaveformPoint],
+    gain: f32,
     upper: bool,
     compact: bool,
 ) {
     let mut path = vg::PathBuilder::new();
     let center_y = rect.y + rect.h * 0.5;
-    let scale_y = rect.h * if compact { 0.34 } else { 0.42 };
+    let scale_y = rect.h * 0.5;
     for (index, point) in points.iter().enumerate() {
         let x = waveform_point_x(rect, index, points.len());
         let value = if upper { point.max } else { point.min };
-        let y = center_y - value.clamp(-1.0, 1.0) * scale_y;
+        let y = center_y - normalized_waveform_value(value, gain) * scale_y;
         if index == 0 {
             path.move_to((x, y));
         } else {
@@ -144,6 +159,14 @@ fn draw_waveform_edge(
     paint.set_style(vg::PaintStyle::Stroke);
     paint.set_anti_alias(true);
     canvas.draw_path(&path.detach(), &paint);
+}
+
+fn normalized_waveform_value(value: f32, gain: f32) -> f32 {
+    if value.is_finite() {
+        (value * gain).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 fn draw_selected_slice_region(

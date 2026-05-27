@@ -66,6 +66,23 @@ pub fn waveform_points_for_view(
         .collect()
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn waveform_display_normalization_gain(points: &[WaveformPoint]) -> f32 {
+    let peak = points
+        .iter()
+        .map(|point| {
+            finite_sample(point.min)
+                .abs()
+                .max(finite_sample(point.max).abs())
+        })
+        .fold(0.0_f32, f32::max);
+    if peak > 0.0 {
+        1.0 / peak.max(f32::MIN_POSITIVE)
+    } else {
+        1.0
+    }
+}
+
 fn waveform_point_from_samples(samples: &[f32]) -> WaveformPoint {
     let mut min = 0.0_f32;
     let mut max = 0.0_f32;
