@@ -1,5 +1,6 @@
 use lindelion_dsp_utils::{
     envelope::{Adsr, AdsrState, EnvelopePhase},
+    math::finite_clamp,
     smoothing::{SmoothedParam, SmoothedParamSpec},
 };
 
@@ -198,6 +199,11 @@ impl ModulationState {
     }
 
     fn next_lfo_sample(&mut self, sample_rate: f32) -> f32 {
+        let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
+            sample_rate
+        } else {
+            48_000.0
+        };
         self.apply_expression_values();
         let lfo_rate_mod = self.modulation_sum(
             ModulationDestination::LfoRate,
@@ -211,9 +217,15 @@ impl ModulationState {
                 brightness: self.brightness,
             },
         );
-        let rate_hz =
-            (self.config.lfo.rate_hz * (1.0 + lfo_rate_mod).clamp(0.01, 16.0)).clamp(0.01, 100.0);
-        self.lfo_phase = (self.lfo_phase + rate_hz / sample_rate).fract();
+        let base_rate_hz = finite_clamp(self.config.lfo.rate_hz, 0.01, 100.0, 1.0);
+        let rate_hz = finite_clamp(
+            base_rate_hz * (1.0 + lfo_rate_mod).clamp(0.01, 16.0),
+            0.01,
+            100.0,
+            base_rate_hz,
+        );
+        let phase = finite_clamp(self.lfo_phase, 0.0, 1.0, 0.0);
+        self.lfo_phase = (phase + rate_hz / sample_rate).fract();
 
         match self.config.lfo.shape {
             crate::LfoShape::Sine => (std::f32::consts::TAU * self.lfo_phase).sin(),
@@ -288,13 +300,13 @@ pub(super) fn modulation_sum_from(
     destination: ModulationDestination,
     sources: ModulationSources,
 ) -> f32 {
-    modulation
+    let sum = modulation
         .slots
         .iter()
         .filter(|slot| slot.enabled && slot.destination == destination)
         .map(|slot| source_value(slot.source, sources) * slot.amount)
-        .sum::<f32>()
-        .clamp(-1.0, 1.0)
+        .sum::<f32>();
+    finite_clamp(sum, -1.0, 1.0, 0.0)
 }
 
 fn modulation_targets_resonators(modulation: ModulationConfig) -> bool {

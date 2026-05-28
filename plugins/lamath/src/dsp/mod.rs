@@ -5,6 +5,11 @@ pub(crate) mod modal;
 mod voice;
 pub(crate) mod waveguide;
 
+#[cfg(test)]
+mod comparison_tests;
+#[cfg(test)]
+pub(crate) mod render_metrics;
+
 pub use engine::SynthEngine;
 pub use excitation::SelectedExcitations;
 pub(crate) use excitation::{

@@ -1,6 +1,9 @@
 use lindelion_dsp_utils::math;
 
-use crate::{ModalPreset, dsp::constants::STRIKE_POSITION};
+use crate::{
+    ModalPreset,
+    dsp::constants::{DSP_FALLBACK_SAMPLE_RATE, STRIKE_POSITION},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModalBankParams {
@@ -43,6 +46,7 @@ impl ModalBank {
     }
 
     pub fn with_capacity(sample_rate: f32, max_modes: usize, params: ModalBankParams) -> Self {
+        let sample_rate = sanitize_sample_rate(sample_rate);
         let mut bank = Self {
             sample_rate,
             modes: Vec::with_capacity(max_modes.clamp(1, 256)),
@@ -133,6 +137,7 @@ impl ModalBank {
     }
 
     pub fn process_sample(&mut self, input: f32) -> f32 {
+        let input = math::snap_to_zero(input);
         let sum = self
             .modes
             .iter_mut()
@@ -166,8 +171,9 @@ pub struct ModalMode {
 
 impl ModalMode {
     pub fn new(sample_rate: f32, frequency_hz: f32, decay_seconds: f32, gain: f32) -> Self {
-        let frequency_hz = frequency_hz.clamp(1.0, sample_rate * 0.49);
-        let decay_seconds = decay_seconds.max(0.001);
+        let sample_rate = sanitize_sample_rate(sample_rate);
+        let frequency_hz = math::finite_clamp(frequency_hz, 1.0, sample_rate * 0.49, 1.0);
+        let decay_seconds = math::finite_or(decay_seconds, 0.001).max(0.001);
         let radius = (-1.0 / (decay_seconds * sample_rate)).exp();
         let omega = std::f32::consts::TAU * frequency_hz / sample_rate;
 
@@ -176,15 +182,16 @@ impl ModalMode {
             radius,
             coefficient: 2.0 * radius * omega.cos(),
             radius_squared: radius * radius,
-            gain,
+            gain: math::snap_to_zero(gain),
             y1: 0.0,
             y2: 0.0,
         }
     }
 
     pub fn retune(&mut self, sample_rate: f32, frequency_hz: f32, decay_seconds: f32, gain: f32) {
-        let frequency_hz = frequency_hz.clamp(1.0, sample_rate * 0.49);
-        let decay_seconds = decay_seconds.max(0.001);
+        let sample_rate = sanitize_sample_rate(sample_rate);
+        let frequency_hz = math::finite_clamp(frequency_hz, 1.0, sample_rate * 0.49, 1.0);
+        let decay_seconds = math::finite_or(decay_seconds, 0.001).max(0.001);
         let radius = (-1.0 / (decay_seconds * sample_rate)).exp();
         let omega = std::f32::consts::TAU * frequency_hz / sample_rate;
 
@@ -192,10 +199,13 @@ impl ModalMode {
         self.radius = radius;
         self.coefficient = 2.0 * radius * omega.cos();
         self.radius_squared = radius * radius;
-        self.gain = gain;
+        self.gain = math::snap_to_zero(gain);
     }
 
     pub fn process_sample(&mut self, input: f32) -> f32 {
+        let input = math::snap_to_zero(input);
+        self.y1 = math::snap_to_zero(self.y1);
+        self.y2 = math::snap_to_zero(self.y2);
         let output = input * self.gain + self.coefficient * self.y1 - self.radius_squared * self.y2;
         self.y2 = self.y1;
         self.y1 = math::snap_to_zero(output);
@@ -205,6 +215,14 @@ impl ModalMode {
     pub fn reset(&mut self) {
         self.y1 = 0.0;
         self.y2 = 0.0;
+    }
+}
+
+fn sanitize_sample_rate(sample_rate: f32) -> f32 {
+    if sample_rate.is_finite() && sample_rate > 0.0 {
+        sample_rate
+    } else {
+        DSP_FALLBACK_SAMPLE_RATE
     }
 }
 
@@ -367,6 +385,16 @@ mod tests {
             assert_all_finite(&output);
             assert!(peak_abs(&output) < 20.0);
         }
+    }
+
+    #[test]
+    fn modal_mode_recovers_from_non_finite_state_and_input() {
+        let mut mode = ModalMode::new(48_000.0, 440.0, 1.0, 1.0);
+        mode.y1 = f32::NAN;
+        mode.y2 = f32::INFINITY;
+
+        assert_eq!(mode.process_sample(f32::NAN), 0.0);
+        assert!(mode.process_sample(0.25).is_finite());
     }
 
     /// Emits docs/plots/data/modal_impulse.csv for the ModalBank doc.

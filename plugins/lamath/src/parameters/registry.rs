@@ -165,6 +165,13 @@ lindelion_plugin_shell::define_parameter_bindings! {
         format: ParameterFormatter::Plain,
         editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorABoundaryReflection, EditorSurfaceGroup::ResonatorAControls, 6, "Reflect")),
     },
+    ParameterInfo::continuous(37, "Resonator A Dispersion", "", parameter_range!(WAVEGUIDE_DISPERSION)) => {
+        path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Waveguide(WaveguideParameter::Dispersion) },
+        apply: NOTE_BOUNDARY,
+        runtime: RuntimeParameterTarget::None,
+        format: ParameterFormatter::Plain,
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorADispersion, EditorSurfaceGroup::ResonatorAControls, 7, "Disp")),
+    },
 
     ParameterInfo::stepped(40, "Resonator B Model", "", ParameterRange::linear(0.0, 1.0, 1.0), 1) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Model },
@@ -243,6 +250,13 @@ lindelion_plugin_shell::define_parameter_bindings! {
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Plain,
         editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBBoundaryReflection, EditorSurfaceGroup::ResonatorBControls, 6, "Reflect")),
+    },
+    ParameterInfo::continuous(57, "Resonator B Dispersion", "", parameter_range!(WAVEGUIDE_DISPERSION)) => {
+        path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Waveguide(WaveguideParameter::Dispersion) },
+        apply: NOTE_BOUNDARY,
+        runtime: RuntimeParameterTarget::None,
+        format: ParameterFormatter::Plain,
+        editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBDispersion, EditorSurfaceGroup::ResonatorBControls, 7, "Disp")),
     },
 
     ParameterInfo::continuous(60, "Amp Attack", "ms", ParameterRange::linear(0.0, 5_000.0, 1.0)) => {

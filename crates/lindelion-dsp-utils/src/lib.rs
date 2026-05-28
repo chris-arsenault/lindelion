@@ -35,7 +35,11 @@ pub fn soft_saturate(input: f32, drive: f32) -> f32 {
         return 0.0;
     }
 
-    let drive = drive.clamp(0.0, 1.0);
+    let drive = if drive.is_finite() {
+        drive.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     if drive <= f32::EPSILON {
         return input;
     }
@@ -46,6 +50,8 @@ pub fn soft_saturate(input: f32, drive: f32) -> f32 {
 }
 
 pub fn equal_power_pan(mono: f32, pan: f32) -> (f32, f32) {
+    let mono = math::snap_to_zero(mono);
+    let pan = if pan.is_finite() { pan } else { 0.0 };
     let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
     (mono * angle.cos(), mono * angle.sin())
 }
@@ -105,6 +111,22 @@ mod tests {
             wet_rms < dry_rms * 2.0,
             "wet_rms={wet_rms}, dry_rms={dry_rms}"
         );
+    }
+
+    #[test]
+    fn saturator_sanitizes_non_finite_drive() {
+        assert_eq!(soft_saturate(0.25, f32::NAN), 0.25);
+        assert_eq!(soft_saturate(0.25, f32::INFINITY), 0.25);
+    }
+
+    #[test]
+    fn pan_sanitizes_non_finite_input_and_pan() {
+        assert_eq!(equal_power_pan(f32::NAN, 0.0), (0.0, 0.0));
+        let (left, right) = equal_power_pan(1.0, f32::NAN);
+
+        assert!(left.is_finite());
+        assert!(right.is_finite());
+        assert!((left - right).abs() < 0.000_01);
     }
 
     #[test]

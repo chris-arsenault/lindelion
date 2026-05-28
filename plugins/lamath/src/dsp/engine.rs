@@ -159,17 +159,24 @@ impl<'a> SynthEngine<'a> {
 
         self.voices.process_live_voices(|voice| {
             let mut block_peak = 0.0_f32;
+            let mut invalid_sample = false;
             for index in 0..len {
                 let (sample_left, sample_right) = voice
                     .process_stereo_sample_with_live_excitation(live_excitation.sample_at(index));
+                if !sample_left.is_finite() || !sample_right.is_finite() {
+                    voice.clear();
+                    invalid_sample = true;
+                    break;
+                }
                 block_peak = block_peak.max(sample_left.abs()).max(sample_right.abs());
                 left[index] = snap_to_zero(left[index] + sample_left);
                 right[index] = snap_to_zero(right[index] + sample_right);
             }
 
             VoiceRenderStatus {
-                last_level: block_peak,
-                idle: voice.is_excitation_finished() && block_peak < IDLE_LEVEL_THRESHOLD,
+                last_level: if invalid_sample { 0.0 } else { block_peak },
+                idle: invalid_sample
+                    || (voice.is_excitation_finished() && block_peak < IDLE_LEVEL_THRESHOLD),
             }
         });
     }

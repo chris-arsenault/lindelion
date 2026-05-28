@@ -431,6 +431,7 @@ pub(crate) enum WaveguideParameter {
     LoopResonance,
     LoopGain,
     Nonlinearity,
+    Dispersion,
     Position,
     Style,
     BoundaryReflection,
@@ -443,6 +444,7 @@ impl WaveguideParameter {
             Self::LoopResonance => config.loop_filter_resonance,
             Self::LoopGain => config.loop_gain,
             Self::Nonlinearity => config.loop_nonlinearity,
+            Self::Dispersion => config.dispersion,
             Self::Position => config.position_of_strike,
             Self::Style => config.style.plain(),
             Self::BoundaryReflection => config.boundary_reflection,
@@ -468,6 +470,7 @@ impl WaveguideParameter {
             Self::LoopResonance => config.loop_filter_resonance = FILTER_RESONANCE.clamp(value),
             Self::LoopGain => config.loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(value),
             Self::Nonlinearity => config.loop_nonlinearity = finite_value(value, 0.0, 1.0, 0.0),
+            Self::Dispersion => config.dispersion = WAVEGUIDE_DISPERSION.clamp(value),
             Self::Position => config.position_of_strike = STRIKE_POSITION.clamp(value),
             Self::Style => config.style = WaveguideStyle::from_plain(value),
             Self::BoundaryReflection => {

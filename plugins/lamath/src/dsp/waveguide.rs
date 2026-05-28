@@ -6,10 +6,19 @@ use lindelion_dsp_utils::{
 use serde::{Deserialize, Serialize};
 
 use super::constants::{
-    DEFAULT_BIQUAD_Q, FILTER_RESONANCE, STRIKE_POSITION, TUBE_BOUNDARY,
-    WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_FILTER_Q, WAVEGUIDE_LOOP_GAIN,
-    WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH,
+    FILTER_RESONANCE, STRIKE_POSITION, WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ,
+    WAVEGUIDE_LOOP_GAIN, WAVEGUIDE_PICKUP_POSITION,
 };
+
+mod body;
+mod core;
+mod dispersion;
+#[cfg(test)]
+mod mesh_2d;
+#[cfg(test)]
+mod string_1d;
+mod traveling;
+mod tube_1d;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WaveguideStyle {
@@ -30,8 +39,14 @@ pub struct WaveguideParams {
     pub loop_filter_resonance: f32,
     pub loop_gain: f32,
     pub loop_nonlinearity: f32,
+    pub dispersion: f32,
     pub position_of_strike: f32,
+    pub pickup_position: f32,
     pub boundary_reflection: f32,
+}
+
+fn default_pickup_position() -> f32 {
+    WAVEGUIDE_PICKUP_POSITION.default
 }
 
 impl Default for WaveguideParams {
@@ -43,8 +58,10 @@ impl Default for WaveguideParams {
             loop_filter_resonance: FILTER_RESONANCE.default,
             loop_gain: WAVEGUIDE_LOOP_GAIN.default,
             loop_nonlinearity: 0.0,
+            dispersion: WAVEGUIDE_DISPERSION.default,
             position_of_strike: STRIKE_POSITION.default,
-            boundary_reflection: TUBE_BOUNDARY.reflection.default,
+            pickup_position: default_pickup_position(),
+            boundary_reflection: crate::dsp::constants::TUBE_BOUNDARY.reflection.default,
         }
     }
 }
@@ -55,20 +72,23 @@ pub struct WaveguideResonator {
     delay: DelayLine,
     fractional_delay: FirstOrderAllpass,
     loop_filter: Biquad,
+    dispersion: dispersion::WaveguideDispersion,
+    body: body::WaveguideBody,
+    tube: tube_1d::Tube1d,
 }
 
 impl WaveguideResonator {
     pub fn new(sample_rate: f32, lowest_frequency_hz: f32) -> Self {
-        let max_delay = (sample_rate / lowest_frequency_hz.max(1.0)).ceil() as usize + 8;
+        let sample_rate = core::sanitize_sample_rate(sample_rate);
+        let max_delay = core::max_delay_samples(sample_rate, lowest_frequency_hz, 1.0);
         Self {
             sample_rate,
             delay: DelayLine::new(max_delay),
             fractional_delay: FirstOrderAllpass::default(),
-            loop_filter: Biquad::new(BiquadCoefficients::lowpass(
-                sample_rate,
-                WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ.default,
-                DEFAULT_BIQUAD_Q,
-            )),
+            loop_filter: Biquad::new(BiquadCoefficients::identity()),
+            dispersion: dispersion::WaveguideDispersion::new(),
+            body: body::WaveguideBody::new(sample_rate),
+            tube: tube_1d::Tube1d::new(sample_rate, lowest_frequency_hz),
         }
     }
 
@@ -76,96 +96,74 @@ impl WaveguideResonator {
         self.delay.clear();
         self.fractional_delay.reset();
         self.loop_filter.reset();
+        self.dispersion.reset();
+        self.body.reset();
+        self.tube.reset();
     }
 
     pub fn process_sample(&mut self, excitation: f32, params: WaveguideParams) -> f32 {
-        let frequency_hz = params.frequency_hz.clamp(
-            self.sample_rate / self.delay.capacity() as f32,
-            self.sample_rate * 0.45,
-        );
-        let delay_samples =
-            (self.sample_rate / frequency_hz - 1.0).clamp(1.0, self.delay.capacity() as f32 - 3.0);
-        let integer_delay = delay_samples.floor();
-        let fractional_delay = delay_samples - integer_delay;
-        self.fractional_delay.set_fractional_delay(fractional_delay);
-        self.loop_filter.set_coefficients(loop_filter_coefficients(
-            self.sample_rate,
-            params.loop_filter_cutoff,
-            params.loop_filter_resonance,
-        ));
+        if params.style == WaveguideStyle::Tube {
+            return self.tube.process_sample(excitation, params);
+        }
 
-        let delay_tap = self.delay.read(integer_delay);
+        let damping = core::loop_damping(self.sample_rate, params);
+        let dispersion_profile = dispersion::dispersion_profile(self.sample_rate, params);
+        let geometry = core::waveguide_geometry(params.position_of_strike, params.pickup_position);
+        let tuning = core::delay_tuning(
+            self.sample_rate,
+            self.delay.capacity(),
+            params.frequency_hz,
+            1.0,
+            1.0 + damping.filter_delay_samples + dispersion_profile.delay_compensation_samples,
+        );
+        self.fractional_delay
+            .set_fractional_delay(tuning.fractional_delay);
+        self.loop_filter.set_coefficients(damping.coefficients);
+
+        let delay_tap = self.delay.read(tuning.integer_delay);
         let delayed = self.fractional_delay.process(delay_tap);
+        let loop_delay = tuning.integer_delay + tuning.fractional_delay;
+        let pickup = self.delay.read(core::position_delay_samples(
+            loop_delay,
+            geometry.pickup_position,
+        ));
         let damped = self.loop_filter.process(delayed);
-        let nonlinear = if params.loop_nonlinearity > 0.0 {
-            soft_saturate(damped, params.loop_nonlinearity)
+        let loop_nonlinearity = math::finite_clamp(params.loop_nonlinearity, 0.0, 1.0, 0.0);
+        let nonlinear = if loop_nonlinearity > 0.0 {
+            soft_saturate(damped, loop_nonlinearity)
         } else {
             damped
         };
 
-        let resonance_gain_compensation = 1.0
-            / (1.0
-                + FILTER_RESONANCE.clamp(params.loop_filter_resonance)
-                    * WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH);
-        let feedback = feedback_sample(nonlinear, params, resonance_gain_compensation);
+        let dispersed = self
+            .dispersion
+            .process_sample(nonlinear, dispersion_profile);
+        let feedback = dispersed * damping.loop_gain;
         self.delay.push(math::snap_to_zero(feedback));
-        self.delay.add_at(
-            injection_delay_samples(integer_delay, params.position_of_strike),
-            math::snap_to_zero(excitation_sample(excitation, params)),
-        );
-
-        math::snap_to_zero(output_sample(delayed, params))
-    }
-}
-
-fn feedback_sample(
-    loop_sample: f32,
-    params: WaveguideParams,
-    resonance_gain_compensation: f32,
-) -> f32 {
-    let loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(params.loop_gain) * resonance_gain_compensation;
-    match params.style {
-        WaveguideStyle::String => loop_sample * loop_gain,
-        WaveguideStyle::Tube => {
-            loop_sample * loop_gain * TUBE_BOUNDARY.feedback_gain(params.boundary_reflection)
+        let excitation = math::snap_to_zero(excitation);
+        for tap in geometry.excitation_taps {
+            self.delay.add_at(
+                core::position_delay_samples(loop_delay, tap.position),
+                math::snap_to_zero(excitation * tap.gain),
+            );
         }
+
+        self.body.process_sample(pickup, params)
     }
 }
 
-fn excitation_sample(excitation: f32, params: WaveguideParams) -> f32 {
-    match params.style {
-        WaveguideStyle::String => excitation,
-        WaveguideStyle::Tube => {
-            excitation * TUBE_BOUNDARY.excitation_gain(params.boundary_reflection)
-        }
-    }
-}
-
-fn output_sample(delayed: f32, params: WaveguideParams) -> f32 {
-    match params.style {
-        WaveguideStyle::String => delayed,
-        WaveguideStyle::Tube => delayed * TUBE_BOUNDARY.output_gain(params.boundary_reflection),
-    }
-}
-
-fn loop_filter_coefficients(
-    sample_rate: f32,
-    loop_filter_cutoff: f32,
-    loop_filter_resonance: f32,
-) -> BiquadCoefficients {
-    let q = WAVEGUIDE_LOOP_FILTER_Q.q_for_resonance(loop_filter_resonance);
-    BiquadCoefficients::lowpass(sample_rate, loop_filter_cutoff, q)
-}
-
-fn injection_delay_samples(loop_delay_samples: f32, position_of_strike: f32) -> f32 {
-    let position = STRIKE_POSITION.clamp(position_of_strike);
-    (loop_delay_samples * position).clamp(0.0, loop_delay_samples.max(0.0))
-}
+#[cfg(test)]
+mod measurement_tests;
+#[cfg(test)]
+mod position_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms, rms_difference};
+    use lindelion_dsp_utils::analysis::{
+        assert_all_finite, estimate_f0_autocorrelation, first_index_above_abs, peak_abs, rms,
+        rms_difference,
+    };
 
     #[test]
     fn impulse_produces_decaying_output() {
@@ -210,7 +208,7 @@ mod tests {
         }
 
         let estimate =
-            estimate_frequency_autocorrelation(&output[500..], sample_rate, 200.0, 700.0).unwrap();
+            estimate_f0_autocorrelation(&output[500..], sample_rate, 200.0, 700.0).unwrap();
         assert!((estimate - target).abs() < 12.0, "estimate={estimate}");
     }
 
@@ -233,8 +231,7 @@ mod tests {
         );
 
         let estimate =
-            estimate_frequency_autocorrelation(&output[1_000..], sample_rate, 180.0, 420.0)
-                .unwrap();
+            estimate_f0_autocorrelation(&output[1_000..], sample_rate, 180.0, 420.0).unwrap();
         assert!((estimate - target).abs() < 6.0, "estimate={estimate}");
     }
 
@@ -339,6 +336,64 @@ mod tests {
     }
 
     #[test]
+    fn string_dispersion_changes_render_without_losing_fundamental_tuning() {
+        let sample_rate = 48_000.0;
+        let target = 220.0;
+        let base = WaveguideParams {
+            frequency_hz: target,
+            loop_gain: 0.99,
+            loop_filter_cutoff: 18_000.0,
+            loop_filter_resonance: 0.05,
+            ..waveguide_material_change_params()
+        };
+        let dispersed_params = WaveguideParams {
+            dispersion: 0.9,
+            ..base
+        };
+        let damping = core::loop_damping(sample_rate, dispersed_params);
+        let profile = dispersion::dispersion_profile(sample_rate, dispersed_params);
+        let tuning = core::delay_tuning(
+            sample_rate,
+            WaveguideResonator::new(sample_rate, 20.0).delay.capacity(),
+            target,
+            1.0,
+            1.0 + damping.filter_delay_samples + profile.delay_compensation_samples,
+        );
+        let compensated_period = tuning.integer_delay
+            + tuning.fractional_delay
+            + 1.0
+            + damping.filter_delay_samples
+            + profile.delay_compensation_samples;
+        let natural = render_impulse(sample_rate, base, 18_000);
+        let dispersed = render_impulse(sample_rate, dispersed_params, 18_000);
+
+        assert_all_finite(&natural);
+        assert_all_finite(&dispersed);
+        assert!(rms_difference(&natural[512..], &dispersed[512..]) > 0.000_001);
+        assert!((compensated_period - sample_rate / target).abs() < 0.001);
+    }
+
+    #[test]
+    fn waveguide_recovers_from_non_finite_excitation_and_params() {
+        let mut waveguide = WaveguideResonator::new(48_000.0, 20.0);
+        let params = WaveguideParams {
+            frequency_hz: f32::NAN,
+            loop_filter_cutoff: f32::NAN,
+            loop_filter_resonance: f32::NAN,
+            loop_gain: f32::NAN,
+            loop_nonlinearity: f32::NAN,
+            dispersion: f32::NAN,
+            position_of_strike: f32::NAN,
+            boundary_reflection: f32::NAN,
+            ..WaveguideParams::default()
+        };
+
+        for input in [f32::NAN, f32::INFINITY, 0.5, 0.0] {
+            assert!(waveguide.process_sample(input, params).is_finite());
+        }
+    }
+
+    #[test]
     fn tube_style_materially_changes_render() {
         let sample_rate = 48_000.0;
         let base = WaveguideParams {
@@ -398,7 +453,7 @@ mod tests {
     #[test]
     fn strike_position_moves_excitation_injection_point() {
         let sample_rate = 48_000.0;
-        let near_output = render_impulse(
+        let high_position = render_impulse(
             sample_rate,
             WaveguideParams {
                 frequency_hz: 240.0,
@@ -411,7 +466,7 @@ mod tests {
             },
             2_000,
         );
-        let near_input = render_impulse(
+        let low_position = render_impulse(
             sample_rate,
             WaveguideParams {
                 position_of_strike: 0.1,
@@ -428,12 +483,12 @@ mod tests {
             2_000,
         );
 
-        let near_output_onset = first_above(&near_output, 0.000_1).unwrap();
-        let near_input_onset = first_above(&near_input, 0.000_1).unwrap();
+        let high_position_onset = first_index_above_abs(&high_position, 0.000_1).unwrap();
+        let low_position_onset = first_index_above_abs(&low_position, 0.000_1).unwrap();
 
         assert!(
-            near_output_onset + 80 < near_input_onset,
-            "near_output_onset={near_output_onset}, near_input_onset={near_input_onset}"
+            low_position_onset + 20 < high_position_onset,
+            "low_position_onset={low_position_onset}, high_position_onset={high_position_onset}"
         );
     }
 
@@ -501,7 +556,9 @@ mod tests {
                 loop_filter_resonance: t * 0.95,
                 loop_gain: 0.2 + t * 0.799,
                 loop_nonlinearity: t,
+                dispersion: t,
                 position_of_strike: 0.1 + 0.8 * t,
+                pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
                 boundary_reflection: -1.0 + t * 2.0,
             };
             output.push(waveguide.process_sample(if index == 0 { 1.0 } else { 0.0 }, params));
@@ -532,35 +589,5 @@ mod tests {
             position_of_strike: 0.45,
             ..WaveguideParams::default()
         }
-    }
-
-    fn first_above(samples: &[f32], threshold: f32) -> Option<usize> {
-        samples.iter().position(|sample| sample.abs() > threshold)
-    }
-
-    fn estimate_frequency_autocorrelation(
-        samples: &[f32],
-        sample_rate: f32,
-        min_hz: f32,
-        max_hz: f32,
-    ) -> Option<f32> {
-        let min_lag = (sample_rate / max_hz).floor().max(1.0) as usize;
-        let max_lag = (sample_rate / min_hz).ceil() as usize;
-        let max_lag = max_lag.min(samples.len().saturating_sub(1));
-        let mut best_lag = 0;
-        let mut best_score = f32::NEG_INFINITY;
-
-        for lag in min_lag..=max_lag {
-            let mut score = 0.0;
-            for index in 0..samples.len() - lag {
-                score += samples[index] * samples[index + lag];
-            }
-            if score > best_score {
-                best_score = score;
-                best_lag = lag;
-            }
-        }
-
-        (best_lag > 0).then(|| sample_rate / best_lag as f32)
     }
 }

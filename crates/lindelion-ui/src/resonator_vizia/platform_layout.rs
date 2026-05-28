@@ -44,6 +44,7 @@ fn resonator_top_strip(cx: &mut Context, signals: EditorSignals) {
         HStack::new(cx, move |cx| {
             resonator_tool_button(cx, ICON_FOLDER_OPEN, "Load patch", UiCommand::LoadPatch);
             resonator_tool_button(cx, ICON_DOWNLOAD, "Export patch with samples", UiCommand::ExportPatchWithSamples);
+            resonator_tool_button(cx, ICON_REFRESH, "Reset audio engine", UiCommand::ResetAudioEngine);
             crate::vizia_controls::icon_tool_button(cx, ICON_PLUS, "Add sample to library")
                 .on_press(|cx| cx.emit(EditorEvent::AddLibrarySample));
             crate::vizia_controls::icon_tool_button(cx, ICON_SETTINGS, "Settings")
@@ -172,6 +173,7 @@ fn resonator_lane_a(cx: &mut Context, signals: EditorSignals) {
             ResonatorEditorSurfaceSlot::ResonatorALoopGain,
             ResonatorEditorSurfaceSlot::ResonatorANonlinearity,
             ResonatorEditorSurfaceSlot::ResonatorABoundaryReflection,
+            ResonatorEditorSurfaceSlot::ResonatorADispersion,
         ],
         signals,
     );
@@ -193,6 +195,7 @@ fn resonator_lane_b(cx: &mut Context, signals: EditorSignals) {
             ResonatorEditorSurfaceSlot::ResonatorBLoopGain,
             ResonatorEditorSurfaceSlot::ResonatorBNonlinearity,
             ResonatorEditorSurfaceSlot::ResonatorBBoundaryReflection,
+            ResonatorEditorSurfaceSlot::ResonatorBDispersion,
         ],
         signals,
     );
@@ -215,7 +218,7 @@ fn resonator_lane(
     model_slot: ResonatorEditorSurfaceSlot,
     waveguide_style_slot: ResonatorEditorSurfaceSlot,
     modal_slots: [ResonatorEditorSurfaceSlot; 3],
-    waveguide_slots: [ResonatorEditorSurfaceSlot; 4],
+    waveguide_slots: [ResonatorEditorSurfaceSlot; 5],
     signals: EditorSignals,
 ) {
     let model_signal = signals.parameter(model_slot).signal;

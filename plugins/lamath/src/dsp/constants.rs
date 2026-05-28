@@ -65,11 +65,7 @@ impl TubeBoundaryModel {
         self.reflection.clamp(value)
     }
 
-    pub(crate) fn feedback_gain(self, value: f32) -> f32 {
-        self.reflection(value)
-    }
-
-    pub(crate) fn excitation_gain(self, value: f32) -> f32 {
+    pub(crate) fn excitation_coupling(self, value: f32) -> f32 {
         let reflection = self.reflection(value).abs();
         (1.0 - reflection * self.excitation_loss_per_reflection)
             .clamp(self.min_excitation_gain, 1.0)
@@ -143,11 +139,12 @@ pub(crate) const WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ: FloatRange =
     FloatRange::new(20.0, 20_000.0, 8_000.0);
 pub(crate) const FILTER_RESONANCE: FloatRange = FloatRange::new(0.0, 0.999, 0.0);
 pub(crate) const WAVEGUIDE_LOOP_GAIN: FloatRange = FloatRange::new(0.0, 0.999, 0.92);
+pub(crate) const WAVEGUIDE_DISPERSION: FloatRange = FloatRange::new(0.0, 1.0, 0.0);
 pub(crate) const STRIKE_POSITION: FloatRange = FloatRange::new(0.001, 0.999, 0.5);
+pub(crate) const WAVEGUIDE_PICKUP_POSITION: FloatRange = FloatRange::new(0.001, 0.999, 0.82);
 
 pub(crate) const OUTPUT_FILTER_Q: ResonanceQ = ResonanceQ::new(DEFAULT_BIQUAD_Q, 8.0);
 pub(crate) const WAVEGUIDE_LOOP_FILTER_Q: ResonanceQ = ResonanceQ::new(0.55, 4.0);
-pub(crate) const WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH: f32 = 0.45;
 
 pub(crate) const FILTER_CUTOFF_MOD_OCTAVES: f32 = 4.0;
 pub(crate) const MODAL_DAMPING_MOD_OCTAVES: f32 = 2.0;
@@ -167,8 +164,8 @@ mod tests {
     #[test]
     fn boundary_model_numerics_are_pinned() {
         assert_eq!(TUBE_BOUNDARY.reflection(f32::NAN), 0.75);
-        assert_eq!(TUBE_BOUNDARY.feedback_gain(2.0), 1.0);
-        assert_eq!(TUBE_BOUNDARY.excitation_gain(0.75), 0.8125);
+        assert_eq!(TUBE_BOUNDARY.reflection(2.0), 1.0);
+        assert_eq!(TUBE_BOUNDARY.excitation_coupling(0.75), 0.8125);
         assert!((TUBE_BOUNDARY.output_gain(0.75) - 0.95).abs() < 0.000_001);
     }
 

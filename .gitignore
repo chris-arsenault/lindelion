@@ -3,6 +3,7 @@
 .env
 .env.*
 .DS_Store
+.sulion-paste/
 node_modules/
 dist/
 .terraform/

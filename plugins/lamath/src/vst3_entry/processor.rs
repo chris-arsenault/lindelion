@@ -139,6 +139,14 @@ impl ResonatorVst3Processor {
         self.peer
             .notify(ResonatorPluginMessage::telemetry_response(payload).into_com_message())
     }
+
+    fn reset_audio_engine(&self) -> tresult {
+        let Ok(mut synth) = self.synth.try_borrow_mut() else {
+            return kResultFalse;
+        };
+        synth.reset_audio_engine();
+        kResultOk
+    }
 }
 
 impl IPluginBaseTrait for ResonatorVst3Processor {
@@ -362,6 +370,7 @@ impl IConnectionPointTrait for ResonatorVst3Processor {
 
         match message {
             ResonatorPluginMessage::PatchUpdate(payload) => self.apply_patch_payload(&payload),
+            ResonatorPluginMessage::ResetAudioEngine => self.reset_audio_engine(),
             ResonatorPluginMessage::TelemetryRequest => self.send_telemetry_response(),
             ResonatorPluginMessage::TelemetryResponse(_) => kNotImplemented,
         }

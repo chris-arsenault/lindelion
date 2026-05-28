@@ -167,6 +167,7 @@ pub enum UiCommand {
     LoadPatch,
     ExportPatchWithSamples,
     OpenLibrary,
+    ResetAudioEngine,
     SelectExcitationSlot(PadId),
     LoadSelectedExcitationSlot,
     LoadExcitationSlot(PadId),
@@ -368,6 +369,7 @@ impl EditorCommandHandler {
                         .map_err(EditorCommandError::Sample)
                 }
             }
+            UiCommand::ResetAudioEngine => Ok(EditorCommandOutcome::Ignored),
             UiCommand::LoadExcitationSlot(slot) => {
                 load_excitation_slot::<P::Error, S>(slot, context, sample_slots)
             }
@@ -436,6 +438,7 @@ impl EditorCommandFloatAdapter {
     const OPEN_LIBRARY: u16 = 4;
     const LOAD_SELECTED_EXCITATION_SLOT: u16 = 5;
     const CLEAR_SELECTED_EXCITATION_SLOT: u16 = 6;
+    const RESET_AUDIO_ENGINE: u16 = 7;
     const REDETECT_SLICES: u16 = 40;
     const TUNE_SELECTED_SLICE: u16 = 41;
     const TUNE_ALL_SLICES: u16 = 42;
@@ -450,6 +453,7 @@ impl EditorCommandFloatAdapter {
             Some(UiCommand::LoadPatch) => Self::LOAD_PATCH,
             Some(UiCommand::ExportPatchWithSamples) => Self::EXPORT_PATCH_WITH_SAMPLES,
             Some(UiCommand::OpenLibrary) => Self::OPEN_LIBRARY,
+            Some(UiCommand::ResetAudioEngine) => Self::RESET_AUDIO_ENGINE,
             Some(UiCommand::LoadSelectedExcitationSlot) => Self::LOAD_SELECTED_EXCITATION_SLOT,
             Some(UiCommand::ClearSelectedExcitationSlot) => Self::CLEAR_SELECTED_EXCITATION_SLOT,
             Some(UiCommand::SelectExcitationSlot(slot)) => {
@@ -477,6 +481,7 @@ impl EditorCommandFloatAdapter {
             Self::LOAD_PATCH => Some(UiCommand::LoadPatch),
             Self::EXPORT_PATCH_WITH_SAMPLES => Some(UiCommand::ExportPatchWithSamples),
             Self::OPEN_LIBRARY => Some(UiCommand::OpenLibrary),
+            Self::RESET_AUDIO_ENGINE => Some(UiCommand::ResetAudioEngine),
             Self::LOAD_SELECTED_EXCITATION_SLOT => Some(UiCommand::LoadSelectedExcitationSlot),
             Self::CLEAR_SELECTED_EXCITATION_SLOT => Some(UiCommand::ClearSelectedExcitationSlot),
             Self::REDETECT_SLICES => Some(UiCommand::RedetectSlices),
@@ -526,6 +531,7 @@ pub fn command_label(command: Option<UiCommand>) -> &'static str {
         Some(UiCommand::LoadPatch) => "Patch load requested",
         Some(UiCommand::ExportPatchWithSamples) => "Export requested",
         Some(UiCommand::OpenLibrary) => "Library updated",
+        Some(UiCommand::ResetAudioEngine) => "Audio engine reset",
         Some(UiCommand::SelectExcitationSlot(_)) => "Layer selected",
         Some(UiCommand::LoadSelectedExcitationSlot) => "Layer load requested",
         Some(UiCommand::LoadExcitationSlot(_)) => "Layer load requested",

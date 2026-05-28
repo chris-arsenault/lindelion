@@ -5,6 +5,7 @@ lindelion_plugin_shell::define_vst3_plugin_messages! {
     messages {
         empty {
             TelemetryRequest => "telemetry_request",
+            ResetAudioEngine => "reset_audio_engine",
         }
         payload {
             PatchUpdate(Vec<u8>) => "patch_update",
@@ -20,6 +21,10 @@ impl ResonatorPluginMessage {
 
     pub(super) fn telemetry_request() -> Self {
         Self::TelemetryRequest
+    }
+
+    pub(super) fn reset_audio_engine() -> Self {
+        Self::ResetAudioEngine
     }
 
     pub(super) fn telemetry_response(payload: Vec<u8>) -> Self {

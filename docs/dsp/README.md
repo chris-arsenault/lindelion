@@ -18,5 +18,6 @@ Per-module reference docs for DSP types in the Lindelion workspace. Each doc fol
 | [Phrase analysis](phrase-analysis.md) | `crates/lindelion-phrase-analysis/` | Pipeline orchestrator: pitch → onsets → note segmentation |
 | [Resample Pro pitch shifting](resample-pro.md) | `crates/lindelion-pitch-shift/` + `plugins/linnod/src/runtime/prepared_resample_pro.rs` | Phase-aware stretch-plus-resample pitch shifting with setup-time Linnod slice preparation |
 | [Ableton Complex Pro reference](ableton-complex-pro.md) | Public Ableton/zplane sources + Lindelion comparison | Clean-room reference for Complex Pro-style pitch and time-stretch behavior |
+| [Pitch-shift regression signature](pitch-shift-regression-signature.md) | Local render analysis note | Diagnostic signature for phase-coherence and peak-locking pitch-shift regressions |
 
 Plot generation is wired through Rust integration tests in `crates/lindelion-dsp-utils/tests/plot_data.rs` and a unit test in `plugins/lamath/src/dsp/modal.rs`. The tests emit deterministic CSVs under `docs/plots/data/`; `make docs` reads those CSVs and renders SVGs under `docs/plots/`. See [`../../tools/dsp-plot/README.md`](../../tools/dsp-plot/README.md) for the pipeline details and Python setup.

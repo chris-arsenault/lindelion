@@ -184,6 +184,13 @@ impl ResonatorSynth {
         self.processor.set_pitch_bend_normalized(value);
     }
 
+    pub fn reset_audio_engine(&mut self) {
+        self.sidechain_input_scratch.fill(0.0);
+        self.sidechain_input_len = 0;
+        self.telemetry = ResonatorTelemetry::default();
+        self.rebuild_processor();
+    }
+
     fn rebuild_processor(&mut self) {
         self.processor = processor_from_patch_and_buffers(
             self.setup.sample_rate as f32,
@@ -214,6 +221,7 @@ fn processor_from_patch_and_buffers(
     buffers: &[Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS],
     max_block_size: usize,
 ) -> ResonatorProcessor<'static> {
+    let sample_rate = sanitized_processor_sample_rate(sample_rate);
     if buffers.iter().all(Option::is_none) {
         return ResonatorProcessor::with_builtin_excitation_and_realtime_capacity(
             sample_rate,
@@ -227,6 +235,14 @@ fn processor_from_patch_and_buffers(
         RuntimePatch::new(patch.clone(), loaded_runtime_slots(&patch, buffers)),
         max_block_size,
     )
+}
+
+fn sanitized_processor_sample_rate(sample_rate: f32) -> f32 {
+    if sample_rate.is_finite() && sample_rate > 0.0 {
+        sample_rate
+    } else {
+        48_000.0
+    }
 }
 
 fn loaded_runtime_slots(

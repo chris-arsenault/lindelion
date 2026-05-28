@@ -100,6 +100,11 @@ impl ResonatorVst3Controller {
             .notify(ResonatorPluginMessage::telemetry_request().into_com_message());
     }
 
+    pub(super) fn reset_audio_engine(&self) -> tresult {
+        self.peer
+            .notify(ResonatorPluginMessage::reset_audio_engine().into_com_message())
+    }
+
     pub(super) fn save_patch_to_path(&self, path: &Path) -> Result<(), patch_io::PatchIoError> {
         patch_io::save_patch(path, &self.patch.borrow())
     }
@@ -202,9 +207,9 @@ impl IConnectionPointTrait for ResonatorVst3Controller {
                 self.telemetry.set(telemetry);
                 kResultOk
             }
-            ResonatorPluginMessage::PatchUpdate(_) | ResonatorPluginMessage::TelemetryRequest => {
-                kNotImplemented
-            }
+            ResonatorPluginMessage::PatchUpdate(_)
+            | ResonatorPluginMessage::TelemetryRequest
+            | ResonatorPluginMessage::ResetAudioEngine => kNotImplemented,
         }
     }
 }

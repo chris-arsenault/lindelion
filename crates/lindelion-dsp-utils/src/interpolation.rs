@@ -56,7 +56,12 @@ pub fn linear_wrapped(samples: &[f32], index: f32) -> f32 {
     }
 
     let len = samples.len() as f32;
-    let wrapped = index.rem_euclid(len);
+    let wrapped = if index.is_finite() {
+        let wrapped = index.rem_euclid(len);
+        if wrapped >= len { 0.0 } else { wrapped }
+    } else {
+        0.0
+    };
     let base = wrapped.floor() as usize;
     let next = (base + 1) % samples.len();
     let frac = wrapped - base as f32;
@@ -103,5 +108,12 @@ mod tests {
         let samples = [0.0, 10.0, 20.0, 30.0];
         assert_eq!(linear_wrapped(&samples, -1.0), 30.0);
         assert_eq!(linear_wrapped(&samples, 3.5), 15.0);
+    }
+
+    #[test]
+    fn linear_wrapped_handles_boundary_and_non_finite_indices() {
+        let samples = [0.0, 10.0, 20.0, 30.0];
+        assert_eq!(linear_wrapped(&samples, 4.0), 0.0);
+        assert_eq!(linear_wrapped(&samples, f32::NAN), 0.0);
     }
 }

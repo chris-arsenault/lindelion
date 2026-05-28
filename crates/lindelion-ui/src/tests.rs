@@ -373,6 +373,24 @@ fn command_handler_ignores_missing_file_dialog_selection() {
 }
 
 #[test]
+fn command_handler_ignores_audio_engine_reset_by_default() {
+    let mut patch_io = MockPatchIoService::default();
+    let mut sample_slots = MockSampleSlotService::default();
+
+    assert_eq!(
+        EditorCommandHandler::handle(
+            UiCommand::ResetAudioEngine,
+            EditorCommandContext::default(),
+            &mut patch_io,
+            &mut sample_slots,
+        ),
+        Ok(EditorCommandOutcome::Ignored)
+    );
+    assert!(patch_io.calls.is_empty());
+    assert!(sample_slots.calls.is_empty());
+}
+
+#[test]
 fn telemetry_request_handler_invokes_service() {
     let mut telemetry = MockTelemetryService::default();
 
@@ -478,6 +496,7 @@ fn command_fixtures() -> Vec<UiCommand> {
         UiCommand::LoadPatch,
         UiCommand::ExportPatchWithSamples,
         UiCommand::OpenLibrary,
+        UiCommand::ResetAudioEngine,
         UiCommand::LoadSelectedExcitationSlot,
         UiCommand::ClearSelectedExcitationSlot,
         UiCommand::RedetectSlices,

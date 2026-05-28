@@ -1,4 +1,4 @@
-use lindelion_dsp_utils::analysis::{rms, spectral_centroid_hz};
+use lindelion_dsp_utils::analysis::{audio_window_metrics, rms};
 use lindelion_phrase_analysis::PhraseAnalysisResult;
 use lindelion_pitch_detect::median_voiced_pitch;
 
@@ -74,14 +74,14 @@ impl<'a> PhraseAnalysisExpressionFrameSource<'a> {
                 / frames.len() as f32
         };
         let audio = self.audio.get(start_sample..end_sample).unwrap_or_default();
-        let centroid = spectral_centroid_hz(audio, self.sample_rate as f32).unwrap_or(0.0);
+        let metrics = audio_window_metrics(audio, self.sample_rate as f32);
 
         mapping.frame_from_features(AudioExpressionFeatures {
             start_sample,
             end_sample,
             pitch_hz,
             loudness_rms: loudness,
-            spectral_centroid_hz: centroid,
+            spectral_centroid_hz: metrics.spectral_centroid_hz.unwrap_or(0.0),
             gate: true,
         })
     }

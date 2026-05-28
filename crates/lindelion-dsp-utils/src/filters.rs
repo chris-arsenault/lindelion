@@ -45,6 +45,7 @@ impl OnePoleLowpass {
 
     pub fn process(&mut self, input: f32) -> f32 {
         let input = math::snap_to_zero(input);
+        self.coefficient = math::finite_clamp(self.coefficient, 0.0, 1.0, 1.0);
         self.z1 = math::snap_to_zero(self.z1);
         self.z1 += self.coefficient * (input - self.z1);
         self.z1 = math::snap_to_zero(self.z1);
@@ -66,6 +67,16 @@ pub struct BiquadCoefficients {
 }
 
 impl BiquadCoefficients {
+    pub const fn identity() -> Self {
+        Self {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        }
+    }
+
     pub fn lowpass(sample_rate: f32, cutoff_hz: f32, q: f32) -> Self {
         rbj(sample_rate, cutoff_hz, q, BiquadKind::Lowpass)
     }
@@ -76,6 +87,14 @@ impl BiquadCoefficients {
 
     pub fn bandpass(sample_rate: f32, cutoff_hz: f32, q: f32) -> Self {
         rbj(sample_rate, cutoff_hz, q, BiquadKind::Bandpass)
+    }
+
+    pub fn is_finite(self) -> bool {
+        self.b0.is_finite()
+            && self.b1.is_finite()
+            && self.b2.is_finite()
+            && self.a1.is_finite()
+            && self.a2.is_finite()
     }
 }
 
@@ -135,11 +154,20 @@ impl Biquad {
     }
 
     pub fn set_coefficients(&mut self, coefficients: BiquadCoefficients) {
-        self.coefficients = coefficients;
+        if coefficients.is_finite() {
+            self.coefficients = coefficients;
+        } else {
+            self.reset();
+        }
     }
 
     pub fn process(&mut self, input: f32) -> f32 {
         let input = math::snap_to_zero(input);
+        if !self.coefficients.is_finite() {
+            self.coefficients = BiquadCoefficients::identity();
+            self.reset();
+            return input;
+        }
         self.x1 = math::snap_to_zero(self.x1);
         self.x2 = math::snap_to_zero(self.x2);
         self.y1 = math::snap_to_zero(self.y1);
@@ -248,6 +276,17 @@ mod tests {
     }
 
     #[test]
+    fn one_pole_recovers_from_non_finite_state_coefficient_and_input() {
+        let mut filter = OnePoleLowpass {
+            z1: f32::NAN,
+            coefficient: f32::NAN,
+        };
+
+        assert_eq!(filter.process(f32::NAN), 0.0);
+        assert_eq!(filter.process(0.5), 0.5);
+    }
+
+    #[test]
     fn lowpass_reduces_high_frequency_more_than_low_frequency() {
         let sample_rate = 48_000.0;
         let mut filter = Biquad::new(BiquadCoefficients::lowpass(sample_rate, 1_000.0, 0.707));
@@ -307,5 +346,24 @@ mod tests {
         }
 
         assert_all_finite(&output);
+    }
+
+    #[test]
+    fn biquad_recovers_from_non_finite_state_coefficients_and_input() {
+        let mut filter = Biquad::new(BiquadCoefficients {
+            b0: f32::NAN,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        });
+        filter.x1 = f32::NAN;
+        filter.x2 = f32::INFINITY;
+        filter.y1 = f32::NAN;
+        filter.y2 = f32::INFINITY;
+
+        assert_eq!(filter.process(f32::NAN), 0.0);
+        assert_eq!(filter.process(0.25), 0.25);
+        assert!(filter.coefficients.is_finite());
     }
 }

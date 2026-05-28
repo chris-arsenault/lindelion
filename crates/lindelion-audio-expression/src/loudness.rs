@@ -1,4 +1,4 @@
-use lindelion_dsp_utils::analysis::{rms, spectral_centroid_hz};
+use lindelion_dsp_utils::analysis::audio_window_metrics;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct StreamingLoudnessFrame {
@@ -37,12 +37,12 @@ impl StreamingLoudnessTracker for RmsCentroidLoudnessTracker {
         audio: &[f32],
         sample_rate: u32,
     ) -> StreamingLoudnessFrame {
+        let metrics = audio_window_metrics(audio, sample_rate.max(1) as f32);
         self.frame = StreamingLoudnessFrame {
             start_sample,
             end_sample: start_sample.saturating_add(audio.len()),
-            rms: rms(audio),
-            spectral_centroid_hz: spectral_centroid_hz(audio, sample_rate.max(1) as f32)
-                .unwrap_or(0.0),
+            rms: metrics.rms,
+            spectral_centroid_hz: metrics.spectral_centroid_hz.unwrap_or(0.0),
         };
         self.frame
     }

@@ -65,6 +65,31 @@ fn repeated_clip_loop_note_offs_remain_bounded_and_decay_after_stop() {
 }
 
 #[test]
+fn reset_audio_engine_clears_active_runtime_state_without_changing_patch() {
+    let setup = realtime_process_setup(128);
+    let mut synth = ResonatorSynth::default();
+    let mut left = vec![0.0; 128];
+    let mut right = vec![0.0; 128];
+    let events = [MidiEvent::Note(NoteEvent::On {
+        channel: 0,
+        note: 60,
+        velocity: 1.0,
+    })];
+
+    synth.reset(setup);
+    process_block(&mut synth, setup, &mut left, &mut right, &events);
+    assert!(synth.telemetry().active_voices > 0);
+
+    synth.reset_audio_engine();
+    assert_eq!(synth.telemetry(), ResonatorTelemetry::default());
+    process_block(&mut synth, setup, &mut left, &mut right, &[]);
+
+    assert_eq!(synth.patch().name, ResonatorSynthPatch::default().name);
+    assert_eq!(synth.telemetry().active_voices, 0);
+    assert_eq!(peak_abs(&left).max(peak_abs(&right)), 0.0);
+}
+
+#[test]
 fn audio_plugin_process_does_not_allocate() {
     let mut synth = ResonatorSynth::default();
     let setup = ProcessSetup {

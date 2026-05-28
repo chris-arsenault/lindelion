@@ -21,7 +21,7 @@ pub(crate) use lindelion_ui::resonator_vizia::{
 
 use crate::dsp::constants::{
     FILTER_RESONANCE, MASTER_GAIN_DB, MASTER_GAIN_LINEAR, OUTPUT_FILTER_CUTOFF_HZ, STRIKE_POSITION,
-    TUBE_BOUNDARY, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
+    TUBE_BOUNDARY, WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
 };
 use crate::{
     AudioInputMode, EnvelopeConfig, FilterMode, LfoShape, LiveExcitationMode, ModalConfig,

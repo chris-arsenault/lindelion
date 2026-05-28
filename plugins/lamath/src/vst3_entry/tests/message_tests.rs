@@ -45,6 +45,35 @@ fn plugin_message_roundtrips_payload() {
 }
 
 #[test]
+fn plugin_message_roundtrips_audio_engine_reset() {
+    let message = ResonatorPluginMessage::reset_audio_engine()
+        .into_com_message()
+        .to_com_ptr::<IMessage>()
+        .unwrap();
+
+    let decoded = unsafe { ResonatorPluginMessage::decode(message.as_ptr()) };
+
+    assert_eq!(decoded, Ok(Some(ResonatorPluginMessage::ResetAudioEngine)));
+}
+
+#[test]
+fn processor_notify_applies_audio_engine_reset_message() {
+    let processor = ResonatorVst3Processor::new();
+    let message = ResonatorPluginMessage::reset_audio_engine()
+        .into_com_message()
+        .to_com_ptr::<IMessage>()
+        .unwrap();
+
+    let result = unsafe { processor.notify(message.as_ptr()) };
+
+    assert_eq!(result, kResultOk);
+    assert_eq!(
+        processor.synth.borrow().telemetry(),
+        ResonatorTelemetry::default()
+    );
+}
+
+#[test]
 fn unknown_plugin_messages_are_ignored_safely() {
     let processor = ResonatorVst3Processor::new();
     let message = PluginMessage::with_payload("lindelion.lamath.future", Vec::new())

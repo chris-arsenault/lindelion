@@ -141,6 +141,7 @@ fn component_state_projection_covers_expanded_parameter_surface() {
         resonator_a: crate::ResonatorConfig::Waveguide(crate::WaveguideConfig {
             style: crate::WaveguideStyle::Tube,
             loop_gain: 0.96,
+            dispersion: 0.62,
             boundary_reflection: -0.4,
             ..crate::WaveguideConfig::default()
         }),
@@ -170,6 +171,7 @@ fn component_state_projection_covers_expanded_parameter_surface() {
     assert_parameter_value(&values, 32, 0.96);
     assert_parameter_value(&values, 35, 1.0);
     assert_parameter_value(&values, 36, -0.4);
+    assert_parameter_value(&values, 37, 0.62);
     assert_parameter_value(&values, 41, 4.0);
     assert_parameter_value(&values, 46, 0.75);
     assert_parameter_value(&values, 69, 3.0);

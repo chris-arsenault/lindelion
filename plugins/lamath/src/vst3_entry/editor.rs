@@ -84,6 +84,7 @@ mod macos {
     use lindelion_sample_library::SampleReference;
     use lindelion_ui::{
         EditorCommandContext, EditorCommandHandler, PadId, PatchIoService, SampleSlotService,
+        UiCommand,
         resonator_vizia::{
             ResonatorEditorCallbacks, ResonatorEditorCommandRequest, ResonatorEditorDirectories,
             ResonatorEditorHost, ResonatorEditorPatchSummary, ResonatorEditorSampleSummary,
@@ -220,6 +221,11 @@ mod macos {
         let Some(controller) = (unsafe { controller(context) }) else {
             return;
         };
+
+        if request.command == UiCommand::ResetAudioEngine {
+            let _ = controller.reset_audio_engine();
+            return;
+        }
 
         let context = EditorCommandContext {
             patch_save_path: request.patch_save_path,

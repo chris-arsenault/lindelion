@@ -1,6 +1,6 @@
 use lindelion_dsp_utils::{
     filters::{Biquad, BiquadCoefficients},
-    math::{finite_clamp, semitones_to_ratio},
+    math::{finite_clamp, finite_or, semitones_to_ratio, snap_to_zero},
     params::{StructuralChangePolicy, StructuralParam},
 };
 use lindelion_plugin_shell::SmoothedAtomicParam;
@@ -18,7 +18,8 @@ use super::{
 use crate::dsp::{
     constants::{
         LOWEST_RESONATOR_FREQUENCY_HZ, MODAL_DAMPING_MOD_OCTAVES, RESONATOR_POSITION_MOD_DEPTH,
-        SERIES_CONDITIONER, STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_LOOP_GAIN,
+        SERIES_CONDITIONER, STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_DISPERSION,
+        WAVEGUIDE_LOOP_GAIN, WAVEGUIDE_PICKUP_POSITION,
     },
     modal::{ModalBank, ModalBankParams},
     waveguide::{WaveguideParams, WaveguideResonator},
@@ -172,9 +173,10 @@ impl ResonatorStack {
     }
 
     pub(super) fn process_sample(&mut self, excitation: f32) -> f32 {
+        let excitation = snap_to_zero(excitation);
         let mix_a = self.parallel_mix_a.next_sample();
         let mix_b = self.parallel_mix_b.next_sample();
-        match self.routing.current() {
+        snap_to_zero(match self.routing.current() {
             ResonatorRouting::Parallel { .. } => {
                 let a = self.resonator_a.process_sample(excitation);
                 let b = self.resonator_b.process_sample(excitation);
@@ -190,7 +192,7 @@ impl ResonatorStack {
                 let colored_excitation = self.body_color_exciter.process_sample(excitation, a);
                 self.resonator_b.process_sample(colored_excitation)
             }
-        }
+        })
     }
 
     pub(super) fn retune(&mut self, base_frequency: f32) {
@@ -374,14 +376,16 @@ impl SeriesConditioner {
     }
 
     pub(super) fn process_sample(&mut self, input: f32) -> f32 {
-        let highpassed = self.highpass.process(input);
+        let highpassed = snap_to_zero(self.highpass.process(input));
         let magnitude = highpassed.abs();
 
-        self.fast_env = SERIES_CONDITIONER.next_fast_env(self.fast_env, magnitude);
-        self.slow_env = SERIES_CONDITIONER.next_slow_env(self.slow_env, magnitude);
+        self.fast_env =
+            snap_to_zero(SERIES_CONDITIONER.next_fast_env(snap_to_zero(self.fast_env), magnitude));
+        self.slow_env =
+            snap_to_zero(SERIES_CONDITIONER.next_slow_env(snap_to_zero(self.slow_env), magnitude));
 
         let transient_bias = SERIES_CONDITIONER.transient_bias(self.fast_env, self.slow_env);
-        highpassed * SERIES_CONDITIONER.output_gain(transient_bias)
+        snap_to_zero(highpassed * SERIES_CONDITIONER.output_gain(transient_bias))
     }
 }
 
@@ -413,6 +417,10 @@ impl BodyColorExciter {
     }
 
     fn process_sample(&mut self, excitation: f32, color_sample: f32) -> f32 {
+        let excitation = snap_to_zero(excitation);
+        let color_sample = snap_to_zero(color_sample);
+        self.window_env = finite_clamp(self.window_env, 0.0, 1.0, 0.0);
+        self.trigger_peak = snap_to_zero(self.trigger_peak).max(0.0);
         let magnitude = excitation.abs();
         let trigger_threshold =
             BODY_COLOR_TRIGGER_THRESHOLD.max(self.trigger_peak * BODY_COLOR_TRIGGER_RATIO);
@@ -427,11 +435,16 @@ impl BodyColorExciter {
             self.window_env = 0.0;
         }
 
-        colored
+        snap_to_zero(colored)
     }
 }
 
 fn decay_to_floor(sample_rate: f32, duration_ms: f32) -> f32 {
+    let sample_rate = finite_or(
+        sample_rate,
+        super::super::constants::DSP_FALLBACK_SAMPLE_RATE,
+    );
+    let duration_ms = finite_or(duration_ms, 0.0).max(0.0);
     let samples = (sample_rate * duration_ms * 0.001).max(1.0);
     0.001_f32.powf(1.0 / samples)
 }
@@ -457,13 +470,21 @@ fn waveguide_params_from_config(config: &WaveguideConfig, base_frequency: f32) -
         loop_filter_resonance: config.loop_filter_resonance,
         loop_gain: config.loop_gain,
         loop_nonlinearity: config.loop_nonlinearity,
+        dispersion: WAVEGUIDE_DISPERSION.clamp(config.dispersion),
         position_of_strike: config.position_of_strike,
+        pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
         boundary_reflection: config.boundary_reflection,
     }
 }
 
 fn tuned_frequency(base_frequency: f32, semitone_offset: i8, cent_offset: f32) -> f32 {
-    base_frequency * semitones_to_ratio(semitone_offset as f32 + cent_offset / 100.0)
+    let base_frequency = if base_frequency.is_finite() && base_frequency > 0.0 {
+        base_frequency
+    } else {
+        LOWEST_RESONATOR_FREQUENCY_HZ
+    };
+    let cent_offset = finite_or(cent_offset, 0.0);
+    snap_to_zero(base_frequency * semitones_to_ratio(semitone_offset as f32 + cent_offset / 100.0))
 }
 
 fn sanitize_routing(routing: ResonatorRouting) -> ResonatorRouting {
@@ -549,5 +570,30 @@ fn modulated_resonator_config(
                 .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
             ResonatorConfig::Waveguide(config)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn series_conditioner_recovers_from_non_finite_state_and_input() {
+        let mut conditioner = SeriesConditioner::new(48_000.0);
+        conditioner.fast_env = f32::NAN;
+        conditioner.slow_env = f32::INFINITY;
+
+        assert_eq!(conditioner.process_sample(f32::NAN), 0.0);
+        assert!(conditioner.process_sample(0.25).is_finite());
+    }
+
+    #[test]
+    fn body_color_exciter_recovers_from_non_finite_state_and_input() {
+        let mut exciter = BodyColorExciter::new(48_000.0);
+        exciter.window_env = f32::NAN;
+        exciter.trigger_peak = f32::INFINITY;
+
+        assert_eq!(exciter.process_sample(f32::NAN, f32::NAN), 0.0);
+        assert!(exciter.process_sample(0.5, 0.25).is_finite());
     }
 }

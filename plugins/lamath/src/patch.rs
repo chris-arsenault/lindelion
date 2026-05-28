@@ -8,7 +8,7 @@ use crate::dsp::{
     WaveguideStyle,
     constants::{
         FILTER_RESONANCE, MASTER_GAIN_DB, OUTPUT_FILTER_CUTOFF_HZ, STRIKE_POSITION, TUBE_BOUNDARY,
-        WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
+        WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
     },
 };
 
@@ -209,6 +209,8 @@ pub struct WaveguideConfig {
     pub loop_filter_resonance: f32,
     pub loop_gain: f32,
     pub loop_nonlinearity: f32,
+    #[serde(default = "default_waveguide_dispersion")]
+    pub dispersion: f32,
     pub position_of_strike: f32,
     #[serde(default = "default_boundary_reflection")]
     pub boundary_reflection: f32,
@@ -224,10 +226,15 @@ impl Default for WaveguideConfig {
             loop_filter_resonance: FILTER_RESONANCE.default,
             loop_gain: WAVEGUIDE_LOOP_GAIN.default,
             loop_nonlinearity: 0.0,
+            dispersion: default_waveguide_dispersion(),
             position_of_strike: STRIKE_POSITION.default,
             boundary_reflection: default_boundary_reflection(),
         }
     }
+}
+
+pub(crate) const fn default_waveguide_dispersion() -> f32 {
+    WAVEGUIDE_DISPERSION.default
 }
 
 pub(crate) const fn default_boundary_reflection() -> f32 {
