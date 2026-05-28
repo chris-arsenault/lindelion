@@ -12,7 +12,7 @@ use vizia::{
     icons::{
         ICON_ACTIVITY, ICON_ADJUSTMENTS_HORIZONTAL, ICON_ARROWS_SHUFFLE, ICON_DEVICE_FLOPPY,
         ICON_DOWNLOAD, ICON_FILE_MUSIC, ICON_FOLDER_OPEN, ICON_MINUS, ICON_MUSIC, ICON_PLUS,
-        ICON_WAVE_SINE,
+        ICON_SETTINGS, ICON_X,
     },
     prelude::*,
     vg,
@@ -24,9 +24,10 @@ use super::{
     LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit, LinnodEditorEnvelope,
     LinnodEditorHost, LinnodEditorMarker, LinnodEditorMarkerEdit, LinnodEditorMarkerKind,
     LinnodEditorPadEdit, LinnodEditorPadSummary, LinnodEditorParameterBinding,
-    LinnodEditorPatchSummary, LinnodEditorPlaybackEdit, LinnodEditorPlaybackMode,
-    LinnodEditorSliceEdit, LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorStatus,
-    LinnodEditorSurfaceSlot, LinnodEditorTelemetry, LinnodEditorTriggerMode,
+    LinnodEditorPatchSummary, LinnodEditorPitchShiftAlgorithm, LinnodEditorPlaybackEdit,
+    LinnodEditorPlaybackMode, LinnodEditorSliceEdit, LinnodEditorSliceSummary,
+    LinnodEditorSourceStatus, LinnodEditorStatus, LinnodEditorSurfaceSlot, LinnodEditorTelemetry,
+    LinnodEditorTriggerMode,
 };
 use crate::{PadId, WaveformPoint};
 
@@ -35,6 +36,7 @@ mod platform_drop;
 
 include!("platform_style.rs");
 include!("platform_state.rs");
+include!("platform_settings.rs");
 include!("platform_layout.rs");
 include!("platform_playback_controls.rs");
 include!("platform_controls.rs");

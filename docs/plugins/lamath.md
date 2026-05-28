@@ -146,12 +146,15 @@ The string style uses ordinary same-polarity feedback. The tube style applies th
 
 ### 4.3 Routing
 
-Two routing modes are implemented:
+Three routing modes are implemented:
 
 - `Parallel` - excitation feeds A and B independently and their outputs are mixed.
 - `Series` - excitation feeds A, then A's output feeds B's excitation input.
+- `Body Color` - excitation feeds A, and a short window of A's response becomes the colored excitation for B.
 
 Series routing includes a high-pass and transient-bias gate before B to keep steady-state resonance from becoming runaway feedback.
+Body Color is intended for stable commuted/body-response sounds: A imprints early resonator color onto B without feeding A's long ringing tail into B continuously.
+When both resonator slots are modal banks, selecting `Series` is canonicalized to `Body Color` while preserving the routing mix values. Mixed modal/waveguide pairs keep all three routing modes available.
 
 ---
 

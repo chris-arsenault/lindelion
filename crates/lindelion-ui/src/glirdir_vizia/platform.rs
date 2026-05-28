@@ -4,7 +4,7 @@ use vizia::{
     ParentWindow, WindowHandle, WindowScalePolicy,
     icons::{
         ICON_ACTIVITY, ICON_DEVICE_FLOPPY, ICON_DOWNLOAD, ICON_MICROPHONE, ICON_PLAYER_PLAY,
-        ICON_PLAYER_STOP, ICON_REPEAT, ICON_TRASH,
+        ICON_PLAYER_STOP, ICON_REPEAT, ICON_SETTINGS, ICON_TRASH, ICON_X,
     },
     prelude::*,
     vg,
@@ -23,6 +23,7 @@ use crate::WaveformPoint;
 mod platform_drag;
 
 include!("platform_state.rs");
+include!("platform_settings.rs");
 include!("platform_layout.rs");
 include!("platform_controls.rs");
 include!("platform_drawing.rs");

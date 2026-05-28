@@ -3,6 +3,7 @@ pub mod analysis_job;
 pub mod parameters;
 pub mod patch;
 mod patch_detection;
+mod patch_engine;
 pub mod patch_io;
 mod plugin;
 mod runtime;
@@ -17,10 +18,11 @@ pub use analysis_job::{
 };
 pub use parameters::PARAMETERS;
 pub use patch::{
-    ChokeGroupId, DetectionEdit, EnvelopeConfig, LinnodPatch, OutputConfig, PadAssignment, PadEdit,
-    PadId, PitchOffset, PlaybackConfig, PlaybackEdit, PlaybackMode, SliceEdit, SliceParams,
-    TriggerMode, TuningConfig, default_pad_assignments, normalize_pad_assignments,
-    pad_assignment_for_note, slice_index_for_pad,
+    ChokeGroupId, DetectionEdit, EngineConfig, EngineEdit, EnvelopeConfig, LinnodPatch,
+    OutputConfig, PadAssignment, PadEdit, PadId, PitchOffset, PitchShiftAlgorithm, PlaybackConfig,
+    PlaybackEdit, PlaybackMode, SliceEdit, SliceParams, TriggerMode, TuningConfig,
+    default_pad_assignments, normalize_pad_assignments, pad_assignment_for_note,
+    slice_index_for_pad,
 };
 pub use plugin::{DESCRIPTOR, Linnod};
 pub use tuning::{

@@ -76,7 +76,8 @@ pub(crate) struct RuntimePatch<'a> {
 }
 
 impl RuntimePatch<'static> {
-    pub(crate) fn with_builtin_excitation(patch: ResonatorSynthPatch) -> Self {
+    pub(crate) fn with_builtin_excitation(mut patch: ResonatorSynthPatch) -> Self {
+        patch.normalize_routing_for_resonator_models();
         let slot_config = patch.excitation_slots.first().cloned().unwrap_or_default();
         Self {
             patch,
@@ -96,9 +97,10 @@ impl RuntimePatch<'static> {
 
 impl<'a> RuntimePatch<'a> {
     pub(crate) fn new(
-        patch: ResonatorSynthPatch,
+        mut patch: ResonatorSynthPatch,
         slots: [Option<RuntimeExcitationSlot<'a>>; MAX_EXCITATION_LAYERS],
     ) -> Self {
+        patch.normalize_routing_for_resonator_models();
         Self { patch, slots }
     }
 }
@@ -254,7 +256,8 @@ impl<'a> ResonatorProcessor<'a> {
         self.audio_note_state.status()
     }
 
-    pub(crate) fn replace_patch_config(&mut self, patch: ResonatorSynthPatch) {
+    pub(crate) fn replace_patch_config(&mut self, mut patch: ResonatorSynthPatch) {
+        patch.normalize_routing_for_resonator_models();
         self.release_active_audio_note();
         let live_latch_state =
             LiveExcitationLatchRuntimeState::new(self.sample_rate, patch.live_excitation);

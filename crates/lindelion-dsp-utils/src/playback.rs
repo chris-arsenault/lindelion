@@ -50,6 +50,7 @@ impl PlaybackRegion {
 pub struct PlaybackCursor {
     region: PlaybackRegion,
     relative_position: f32,
+    unwrapped_relative_position: f32,
     increment: f32,
     direction: PlaybackDirection,
     looped: bool,
@@ -64,6 +65,7 @@ impl PlaybackCursor {
                 end_sample: 0.0,
             },
             relative_position: 0.0,
+            unwrapped_relative_position: 0.0,
             increment: 1.0,
             direction: PlaybackDirection::Forward,
             looped: false,
@@ -97,6 +99,7 @@ impl PlaybackCursor {
         Self {
             region,
             relative_position,
+            unwrapped_relative_position: relative_position,
             increment: finite_non_negative(increment),
             direction,
             looped,
@@ -113,13 +116,19 @@ impl PlaybackCursor {
     }
 
     pub fn next_position(&mut self) -> Option<f32> {
+        self.next_position_with_unwrapped()
+            .map(|(position, _)| position)
+    }
+
+    pub fn next_position_with_unwrapped(&mut self) -> Option<(f32, f32)> {
         if self.finished {
             return None;
         }
 
         let position = self.current_position();
+        let unwrapped = self.unwrapped_relative_position;
         self.advance();
-        Some(position)
+        Some((position, unwrapped))
     }
 
     fn current_position(self) -> f32 {
@@ -131,6 +140,7 @@ impl PlaybackCursor {
 
     fn advance(&mut self) {
         self.relative_position += self.increment;
+        self.unwrapped_relative_position += self.increment;
         let duration = self.region.duration_samples();
         if self.relative_position < duration {
             return;

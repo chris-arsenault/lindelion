@@ -14,7 +14,7 @@ fn command_state_tracks_selected_excitation_slot() {
     );
     assert_eq!(dispatch.command, UiCommand::LoadExcitationSlot(slot));
     assert_eq!(dispatch.selected_slot, Some(slot));
-    assert_eq!(command_label(state.last_command), "Slot load requested");
+    assert_eq!(command_label(state.last_command), "Layer load requested");
 }
 
 #[test]

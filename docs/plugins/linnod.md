@@ -3,7 +3,7 @@
 **Name:** Linnod
 **Name etymology:** Sindarin, a measured verse unit: a half-line of 4+3 syllables forming a distinct portion of a larger song.
 **Target:** macOS VST3 instrument, Apple Silicon primary.
-**Status:** VST3 melodic sample-slicer instrument with patch/state persistence, source loading and analysis, shared marker/slice domain logic, SwiftF0-backed tuning, shared source-filter pitch shifting, allocation-free slice playback, typed editor/VST3 messaging, and macOS bundle automation.
+**Status:** VST3 melodic sample-slicer instrument with patch/state persistence, source loading and analysis, shared marker/slice domain logic, SwiftF0-backed tuning, setup-time Resample Stretch slice rendering, allocation-free slice playback, typed editor/VST3 messaging, and macOS bundle automation.
 
 This document describes the behavior implemented in the workspace today. Deferred product extensions and external host-validation follow-up live in [linnod-backlog.md](linnod-backlog.md).
 
@@ -67,6 +67,8 @@ Each `SliceParams` entry contains:
 
 Patches roundtrip through the shared `TomlPatchFormat`. VST3 DAW state stores the same patch payload through the shared plugin-state stream path. Cached pitch analysis is deterministic from source audio, markers, and pitch contour; it is rebuilt by the worker instead of being serialized into the patch.
 
+Linnod uses the workspace's shared patch and sample-library conventions rather than a separate product-specific storage layout. Plugin-specific behavior stays in the Linnod patch schema, editor messages, and runtime policy.
+
 ---
 
 ## 4. Source Analysis And Pitch Shifting
@@ -82,7 +84,17 @@ The source-analysis worker builds:
 - per-slice pitch summaries;
 - a deterministic `lindelion-pitch-shift::PitchShiftSourceCache`.
 
-The pitch-shift implementation is not PSOLA. Linnod uses the shared source-filter pitch-shift crate: pitch-adaptive spectral envelopes, voicing segments, residual descriptors, and a synthesis engine that changes pitch while keeping formant placement anchored to the source envelope.
+Pitch shifting is a required Linnod capability for pad and chromatic playback, not an optional enhancement. Small shifts such as 1 cent should remain nearly identical to the source except for the intended pitch change, and semitone shifts should avoid added high-frequency noise, saturation-like coloration, or loop-boundary discontinuities. Fixes must preserve Linnod's fixed-duration pitch-shift semantics unless the user explicitly approves a product behavior change.
+
+Linnod uses the shared pitch-shift crate. `ResampleStretch` is implemented as a phase-aware Resample Pro path: source-level STFT analysis, time scaling at the requested pitch ratio, and bandlimited windowed-sinc resampling back to fixed slice duration. The durable DSP reference is [Resample Pro pitch shifting](../dsp/resample-pro.md).
+
+`ResampleStretch` is not PSOLA and is not plain sample-rate transposition. PSOLA-like behavior remains limited to the older pitch-synchronous source-filter mode, while varispeed remains the explicit mode that changes playback increment and moves formants with the sample.
+
+Linnod keeps Resample Pro rendering outside MIDI note playback. Source and patch preparation resolve the non-identity Resample Stretch variants required by the current patch, render complete slice buffers with guard context, and cache them by source cache key, slice range, pitch ratio, formant ratio, playback direction, and render-config version. Voices read those prepared buffers and apply only playback cursor, declick, envelope, gain, pan, filter, and output processing.
+
+Pad mode prepares the exact slice/pitch variants implied by the pad map. Chromatic mode prepares the selected root-note variant for the active chromatic pad. A chromatic note requiring a shifted variant that is not prepared is silent rather than falling back to direct unshifted playback or another pitch algorithm.
+
+The older source-filter modes remain available for their existing semantics. When formants track pitch, voiced playback can use a pitch-synchronous overlap-add style path; when formants are preserved independently, source-filter synthesis uses pitch-adaptive spectral envelopes, voicing segments, and residual descriptors.
 
 ---
 
@@ -124,6 +136,7 @@ The validator target requires Steinberg's `validator` executable on macOS. Set `
 Current coverage:
 
 - allocation tests for note-on, release, pad choke/retrigger, cross-pad choke groups, and block render;
+- prepared Resample Stretch tests proving note playback reads cached buffers and does not invoke the Resample Pro renderer;
 - finite-output runtime tests for source-backed rendering;
 - Criterion runtime benches under `plugins/linnod/benches/runtime.rs`;
 - `make ci` compiles all benches through `cargo bench --workspace --no-run`.

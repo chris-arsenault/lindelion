@@ -18,7 +18,7 @@ Per-product backlogs cover product-specific work:
 
 ## Shared infrastructure
 
-- Extract more VST3 controller plumbing when a repeated shape has at least two active consumers beyond the current shared parameter mirror, parameter formatting, state, factory, and message helpers.
+- Extract more VST3 controller and patch/library plumbing only when a repeated shape has at least two active consumers beyond the current shared parameter mirror, parameter formatting, state, factory, message helpers, patch filename policy, and sample-library recovery helpers. Candidate areas include patch mirror update flow, patch-to-processor message routing, and controller restart/status handling if those shapes remain duplicated after current product work settles.
 
 ## Performance and CI
 

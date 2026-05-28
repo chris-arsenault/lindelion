@@ -1,16 +1,13 @@
 use std::{error::Error, fmt};
 
-use lindelion_dsp_utils::{
-    analysis,
-    math::{finite_clamp, finite_or},
-};
+use lindelion_dsp_utils::{analysis, math::finite_clamp};
 use lindelion_onset_detect::{SliceMarker, slice_regions_from_markers};
 use lindelion_pitch_detect::{PitchContour, median_voiced_pitch};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     PitchShiftFrameAnalysis, PitchShiftSliceSummary, PitchShiftSourceCache, SourceCacheKey,
-    VoicingKind, VoicingSegment, spectral::analyze_spectral_frame,
+    VoicingKind, VoicingSegment, resample_pro_analysis, spectral::analyze_spectral_frame,
 };
 
 pub const DEFAULT_FRAME_SIZE: usize = 2048;
@@ -122,12 +119,15 @@ impl PitchShiftAnalyzer {
 
         let config = self.config;
         let frames = analyze_frames(audio, sample_rate, pitch_contour, config);
+        let resample_pro =
+            resample_pro_analysis::analyze_resample_pro(audio, sample_rate, markers, config);
         let key = SourceCacheKey::from_inputs(audio, sample_rate, pitch_contour, markers, config);
         Ok(PitchShiftSourceCache {
             key,
             sample_rate,
             source_len_samples: audio.len(),
             config,
+            resample_pro,
             epoch_samples: voiced_epoch_samples(audio, sample_rate, &frames),
             voicing_segments: voicing_segments_from_frames(&frames, audio.len()),
             slice_summaries: summarize_slices(markers, audio.len(), pitch_contour, &frames),
@@ -163,8 +163,9 @@ fn analyze_frames(
                 f0_hz: voiced.then_some(f0_hz).flatten(),
                 confidence: finite_clamp(frame.confidence, 0.0, 1.0, 0.0),
                 voiced,
-                rms: finite_or(frame.rms, 0.0).max(0.0),
+                rms: spectral.rms,
                 harmonic_magnitudes: spectral.harmonic_magnitudes,
+                spectral_peaks: spectral.spectral_peaks,
                 spectral_envelope: spectral.envelope,
                 residual: spectral.residual,
             }

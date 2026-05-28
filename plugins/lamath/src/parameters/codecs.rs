@@ -30,6 +30,7 @@ impl ResonatorModel {
 enum RoutingMode {
     Parallel,
     Series,
+    BodyColor,
 }
 
 impl RoutingMode {
@@ -37,6 +38,7 @@ impl RoutingMode {
         match routing {
             ResonatorRouting::Parallel { .. } => Self::Parallel,
             ResonatorRouting::Series { .. } => Self::Series,
+            ResonatorRouting::BodyColor { .. } => Self::BodyColor,
         }
     }
 
@@ -46,6 +48,7 @@ impl RoutingMode {
         match self {
             Self::Parallel => ResonatorRouting::Parallel { mix_a, mix_b },
             Self::Series => ResonatorRouting::Series { mix_a, mix_b },
+            Self::BodyColor => ResonatorRouting::BodyColor { mix_a, mix_b },
         }
     }
 }
@@ -83,10 +86,11 @@ lindelion_plugin_shell::define_parameter_codec! {
 
 lindelion_plugin_shell::define_parameter_codec! {
     impl ParameterCodec for RoutingMode {
-        max: 1;
+        max: 2;
         fallback: Self::Parallel;
         0 => Self::Parallel, "Parallel";
         1 => Self::Series, "Series";
+        2 => Self::BodyColor, "Body Color";
     }
 }
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use lindelion_plugin_shell::{
-    AudioPlugin, MidiControllerRoute, MidiEvent, MidiEventNormalizer, ParameterId,
+    AudioPlugin, MidiControllerRoute, MidiEvent, MidiEventNormalizer, ParameterId, PluginState,
     ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
     vst3::{
         Vst3BusInfo, Vst3PeerConnection, can_process_32_bit_sample_size, clear_vst_outputs,
@@ -17,7 +17,8 @@ use lindelion_plugin_shell::{
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{
-    Linnod, LinnodWorker, LinnodWorkerQueue, LinnodWorkerResult, SourceAnalysisStatus, patch_io,
+    Linnod, LinnodWorker, LinnodWorkerQueue, LinnodWorkerResult, SourceAnalysisJob,
+    SourceAnalysisJobResult, SourceAnalysisStatus, patch_io,
     tuning::{
         snap_all_slices_to_scale, tune_all_slices_to_nearest_notes, tune_slice_to_nearest_note,
     },
@@ -342,6 +343,8 @@ impl LinnodVst3Processor {
     }
 }
 
+include!("processor_restore.rs");
+
 impl IPluginBaseTrait for LinnodVst3Processor {
     unsafe fn initialize(&self, _context: *mut FUnknown) -> tresult {
         kResultOk
@@ -405,11 +408,7 @@ impl IComponentTrait for LinnodVst3Processor {
         let Some(plugin_state) = read_plugin_state_from_stream(state) else {
             return kResultFalse;
         };
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return kResultFalse;
-        };
-        plugin.load_state(plugin_state);
-        kResultOk
+        self.restore_plugin_state(plugin_state)
     }
 
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {

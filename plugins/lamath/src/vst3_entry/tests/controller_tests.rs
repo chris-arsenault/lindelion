@@ -102,7 +102,7 @@ fn controller_slot_assignment_updates_patch_and_summary_before_processor_bridge(
     );
     assert_eq!(
         controller.editor_summary.borrow().slots[2].detail,
-        "kick.wav"
+        "kick.wav / +0.0 dB / vel 0-127 / fixed / one-shot"
     );
 }
 
@@ -199,7 +199,10 @@ fn editor_patch_summary_reflects_excitation_samples() {
     let summary = EditorPatchSummary::from_patch(&patch);
 
     assert_eq!(summary.patch_name, "Sample Patch");
-    assert_eq!(summary.slots[0].detail, "metal.wav");
+    assert_eq!(
+        summary.slots[0].detail,
+        "metal.wav / +0.0 dB / vel 0-127 / pitch / loop"
+    );
     assert!(summary.slots[0].sample_backed);
     assert!(summary.slots[0].pitch_track);
     assert!(summary.slots[0].looping);

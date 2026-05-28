@@ -2,20 +2,22 @@ use lindelion_plugin_shell::vst3::{PluginMessage, PluginMessageDecodeError, Plug
 use vst3::Steinberg::Vst::{IConnectionPointTrait, IMessage};
 use vst3::Steinberg::*;
 
+mod fixtures;
+
 use super::{
-    LinnodMessageKind, LinnodPluginMessage, LinnodStatusPayload, LinnodVst3Controller,
-    LinnodVst3Processor,
+    LinnodMessageKind, LinnodPluginMessage, LinnodVst3Controller, LinnodVst3Processor,
     controller::{normalized_parameter_value, parameter_index},
     messages::{
         LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodPlaybackEditMessage, LinnodSliceEditMessage, LinnodSourceSlicePayload,
-        LinnodSourceSummaryPayload, LinnodTelemetryPayload, LinnodWaveformPointPayload,
+        LinnodPlaybackEditMessage, LinnodSliceEditMessage, LinnodTelemetryPayload,
     },
 };
 use crate::{
-    ChokeGroupId, LinnodPatch, PadId, SourceAnalysisStatus, parameters::MASTER_GAIN_PARAMETER_ID,
-    patch_io,
+    ChokeGroupId, LinnodPatch, PadId, PitchShiftAlgorithm, SourceAnalysisJobResult,
+    SourceAnalysisStatus, parameters::MASTER_GAIN_PARAMETER_ID, patch_io,
 };
+use fixtures::{source_analysis, source_summary_payload, status_payload};
+use lindelion_sample_library::SampleReference;
 
 #[test]
 fn plugin_messages_roundtrip_typed_payloads() {
@@ -149,6 +151,24 @@ fn controller_applies_source_summary_and_preserves_it_across_patch_updates() {
     assert_eq!(
         controller.summary.borrow().trigger_mode,
         lindelion_ui::linnod_vizia::LinnodEditorTriggerMode::Chromatic
+    );
+}
+
+#[test]
+fn controller_sets_linnod_pitch_shift_algorithm() {
+    let controller = LinnodVst3Controller::new();
+
+    controller.set_pitch_shift_algorithm(
+        lindelion_ui::linnod_vizia::LinnodEditorPitchShiftAlgorithm::ResampleStretch,
+    );
+
+    assert_eq!(
+        controller.patch.borrow().engine.pitch_shift_algorithm,
+        PitchShiftAlgorithm::ResampleStretch
+    );
+    assert_eq!(
+        controller.summary.borrow().pitch_shift_algorithm,
+        lindelion_ui::linnod_vizia::LinnodEditorPitchShiftAlgorithm::ResampleStretch
     );
 }
 
@@ -404,6 +424,25 @@ fn processor_notify_applies_patch_payload() {
 }
 
 #[test]
+fn processor_restore_loads_source_without_controller_notify() {
+    let processor = LinnodVst3Processor::new();
+    let patch = LinnodPatch {
+        source_sample: Some(SampleReference::new("hash", "Samples/source.wav")),
+        ..LinnodPatch::default()
+    };
+    let state = patch_io::to_plugin_state(&patch).unwrap();
+
+    let result = processor.restore_plugin_state_with_source_runner(state, |job| {
+        SourceAnalysisJobResult::ready(job.sequence, source_analysis())
+    });
+
+    let plugin = processor.plugin.borrow();
+    assert_eq!(result, kResultOk);
+    assert_eq!(plugin.source_status(), SourceAnalysisStatus::Ready);
+    assert!(plugin.source_audio().is_some());
+}
+
+#[test]
 fn processor_notify_applies_detection_edit_payload() {
     let processor = LinnodVst3Processor::new();
     let message = LinnodPluginMessage::DetectionEdit(
@@ -531,47 +570,4 @@ fn notify_controller(controller: &LinnodVst3Controller, message: LinnodPluginMes
 
 fn patch_payload(patch: &LinnodPatch) -> Vec<u8> {
     patch_io::to_toml_string(patch).unwrap().into_bytes()
-}
-
-fn status_payload() -> LinnodStatusPayload {
-    LinnodStatusPayload {
-        source_status: SourceAnalysisStatus::Ready,
-        has_source: true,
-        has_analysis: true,
-        marker_count: 3,
-        selected_slice_index: Some(1),
-        active_voices: 2,
-    }
-}
-
-fn source_summary_payload() -> LinnodSourceSummaryPayload {
-    LinnodSourceSummaryPayload {
-        source_label: "source.wav".to_string(),
-        source_sample_rate: 48_000,
-        waveform: vec![
-            LinnodWaveformPointPayload {
-                min: -0.5,
-                max: 0.1,
-                rms: 0.25,
-            },
-            LinnodWaveformPointPayload {
-                min: -0.2,
-                max: 0.75,
-                rms: 0.35,
-            },
-        ],
-        slices: vec![LinnodSourceSlicePayload {
-            index: 0,
-            start_sample: 0,
-            end_sample: 4_800,
-            detected_f0_hz: Some(220.0),
-            detected_midi_note: Some(57.0),
-            nearest_midi_note: Some(57),
-            nearest_scale_midi_note: Some(57),
-            nearest_midi_note_hz: Some(220.0),
-            nearest_scale_midi_note_hz: Some(220.0),
-            cents_deviation: Some(0.0),
-            root_target_f0_hz: Some(220.0),
-        }],
-    }
 }

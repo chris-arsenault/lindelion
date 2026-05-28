@@ -276,6 +276,7 @@ struct EditorSignals {
     status: Signal<GlirdirEditorStatus>,
     preview: Signal<GlirdirEditorPreview>,
     command_status: Signal<Option<GlirdirEditorCommand>>,
+    settings_open: Signal<bool>,
 }
 
 impl EditorSignals {
@@ -299,6 +300,8 @@ enum EditorEvent {
     SetParameter { id: u32, normalized: f32 },
     Command(GlirdirEditorCommand),
     ExportMidiFile,
+    ToggleSettings,
+    CloseSettings,
     SyncFromController,
 }
 
@@ -325,6 +328,12 @@ impl Model for EditorModel {
                 }
                 self.signals.command_status.set(Some(GlirdirEditorCommand::ExportMidi));
             },
+            EditorEvent::ToggleSettings => {
+                self.signals.settings_open.set(!self.signals.settings_open.get());
+            }
+            EditorEvent::CloseSettings => {
+                self.signals.settings_open.set(false);
+            }
             EditorEvent::SyncFromController => unsafe {
                 self.complete_pending_export();
                 self.host.request_status();

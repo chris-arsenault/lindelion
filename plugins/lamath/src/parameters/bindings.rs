@@ -1,5 +1,6 @@
 const AUDIO_INPUT_MODE_EDITOR_LABELS: &[&str] = &["Off", "Audio Notes", "MIDI + Audio"];
 const LIVE_EXCITATION_MODE_EDITOR_LABELS: &[&str] = &["Off", "Cont", "Latch", "Both"];
+const ROUTING_MODE_EDITOR_LABELS: &[&str] = &["Parallel", "Series", "Body"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParameterApplyKind {
@@ -154,6 +155,23 @@ impl EditorParameterBinding {
             order,
             label,
             control: EditorControlKind::Segmented { labels, width },
+        }
+    }
+
+    pub(crate) const fn selector(
+        slot: EditorSurfaceSlot,
+        group: EditorSurfaceGroup,
+        order: u8,
+        label: &'static str,
+        labels: &'static [&'static str],
+        width: f32,
+    ) -> Self {
+        Self {
+            slot,
+            group,
+            order,
+            label,
+            control: EditorControlKind::Selector { labels, width },
         }
     }
 

@@ -114,6 +114,7 @@ fn command_status_text(command: Signal<Option<LinnodEditorCommand>>) -> Memo<Str
             Some(LinnodEditorCommand::LoadPatch) => "Patch loaded",
             Some(LinnodEditorCommand::ExportPatchWithSamples) => "Patch exported",
             Some(LinnodEditorCommand::SetTriggerMode(_)) => "Trigger mode changed",
+            Some(LinnodEditorCommand::SetPitchShiftAlgorithm(_)) => "Pitch engine changed",
             Some(LinnodEditorCommand::SelectPad(_)) => "Pad selected",
             None => "Ready",
         }
@@ -281,11 +282,12 @@ fn selected_pitch_diagnostic_text(summary: Signal<LinnodEditorPatchSummary>) -> 
         let summary = summary.get();
         let slice = selected_slice(&summary);
         let detected = detected_pitch_text(&slice);
+        let shift = selected_pitch_shift_text(&slice);
         let target = selected_pitch_target_text_for_slice(&slice, summary.tuning_reference_hz);
         let pad = selected_pad(&summary)
-            .map(|pad| format!("MIDI {}", pad.midi_note))
-            .unwrap_or_else(|| "MIDI --".to_string());
-        format!("{detected} -> {target} / {pad}")
+            .map(|pad| format!("pad MIDI {}", pad.midi_note))
+            .unwrap_or_else(|| "pad MIDI --".to_string());
+        format!("{detected} / {shift} / {target} / {pad}")
     })
 }
 
@@ -344,10 +346,19 @@ fn selected_pad_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> 
 
 fn detected_pitch_text(slice: &LinnodEditorSliceSummary) -> String {
     match (slice.detected_f0_hz, slice.detected_midi_note) {
-        (Some(frequency), Some(note)) => format!("det {frequency:.1} Hz {}", midi_note_text(note)),
-        (Some(frequency), None) => format!("det {frequency:.1} Hz"),
-        _ => "det --".to_string(),
+        (Some(frequency), Some(note)) => {
+            format!("in {frequency:.1}Hz {}", midi_note_text(note))
+        }
+        (Some(frequency), None) => format!("in {frequency:.1}Hz"),
+        _ => "in --".to_string(),
     }
+}
+
+fn selected_pitch_shift_text(slice: &LinnodEditorSliceSummary) -> String {
+    format!(
+        "shift {:+}st {:+.1}ct",
+        slice.pitch_semitones, slice.pitch_cents
+    )
 }
 
 fn selected_pitch_target_text_for_slice(
@@ -356,10 +367,10 @@ fn selected_pitch_target_text_for_slice(
 ) -> String {
     match slice.root_target_f0_hz {
         Some(frequency) => format!(
-            "target {frequency:.1} Hz {}",
+            "out {frequency:.1}Hz {}",
             midi_note_text(midi_note_from_frequency(frequency, reference_hz))
         ),
-        None => "target --".to_string(),
+        None => "out --".to_string(),
     }
 }
 

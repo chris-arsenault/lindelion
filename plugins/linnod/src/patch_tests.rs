@@ -11,6 +11,10 @@ fn default_patch_has_sixteen_slices_and_pad_assignments() {
     assert_eq!(patch.pad_map[0].midi_note, 36);
     assert_eq!(patch.pad_map[15].midi_note, 51);
     assert_eq!(patch.playback.mode, PlaybackMode::OneShot);
+    assert_eq!(
+        patch.engine.pitch_shift_algorithm,
+        PitchShiftAlgorithm::SpectralPeak
+    );
     assert!(!patch.slices[0].use_playback_override);
 }
 
@@ -102,6 +106,29 @@ fn playback_edit_and_effective_config_use_global_then_slice_override() {
         PlaybackMode::Looped
     );
     assert_eq!(patch.effective_playback_config(0).envelope.attack_ms, 1.0);
+}
+
+#[test]
+fn engine_edit_sets_pitch_shift_algorithm() {
+    let mut patch = LinnodPatch::default();
+
+    assert!(patch.apply_engine_edit(EngineEdit::PitchShiftAlgorithm(
+        PitchShiftAlgorithm::TimeStretch,
+    )));
+
+    assert_eq!(
+        patch.engine.pitch_shift_algorithm,
+        PitchShiftAlgorithm::TimeStretch
+    );
+
+    assert!(patch.apply_engine_edit(EngineEdit::PitchShiftAlgorithm(
+        PitchShiftAlgorithm::ResampleStretch,
+    )));
+
+    assert_eq!(
+        patch.engine.pitch_shift_algorithm,
+        PitchShiftAlgorithm::ResampleStretch
+    );
 }
 
 #[test]

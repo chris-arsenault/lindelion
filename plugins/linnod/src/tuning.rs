@@ -152,7 +152,8 @@ mod tests {
     use super::*;
     use lindelion_midi::{RootNote, Scale};
     use lindelion_pitch_shift::{
-        PitchShiftAnalysisConfig, PitchShiftSourceCache, SourceCacheKey, VoicingKind,
+        PitchShiftAnalysisConfig, PitchShiftSourceCache, ResampleProCache, SourceCacheKey,
+        VoicingKind,
     };
 
     #[test]
@@ -211,6 +212,7 @@ mod tests {
             source_len_samples: 4_800,
             config: PitchShiftAnalysisConfig::default(),
             frames: Vec::new(),
+            resample_pro: ResampleProCache::default(),
             epoch_samples: Vec::new(),
             voicing_segments: vec![lindelion_pitch_shift::VoicingSegment {
                 kind: VoicingKind::Voiced,

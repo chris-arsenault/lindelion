@@ -3,11 +3,12 @@ use lindelion_midi::{RootNote, Scale};
 use lindelion_onset_detect::{
     DetectionConfig, SliceMarker, SliceRegion, slice_region_at_sample, slice_regions_from_markers,
 };
-use lindelion_pitch_shift::PitchShiftRatios;
+use lindelion_pitch_shift::{PitchShiftRatios, PitchShiftSynthesisAlgorithm};
 use lindelion_sample_library::SampleReference;
 use serde::{Deserialize, Serialize};
 
 pub use crate::patch_detection::DetectionEdit;
+pub use crate::patch_engine::{EngineConfig, EngineEdit, PitchShiftAlgorithm};
 
 pub const SLICE_COUNT: usize = 16;
 pub const FIRST_PAD_MIDI_NOTE: u8 = 36;
@@ -26,6 +27,8 @@ pub const MAX_FILTER_CUTOFF_HZ: f32 = 20_000.0;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinnodPatch {
     pub name: String,
+    #[serde(default)]
+    pub engine: EngineConfig,
     #[serde(default)]
     pub output: OutputConfig,
     #[serde(default)]
@@ -52,6 +55,7 @@ impl Default for LinnodPatch {
     fn default() -> Self {
         Self {
             name: "Default".to_string(),
+            engine: EngineConfig::default(),
             output: OutputConfig::default(),
             playback: PlaybackConfig::default(),
             source_sample: None,
@@ -93,6 +97,11 @@ impl LinnodPatch {
         true
     }
 
+    pub fn apply_engine_edit(&mut self, edit: EngineEdit) -> bool {
+        self.engine.apply_edit(edit);
+        true
+    }
+
     pub fn effective_playback_config(&self, slice_index: usize) -> PlaybackConfig {
         let global = self.playback.sanitized();
         self.slice(slice_index)
@@ -100,7 +109,32 @@ impl LinnodPatch {
             .unwrap_or(global)
     }
 
+    pub fn pitch_shift_ratios(&self, pitch_ratio: f32) -> PitchShiftRatios {
+        let pitch_ratio = self
+            .engine
+            .pitch_shift_algorithm
+            .render_pitch_ratio(pitch_ratio);
+        PitchShiftRatios {
+            pitch_ratio,
+            formant_ratio: self
+                .engine
+                .pitch_shift_algorithm
+                .formant_ratio(self.trigger_mode, pitch_ratio),
+        }
+    }
+
+    pub fn playback_pitch_ratio(&self, pitch_ratio: f32) -> f32 {
+        self.engine
+            .pitch_shift_algorithm
+            .playback_pitch_ratio(pitch_ratio)
+    }
+
+    pub fn pitch_shift_synthesis_algorithm(&self) -> PitchShiftSynthesisAlgorithm {
+        self.engine.pitch_shift_algorithm.synthesis_algorithm()
+    }
+
     pub fn normalize_layout(&mut self) {
+        self.engine = self.engine.sanitized();
         self.playback = self.playback.sanitized();
         if self.slices.len() < SLICE_COUNT {
             let start = self.slices.len() + 1;

@@ -1,8 +1,14 @@
 use vizia::prelude::*;
 
+#[path = "vizia_controls/choice.rs"]
+mod choice;
 #[path = "vizia_controls/drag_value.rs"]
 mod drag_value;
 
+pub(crate) use choice::{
+    IconSegmentedChoice, compact_binary_segmented, inline_binary_segmented, inline_icon_segmented,
+    inline_parameter_segmented, parameter_cycle_selector,
+};
 pub(crate) use drag_value::{DragValueSpec, drag_value, dynamic_drag_value};
 
 pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
@@ -28,6 +34,17 @@ pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
     .ll-panel-slice { border-color: #6b4d24; }
     .ll-panel-mod { border-color: #4b3f76; }
     .ll-panel-transport { border-color: #704050; }
+    .ll-settings-panel {
+        background-color: #151b1d;
+        border-width: 1px;
+        border-color: #4b565a;
+        border-radius: 6px;
+        padding: 12px;
+    }
+    .ll-settings-title {
+        color: #f2f7f3;
+        font-size: 14px;
+    }
     .ll-section-title {
         color: #f1f5f2;
         font-size: 12px;
@@ -98,13 +115,13 @@ pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
     .ll-control-row:hover .ll-control-label,
     .ll-drag-value:hover .ll-control-label,
     .ll-knob-cell:hover .ll-control-label,
-    .ll-stepper:hover .ll-control-label {
+    .ll-cycle-selector:hover .ll-control-label {
         color: #c4cec8;
     }
     .ll-control-row:hover .ll-control-value,
     .ll-drag-value:hover .ll-control-value,
     .ll-knob-cell:hover .ll-control-value,
-    .ll-stepper:hover .ll-control-value {
+    .ll-cycle-selector:hover .ll-control-value {
         color: #f6fbf7;
     }
     .ll-drag-value {
@@ -125,27 +142,43 @@ pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
     .ll-drag-value-mod:hover { border-color: #9a78ff; }
     .ll-drag-value-transport:hover { border-color: #ef6f88; }
     knob.ll-knob {
-        width: 42px;
-        height: 42px;
+        width: 31px;
+        height: 31px;
     }
     .ll-knob .knob-track {
         color: #7ed06d;
-        background-color: #263136;
+        background-color: #30383c;
     }
     .ll-knob-audio .knob-track { color: #59b6d8; }
     .ll-knob-slice .knob-track { color: #f2a84b; }
     .ll-knob-mod .knob-track { color: #9a78ff; }
     .ll-knob-transport .knob-track { color: #ef6f88; }
-    .ll-knob .knob-head { color: #f0f8f2; }
-    .ll-knob .knob-tick {
-        background-color: #f0f8f2;
-        width: 3px;
-        height: 12px;
-        border-radius: 2px;
+    .ll-knob .knob-head {
+        background-color: #1c2427;
+        border-width: 1px;
+        border-color: #5a676b;
+        color: #f0f8f2;
     }
+    .ll-knob-tone .knob-head { border-color: #536a50; }
+    .ll-knob-audio .knob-head { border-color: #416777; }
+    .ll-knob-slice .knob-head { border-color: #73582f; }
+    .ll-knob-mod .knob-head { border-color: #5f5290; }
+    .ll-knob-transport .knob-head { border-color: #794655; }
+    .ll-knob:hover .knob-head {
+        background-color: #232d30;
+        border-color: #d8e3dc;
+    }
+    .ll-knob .knob-tick {
+        background-color: #edf6f1;
+        width: 2px;
+        height: 8px;
+        border-radius: 1px;
+    }
+    .ll-knob-label { font-size: 9px; }
+    .ll-knob-value { font-size: 10px; }
     .ll-range-mark {
         color: #67746f;
-        font-size: 8px;
+        font-size: 7px;
     }
     slider.ll-slider { height: 18px; }
     slider.ll-slider .track {
@@ -187,6 +220,38 @@ pub(crate) const COMMON_CONTROL_STYLE: &str = r#"
     button.ll-seg-active {
         background-color: #315667;
         color: #edf8ff;
+    }
+    button.ll-icon-seg-button {
+        background-color: transparent;
+        border-width: 0px;
+        border-radius: 3px;
+        color: #93a19a;
+    }
+    button.ll-icon-seg-button:hover {
+        background-color: #242d30;
+        color: #f0f7f2;
+    }
+    button.ll-icon-seg-active {
+        background-color: #315667;
+        color: #edf8ff;
+    }
+    .ll-choice-icon {
+        color: #dce6e0;
+        width: 15px;
+        height: 15px;
+    }
+    button.ll-cycle-button {
+        background-color: #111719;
+        border-width: 1px;
+        border-color: #303b3f;
+        border-radius: 5px;
+        color: #dce6e0;
+        padding-left: 7px;
+        padding-right: 7px;
+    }
+    button.ll-cycle-button:hover {
+        background-color: #1d2528;
+        border-color: #59b6d8;
     }
     button.ll-tool-button,
     button.ll-step-button {
@@ -310,98 +375,22 @@ pub(crate) fn parameter_knob<V, F>(
             .class(knob_class(accent));
         Label::new(cx, label)
             .class("ll-control-label")
+            .class("ll-knob-label")
             .alignment(Alignment::Center)
-            .width(Pixels(74.0));
+            .width(Pixels(62.0));
         Label::new(cx, value_text.clone())
             .class("ll-control-value")
+            .class("ll-knob-value")
             .alignment(Alignment::Center)
-            .width(Pixels(74.0));
+            .width(Pixels(62.0));
         range_marks(cx, centered);
     })
     .class("ll-knob-cell")
-    .width(Pixels(80.0))
-    .height(Pixels(82.0))
+    .width(Pixels(66.0))
+    .height(Pixels(66.0))
     .alignment(Alignment::Center)
-    .vertical_gap(Pixels(2.0))
+    .vertical_gap(Pixels(1.0))
     .tooltip(|cx| tooltip(cx, KNOB_HELP));
-}
-
-pub(crate) fn parameter_stepper<V, F>(
-    cx: &mut Context,
-    label: &'static str,
-    value_text: V,
-    normalized: Signal<f32>,
-    count: usize,
-    on_change: F,
-) where
-    V: Res<String> + Clone + 'static,
-    F: Fn(&mut EventContext, f32) + Copy + Send + Sync + 'static,
-{
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label)
-            .class("ll-control-label")
-            .width(Pixels(52.0));
-        step_button(cx, "-", normalized, count, -1, on_change);
-        Label::new(cx, value_text.clone())
-            .class("ll-control-value")
-            .width(Stretch(1.0))
-            .alignment(Alignment::Center);
-        step_button(cx, "+", normalized, count, 1, on_change);
-    })
-    .class("ll-stepper")
-    .height(Pixels(24.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(5.0));
-}
-pub(crate) fn inline_parameter_segmented<F>(
-    cx: &mut Context,
-    label: &'static str,
-    normalized: Signal<f32>,
-    labels: &'static [&'static str],
-    width: f32,
-    on_change: F,
-) where
-    F: Fn(&mut EventContext, f32) + Copy + Send + Sync + 'static,
-{
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label)
-            .class("ll-control-label")
-            .width(Pixels(56.0));
-        segmented_buttons(cx, normalized, labels, width, on_change);
-    })
-    .height(Pixels(24.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(6.0));
-}
-
-pub(crate) fn inline_binary_segmented<F>(
-    cx: &mut Context,
-    label: &'static str,
-    normalized: Signal<f32>,
-    left_label: &'static str,
-    right_label: &'static str,
-    width: f32,
-    on_change: F,
-) where
-    F: Fn(&mut EventContext, f32) + Copy + Send + Sync + 'static,
-{
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label)
-            .class("ll-control-label")
-            .width(Pixels(56.0));
-        HStack::new(cx, move |cx| {
-            segmented_button(cx, normalized, 2, 0, left_label, on_change);
-            segmented_button(cx, normalized, 2, 1, right_label, on_change);
-        })
-        .class("segmented")
-        .class("ll-segmented")
-        .height(Pixels(24.0))
-        .width(Pixels(width))
-        .horizontal_gap(Pixels(2.0));
-    })
-    .height(Pixels(24.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(6.0));
 }
 pub(crate) fn icon_tool_button<'a>(
     cx: &'a mut Context,
@@ -432,77 +421,6 @@ pub(crate) fn compact_text_button<'a>(
     .height(Pixels(24.0))
     .tooltip(move |cx| tooltip(cx, tooltip_text))
 }
-fn segmented_buttons<F>(
-    cx: &mut Context,
-    normalized: Signal<f32>,
-    labels: &'static [&'static str],
-    width: f32,
-    on_change: F,
-) where
-    F: Fn(&mut EventContext, f32) + Copy + Send + Sync + 'static,
-{
-    HStack::new(cx, move |cx| {
-        for (index, label) in labels.iter().copied().enumerate() {
-            segmented_button(cx, normalized, labels.len(), index, label, on_change);
-        }
-    })
-    .class("segmented")
-    .class("ll-segmented")
-    .height(Pixels(24.0))
-    .width(Pixels(width))
-    .horizontal_gap(Pixels(2.0));
-}
-fn segmented_button<F>(
-    cx: &mut Context,
-    normalized: Signal<f32>,
-    count: usize,
-    index: usize,
-    label: &'static str,
-    on_change: F,
-) where
-    F: Fn(&mut EventContext, f32) + Copy + Send + Sync + 'static,
-{
-    let next = normalized_for_index(index, count);
-    Button::new(cx, move |cx| {
-        Label::new(cx, label).alignment(Alignment::Center)
-    })
-    .on_press(move |cx| on_change(cx, next))
-    .class("seg-button")
-    .class("ll-seg-button")
-    .toggle_class(
-        "seg-active",
-        normalized.map(move |value| selected_index(*value, count) == Some(index)),
-    )
-    .toggle_class(
-        "ll-seg-active",
-        normalized.map(move |value| selected_index(*value, count) == Some(index)),
-    )
-    .width(Stretch(1.0))
-    .height(Stretch(1.0));
-}
-fn step_button<F>(
-    cx: &mut Context,
-    label: &'static str,
-    normalized: Signal<f32>,
-    count: usize,
-    direction: isize,
-    on_change: F,
-) where
-    F: Fn(&mut EventContext, f32) + Copy + Send + Sync + 'static,
-{
-    Button::new(cx, move |cx| {
-        Label::new(cx, label).alignment(Alignment::Center)
-    })
-    .on_press(move |cx| {
-        let selected = selected_index(normalized.get(), count).unwrap_or(0) as isize;
-        let next = (selected + direction).clamp(0, count.saturating_sub(1) as isize) as usize;
-        on_change(cx, normalized_for_index(next, count));
-    })
-    .class("step-button")
-    .class("ll-step-button")
-    .width(Pixels(24.0))
-    .height(Pixels(22.0));
-}
 fn range_marks(cx: &mut Context, centered: bool) {
     HStack::new(cx, move |cx| {
         Label::new(cx, "min").class("ll-range-mark");
@@ -511,11 +429,11 @@ fn range_marks(cx: &mut Context, centered: bool) {
         Spacer::new(cx);
         Label::new(cx, "max").class("ll-range-mark");
     })
-    .width(Pixels(66.0))
-    .height(Pixels(8.0))
+    .width(Pixels(54.0))
+    .height(Pixels(7.0))
     .alignment(Alignment::Center);
 }
-fn tooltip<'a>(cx: &'a mut Context, text: &'static str) -> Handle<'a, Tooltip> {
+pub(crate) fn tooltip<'a>(cx: &'a mut Context, text: &'static str) -> Handle<'a, Tooltip> {
     Tooltip::new(cx, move |cx| {
         Label::new(cx, text).padding(Pixels(5.0));
     })
@@ -549,14 +467,4 @@ fn chip_class(kind: ChipKind) -> &'static str {
         ChipKind::Audio => "ll-chip-audio",
         ChipKind::Slice => "ll-chip-slice",
     }
-}
-pub(crate) const fn normalized_for_index(index: usize, count: usize) -> f32 {
-    if count <= 1 {
-        0.0
-    } else {
-        index as f32 / (count - 1) as f32
-    }
-}
-pub(crate) fn selected_index(value: f32, count: usize) -> Option<usize> {
-    (count > 0).then(|| (value.clamp(0.0, 1.0) * (count - 1) as f32).round() as usize)
 }

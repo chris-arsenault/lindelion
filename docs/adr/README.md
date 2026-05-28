@@ -10,3 +10,4 @@
 | [0006](0006-typed-ui-commands.md) | Typed UI commands | Accepted | 2026-05-23 |
 | [0007](0007-macos-vst3-build-path.md) | macOS-only VST3 build path | Accepted | 2026-05-23 |
 | [0008](0008-capture-first-analysis.md) | Capture-first voice-to-MIDI analysis | Accepted | 2026-05-23 |
+| [0009](0009-linnod-setup-time-resample-pro.md) | Linnod setup-time Resample Pro rendering | Accepted | 2026-05-28 |

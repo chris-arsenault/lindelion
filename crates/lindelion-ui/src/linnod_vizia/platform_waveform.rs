@@ -6,6 +6,7 @@ const WAVEFORM_TOP_PAD: f32 = 10.0;
 const WAVEFORM_BOTTOM_PAD: f32 = 10.0;
 const WAVEFORM_OVERVIEW_HEIGHT: f32 = 24.0;
 const MIN_ZOOM_SAMPLES: f32 = 128.0;
+const WAVEFORM_HELP: &str = "Wheel or +/- zooms. Shift-wheel or overview drag pans. Drag trim handles. Double-click focuses the active slice.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WaveformViewMode {
@@ -19,6 +20,7 @@ struct SourceWaveformView {
     mode: WaveformViewMode,
     view_start: f32,
     view_end: f32,
+    focus_key: Option<WaveformFocusKey>,
     drag: Option<WaveformDrag>,
 }
 
@@ -29,6 +31,13 @@ enum WaveformDrag {
     SliceEnd(SliceTrimDrag),
     Pan(PanDrag),
     Overview,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WaveformControl {
+    ZoomOut,
+    Focus,
+    ZoomIn,
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +63,17 @@ struct PanDrag {
     view_start: f32,
     view_end: f32,
     started: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct WaveformFocusKey {
+    source_label: String,
+    source_sample_rate: u32,
+    source_span_samples: usize,
+    waveform_len: usize,
+    selected_slice_index: Option<usize>,
+    selected_slice_start: usize,
+    selected_slice_end: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -99,10 +119,14 @@ impl SourceWaveformView {
             mode,
             view_start: 0.0,
             view_end: 1.0,
+            focus_key: None,
             drag: None,
         }
         .build(cx, |_| {})
-        .bind(summary, |mut view| view.needs_redraw())
+        .bind(summary, move |view| {
+            let next_summary = summary.get();
+            view.modify(|view| view.sync_view_to_summary(&next_summary));
+        })
         .bind(drop_active, |mut view| view.needs_redraw())
     }
 }
@@ -151,20 +175,12 @@ impl View for SourceWaveformView {
         draw_markers(main, canvas, &summary, range);
         draw_selected_trim_handles(main, canvas, &summary, range);
         self.draw_drag_preview(main, canvas, &summary, range);
-        if self.mode == WaveformViewMode::SourceEditor {
+        if waveform_has_overview(self.mode) {
             let overview = overview_waveform_rect(bounds);
-            draw_waveform_body(
-                overview,
-                canvas,
-                &summary.waveform,
-                &summary,
-                WaveformRange {
-                    start: 0,
-                    end: source_span_samples(&summary),
-                },
-                true,
-            );
-            draw_viewport_overview(overview, canvas, &summary, range);
+            draw_waveform_overview(overview, canvas, &summary, range);
+        }
+        if can_edit_waveform(&summary) {
+            draw_waveform_controls(bounds, canvas);
         }
     }
 }
@@ -177,10 +193,9 @@ impl SourceWaveformView {
         }
         let x = cx.mouse().cursor_x;
         let y = cx.mouse().cursor_y;
-        if self.mode == WaveformViewMode::SourceEditor
-            && point_in_rect(overview_waveform_rect(cx.bounds()), x, y)
-        {
-            self.reset_zoom();
+        if waveform_has_overview(self.mode) && point_in_rect(overview_waveform_rect(cx.bounds()), x, y) {
+            self.reset_view_for_mode(&summary);
+            self.focus_key = Some(WaveformFocusKey::for_view(self.mode, &summary));
             cx.needs_redraw();
             return true;
         }
@@ -198,7 +213,8 @@ impl SourceWaveformView {
             }
             return true;
         }
-        self.reset_zoom();
+        self.focus_selected_slice(&summary);
+        self.focus_key = Some(WaveformFocusKey::for_view(self.mode, &summary));
         cx.needs_redraw();
         true
     }
@@ -211,9 +227,13 @@ impl SourceWaveformView {
         let bounds = cx.bounds();
         let x = cx.mouse().cursor_x;
         let y = cx.mouse().cursor_y;
-        if self.mode == WaveformViewMode::SourceEditor
-            && point_in_rect(overview_waveform_rect(bounds), x, y)
-        {
+        self.ensure_slice_detail_focus(&summary);
+        if let Some(control) = waveform_control_at(bounds, x, y) {
+            self.activate_control(control, &summary);
+            cx.needs_redraw();
+            return true;
+        }
+        if waveform_has_overview(self.mode) && point_in_rect(overview_waveform_rect(bounds), x, y) {
             self.drag = Some(WaveformDrag::Overview);
             self.center_view_on_overview_x(bounds, &summary, x);
             cx.capture();
@@ -231,6 +251,7 @@ impl SourceWaveformView {
             }
         }
         if let Some(handle) = nearest_trim_handle_at_x(main, &summary, range, x) {
+            self.freeze_visible_range(&summary);
             self.drag = Some(handle);
             cx.capture();
             cx.needs_redraw();
@@ -248,7 +269,7 @@ impl SourceWaveformView {
                 return true;
             }
         }
-        self.activate_slice_detail_view(&summary);
+        self.ensure_slice_detail_focus(&summary);
         let range = self.visible_range(&summary);
         self.drag = Some(WaveformDrag::Pan(PanDrag {
             start_x: x,
@@ -341,7 +362,7 @@ impl SourceWaveformView {
         if !can_edit_waveform(&summary) {
             return false;
         }
-        self.activate_slice_detail_view(&summary);
+        self.ensure_slice_detail_focus(&summary);
         let main = main_waveform_rect(cx.bounds(), self.mode);
         let x = cx.mouse().cursor_x;
         let focus = ((x - main.x) / main.w.max(1.0)).clamp(0.0, 1.0);
@@ -362,9 +383,6 @@ impl SourceWaveformView {
 
     fn visible_range(&self, summary: &LinnodEditorPatchSummary) -> WaveformRange {
         let span = source_span_samples(summary);
-        if self.mode == WaveformViewMode::SliceDetail && self.view_is_full() {
-            return selected_slice_focus_range(summary, span);
-        }
         WaveformRange {
             start: (self.view_start.clamp(0.0, 1.0) * span as f32).round() as usize,
             end: (self.view_end.clamp(0.0, 1.0) * span as f32).round() as usize,
@@ -453,8 +471,21 @@ impl SourceWaveformView {
         self.view_end = 1.0;
     }
 
-    fn view_is_full(&self) -> bool {
-        self.view_start <= 0.001 && self.view_end >= 0.999
+    fn reset_view_for_mode(&mut self, summary: &LinnodEditorPatchSummary) {
+        match self.mode {
+            WaveformViewMode::SourceEditor => self.reset_zoom(),
+            WaveformViewMode::SliceDetail => self.focus_selected_slice(summary),
+        }
+    }
+
+    fn activate_control(&mut self, control: WaveformControl, summary: &LinnodEditorPatchSummary) {
+        self.ensure_slice_detail_focus(summary);
+        match control {
+            WaveformControl::ZoomOut => self.zoom_around(0.5, 1.38, summary),
+            WaveformControl::Focus => self.reset_view_for_mode(summary),
+            WaveformControl::ZoomIn => self.zoom_around(0.5, 0.72, summary),
+        }
+        self.focus_key = Some(WaveformFocusKey::for_view(self.mode, summary));
     }
 
     fn zoom_around(&mut self, focus: f32, factor: f32, summary: &LinnodEditorPatchSummary) {
@@ -476,8 +507,35 @@ impl SourceWaveformView {
         self.view_end = start + span;
     }
 
-    fn activate_slice_detail_view(&mut self, summary: &LinnodEditorPatchSummary) {
-        if self.mode != WaveformViewMode::SliceDetail || !self.view_is_full() {
+    fn freeze_visible_range(&mut self, summary: &LinnodEditorPatchSummary) {
+        let span = source_span_samples(summary).max(1) as f32;
+        let range = self.visible_range(summary);
+        self.set_view(range.start as f32 / span, range.end as f32 / span, summary);
+    }
+
+    fn ensure_slice_detail_focus(&mut self, summary: &LinnodEditorPatchSummary) {
+        if self.mode != WaveformViewMode::SliceDetail || self.focus_key.is_some() {
+            return;
+        }
+        self.focus_selected_slice(summary);
+        self.focus_key = Some(WaveformFocusKey::for_view(self.mode, summary));
+    }
+
+    fn sync_view_to_summary(&mut self, summary: &LinnodEditorPatchSummary) {
+        if self.drag.is_some() {
+            return;
+        }
+        let next_key = WaveformFocusKey::for_view(self.mode, summary);
+        if self.focus_key.as_ref() == Some(&next_key) {
+            return;
+        }
+        self.reset_view_for_mode(summary);
+        self.focus_key = Some(next_key);
+    }
+
+    fn focus_selected_slice(&mut self, summary: &LinnodEditorPatchSummary) {
+        if self.mode != WaveformViewMode::SliceDetail {
+            self.reset_zoom();
             return;
         }
         let span = source_span_samples(summary).max(1) as f32;

@@ -131,6 +131,7 @@ struct EditorSignals {
     command_status: Signal<Option<LinnodEditorCommand>>,
     drop_active: Signal<bool>,
     control_scope: Signal<ControlScope>,
+    settings_open: Signal<bool>,
 }
 
 impl EditorSignals {
@@ -187,6 +188,8 @@ enum EditorEvent {
     PadEdit(LinnodEditorPadEdit),
     PlaybackEdit(LinnodEditorPlaybackEdit),
     SetControlScope(ControlScope),
+    ToggleSettings,
+    CloseSettings,
     SyncFromController,
 }
 
@@ -247,6 +250,12 @@ impl Model for EditorModel {
             },
             EditorEvent::SetControlScope(scope) => {
                 self.signals.control_scope.set(*scope);
+            }
+            EditorEvent::ToggleSettings => {
+                self.signals.settings_open.set(!self.signals.settings_open.get());
+            }
+            EditorEvent::CloseSettings => {
+                self.signals.settings_open.set(false);
             }
             EditorEvent::SyncFromController => unsafe {
                 self.complete_pending_dialog();
@@ -323,6 +332,7 @@ fn build_application(
             command_status: Signal::new(None),
             drop_active: Signal::new(false),
             control_scope: Signal::new(ControlScope::Global),
+            settings_open: Signal::new(false),
         };
         EditorModel {
             host,

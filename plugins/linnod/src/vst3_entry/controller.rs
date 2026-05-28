@@ -14,7 +14,9 @@ use lindelion_plugin_shell::vst3::{
 };
 use lindelion_ui::{
     PadId as UiPadId,
-    linnod_vizia::{LinnodEditorPatchSummary, LinnodEditorTriggerMode},
+    linnod_vizia::{
+        LinnodEditorPatchSummary, LinnodEditorPitchShiftAlgorithm, LinnodEditorTriggerMode,
+    },
 };
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
@@ -26,7 +28,7 @@ use crate::{
         normalized_parameter_value as registry_normalized_parameter_value,
         parameter_binding_by_index, parameter_binding_index, parameter_info,
     },
-    patch::TriggerMode,
+    patch::{EngineEdit, PitchShiftAlgorithm, TriggerMode},
     patch_io,
 };
 
@@ -176,6 +178,24 @@ impl LinnodVst3Controller {
             LinnodEditorTriggerMode::Pad => TriggerMode::Pad,
             LinnodEditorTriggerMode::Chromatic => TriggerMode::Chromatic,
         };
+        self.refresh_summary();
+        self.send_patch_to_processor()
+    }
+
+    pub(super) fn set_pitch_shift_algorithm(
+        &self,
+        algorithm: LinnodEditorPitchShiftAlgorithm,
+    ) -> tresult {
+        self.patch
+            .borrow_mut()
+            .apply_engine_edit(EngineEdit::PitchShiftAlgorithm(match algorithm {
+                LinnodEditorPitchShiftAlgorithm::SpectralPeak => PitchShiftAlgorithm::SpectralPeak,
+                LinnodEditorPitchShiftAlgorithm::Varispeed => PitchShiftAlgorithm::Varispeed,
+                LinnodEditorPitchShiftAlgorithm::TimeStretch => PitchShiftAlgorithm::TimeStretch,
+                LinnodEditorPitchShiftAlgorithm::ResampleStretch => {
+                    PitchShiftAlgorithm::ResampleStretch
+                }
+            }));
         self.refresh_summary();
         self.send_patch_to_processor()
     }

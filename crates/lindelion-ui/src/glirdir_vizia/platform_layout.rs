@@ -1,32 +1,37 @@
 fn build_editor(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, move |cx| {
-        glirdir_top_strip(cx, signals);
-        HStack::new(cx, move |cx| {
-            VStack::new(cx, move |cx| {
-                glirdir_capture_section(cx, signals);
-                glirdir_detection_section(cx, signals);
+    ZStack::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            glirdir_top_strip(cx, signals);
+            HStack::new(cx, move |cx| {
+                VStack::new(cx, move |cx| {
+                    glirdir_capture_section(cx, signals);
+                    glirdir_detection_section(cx, signals);
+                })
+                .width(Pixels(280.0))
+                .height(Stretch(1.0))
+                .vertical_gap(Pixels(10.0));
+                glirdir_preview_section(cx, signals);
+                VStack::new(cx, move |cx| {
+                    glirdir_quantize_section(cx, signals);
+                    glirdir_audition_section(cx, signals);
+                })
+                .width(Pixels(280.0))
+                .height(Stretch(1.0))
+                .vertical_gap(Pixels(10.0));
             })
-            .width(Pixels(280.0))
             .height(Stretch(1.0))
-            .vertical_gap(Pixels(10.0));
-            glirdir_preview_section(cx, signals);
-            VStack::new(cx, move |cx| {
-                glirdir_quantize_section(cx, signals);
-                glirdir_audition_section(cx, signals);
-            })
-            .width(Pixels(280.0))
-            .height(Stretch(1.0))
-            .vertical_gap(Pixels(10.0));
+            .horizontal_gap(Pixels(10.0));
         })
+        .padding(Pixels(12.0))
+        .width(Stretch(1.0))
         .height(Stretch(1.0))
-        .horizontal_gap(Pixels(10.0));
+        .vertical_gap(Pixels(10.0));
+        glirdir_settings_overlay(cx, signals);
     })
     .class("root")
     .class("ll-shell")
-    .padding(Pixels(12.0))
     .width(Stretch(1.0))
-    .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
+    .height(Stretch(1.0));
 }
 
 fn build_application(
@@ -49,6 +54,7 @@ fn build_application(
             status: Signal::new(values.status),
             preview: Signal::new(values.preview.clone()),
             command_status: Signal::new(values.command_status),
+            settings_open: Signal::new(false),
         };
         EditorModel {
             host,
@@ -86,6 +92,8 @@ fn glirdir_top_strip(cx: &mut Context, signals: EditorSignals) {
             glirdir_tool_button(cx, ICON_TRASH, "Clear scratchpad", GlirdirEditorCommand::ClearScratchpad);
             glirdir_tool_button(cx, ICON_DEVICE_FLOPPY, "Save scratchpad to library", GlirdirEditorCommand::SaveScratchpadToLibrary);
             glirdir_export_button(cx);
+            crate::vizia_controls::icon_tool_button(cx, ICON_SETTINGS, "Settings")
+                .on_press(|cx| cx.emit(EditorEvent::ToggleSettings));
         })
         .horizontal_gap(Pixels(5.0));
     })

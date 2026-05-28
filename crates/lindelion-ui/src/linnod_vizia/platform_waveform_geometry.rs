@@ -7,7 +7,7 @@ impl WaveformRange {
 }
 
 fn main_waveform_rect(bounds: BoundingBox, mode: WaveformViewMode) -> WaveformRect {
-    let overview_space = if mode == WaveformViewMode::SourceEditor {
+    let overview_space = if waveform_has_overview(mode) {
         WAVEFORM_OVERVIEW_HEIGHT + 10.0
     } else {
         0.0
@@ -27,6 +27,53 @@ fn overview_waveform_rect(bounds: BoundingBox) -> WaveformRect {
         w: (bounds.w - WAVEFORM_SIDE_PAD * 2.0).max(1.0),
         h: WAVEFORM_OVERVIEW_HEIGHT,
     }
+}
+
+fn waveform_has_overview(_mode: WaveformViewMode) -> bool {
+    true
+}
+
+fn waveform_control_rects(bounds: BoundingBox) -> [(WaveformControl, WaveformRect); 3] {
+    const SIZE: f32 = 18.0;
+    const GAP: f32 = 4.0;
+    const PAD: f32 = 7.0;
+    let top = bounds.y + PAD;
+    let left = bounds.x + bounds.w - PAD - SIZE * 3.0 - GAP * 2.0;
+    [
+        (
+            WaveformControl::ZoomOut,
+            WaveformRect {
+                x: left,
+                y: top,
+                w: SIZE,
+                h: SIZE,
+            },
+        ),
+        (
+            WaveformControl::Focus,
+            WaveformRect {
+                x: left + SIZE + GAP,
+                y: top,
+                w: SIZE,
+                h: SIZE,
+            },
+        ),
+        (
+            WaveformControl::ZoomIn,
+            WaveformRect {
+                x: left + SIZE * 2.0 + GAP * 2.0,
+                y: top,
+                w: SIZE,
+                h: SIZE,
+            },
+        ),
+    ]
+}
+
+fn waveform_control_at(bounds: BoundingBox, x: f32, y: f32) -> Option<WaveformControl> {
+    waveform_control_rects(bounds)
+        .into_iter()
+        .find_map(|(control, rect)| point_in_rect(rect, x, y).then_some(control))
 }
 
 fn nearest_marker_at_x(
@@ -122,9 +169,7 @@ fn selected_slice_focus_range(
     source_span: usize,
 ) -> WaveformRange {
     let slice = selected_slice(summary);
-    let (start, end) = effective_slice_bounds(summary, &slice)
-        .or_else(|| slice_bounds(summary, slice.index))
-        .unwrap_or((0, source_span));
+    let (start, end) = slice_bounds(summary, slice.index).unwrap_or((0, source_span));
     let slice_span = end.saturating_sub(start).max(1);
     let pad = (slice_span / 3).max(summary.source_sample_rate as usize / 200);
     WaveformRange {
@@ -196,4 +241,28 @@ fn point_in_rect(rect: WaveformRect, x: f32, y: f32) -> bool {
 fn left_drag_distance(cx: &EventContext) -> f32 {
     let (dx, dy) = cx.mouse().button_delta(MouseButton::Left);
     dx.hypot(dy)
+}
+
+impl WaveformFocusKey {
+    fn for_view(mode: WaveformViewMode, summary: &LinnodEditorPatchSummary) -> Self {
+        let selected_slice_index = summary.selected_slice_index;
+        let (selected_slice_start, selected_slice_end) = if mode == WaveformViewMode::SliceDetail {
+            selected_slice_index
+                .and_then(|index| slice_bounds(summary, index))
+                .unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+        Self {
+            source_label: summary.source_label.clone(),
+            source_sample_rate: summary.source_sample_rate,
+            source_span_samples: source_span_samples(summary),
+            waveform_len: summary.waveform.len(),
+            selected_slice_index: (mode == WaveformViewMode::SliceDetail)
+                .then_some(selected_slice_index)
+                .flatten(),
+            selected_slice_start,
+            selected_slice_end,
+        }
+    }
 }

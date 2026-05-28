@@ -4,7 +4,9 @@ use crate::test_support::{
     sidechain_sine_note_after_silence,
 };
 use lindelion_dsp_utils::{
-    analysis::{assert_all_finite, dft_magnitude_at, peak_abs, rms},
+    analysis::{
+        assert_all_finite, dft_magnitude_at, max_adjacent_delta, peak_abs, rms, rms_difference,
+    },
     db_to_gain,
     math::midi_note_to_hz,
     params::StructuralChangePolicy,

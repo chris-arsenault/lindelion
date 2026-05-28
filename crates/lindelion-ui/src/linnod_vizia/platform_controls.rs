@@ -55,12 +55,13 @@ fn linnod_parameter_control(
                 },
             )
         }
-        LinnodEditorControlKind::Selector { labels, .. } => crate::vizia_controls::parameter_stepper(
+        LinnodEditorControlKind::Selector { labels, width } => crate::vizia_controls::parameter_cycle_selector(
             cx,
             control.label(),
             control.value_text(),
             control.signal,
             labels.len(),
+            width,
             move |cx, normalized| {
                 cx.emit(EditorEvent::SetParameter {
                     id: control.id,

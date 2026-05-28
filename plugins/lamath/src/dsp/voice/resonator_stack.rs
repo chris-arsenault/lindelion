@@ -8,7 +8,7 @@ use lindelion_plugin_shell::SmoothedAtomicParam;
 use crate::{
     ModalConfig, ModulationConfig, ModulationDestination, PARALLEL_MIX_A_PARAMETER_ID,
     PARALLEL_MIX_B_PARAMETER_ID, ResonatorConfig, ResonatorRouting, WaveguideConfig,
-    smoothed_runtime_parameter,
+    normalize_routing_for_resonator_models, smoothed_runtime_parameter,
 };
 
 use super::{
@@ -24,6 +24,12 @@ use crate::dsp::{
     waveguide::{WaveguideParams, WaveguideResonator},
 };
 
+const BODY_COLOR_WINDOW_MS: f32 = 35.0;
+const BODY_COLOR_RETRIGGER_MS: f32 = 80.0;
+const BODY_COLOR_TRIGGER_THRESHOLD: f32 = 1.0e-5;
+const BODY_COLOR_TRIGGER_RATIO: f32 = 1.5;
+const BODY_COLOR_EXCITATION_GAIN: f32 = 0.006;
+
 #[derive(Debug)]
 pub(super) struct ResonatorStack {
     resonator_a: ResonatorEngine,
@@ -36,6 +42,7 @@ pub(super) struct ResonatorStack {
     pub(super) parallel_mix_a: SmoothedAtomicParam,
     pub(super) parallel_mix_b: SmoothedAtomicParam,
     pub(super) series_conditioner: SeriesConditioner,
+    body_color_exciter: BodyColorExciter,
 }
 
 impl ResonatorStack {
@@ -61,6 +68,7 @@ impl ResonatorStack {
             parallel_mix_a: parallel_mix_a_param(sample_rate, parallel_mix_a(routing)),
             parallel_mix_b: parallel_mix_b_param(sample_rate, parallel_mix_b(routing)),
             series_conditioner: SeriesConditioner::new(sample_rate),
+            body_color_exciter: BodyColorExciter::new(sample_rate),
         }
     }
 
@@ -122,14 +130,14 @@ impl ResonatorStack {
     }
 
     pub(super) fn reset_routing(&mut self, routing: ResonatorRouting) {
-        let routing = sanitize_routing(routing);
+        let routing = self.sanitized_model_routing(routing);
         self.routing.reset(routing);
         self.parallel_mix_a.reset_plain(parallel_mix_a(routing));
         self.parallel_mix_b.reset_plain(parallel_mix_b(routing));
     }
 
     pub(super) fn set_routing(&mut self, routing: ResonatorRouting) {
-        let routing = sanitize_routing(routing);
+        let routing = self.sanitized_model_routing(routing);
         if routing_plain(self.routing.current()) != routing_plain(routing) {
             self.routing.set_target(routing);
         } else {
@@ -158,6 +166,7 @@ impl ResonatorStack {
         let routing_sample = self.routing.next_sample();
         if routing_sample.change.is_some() {
             self.reset_series_conditioner(sample_rate);
+            self.reset_body_color_exciter(sample_rate);
         }
         routing_sample.gain
     }
@@ -175,6 +184,11 @@ impl ResonatorStack {
                 let a = self.resonator_a.process_sample(excitation);
                 let conditioned = self.series_conditioner.process_sample(a);
                 self.resonator_b.process_sample(conditioned)
+            }
+            ResonatorRouting::BodyColor { .. } => {
+                let a = self.resonator_a.process_sample(excitation);
+                let colored_excitation = self.body_color_exciter.process_sample(excitation, a);
+                self.resonator_b.process_sample(colored_excitation)
             }
         }
     }
@@ -206,10 +220,23 @@ impl ResonatorStack {
         self.parallel_mix_a.reset_plain(parallel_mix_a(routing));
         self.parallel_mix_b.reset_plain(parallel_mix_b(routing));
         self.reset_series_conditioner(sample_rate);
+        self.reset_body_color_exciter(sample_rate);
     }
 
     pub(super) fn reset_series_conditioner(&mut self, sample_rate: f32) {
         self.series_conditioner.reset(sample_rate);
+    }
+
+    fn sanitized_model_routing(&self, routing: ResonatorRouting) -> ResonatorRouting {
+        sanitize_routing(normalize_routing_for_resonator_models(
+            routing,
+            self.base_resonator_a_config,
+            self.base_resonator_b_config,
+        ))
+    }
+
+    fn reset_body_color_exciter(&mut self, sample_rate: f32) {
+        self.body_color_exciter.reset(sample_rate);
     }
 }
 
@@ -358,6 +385,57 @@ impl SeriesConditioner {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BodyColorExciter {
+    window_env: f32,
+    trigger_peak: f32,
+    window_decay: f32,
+    trigger_decay: f32,
+}
+
+impl BodyColorExciter {
+    fn new(sample_rate: f32) -> Self {
+        let mut exciter = Self {
+            window_env: 0.0,
+            trigger_peak: 0.0,
+            window_decay: 0.0,
+            trigger_decay: 0.0,
+        };
+        exciter.reset(sample_rate);
+        exciter
+    }
+
+    fn reset(&mut self, sample_rate: f32) {
+        self.window_env = 0.0;
+        self.trigger_peak = 0.0;
+        self.window_decay = decay_to_floor(sample_rate, BODY_COLOR_WINDOW_MS);
+        self.trigger_decay = decay_to_floor(sample_rate, BODY_COLOR_RETRIGGER_MS);
+    }
+
+    fn process_sample(&mut self, excitation: f32, color_sample: f32) -> f32 {
+        let magnitude = excitation.abs();
+        let trigger_threshold =
+            BODY_COLOR_TRIGGER_THRESHOLD.max(self.trigger_peak * BODY_COLOR_TRIGGER_RATIO);
+        if magnitude > trigger_threshold {
+            self.window_env = 1.0;
+        }
+        self.trigger_peak = self.trigger_peak.max(magnitude) * self.trigger_decay;
+
+        let colored = color_sample * self.window_env * BODY_COLOR_EXCITATION_GAIN;
+        self.window_env *= self.window_decay;
+        if self.window_env < BODY_COLOR_TRIGGER_THRESHOLD {
+            self.window_env = 0.0;
+        }
+
+        colored
+    }
+}
+
+fn decay_to_floor(sample_rate: f32, duration_ms: f32) -> f32 {
+    let samples = (sample_rate * duration_ms * 0.001).max(1.0);
+    0.001_f32.powf(1.0 / samples)
+}
+
 fn modal_params_from_config(config: &ModalConfig, base_frequency: f32) -> ModalBankParams {
     ModalBankParams {
         fundamental_hz: tuned_frequency(base_frequency, config.semitone_offset, config.cent_offset),
@@ -398,6 +476,10 @@ fn sanitize_routing(routing: ResonatorRouting) -> ResonatorRouting {
             mix_a: finite_clamp(mix_a, 0.0, 1.0, 0.5),
             mix_b: finite_clamp(mix_b, 0.0, 1.0, 0.5),
         },
+        ResonatorRouting::BodyColor { mix_a, mix_b } => ResonatorRouting::BodyColor {
+            mix_a: finite_clamp(mix_a, 0.0, 1.0, 0.5),
+            mix_b: finite_clamp(mix_b, 0.0, 1.0, 0.5),
+        },
     }
 }
 
@@ -405,6 +487,7 @@ pub(super) fn routing_plain(routing: ResonatorRouting) -> u8 {
     match routing {
         ResonatorRouting::Parallel { .. } => 0,
         ResonatorRouting::Series { .. } => 1,
+        ResonatorRouting::BodyColor { .. } => 2,
     }
 }
 
@@ -412,6 +495,7 @@ fn parallel_mix_a(routing: ResonatorRouting) -> f32 {
     match routing {
         ResonatorRouting::Parallel { mix_a, .. } => mix_a,
         ResonatorRouting::Series { mix_a, .. } => mix_a,
+        ResonatorRouting::BodyColor { mix_a, .. } => mix_a,
     }
 }
 
@@ -419,6 +503,7 @@ fn parallel_mix_b(routing: ResonatorRouting) -> f32 {
     match routing {
         ResonatorRouting::Parallel { mix_b, .. } => mix_b,
         ResonatorRouting::Series { mix_b, .. } => mix_b,
+        ResonatorRouting::BodyColor { mix_b, .. } => mix_b,
     }
 }
 

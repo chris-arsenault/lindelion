@@ -1754,6 +1754,8 @@ dependencies = [
  "lindelion-dsp-utils",
  "lindelion-onset-detect",
  "lindelion-pitch-detect",
+ "lindelion-sample-library",
+ "lindelion-test-allocator",
  "realfft",
  "serde",
 ]

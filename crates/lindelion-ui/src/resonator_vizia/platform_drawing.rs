@@ -93,18 +93,25 @@ impl View for MiniWaveform {
 
 struct LibraryWaveform {
     samples: Signal<Vec<ResonatorEditorSampleSummary>>,
-    index: usize,
+    page_start: Signal<usize>,
+    row: usize,
 }
 
 impl LibraryWaveform {
     fn new(
         cx: &mut Context,
         samples: Signal<Vec<ResonatorEditorSampleSummary>>,
-        index: usize,
+        page_start: Signal<usize>,
+        row: usize,
     ) -> Handle<'_, Self> {
-        Self { samples, index }
+        Self {
+            samples,
+            page_start,
+            row,
+        }
             .build(cx, |_| {})
             .bind(samples, |mut view| view.needs_redraw())
+            .bind(page_start, |mut view| view.needs_redraw())
     }
 }
 
@@ -114,7 +121,8 @@ impl View for LibraryWaveform {
         draw_panel_background(bounds, canvas);
 
         let samples = self.samples.get();
-        let Some(sample) = samples.get(self.index) else {
+        let index = self.page_start.get().saturating_add(self.row);
+        let Some(sample) = samples.get(index) else {
             return;
         };
         draw_waveform_preview(bounds, canvas, &sample.preview, Color::rgb(121, 156, 204));
@@ -160,31 +168,6 @@ impl View for ResonatorScope {
         draw_connection(canvas, left, right, voice_amount);
         draw_resonator(canvas, left, 38.0, left_amount, Color::rgb(124, 188, 148));
         draw_resonator(canvas, right, 34.0, right_amount, Color::rgb(196, 151, 81));
-    }
-}
-
-struct ResonatorBadge {
-    model: Signal<f32>,
-}
-
-impl ResonatorBadge {
-    fn new(cx: &mut Context, model: Signal<f32>) -> Handle<'_, Self> {
-        Self { model }
-            .build(cx, |_| {})
-            .bind(model, |mut view| view.needs_redraw())
-    }
-}
-
-impl View for ResonatorBadge {
-    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
-        let bounds = cx.bounds();
-        let model = self.model.get().clamp(0.0, 1.0);
-        let color = if model < 0.5 {
-            Color::rgb(124, 188, 148)
-        } else {
-            Color::rgb(121, 156, 204)
-        };
-        draw_meter_track(bounds, canvas, 0.35 + model * 0.55, color);
     }
 }
 

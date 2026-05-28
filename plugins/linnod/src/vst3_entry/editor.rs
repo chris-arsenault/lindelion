@@ -274,6 +274,9 @@ unsafe fn handle_command(context: usize, request: LinnodEditorCommandRequest<'_>
         LinnodEditorCommand::SetTriggerMode(mode) => {
             controller.set_trigger_mode(mode);
         }
+        LinnodEditorCommand::SetPitchShiftAlgorithm(algorithm) => {
+            controller.set_pitch_shift_algorithm(algorithm);
+        }
         LinnodEditorCommand::SelectPad(pad) => {
             controller.select_pad(pad);
         }

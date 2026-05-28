@@ -1,20 +1,29 @@
 fn build_editor(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, move |cx| {
-        linnod_top_strip(cx, signals);
-        HStack::new(cx, move |cx| {
+    ZStack::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            linnod_top_strip(cx, signals);
             linnod_source_section(cx, signals);
-            linnod_pad_section(cx, signals);
-            linnod_slice_section(cx, signals);
+            linnod_bottom_section(cx, signals);
         })
+        .padding(Pixels(12.0))
+        .width(Stretch(1.0))
         .height(Stretch(1.0))
-        .horizontal_gap(Pixels(10.0));
+        .vertical_gap(Pixels(10.0));
+        linnod_settings_overlay(cx, signals);
     })
     .class("root")
     .class("ll-shell")
-    .padding(Pixels(12.0))
     .width(Stretch(1.0))
+    .height(Stretch(1.0));
+}
+
+fn linnod_bottom_section(cx: &mut Context, signals: EditorSignals) {
+    HStack::new(cx, move |cx| {
+        linnod_pad_section(cx, signals);
+        linnod_slice_section(cx, signals);
+    })
     .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
+    .horizontal_gap(Pixels(10.0));
 }
 
 fn linnod_top_strip(cx: &mut Context, signals: EditorSignals) {
@@ -40,6 +49,7 @@ fn linnod_top_strip(cx: &mut Context, signals: EditorSignals) {
             linnod_command_button(cx, ICON_DEVICE_FLOPPY, "Save patch", EditorEvent::SavePatchDialog);
             linnod_command_button(cx, ICON_FOLDER_OPEN, "Load patch", EditorEvent::LoadPatchDialog);
             linnod_command_button(cx, ICON_DOWNLOAD, "Export patch with samples", EditorEvent::ExportPatchDialog);
+            linnod_command_button(cx, ICON_SETTINGS, "Settings", EditorEvent::ToggleSettings);
         })
         .horizontal_gap(Pixels(5.0));
     })
@@ -62,27 +72,15 @@ fn linnod_source_section(cx: &mut Context, signals: EditorSignals) {
             .class("source-view")
             .class("ll-visual-frame")
             .class("ll-visual-audio")
-            .height(Pixels(240.0));
-        HStack::new(cx, move |cx| {
-            crate::vizia_controls::metric(cx, "source", source_rate_text(signals.summary));
-            crate::vizia_controls::metric(cx, "detection", detection_detail_text(signals.summary));
-            crate::vizia_controls::metric(cx, "markers", marker_count_text(signals.status));
-            linnod_command_button(
-                cx,
-                ICON_WAVE_SINE,
-                "Load source audio",
-                EditorEvent::LoadSourceDialog,
-            );
-        })
-        .height(Pixels(38.0))
-        .horizontal_gap(Pixels(8.0));
+            .tooltip(|cx| crate::vizia_controls::tooltip(cx, WAVEFORM_HELP))
+            .height(Stretch(1.0));
         linnod_detection_controls(cx, signals);
     })
     .class("panel")
     .class("ll-panel")
     .class("ll-panel-audio")
-    .width(Pixels(470.0))
-    .height(Stretch(1.0))
+    .width(Stretch(1.0))
+    .height(Pixels(340.0))
     .vertical_gap(Pixels(8.0));
 }
 
@@ -114,7 +112,7 @@ fn linnod_pad_section(cx: &mut Context, signals: EditorSignals) {
     .class("panel")
     .class("ll-panel")
     .class("ll-panel-slice")
-    .width(Pixels(322.0))
+    .width(Pixels(260.0))
     .height(Stretch(1.0))
     .vertical_gap(Pixels(8.0));
 }
@@ -131,11 +129,8 @@ fn linnod_pad_button(cx: &mut Context, signals: EditorSignals, pad: PadId) {
             Label::new(cx, pad_midi_text(signals.summary, pad))
                 .class("ll-section-subtitle")
                 .alignment(Alignment::Center);
-            Label::new(cx, pad_choke_text(signals.summary, pad))
-                .class("ll-section-subtitle")
-                .alignment(Alignment::Center);
         })
-        .vertical_gap(Pixels(1.0))
+        .vertical_gap(Pixels(0.0))
     })
     .on_press(move |cx| cx.emit(EditorEvent::Command(LinnodEditorCommand::SelectPad(pad))))
     .class("pad-button")
@@ -240,56 +235,9 @@ fn linnod_slice_section(cx: &mut Context, signals: EditorSignals) {
         SourceWaveformView::new(cx, signals.summary, signals.drop_active)
             .class("ll-visual-frame")
             .class("ll-visual-slice")
-            .height(Pixels(112.0));
-        linnod_status_chip(cx, selected_slice_range(signals.summary), crate::vizia_controls::ChipKind::Slice);
-        linnod_status_chip(cx, selected_pitch_diagnostic_text(signals.summary), crate::vizia_controls::ChipKind::Slice);
-        slice_trim_controls(cx, signals.summary);
-        slice_pitch_controls(cx, signals.summary);
-        slice_gain_pan_controls(cx, signals.summary);
-        slice_filter_controls(cx, signals.summary);
-        linnod_playback_panel(cx, signals);
-        HStack::new(cx, move |cx| {
-            linnod_command_button(
-                cx,
-                ICON_MUSIC,
-                "Tune selected slice",
-                EditorEvent::Command(LinnodEditorCommand::TuneSelectedSlice),
-            );
-            linnod_command_button(
-                cx,
-                ICON_ADJUSTMENTS_HORIZONTAL,
-                "Tune all slices",
-                EditorEvent::Command(LinnodEditorCommand::TuneAllSlices),
-            );
-            linnod_command_button(
-                cx,
-                ICON_ARROWS_SHUFFLE,
-                "Snap all slices to scale",
-                EditorEvent::Command(LinnodEditorCommand::SnapAllSlicesToScale),
-            );
-        })
-        .height(Pixels(30.0))
-        .horizontal_gap(Pixels(6.0));
-        HStack::new(cx, move |cx| {
-            linnod_parameter_control(
-                cx,
-                signals.parameter(LinnodEditorSurfaceSlot::MasterGain),
-                crate::vizia_controls::Accent::Tone,
-            );
-            linnod_parameter_control(
-                cx,
-                signals.parameter(LinnodEditorSurfaceSlot::DetectionSensitivity),
-                crate::vizia_controls::Accent::Audio,
-            );
-            linnod_parameter_control(
-                cx,
-                signals.parameter(LinnodEditorSurfaceSlot::TuningReference),
-                crate::vizia_controls::Accent::Mod,
-            );
-        })
-        .height(Pixels(88.0))
-        .horizontal_gap(Pixels(4.0));
-        Label::new(cx, tuning_text(signals.summary)).class("ll-section-subtitle");
+            .tooltip(|cx| crate::vizia_controls::tooltip(cx, WAVEFORM_HELP))
+            .height(Pixels(150.0));
+        linnod_slice_control_columns(cx, signals);
     })
     .class("panel")
     .class("ll-panel")
@@ -297,6 +245,78 @@ fn linnod_slice_section(cx: &mut Context, signals: EditorSignals) {
     .width(Stretch(1.0))
     .height(Stretch(1.0))
     .vertical_gap(Pixels(8.0));
+}
+
+fn linnod_slice_control_columns(cx: &mut Context, signals: EditorSignals) {
+    HStack::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            HStack::new(cx, move |cx| {
+                linnod_status_chip(cx, selected_slice_range(signals.summary), crate::vizia_controls::ChipKind::Slice);
+                linnod_status_chip(cx, selected_pitch_diagnostic_text(signals.summary), crate::vizia_controls::ChipKind::Slice);
+            })
+            .height(Pixels(24.0))
+            .horizontal_gap(Pixels(6.0));
+            slice_trim_controls(cx, signals.summary);
+            slice_pitch_controls(cx, signals.summary);
+        })
+        .width(Pixels(214.0))
+        .vertical_gap(Pixels(6.0));
+        VStack::new(cx, move |cx| {
+            slice_gain_pan_controls(cx, signals.summary);
+            slice_filter_controls(cx, signals.summary);
+            HStack::new(cx, move |cx| {
+                linnod_parameter_control(
+                    cx,
+                    signals.parameter(LinnodEditorSurfaceSlot::MasterGain),
+                    crate::vizia_controls::Accent::Tone,
+                );
+                linnod_parameter_control(
+                    cx,
+                    signals.parameter(LinnodEditorSurfaceSlot::DetectionSensitivity),
+                    crate::vizia_controls::Accent::Audio,
+                );
+                linnod_parameter_control(
+                    cx,
+                    signals.parameter(LinnodEditorSurfaceSlot::TuningReference),
+                    crate::vizia_controls::Accent::Mod,
+                );
+            })
+            .height(Pixels(70.0))
+            .horizontal_gap(Pixels(4.0));
+            Label::new(cx, tuning_text(signals.summary)).class("ll-section-subtitle");
+        })
+        .width(Pixels(214.0))
+        .vertical_gap(Pixels(6.0));
+        VStack::new(cx, move |cx| {
+            linnod_playback_panel(cx, signals);
+            HStack::new(cx, move |cx| {
+                linnod_command_button(
+                    cx,
+                    ICON_MUSIC,
+                    "Tune selected slice",
+                    EditorEvent::Command(LinnodEditorCommand::TuneSelectedSlice),
+                );
+                linnod_command_button(
+                    cx,
+                    ICON_ADJUSTMENTS_HORIZONTAL,
+                    "Tune all slices",
+                    EditorEvent::Command(LinnodEditorCommand::TuneAllSlices),
+                );
+                linnod_command_button(
+                    cx,
+                    ICON_ARROWS_SHUFFLE,
+                    "Snap all slices to scale",
+                    EditorEvent::Command(LinnodEditorCommand::SnapAllSlicesToScale),
+                );
+            })
+            .height(Pixels(30.0))
+            .horizontal_gap(Pixels(6.0));
+        })
+        .width(Stretch(1.0))
+        .vertical_gap(Pixels(6.0));
+    })
+    .height(Stretch(1.0))
+    .horizontal_gap(Pixels(8.0));
 }
 
 fn slice_trim_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {

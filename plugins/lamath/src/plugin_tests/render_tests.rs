@@ -497,6 +497,33 @@ fn parallel_mix_a_b_materially_changes_parallel_render() {
 }
 
 #[test]
+fn parallel_modal_b_decay_controls_independent_tail() {
+    let render = |b_decay| {
+        render_single_note_with_params(
+            &[
+                (RESONATOR_MIX_PARAMETER_ID, 0.5),
+                (40, 0.0),
+                (27, 0.05),
+                (47, b_decay),
+            ],
+            48_000.0,
+            4_096,
+        )
+    };
+    let short_b = render(0.05);
+    let long_b = render(9.0);
+    let short_tail = rms(&short_b.left[48_000..96_000]);
+    let long_tail = rms(&long_b.left[48_000..96_000]);
+
+    assert_all_finite(&short_b.left);
+    assert_all_finite(&long_b.left);
+    assert!(
+        long_tail > short_tail * 8.0,
+        "B decay should extend the independent parallel tail, short={short_tail}, long={long_tail}"
+    );
+}
+
+#[test]
 fn output_filter_modes_produce_distinct_bounded_output() {
     let lowpass = render_filter_mode(0.0);
     let bandpass = render_filter_mode(1.0);
@@ -571,4 +598,3 @@ fn offline_render_matches_realtime_for_fixed_clip() {
         "offline render should match realtime render, max diff {max_diff}"
     );
 }
-

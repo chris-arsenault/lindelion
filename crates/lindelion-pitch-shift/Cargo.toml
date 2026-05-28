@@ -11,3 +11,7 @@ lindelion-onset-detect.workspace = true
 lindelion-pitch-detect.workspace = true
 realfft.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }
+lindelion-test-allocator.workspace = true

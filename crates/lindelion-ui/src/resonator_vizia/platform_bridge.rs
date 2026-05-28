@@ -39,6 +39,7 @@ fn resonator_signals(
     values: &EditorValues,
     parent_view: usize,
 ) -> EditorSignals {
+    let directories = unsafe { host.directories() };
     EditorSignals {
         host,
         dialog_parent: crate::vizia_file_dialogs::DialogParent::from_ns_view(parent_view),
@@ -59,6 +60,9 @@ fn resonator_signals(
         patch_name: Signal::new(values.summary.patch_name.clone()),
         slot_summaries: Signal::new(values.summary.slots.clone()),
         library_samples: Signal::new(values.summary.library_samples.clone()),
+        library_page_start: Signal::new(0),
+        library_location: Signal::new(directories.sample_directory.display().to_string()),
+        settings_open: Signal::new(false),
     }
 }
 
@@ -109,9 +113,6 @@ fn handle_editor_command(
     let Some(command) = command else {
         return;
     };
-    if matches!(command, UiCommand::OpenLibrary) {
-        unsafe { host.refresh_library() };
-    }
     let request = ResonatorEditorCommandRequest {
         command,
         patch_save_path: matches!(command, UiCommand::SavePatch).then_some(path).flatten(),
@@ -119,7 +120,7 @@ fn handle_editor_command(
         patch_export_directory: matches!(command, UiCommand::ExportPatchWithSamples)
             .then_some(path)
             .flatten(),
-        sample_path: matches!(command, UiCommand::LoadExcitationSlot(_))
+        sample_path: matches!(command, UiCommand::LoadExcitationSlot(_) | UiCommand::OpenLibrary)
             .then_some(path)
             .flatten(),
         selected_library_sample: selected_sample,
@@ -129,9 +130,11 @@ fn handle_editor_command(
 
 unsafe fn sync_summary_from_controller(host: ResonatorEditorHost, signals: EditorSignals) {
     let summary = unsafe { host.summary() };
+    let sample_count = summary.library_samples.len();
     signals.patch_name.set(summary.patch_name);
     signals.slot_summaries.set(summary.slots);
     signals.library_samples.set(summary.library_samples);
+    clamp_library_page_signal(signals, sample_count);
 }
 
 unsafe fn request_telemetry_from_controller(host: ResonatorEditorHost) {

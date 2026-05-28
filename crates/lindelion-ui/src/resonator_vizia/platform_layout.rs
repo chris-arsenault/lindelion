@@ -1,26 +1,31 @@
 fn build_editor(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, move |cx| {
-        resonator_top_strip(cx, signals);
-        HStack::new(cx, move |cx| {
-            resonator_source_section(cx, signals);
-            resonator_stack_section(cx, signals);
-            resonator_output_section(cx, signals);
+    ZStack::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            resonator_top_strip(cx, signals);
+            HStack::new(cx, move |cx| {
+                resonator_source_section(cx, signals);
+                resonator_stack_section(cx, signals);
+                resonator_output_section(cx, signals);
+            })
+            .height(Stretch(1.0))
+            .horizontal_gap(Pixels(10.0));
+            HStack::new(cx, move |cx| {
+                resonator_library_section(cx, signals);
+                resonator_modulation_section(cx, signals);
+            })
+            .height(Pixels(264.0))
+            .horizontal_gap(Pixels(10.0));
         })
+        .padding(Pixels(12.0))
+        .width(Stretch(1.0))
         .height(Stretch(1.0))
-        .horizontal_gap(Pixels(10.0));
-        HStack::new(cx, move |cx| {
-            resonator_library_section(cx, signals);
-            resonator_modulation_section(cx, signals);
-        })
-        .height(Pixels(224.0))
-        .horizontal_gap(Pixels(10.0));
+        .vertical_gap(Pixels(10.0));
+        resonator_settings_overlay(cx, signals);
     })
     .class("root")
     .class("ll-shell")
-    .padding(Pixels(12.0))
     .width(Stretch(1.0))
-    .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
+    .height(Stretch(1.0));
 }
 
 fn resonator_top_strip(cx: &mut Context, signals: EditorSignals) {
@@ -39,7 +44,10 @@ fn resonator_top_strip(cx: &mut Context, signals: EditorSignals) {
         HStack::new(cx, move |cx| {
             resonator_tool_button(cx, ICON_FOLDER_OPEN, "Load patch", UiCommand::LoadPatch);
             resonator_tool_button(cx, ICON_DOWNLOAD, "Export patch with samples", UiCommand::ExportPatchWithSamples);
-            resonator_tool_button(cx, ICON_LIBRARY, "Open library", UiCommand::OpenLibrary);
+            crate::vizia_controls::icon_tool_button(cx, ICON_PLUS, "Add sample to library")
+                .on_press(|cx| cx.emit(EditorEvent::AddLibrarySample));
+            crate::vizia_controls::icon_tool_button(cx, ICON_SETTINGS, "Settings")
+                .on_press(|cx| cx.emit(EditorEvent::ToggleSettings));
         })
         .horizontal_gap(Pixels(5.0));
     })
@@ -78,8 +86,9 @@ fn resonator_source_section(cx: &mut Context, signals: EditorSignals) {
                 signals.parameter(ResonatorEditorSurfaceSlot::AudioExpressionEnable),
                 crate::vizia_controls::Accent::Audio,
             );
-            resonator_tool_button(cx, ICON_ACTIVITY, "Load selected excitation slot", UiCommand::LoadSelectedExcitationSlot);
-            resonator_tool_button(cx, ICON_TRASH, "Clear selected excitation slot", UiCommand::ClearSelectedExcitationSlot);
+            crate::vizia_controls::icon_tool_button(cx, ICON_FOLDER_OPEN, "Load sample to selected layer")
+                .on_press(|cx| cx.emit(EditorEvent::ChooseSampleFile));
+            resonator_tool_button(cx, ICON_TRASH, "Clear selected layer", UiCommand::ClearSelectedExcitationSlot);
         })
         .alignment(Alignment::Center)
         .horizontal_gap(Pixels(6.0));
@@ -119,6 +128,7 @@ fn resonator_stack_section(cx: &mut Context, signals: EditorSignals) {
             .height(Pixels(126.0));
         HStack::new(cx, move |cx| {
             resonator_lane_a(cx, signals);
+            resonator_mix_column(cx, signals);
             resonator_lane_b(cx, signals);
         })
         .height(Stretch(1.0))
@@ -150,14 +160,17 @@ fn resonator_lane_a(cx: &mut Context, signals: EditorSignals) {
     resonator_lane(
         cx,
         "A",
-        [
-            ResonatorEditorSurfaceSlot::ResonatorAModel,
-            ResonatorEditorSurfaceSlot::ResonatorAWaveguideStyle,
-        ],
+        ResonatorEditorSurfaceSlot::ResonatorAModel,
+        ResonatorEditorSurfaceSlot::ResonatorAWaveguideStyle,
         [
             ResonatorEditorSurfaceSlot::ResonatorAPreset,
             ResonatorEditorSurfaceSlot::ResonatorABrightness,
             ResonatorEditorSurfaceSlot::ResonatorADecay,
+        ],
+        [
+            ResonatorEditorSurfaceSlot::ResonatorALoopFilter,
+            ResonatorEditorSurfaceSlot::ResonatorALoopGain,
+            ResonatorEditorSurfaceSlot::ResonatorANonlinearity,
             ResonatorEditorSurfaceSlot::ResonatorABoundaryReflection,
         ],
         signals,
@@ -168,9 +181,12 @@ fn resonator_lane_b(cx: &mut Context, signals: EditorSignals) {
     resonator_lane(
         cx,
         "B",
+        ResonatorEditorSurfaceSlot::ResonatorBModel,
+        ResonatorEditorSurfaceSlot::ResonatorBWaveguideStyle,
         [
-            ResonatorEditorSurfaceSlot::ResonatorBModel,
-            ResonatorEditorSurfaceSlot::ResonatorBWaveguideStyle,
+            ResonatorEditorSurfaceSlot::ResonatorBPreset,
+            ResonatorEditorSurfaceSlot::ResonatorBBrightness,
+            ResonatorEditorSurfaceSlot::ResonatorBDecay,
         ],
         [
             ResonatorEditorSurfaceSlot::ResonatorBLoopFilter,
@@ -182,36 +198,44 @@ fn resonator_lane_b(cx: &mut Context, signals: EditorSignals) {
     );
 }
 
+fn resonator_mix_column(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        Spacer::new(cx);
+        resonator_mix_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::ResonatorMix));
+        Spacer::new(cx);
+    })
+    .width(Pixels(76.0))
+    .height(Stretch(1.0))
+    .alignment(Alignment::Center);
+}
+
 fn resonator_lane(
     cx: &mut Context,
     title: &'static str,
-    header_slots: [ResonatorEditorSurfaceSlot; 2],
-    knob_slots: [ResonatorEditorSurfaceSlot; 4],
+    model_slot: ResonatorEditorSurfaceSlot,
+    waveguide_style_slot: ResonatorEditorSurfaceSlot,
+    modal_slots: [ResonatorEditorSurfaceSlot; 3],
+    waveguide_slots: [ResonatorEditorSurfaceSlot; 4],
     signals: EditorSignals,
 ) {
+    let model_signal = signals.parameter(model_slot).signal;
     VStack::new(cx, move |cx| {
         HStack::new(cx, move |cx| {
             Label::new(cx, title).class("section-title").width(Pixels(22.0));
-            ResonatorBadge::new(cx, signals.parameter(header_slots[0]).signal)
-                .class("ll-visual-frame")
-                .width(Pixels(54.0))
-                .height(Pixels(18.0));
-            resonator_parameter_control(
-                cx,
-                signals.parameter(header_slots[0]),
-                crate::vizia_controls::Accent::Tone,
-            );
-            resonator_parameter_control(
-                cx,
-                signals.parameter(header_slots[1]),
-                crate::vizia_controls::Accent::Tone,
-            );
+            resonator_compact_binary_control(cx, signals.parameter(model_slot));
+            HStack::new(cx, move |cx| {
+                resonator_compact_binary_control(cx, signals.parameter(waveguide_style_slot));
+            })
+            .display(resonator_model_display(
+                model_signal,
+                ResonatorLaneModel::Waveguide,
+            ));
         })
         .height(Pixels(44.0))
         .alignment(Alignment::Center)
         .horizontal_gap(Pixels(6.0));
         HStack::new(cx, move |cx| {
-            for slot in knob_slots {
+            for slot in modal_slots {
                 resonator_parameter_control(
                     cx,
                     signals.parameter(slot),
@@ -219,6 +243,24 @@ fn resonator_lane(
                 );
             }
         })
+        .display(resonator_model_display(
+            model_signal,
+            ResonatorLaneModel::Modal,
+        ))
+        .horizontal_gap(Pixels(4.0));
+        HStack::new(cx, move |cx| {
+            for slot in waveguide_slots {
+                resonator_parameter_control(
+                    cx,
+                    signals.parameter(slot),
+                    crate::vizia_controls::Accent::Tone,
+                );
+            }
+        })
+        .display(resonator_model_display(
+            model_signal,
+            ResonatorLaneModel::Waveguide,
+        ))
         .horizontal_gap(Pixels(4.0));
     })
     .class("strip")
@@ -226,6 +268,30 @@ fn resonator_lane(
     .width(Stretch(1.0))
     .height(Stretch(1.0))
     .vertical_gap(Pixels(6.0));
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResonatorLaneModel {
+    Modal,
+    Waveguide,
+}
+
+fn resonator_model_display(
+    model_signal: Signal<f32>,
+    model: ResonatorLaneModel,
+) -> impl Res<Display> + Clone {
+    model_signal.map(move |value| {
+        let active_model = if *value >= 0.5 {
+            ResonatorLaneModel::Waveguide
+        } else {
+            ResonatorLaneModel::Modal
+        };
+        if active_model == model {
+            Display::Flex
+        } else {
+            Display::None
+        }
+    })
 }
 
 fn resonator_output_section(cx: &mut Context, signals: EditorSignals) {
@@ -269,24 +335,18 @@ fn resonator_library_section(cx: &mut Context, signals: EditorSignals) {
     VStack::new(cx, move |cx| {
         crate::vizia_controls::section_header(
             cx,
-            "Library / Slots",
-            selected_slot_text(signals),
+            "Exciter",
+            selected_layer_text(signals),
             crate::vizia_controls::Accent::Audio,
         );
         HStack::new(cx, move |cx| {
             for index in 0..4 {
-                resonator_slot_button(cx, signals, index);
+                resonator_layer_button(cx, signals, index);
             }
         })
-        .height(Pixels(72.0))
+        .height(Pixels(58.0))
         .horizontal_gap(Pixels(6.0));
-        HStack::new(cx, move |cx| {
-            for index in 0..3 {
-                resonator_sample_row(cx, signals, index);
-            }
-        })
-        .height(Stretch(1.0))
-        .horizontal_gap(Pixels(6.0));
+        resonator_library_browser(cx, signals);
     })
     .class("panel")
     .class("ll-panel")
@@ -296,17 +356,62 @@ fn resonator_library_section(cx: &mut Context, signals: EditorSignals) {
     .vertical_gap(Pixels(8.0));
 }
 
-fn resonator_slot_button(cx: &mut Context, signals: EditorSignals, index: usize) {
+fn resonator_library_browser(cx: &mut Context, signals: EditorSignals) {
+    VStack::new(cx, move |cx| {
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, library_browser_title(signals)).class("ll-control-value");
+                Label::new(cx, signals.library_location).class("ll-section-subtitle");
+            })
+            .width(Stretch(1.0))
+            .min_width(Pixels(0.0))
+            .overflow(Overflow::Hidden)
+            .vertical_gap(Pixels(1.0));
+            crate::vizia_controls::icon_tool_button(cx, ICON_FOLDER_OPEN, "Load sample to selected layer")
+                .on_press(|cx| cx.emit(EditorEvent::ChooseSampleFile));
+            crate::vizia_controls::icon_tool_button(cx, ICON_PLUS, "Add sample to library")
+                .on_press(|cx| cx.emit(EditorEvent::AddLibrarySample));
+            resonator_tool_button(cx, ICON_LIBRARY, "Refresh library", UiCommand::OpenLibrary);
+            resonator_tool_button(
+                cx,
+                ICON_TRASH,
+                "Clear selected layer",
+                UiCommand::ClearSelectedExcitationSlot,
+            );
+            crate::vizia_controls::icon_tool_button(cx, ICON_ARROW_BACK, "Previous library page")
+                .on_press(|cx| cx.emit(EditorEvent::LibraryPagePrevious));
+            crate::vizia_controls::icon_tool_button(cx, ICON_ARROW_FORWARD, "Next library page")
+                .on_press(|cx| cx.emit(EditorEvent::LibraryPageNext));
+        })
+        .height(Pixels(30.0))
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(5.0));
+        VStack::new(cx, move |cx| {
+            for row in 0..LIBRARY_BROWSER_ROWS {
+                resonator_sample_row(cx, signals, row);
+            }
+        })
+        .height(Stretch(1.0))
+        .vertical_gap(Pixels(4.0));
+    })
+    .height(Stretch(1.0))
+    .vertical_gap(Pixels(6.0));
+}
+
+fn resonator_layer_button(cx: &mut Context, signals: EditorSignals, index: usize) {
     let slot = PadId((index + 1) as u8);
     Button::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
-            Label::new(cx, slot_label_text(signals.slot_summaries, index)).class("ll-control-value");
-            Label::new(cx, slot_detail_text(signals.slot_summaries, index)).class("ll-section-subtitle");
+            Label::new(cx, layer_label(index)).class("ll-control-value");
+            Label::new(cx, layer_detail_text(signals.slot_summaries, index)).class("ll-section-subtitle");
             MiniWaveform::new(cx, Memo::new(move |_| index as f32 * 0.21))
                 .class("ll-visual-frame")
                 .class("ll-visual-audio")
-                .height(Pixels(22.0));
+                .height(Pixels(18.0));
         })
+        .width(Stretch(1.0))
+        .min_width(Pixels(0.0))
+        .overflow(Overflow::Hidden)
         .vertical_gap(Pixels(2.0))
     })
     .on_press(move |cx| cx.emit(EditorEvent::Command(UiCommand::SelectExcitationSlot(slot))))
@@ -319,27 +424,54 @@ fn resonator_slot_button(cx: &mut Context, signals: EditorSignals, index: usize)
     .height(Stretch(1.0));
 }
 
-fn resonator_sample_row(cx: &mut Context, signals: EditorSignals, index: usize) {
+fn resonator_sample_row(cx: &mut Context, signals: EditorSignals, row: usize) {
     Button::new(cx, move |cx| {
-        VStack::new(cx, move |cx| {
-            Label::new(cx, sample_label_text(signals.library_samples, index)).class("ll-control-value");
-            Label::new(cx, sample_detail_text(signals.library_samples, index)).class("ll-section-subtitle");
-            LibraryWaveform::new(cx, signals.library_samples, index)
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, sample_label_text(signals, row)).class("ll-control-value");
+                Label::new(cx, sample_detail_text(signals, row)).class("ll-section-subtitle");
+            })
+            .width(Pixels(190.0))
+            .min_width(Pixels(0.0))
+            .overflow(Overflow::Hidden)
+            .vertical_gap(Pixels(1.0));
+            LibraryWaveform::new(cx, signals.library_samples, signals.library_page_start, row)
                 .class("ll-visual-frame")
                 .class("ll-visual-audio")
-                .height(Pixels(36.0));
+                .width(Stretch(1.0))
+                .overflow(Overflow::Hidden)
+                .height(Pixels(24.0));
         })
-        .vertical_gap(Pixels(2.0))
+        .width(Stretch(1.0))
+        .min_width(Pixels(0.0))
+        .overflow(Overflow::Hidden)
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(6.0))
     })
-    .on_press(move |cx| cx.emit(EditorEvent::SelectLibrarySample(index)))
     .class("sample-row")
     .class("ll-pad-button")
+    .on_press(move |cx| {
+        cx.emit(EditorEvent::UseLibrarySample(
+            signals.library_page_start.get().saturating_add(row),
+        ));
+    })
     .toggle_class(
         "ll-pad-selected",
-        signals.selected_sample.map(move |selected| (*selected).round() as usize == index),
+        Memo::new(move |_| {
+            selected_sample_matches(
+                signals.selected_sample.get(),
+                signals.library_page_start.get().saturating_add(row),
+            )
+        }),
     )
     .width(Stretch(1.0))
-    .height(Stretch(1.0));
+    .min_width(Pixels(0.0))
+    .overflow(Overflow::Hidden)
+    .height(Pixels(30.0));
+}
+
+fn selected_sample_matches(selected: f32, index: usize) -> bool {
+    selected.is_finite() && selected >= 0.0 && selected.round() as usize == index
 }
 
 fn resonator_modulation_section(cx: &mut Context, signals: EditorSignals) {
@@ -403,71 +535,4 @@ fn sidechain_chip(cx: &mut Context, label: &'static str, signal: Signal<bool>) {
         .toggle_class("ll-chip-ready", signal)
         .height(Pixels(22.0))
         .alignment(Alignment::Center);
-}
-
-fn patch_detail_text(signals: EditorSignals) -> Memo<String> {
-    Memo::new(move |_| {
-        let command = signals
-            .command_status
-            .get()
-            .map(|command| command_label(Some(command)))
-            .unwrap_or("Ready");
-        format!("{} / {command}", signals.patch_name.get())
-    })
-}
-
-fn voices_text(active_voices: Signal<f32>) -> Memo<String> {
-    Memo::new(move |_| format!("{:.0}", active_voices.get().max(0.0)))
-}
-
-fn pitch_confidence_text(confidence: Signal<f32>) -> Memo<String> {
-    Memo::new(move |_| format!("{:.0}%", confidence.get().clamp(0.0, 1.0) * 100.0))
-}
-
-fn sidechain_text(label: &'static str, signal: Signal<bool>) -> Memo<String> {
-    Memo::new(move |_| format!("{label} {}", if signal.get() { "on" } else { "off" }))
-}
-
-fn selected_slot_text(signals: EditorSignals) -> Memo<String> {
-    Memo::new(move |_| format!("slot {}", signals.selected_slot.get().round() as usize + 1))
-}
-
-fn slot_label_text(
-    summaries: Signal<[ResonatorEditorSlotSummary; 4]>,
-    index: usize,
-) -> Memo<String> {
-    Memo::new(move |_| summaries.get()[index].label.clone())
-}
-
-fn slot_detail_text(
-    summaries: Signal<[ResonatorEditorSlotSummary; 4]>,
-    index: usize,
-) -> Memo<String> {
-    Memo::new(move |_| summaries.get()[index].detail.clone())
-}
-
-fn sample_label_text(
-    samples: Signal<Vec<ResonatorEditorSampleSummary>>,
-    index: usize,
-) -> Memo<String> {
-    Memo::new(move |_| {
-        samples
-            .get()
-            .get(index)
-            .map(|sample| sample.label.clone())
-            .unwrap_or_else(|| "Empty".to_string())
-    })
-}
-
-fn sample_detail_text(
-    samples: Signal<Vec<ResonatorEditorSampleSummary>>,
-    index: usize,
-) -> Memo<String> {
-    Memo::new(move |_| {
-        samples
-            .get()
-            .get(index)
-            .map(|sample| sample.detail.clone())
-            .unwrap_or_else(|| "No sample".to_string())
-    })
 }

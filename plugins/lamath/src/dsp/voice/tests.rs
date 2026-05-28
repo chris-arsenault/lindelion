@@ -16,6 +16,8 @@ use crate::{
     ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,
 };
 
+mod sanity;
+
 #[test]
 fn parallel_voice_renders_nonzero_stereo_output() {
     let sample_rate = 48_000.0;

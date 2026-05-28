@@ -6,12 +6,13 @@ use lindelion_ui::{
     linnod_vizia::{
         LinnodEditorDetectionAlgorithm, LinnodEditorDetectionConfig, LinnodEditorMarker,
         LinnodEditorMarkerKind, LinnodEditorPadSummary, LinnodEditorPatchSummary,
-        LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorTriggerMode,
+        LinnodEditorPitchShiftAlgorithm, LinnodEditorSliceSummary, LinnodEditorSourceStatus,
+        LinnodEditorTriggerMode,
     },
     waveform_points_from_samples,
 };
 
-const LINNOD_WAVEFORM_PREVIEW_POINTS: usize = 16_384;
+const LINNOD_WAVEFORM_PREVIEW_POINTS: usize = 32_768;
 
 use crate::{LinnodPatch, patch::TriggerMode, tuning::slice_tuning_info};
 
@@ -36,6 +37,7 @@ pub(super) fn editor_summary_from_patch(patch: &LinnodPatch) -> LinnodEditorPatc
         playback: editor_playback_config(patch.playback),
         detection: editor_detection(patch.detection),
         trigger_mode: editor_trigger_mode(patch.trigger_mode),
+        pitch_shift_algorithm: editor_pitch_shift_algorithm(patch.engine.pitch_shift_algorithm),
         tuning_reference_hz: patch.tuning.reference_hz,
         tuning_root_label: format!("{:?}", patch.tuning.root),
         tuning_scale_label: format!("{:?}", patch.tuning.scale),
@@ -140,6 +142,19 @@ fn source_analysis_label(analysis: &crate::SourceAnalysis) -> String {
             .and_then(|name| name.to_str())
             .unwrap_or("No source")
             .to_string()
+    }
+}
+
+fn editor_pitch_shift_algorithm(
+    algorithm: crate::PitchShiftAlgorithm,
+) -> LinnodEditorPitchShiftAlgorithm {
+    match algorithm {
+        crate::PitchShiftAlgorithm::SpectralPeak => LinnodEditorPitchShiftAlgorithm::SpectralPeak,
+        crate::PitchShiftAlgorithm::Varispeed => LinnodEditorPitchShiftAlgorithm::Varispeed,
+        crate::PitchShiftAlgorithm::TimeStretch => LinnodEditorPitchShiftAlgorithm::TimeStretch,
+        crate::PitchShiftAlgorithm::ResampleStretch => {
+            LinnodEditorPitchShiftAlgorithm::ResampleStretch
+        }
     }
 }
 

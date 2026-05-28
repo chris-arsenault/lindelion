@@ -154,6 +154,7 @@ fn parallel_mix_a(routing: ResonatorRouting) -> f32 {
     match routing {
         ResonatorRouting::Parallel { mix_a, .. } => mix_a,
         ResonatorRouting::Series { mix_a, .. } => mix_a,
+        ResonatorRouting::BodyColor { mix_a, .. } => mix_a,
     }
 }
 
@@ -161,6 +162,7 @@ fn parallel_mix_b(routing: ResonatorRouting) -> f32 {
     match routing {
         ResonatorRouting::Parallel { mix_b, .. } => mix_b,
         ResonatorRouting::Series { mix_b, .. } => mix_b,
+        ResonatorRouting::BodyColor { mix_b, .. } => mix_b,
     }
 }
 
@@ -174,6 +176,28 @@ fn set_parallel_mix(routing: ResonatorRouting, side: MixSide, value: f32) -> Res
     match routing {
         ResonatorRouting::Parallel { .. } => ResonatorRouting::Parallel { mix_a, mix_b },
         ResonatorRouting::Series { .. } => ResonatorRouting::Series { mix_a, mix_b },
+        ResonatorRouting::BodyColor { .. } => ResonatorRouting::BodyColor { mix_a, mix_b },
+    }
+}
+
+fn parallel_mix_balance(routing: ResonatorRouting) -> f32 {
+    let mix_a = finite_value(parallel_mix_a(routing), 0.0, 1.0, 0.5);
+    let mix_b = finite_value(parallel_mix_b(routing), 0.0, 1.0, 0.5);
+    let total = mix_a + mix_b;
+    if total > f32::EPSILON {
+        mix_b / total
+    } else {
+        0.5
+    }
+}
+
+fn set_parallel_mix_balance(routing: ResonatorRouting, value: f32) -> ResonatorRouting {
+    let mix_b = finite_value(value, 0.0, 1.0, 0.5);
+    let mix_a = 1.0 - mix_b;
+    match routing {
+        ResonatorRouting::Parallel { .. } => ResonatorRouting::Parallel { mix_a, mix_b },
+        ResonatorRouting::Series { .. } => ResonatorRouting::Series { mix_a, mix_b },
+        ResonatorRouting::BodyColor { .. } => ResonatorRouting::BodyColor { mix_a, mix_b },
     }
 }
 

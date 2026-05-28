@@ -11,6 +11,8 @@ pub struct PitchShiftSourceCache {
     pub source_len_samples: usize,
     pub config: PitchShiftAnalysisConfig,
     pub frames: Vec<PitchShiftFrameAnalysis>,
+    #[serde(default)]
+    pub resample_pro: ResampleProCache,
     pub epoch_samples: Vec<usize>,
     pub voicing_segments: Vec<VoicingSegment>,
     pub slice_summaries: Vec<PitchShiftSliceSummary>,
@@ -64,8 +66,47 @@ pub struct PitchShiftFrameAnalysis {
     pub voiced: bool,
     pub rms: f32,
     pub harmonic_magnitudes: Vec<f32>,
+    pub spectral_peaks: Vec<SpectralPeak>,
     pub spectral_envelope: SpectralEnvelope,
     pub residual: ResidualEnergyDescriptor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SpectralPeak {
+    pub frequency_hz: f32,
+    pub magnitude: f32,
+    pub phase_radians: f32,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResampleProCache {
+    pub sample_rate: u32,
+    pub fft_size: usize,
+    pub analysis_hop: usize,
+    pub synthesis_hop: usize,
+    pub window: Vec<f64>,
+    pub window_ola_normalization: Vec<f64>,
+    pub frames: Vec<ResampleProFrame>,
+    pub transient_frames: Vec<usize>,
+    #[serde(default)]
+    pub transient_samples: Vec<usize>,
+}
+
+impl ResampleProCache {
+    pub fn bin_count(&self) -> usize {
+        self.fft_size / 2 + 1
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResampleProFrame {
+    pub frame_index: usize,
+    pub start_sample: usize,
+    pub center_sample: usize,
+    pub magnitudes: Vec<f64>,
+    pub phases: Vec<f64>,
+    pub instantaneous_frequency_rad_per_sample: Vec<f64>,
+    pub peak_owner_by_bin: Vec<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

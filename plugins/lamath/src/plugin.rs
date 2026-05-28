@@ -159,9 +159,10 @@ impl ResonatorSynth {
 
     fn set_patch_with_runtime_buffers(
         &mut self,
-        patch: ResonatorSynthPatch,
+        mut patch: ResonatorSynthPatch,
         runtime_buffers: [Option<RuntimeMonoAudioBuffer>; MAX_EXCITATION_LAYERS],
     ) {
+        patch.normalize_routing_for_resonator_models();
         self.patch = patch;
         self.processor = processor_from_patch_and_buffers(
             self.setup.sample_rate as f32,
@@ -193,7 +194,8 @@ impl ResonatorSynth {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_patch_for_test(&mut self, patch: ResonatorSynthPatch) {
+    pub(crate) fn set_patch_for_test(&mut self, mut patch: ResonatorSynthPatch) {
+        patch.normalize_routing_for_resonator_models();
         self.patch = patch;
         self.rebuild_processor();
     }

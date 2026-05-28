@@ -47,6 +47,7 @@ pub(crate) const MASTER_PAN_PARAMETER_ID: u32 = 5;
 pub(crate) const FILTER_RESONANCE_PARAMETER_ID: u32 = 6;
 pub(crate) const PARALLEL_MIX_A_PARAMETER_ID: u32 = 11;
 pub(crate) const PARALLEL_MIX_B_PARAMETER_ID: u32 = 12;
+pub(crate) const RESONATOR_MIX_PARAMETER_ID: u32 = 14;
 pub(crate) const AUDIO_INPUT_MODE_PARAMETER_ID: u32 = 100;
 pub(crate) const AUDIO_EXPRESSION_ENABLE_PARAMETER_ID: u32 = 101;
 pub(crate) const AUDIO_EXPRESSION_PITCH_RANGE_PARAMETER_ID: u32 = 102;

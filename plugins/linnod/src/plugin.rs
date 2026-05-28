@@ -103,7 +103,8 @@ impl Linnod {
             };
             self.patch.source_sample = Some(analysis.source.reference.clone());
             self.patch.markers = analysis.markers.clone();
-            self.processor.clear_voices();
+            self.processor
+                .prepare_source_analysis(&self.patch, analysis);
         }
         accepted
     }
@@ -129,6 +130,9 @@ impl Linnod {
     pub(crate) fn set_patch_preserving_source_analysis(&mut self, patch: LinnodPatch) {
         self.patch = patch;
         self.processor.clear_voices();
+        if let Some(analysis) = self.source_cache.analysis() {
+            self.processor.prepare_patch(&self.patch, analysis);
+        }
     }
 
     fn mark_source_pending_or_idle(&mut self) {
@@ -157,6 +161,10 @@ impl AudioPlugin for Linnod {
     fn reset(&mut self, setup: ProcessSetup) {
         self.setup = setup;
         self.processor.reset(setup.sample_rate as f32);
+        if let Some(analysis) = self.source_cache.analysis() {
+            self.processor
+                .prepare_source_analysis(&self.patch, analysis);
+        }
     }
 
     fn process(&mut self, context: ProcessContext<'_>) {

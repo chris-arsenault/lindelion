@@ -165,7 +165,7 @@ fn injection_delay_samples(loop_delay_samples: f32, position_of_strike: f32) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms};
+    use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms, rms_difference};
 
     #[test]
     fn impulse_produces_decaying_output() {
@@ -532,15 +532,6 @@ mod tests {
             position_of_strike: 0.45,
             ..WaveguideParams::default()
         }
-    }
-
-    fn rms_difference(left: &[f32], right: &[f32]) -> f32 {
-        let len = left.len().min(right.len());
-        let mut sum = 0.0;
-        for (left, right) in left.iter().zip(right).take(len) {
-            sum += (left - right).powi(2);
-        }
-        (sum / len as f32).sqrt()
     }
 
     fn first_above(samples: &[f32], threshold: f32) -> Option<usize> {

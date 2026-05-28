@@ -3,6 +3,7 @@ use std::{fmt, sync::Arc};
 use lindelion_dsp_utils::{
     analysis,
     math::{finite_clamp, ms_to_samples},
+    phase, window,
 };
 use realfft::{RealFftPlanner, RealToComplex};
 
@@ -203,7 +204,7 @@ impl StreamingSpectralFlux {
         let mut frame = self.fft.make_input_vec();
         for (index, sample) in frame.iter_mut().enumerate() {
             let source = self.pending.get(index).copied().unwrap_or(0.0);
-            *sample = source * hann(index, self.frame_size);
+            *sample = source * window::hann(index, self.frame_size);
         }
 
         let mut spectrum = self.fft.make_output_vec();
@@ -399,7 +400,7 @@ fn complex_flux(
             let phase = value.im.atan2(value.re);
             if frame_index > 0 {
                 let predicted_phase = 2.0 * previous_phases[bin] - previous_previous_phases[bin];
-                let phase_error = wrap_phase(phase - predicted_phase);
+                let phase_error = phase::principal_angle_f32(phase - predicted_phase);
                 let phase_distance =
                     (magnitude.mul_add(
                         magnitude,
@@ -458,7 +459,7 @@ fn spectrum_at(
     let mut frame = fft.make_input_vec();
     for (index, sample) in frame.iter_mut().enumerate() {
         let source = audio.get(frame_start + index).copied().unwrap_or(0.0);
-        *sample = if source.is_finite() { source } else { 0.0 } * hann(index, frame_size);
+        *sample = if source.is_finite() { source } else { 0.0 } * window::hann(index, frame_size);
     }
 
     let mut spectrum = fft.make_output_vec();
@@ -506,11 +507,6 @@ fn hoyer_sparsity(magnitudes: &[f32]) -> f32 {
     }
     let n = magnitudes.len() as f32;
     ((n.sqrt() - l1 / l2) / (n.sqrt() - 1.0)).clamp(0.0, 1.0)
-}
-
-fn wrap_phase(phase: f32) -> f32 {
-    let two_pi = 2.0 * std::f32::consts::PI;
-    (phase + std::f32::consts::PI).rem_euclid(two_pi) - std::f32::consts::PI
 }
 
 fn pick_flux_peaks(
@@ -581,12 +577,4 @@ fn local_max(values: &[f32], center: usize, radius: usize) -> f32 {
     let start = center.saturating_sub(radius);
     let end = (center + radius + 1).min(values.len());
     values[start..end].iter().copied().fold(0.0, f32::max)
-}
-
-fn hann(index: usize, len: usize) -> f32 {
-    if len <= 1 {
-        return 1.0;
-    }
-    let phase = 2.0 * std::f32::consts::PI * index as f32 / (len - 1) as f32;
-    0.5 - 0.5 * phase.cos()
 }

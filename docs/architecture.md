@@ -14,7 +14,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `crates/lindelion-audio-expression` | Host-neutral streaming audio-note and audio-expression bridge that maps pitch, onset, loudness, and brightness into plugin-shell note/expression surfaces. |
 | `crates/lindelion-onset-detect` | Batch and streaming onset detection interfaces, detector configuration, and pitch-aware onset input DTOs used by pitch-aware products. |
 | `crates/lindelion-pitch-detect` | SwiftF0 ONNX pitch detection, streaming pitch tracking, confidence filtering, resampling, and shared pitch-contour DTOs. |
-| `crates/lindelion-pitch-shift` | Shared formant-preserving pitch-shift analysis cache: pitch-adaptive spectral envelopes, voiced/unvoiced segmentation, residual descriptors, and per-slice pitch summaries. |
+| `crates/lindelion-pitch-shift` | Shared pitch-shift analysis and rendering: pitch-adaptive spectral envelopes, voiced/unvoiced segmentation, residual descriptors, per-slice pitch summaries, and Resample Pro stretch-plus-resample rendering. |
 | `crates/lindelion-plugin-metadata` | Product VST3 bundle metadata shared by plugin factories, moduleinfo generation, and bundle/validation automation. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics, and phrase-analysis results shared by captured-phrase workflows. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, and Standard MIDI File emission. |
@@ -121,7 +121,7 @@ Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plug
 | Glirdir `audition.rs` | Local MIDI audition engine; optional shared extraction only when a second consumer exists. |
 | Glirdir `midi_export.rs` / `sample_library.rs` | SMF drag/export payloads and shared sample-library scratchpad ingest. |
 | Linnod `analysis.rs` / `analysis_job.rs` / `worker.rs` | Product orchestration around source-sample loading, SwiftF0 pitch detection, onset markers, and pitch-shift cache preparation. |
-| Linnod `runtime.rs` | Source-backed slice playback, voice ownership, pitch-shift rendering, envelopes, filtering, panning, and output limiting. |
+| Linnod `runtime.rs` | Source-backed slice playback, prepared Resample Stretch buffer ownership, voice ownership, envelopes, filtering, panning, and output limiting. |
 
 ## Real-Time Rule
 

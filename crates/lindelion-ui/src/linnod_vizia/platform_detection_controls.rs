@@ -1,39 +1,39 @@
 const DETECTION_LABELS: [&str; 6] = ["super", "complex", "sparse", "pitch", "energy", "grid"];
 
 fn linnod_detection_controls(cx: &mut Context, signals: EditorSignals) {
-    VStack::new(cx, move |cx| {
+    HStack::new(cx, move |cx| {
         HStack::new(cx, move |cx| {
-            for (index, label) in DETECTION_LABELS.iter().copied().enumerate() {
-                detection_algorithm_button(cx, signals.summary, index, label);
-            }
-        })
-        .class("segmented")
-        .class("ll-segmented")
-        .height(Pixels(25.0))
-        .horizontal_gap(Pixels(2.0));
-        HStack::new(cx, move |cx| {
+            detection_metric(cx, "source", source_rate_text(signals.summary));
             detection_metric(cx, "markers", marker_count_text(signals.status));
             detection_metric(cx, "algorithm", detection_detail_text(signals.summary));
         })
-        .height(Pixels(34.0))
+        .width(Pixels(250.0))
         .horizontal_gap(Pixels(8.0));
+        detection_algorithm_controls(cx, signals.summary);
         detection_value_controls(cx, signals.summary);
-        HStack::new(cx, move |cx| {
-            linnod_command_button(
-                cx,
-                ICON_ACTIVITY,
-                "Redetect slices",
-                EditorEvent::Command(LinnodEditorCommand::RedetectSlices),
-            );
-            Label::new(cx, "top 16 candidate slices are kept")
-                .class("ll-section-subtitle")
-                .width(Stretch(1.0));
-        })
-        .height(Pixels(28.0))
-        .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(6.0));
+        linnod_command_button(
+            cx,
+            ICON_ACTIVITY,
+            "Redetect slices",
+            EditorEvent::Command(LinnodEditorCommand::RedetectSlices),
+        );
     })
-    .vertical_gap(Pixels(7.0));
+    .height(Pixels(46.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(8.0));
+}
+
+fn detection_algorithm_controls(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
+    HStack::new(cx, move |cx| {
+        for (index, label) in DETECTION_LABELS.iter().copied().enumerate() {
+            detection_algorithm_button(cx, summary, index, label);
+        }
+    })
+    .class("segmented")
+    .class("ll-segmented")
+    .width(Pixels(362.0))
+    .height(Pixels(25.0))
+    .horizontal_gap(Pixels(2.0));
 }
 
 fn detection_algorithm_button(

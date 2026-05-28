@@ -1,14 +1,17 @@
-use lindelion_dsp_utils::math::finite_or;
+use lindelion_dsp_utils::{math::finite_or, window};
 use realfft::{RealFftPlanner, RealToComplex};
 
 use crate::{
     PitchShiftAnalysisConfig, ResidualEnergyDescriptor, SpectralEnvelope, SpectralEnvelopePoint,
+    SpectralPeak,
 };
 
 pub struct SpectralFrameAnalysis {
     pub start_sample: usize,
     pub end_sample: usize,
+    pub rms: f32,
     pub harmonic_magnitudes: Vec<f32>,
+    pub spectral_peaks: Vec<SpectralPeak>,
     pub envelope: SpectralEnvelope,
     pub residual: ResidualEnergyDescriptor,
 }
@@ -27,13 +30,19 @@ pub fn analyze_spectral_frame(
     let end_sample = center_sample.saturating_add(half).min(audio.len());
     let mut planner = RealFftPlanner::<f32>::new();
     let fft = planner.plan_fft_forward(frame_size);
-    let magnitudes = frame_magnitudes(audio, start_sample, frame_size, &*fft);
+    let spectrum = frame_spectrum(audio, start_sample, frame_size, &*fft);
+    let magnitudes = spectrum
+        .iter()
+        .map(|bin| bin.norm_sqr().sqrt())
+        .collect::<Vec<_>>();
     let bin_hz = sample_rate as f32 / frame_size as f32;
     let residual = residual_descriptor(&magnitudes, bin_hz, f0_hz);
     SpectralFrameAnalysis {
         start_sample,
         end_sample,
+        rms: frame_rms(audio, start_sample, end_sample),
         harmonic_magnitudes: harmonic_magnitudes(&magnitudes, bin_hz, f0_hz),
+        spectral_peaks: spectral_peaks(&spectrum, &magnitudes, bin_hz, f0_hz),
         envelope: spectral_envelope(&magnitudes, bin_hz, f0_hz, config),
         residual,
     }
@@ -48,23 +57,23 @@ fn adaptive_frame_size(configured: usize, sample_rate: u32, f0_hz: Option<f32>) 
     four_periods.clamp(256, configured).next_power_of_two()
 }
 
-fn frame_magnitudes(
+fn frame_spectrum(
     audio: &[f32],
     start_sample: usize,
     frame_size: usize,
     fft: &dyn RealToComplex<f32>,
-) -> Vec<f32> {
+) -> Vec<realfft::num_complex::Complex32> {
     let mut frame = fft.make_input_vec();
     for (index, sample) in frame.iter_mut().enumerate() {
         let source = audio.get(start_sample + index).copied().unwrap_or(0.0);
-        *sample = finite_or(source, 0.0) * hann(index, frame_size);
+        *sample = finite_or(source, 0.0) * window::hann(index, frame_size);
     }
 
     let mut spectrum = fft.make_output_vec();
     if fft.process(&mut frame, &mut spectrum).is_err() {
         return Vec::new();
     }
-    spectrum.iter().map(|bin| bin.norm_sqr().sqrt()).collect()
+    spectrum
 }
 
 fn spectral_envelope(
@@ -179,17 +188,85 @@ fn harmonic_magnitudes(magnitudes: &[f32], bin_hz: f32, f0_hz: Option<f32>) -> V
     values
 }
 
+fn spectral_peaks(
+    spectrum: &[realfft::num_complex::Complex32],
+    magnitudes: &[f32],
+    bin_hz: f32,
+    f0_hz: Option<f32>,
+) -> Vec<SpectralPeak> {
+    if magnitudes.len() < 3 || bin_hz <= 0.0 {
+        return Vec::new();
+    }
+    let peak_floor = magnitudes.iter().copied().fold(0.0, f32::max) * 0.01;
+    let mut peaks = (1..magnitudes.len() - 1)
+        .filter(|index| {
+            magnitudes[*index] > peak_floor
+                && magnitudes[*index] >= magnitudes[index - 1]
+                && magnitudes[*index] > magnitudes[index + 1]
+        })
+        .map(|index| SpectralPeak {
+            frequency_hz: snapped_peak_frequency(
+                interpolated_peak_bin(magnitudes, index) * bin_hz,
+                f0_hz,
+                bin_hz,
+            ),
+            magnitude: magnitudes[index],
+            phase_radians: spectrum
+                .get(index)
+                .map(|bin| bin.im.atan2(bin.re))
+                .unwrap_or(0.0),
+        })
+        .collect::<Vec<_>>();
+    peaks.sort_by(|left, right| right.magnitude.total_cmp(&left.magnitude));
+    peaks.truncate(96);
+    peaks.sort_by(|left, right| left.frequency_hz.total_cmp(&right.frequency_hz));
+    peaks
+}
+
+fn snapped_peak_frequency(frequency_hz: f32, f0_hz: Option<f32>, tolerance_hz: f32) -> f32 {
+    let Some(f0_hz) = f0_hz.filter(|f0| *f0 > 0.0 && f0.is_finite()) else {
+        return frequency_hz;
+    };
+    let harmonic = (frequency_hz / f0_hz).round().max(1.0);
+    let snapped = harmonic * f0_hz;
+    if (snapped - frequency_hz).abs() <= tolerance_hz.max(1.0) {
+        snapped
+    } else {
+        frequency_hz
+    }
+}
+
+fn interpolated_peak_bin(magnitudes: &[f32], index: usize) -> f32 {
+    if index == 0 || index + 1 >= magnitudes.len() {
+        return index as f32;
+    }
+    let left = magnitudes[index - 1];
+    let center = magnitudes[index];
+    let right = magnitudes[index + 1];
+    let curvature = left - 2.0 * center + right;
+    if curvature.abs() <= f32::EPSILON {
+        return index as f32;
+    }
+    let offset = (0.5 * (left - right) / curvature).clamp(-0.5, 0.5);
+    index as f32 + offset
+}
+
+fn frame_rms(audio: &[f32], start_sample: usize, end_sample: usize) -> f32 {
+    if start_sample >= end_sample || start_sample >= audio.len() {
+        return 0.0;
+    }
+    let end_sample = end_sample.min(audio.len());
+    let energy = audio[start_sample..end_sample]
+        .iter()
+        .copied()
+        .map(|sample| sample * sample)
+        .sum::<f32>();
+    (energy / (end_sample - start_sample) as f32).sqrt()
+}
+
 fn rms_magnitude(values: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
     (values.iter().map(|value| value * value).sum::<f32>() / values.len() as f32).sqrt()
-}
-
-fn hann(index: usize, len: usize) -> f32 {
-    if len <= 1 {
-        return 1.0;
-    }
-    let phase = std::f32::consts::TAU * index as f32 / (len - 1) as f32;
-    0.5 - 0.5 * phase.cos()
 }

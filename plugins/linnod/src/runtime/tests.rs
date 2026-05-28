@@ -1,15 +1,24 @@
 use super::*;
-use crate::patch::{ChokeGroupId, PadAssignment, PadId, PitchOffset};
+use crate::patch::{ChokeGroupId, PadAssignment, PadId, PitchOffset, PitchShiftAlgorithm};
 use lindelion_dsp_utils::analysis::{assert_all_finite, estimate_frequency_zero_crossings};
 use lindelion_onset_detect::{MarkerKind, SliceMarker};
 use lindelion_pitch_detect::{PitchContour, PitchFrame};
-use lindelion_pitch_shift::PitchShiftAnalyzer;
+use lindelion_pitch_shift::{PitchShiftAnalyzer, PitchShiftRatios, PitchShiftSynthesisAlgorithm};
 use lindelion_plugin_shell::{MidiEvent, NoteEvent};
 use lindelion_sample_library::{
     OwnedMonoAudioBuffer, RuntimeMonoAudioBuffer, SampleMetadata, SampleReference,
     SampleWaveformPreview,
 };
 use lindelion_test_allocator::assert_no_allocations;
+
+#[path = "tests/crunch_fixture.rs"]
+mod crunch_fixture;
+#[path = "tests/pitch_quality.rs"]
+mod pitch_quality;
+#[path = "tests/prepared_resample_pro.rs"]
+mod prepared_resample_pro;
+#[path = "tests/sax_fixture.rs"]
+mod sax_fixture;
 
 #[test]
 fn runtime_triggers_pad_voice_and_renders_audio() {
@@ -150,10 +159,7 @@ fn pad_mode_renders_pitch_offset_sine_at_requested_frequency() {
         .unwrap();
     assert_eq!(trigger.slice_index, 0);
     assert!((detected_f0_hz * trigger.ratios.pitch_ratio - 440.0).abs() < 0.01);
-    assert_eq!(
-        trigger.ratios.formant_ratio,
-        Some(trigger.ratios.pitch_ratio)
-    );
+    assert_eq!(trigger.ratios.formant_ratio, None);
 
     let mut left = [0.0; 4_096];
     let mut right = [0.0; 4_096];
@@ -173,6 +179,73 @@ fn pad_mode_renders_pitch_offset_sine_at_requested_frequency() {
 }
 
 #[test]
+fn pad_mode_can_use_time_stretch_pitch_shift_algorithm() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.slices[0].pitch = PitchOffset::from_frequency_ratio(2.0);
+    fixture.patch.engine.pitch_shift_algorithm = PitchShiftAlgorithm::TimeStretch;
+
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+
+    assert_eq!(
+        trigger.ratios.formant_ratio,
+        Some(trigger.ratios.pitch_ratio)
+    );
+}
+
+#[test]
+fn pad_mode_can_use_varispeed_pitch_shift_algorithm() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.slices[0].pitch = PitchOffset::from_frequency_ratio(2.0);
+    fixture.patch.engine.pitch_shift_algorithm = PitchShiftAlgorithm::Varispeed;
+
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+
+    assert_eq!(trigger.algorithm, PitchShiftSynthesisAlgorithm::Varispeed);
+    assert_eq!(trigger.ratios, PitchShiftRatios::identity());
+}
+
+#[test]
+fn pad_mode_varispeed_pitch_offset_uses_playback_speed() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.engine.pitch_shift_algorithm = PitchShiftAlgorithm::Varispeed;
+    fixture.patch.slices[0].pitch = PitchOffset::from_frequency_ratio(2.0);
+    let mut left = [0.0; 4_096];
+    let mut right = [0.0; 4_096];
+
+    fixture.processor.process(
+        &fixture.patch,
+        Some(&fixture.analysis),
+        &[note_on(0, 36, 1.0)],
+        &mut left,
+        &mut right,
+    );
+
+    let estimated_hz = estimate_frequency_zero_crossings(&left[512..], 48_000.0).unwrap();
+    assert!(
+        (estimated_hz - 440.0).abs() < 3.0,
+        "expected 440 Hz varispeed output, got {estimated_hz:.2} Hz"
+    );
+}
+
+#[test]
+fn pad_mode_can_use_resample_stretch_pitch_shift_algorithm() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.slices[0].pitch = PitchOffset::from_frequency_ratio(2.0);
+    fixture.patch.engine.pitch_shift_algorithm = PitchShiftAlgorithm::ResampleStretch;
+
+    let trigger =
+        voice_trigger_from_note(&fixture.patch, &fixture.analysis, 36, 48_000.0, 1.0).unwrap();
+
+    assert_eq!(
+        trigger.algorithm,
+        PitchShiftSynthesisAlgorithm::ResampleStretch
+    );
+    assert_eq!(trigger.ratios.formant_ratio, None);
+}
+
+#[test]
 fn identity_pitch_playback_reads_source_samples_directly() {
     let fixture = RuntimeFixture::new();
     let source = fixture.analysis.audio.samples();
@@ -180,11 +253,40 @@ fn identity_pitch_playback_reads_source_samples_directly() {
     let sample = direct_region_sample(&fixture.analysis, 0, source.len(), 37.0);
 
     assert_eq!(sample, source[37]);
-    assert!(is_identity_pitch_request(PitchShiftRatios::identity()));
-    assert!(!is_identity_pitch_request(PitchShiftRatios {
-        pitch_ratio: 2.0,
-        formant_ratio: None,
-    }));
+}
+
+#[test]
+fn non_zero_slice_edges_are_declicked_without_envelope_attack() {
+    let sample_rate = 48_000;
+    let samples = vec![0.8; 256];
+    let analysis = source_analysis_from_samples(
+        samples,
+        sample_rate,
+        vec![SliceMarker {
+            position_samples: 0,
+            kind: MarkerKind::Auto,
+        }],
+        220.0,
+        "non_zero_slice.wav",
+    );
+    let patch = LinnodPatch::default();
+    let mut processor = LinnodProcessor::new(sample_rate as f32);
+    processor.prepare_source_analysis(&patch, &analysis);
+    let mut left = [0.0; 320];
+    let mut right = [0.0; 320];
+
+    processor.process(
+        &patch,
+        Some(&analysis),
+        &[note_on(0, 36, 1.0)],
+        &mut left,
+        &mut right,
+    );
+
+    assert!(left[0].abs() < 0.000_001);
+    assert!(left[16].abs() < left[96].abs() * 0.5);
+    assert!(left[255].abs() < left[160].abs() * 0.1);
+    assert_all_finite(&right);
 }
 
 #[test]
@@ -197,6 +299,29 @@ fn note_trigger_does_not_allocate() {
     fixture.process_no_alloc("linnod note trigger", &events, &mut left, &mut right);
 
     assert_eq!(fixture.processor.active_voice_count(), 1);
+}
+
+#[test]
+fn varispeed_pitch_shift_does_not_allocate() {
+    let mut fixture = RuntimeFixture::new();
+    fixture.patch.engine.pitch_shift_algorithm = PitchShiftAlgorithm::Varispeed;
+    fixture.patch.slices[0].pitch = PitchOffset {
+        semitones: 0,
+        cents: 1.0,
+    };
+    fixture.prepare_current_patch();
+    let events = [note_on(0, 36, 1.0)];
+    let mut left = [0.0; 128];
+    let mut right = [0.0; 128];
+
+    fixture.process_no_alloc(
+        "linnod varispeed pitch shift",
+        &events,
+        &mut left,
+        &mut right,
+    );
+
+    assert!(peak_abs(&left) > 0.000_01);
 }
 
 #[test]
@@ -336,10 +461,14 @@ impl RuntimeFixture {
     }
 
     fn with_markers(markers: Vec<SliceMarker>) -> Self {
+        let analysis = source_analysis(markers);
+        let patch = LinnodPatch::default();
+        let mut processor = LinnodProcessor::new(48_000.0);
+        processor.prepare_source_analysis(&patch, &analysis);
         Self {
-            processor: LinnodProcessor::new(48_000.0),
-            patch: LinnodPatch::default(),
-            analysis: source_analysis(markers),
+            processor,
+            patch,
+            analysis,
         }
     }
 
@@ -357,22 +486,42 @@ impl RuntimeFixture {
         assert_all_finite(left);
         assert_all_finite(right);
     }
+
+    fn prepare_current_patch(&mut self) {
+        self.processor.prepare_patch(&self.patch, &self.analysis);
+    }
 }
 
 fn source_analysis(markers: Vec<SliceMarker>) -> SourceAnalysis {
     let sample_rate = 48_000;
     let samples = sine_wave(220.0, sample_rate, 4_800);
+    source_analysis_from_samples(samples, sample_rate, markers, 220.0, "source.wav")
+}
+
+fn source_analysis_from_samples(
+    samples: Vec<f32>,
+    sample_rate: u32,
+    markers: Vec<SliceMarker>,
+    f0_hz: f32,
+    filename: &str,
+) -> SourceAnalysis {
     let owned_audio = OwnedMonoAudioBuffer::new(samples.clone(), sample_rate);
     let pitch_contour = PitchContour {
         source_sample_rate: sample_rate,
         analysis_sample_rate: sample_rate,
         hop_size: 1_200,
-        frames: vec![
-            pitch_frame(0, 0, Some(220.0)),
-            pitch_frame(1, 1_200, Some(220.0)),
-            pitch_frame(2, 2_400, Some(220.0)),
-            pitch_frame(3, 3_600, Some(220.0)),
-        ],
+        frames: (0..samples.len())
+            .step_by(1_200)
+            .enumerate()
+            .map(|(frame_index, source_sample_position)| {
+                pitch_frame(
+                    frame_index,
+                    source_sample_position,
+                    Some(f0_hz),
+                    sample_rate,
+                )
+            })
+            .collect(),
     };
     let pitch_shift_cache = PitchShiftAnalyzer::default()
         .analyze(&samples, sample_rate, &pitch_contour, &markers)
@@ -380,9 +529,9 @@ fn source_analysis(markers: Vec<SliceMarker>) -> SourceAnalysis {
 
     SourceAnalysis {
         source: SampleMetadata {
-            reference: SampleReference::new("hash", "Samples/source.wav"),
-            filename: "source.wav".to_string(),
-            duration_ms: 100,
+            reference: SampleReference::new("hash", format!("Samples/{filename}")),
+            filename: filename.to_string(),
+            duration_ms: ((samples.len() as f32 / sample_rate as f32) * 1_000.0).round() as u64,
             sample_rate,
             channels: 1,
             rms_db: None,
@@ -400,11 +549,12 @@ fn pitch_frame(
     frame_index: usize,
     source_sample_position: usize,
     f0_hz: Option<f32>,
+    sample_rate: u32,
 ) -> PitchFrame {
     PitchFrame {
         frame_index,
         source_sample_position,
-        timestamp_seconds: source_sample_position as f32 / 48_000.0,
+        timestamp_seconds: source_sample_position as f32 / sample_rate as f32,
         f0_hz,
         raw_f0_hz: f0_hz.unwrap_or(0.0),
         confidence: 0.95,

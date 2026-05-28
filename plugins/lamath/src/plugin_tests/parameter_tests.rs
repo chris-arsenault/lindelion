@@ -60,6 +60,7 @@ fn exposes_complete_patch_parameter_surface() {
         "Filter Mode",
         "Filter Resonance",
         "Routing",
+        "Resonator Mix",
         "Retrigger Resonators",
         "Resonator A Model",
         "Resonator A Modal Preset",
@@ -128,8 +129,8 @@ fn removed_global_loop_gain_parameter_is_ignored() {
 }
 
 #[test]
-fn model_and_routing_parameters_are_explicit_binary_choices() {
-    for id in [10, 13, 20, 35, 40, 55] {
+fn model_and_retrigger_parameters_are_explicit_binary_choices() {
+    for id in [13, 20, 35, 40, 55] {
         let parameter = PARAMETERS
             .iter()
             .find(|parameter| parameter.id.0 == id)
@@ -143,6 +144,18 @@ fn model_and_routing_parameters_are_explicit_binary_choices() {
         assert_eq!(parameter.range.min, 0.0, "parameter {}", parameter.name);
         assert_eq!(parameter.range.max, 1.0, "parameter {}", parameter.name);
     }
+}
+
+#[test]
+fn routing_parameter_exposes_parallel_series_and_body_color_modes() {
+    let parameter = PARAMETERS
+        .iter()
+        .find(|parameter| parameter.id.0 == 10)
+        .expect("routing parameter should exist");
+
+    assert_eq!(parameter.step_count, Some(2));
+    assert_eq!(parameter.range.min, 0.0);
+    assert_eq!(parameter.range.max, 2.0);
 }
 
 #[test]
@@ -252,6 +265,10 @@ fn structural_parameters_have_explicit_apply_policies() {
         ParameterApplyKind::Live
     );
     assert_eq!(
+        apply_parameter_plain(&mut patch, RESONATOR_MIX_PARAMETER_ID, 0.5),
+        ParameterApplyKind::Live
+    );
+    assert_eq!(
         apply_parameter_plain(&mut patch, 101, 1.0),
         ParameterApplyKind::Live
     );
@@ -308,11 +325,81 @@ fn routing_switch_preserves_parallel_mix_values() {
     set_parameter_plain(&mut synth, 10, 1.0);
     assert_series_mix(synth.patch().routing, 0.8, 0.2);
 
+    set_parameter_plain(&mut synth, 10, 2.0);
+    assert_body_color_mix(synth.patch().routing, 0.8, 0.2);
+
     set_parameter_plain(&mut synth, 11, 0.25);
-    assert_series_mix(synth.patch().routing, 0.25, 0.2);
+    assert_body_color_mix(synth.patch().routing, 0.25, 0.2);
 
     set_parameter_plain(&mut synth, 10, 0.0);
     assert_parallel_mix(synth.patch().routing, 0.25, 0.2);
+}
+
+#[test]
+fn resonator_mix_balance_sets_parallel_mix_values() {
+    let mut synth = ResonatorSynth::default();
+    assert_parallel_mix(synth.patch().routing, 1.0, 0.0);
+
+    set_parameter_plain(&mut synth, RESONATOR_MIX_PARAMETER_ID, 0.5);
+    assert_parallel_mix(synth.patch().routing, 0.5, 0.5);
+
+    set_parameter_plain(&mut synth, RESONATOR_MIX_PARAMETER_ID, 1.0);
+    assert_parallel_mix(synth.patch().routing, 0.0, 1.0);
+}
+
+#[test]
+fn modal_modal_series_selection_uses_body_color() {
+    let mut synth = ResonatorSynth::default();
+
+    set_parameter_plain(&mut synth, 11, 0.7);
+    set_parameter_plain(&mut synth, 12, 0.3);
+    set_parameter_plain(&mut synth, 40, 0.0);
+    set_parameter_plain(&mut synth, 10, 1.0);
+
+    assert_body_color_mix(synth.patch().routing, 0.7, 0.3);
+    assert_eq!(
+        patch_parameter_plain_value(synth.patch(), 10),
+        Some(2.0),
+        "modal-modal series should canonicalize to the body-color routing value",
+    );
+}
+
+#[test]
+fn modal_modal_existing_series_becomes_body_color_when_model_changes() {
+    let mut synth = ResonatorSynth::default();
+
+    set_parameter_plain(&mut synth, 11, 0.6);
+    set_parameter_plain(&mut synth, 12, 0.4);
+    set_parameter_plain(&mut synth, 10, 1.0);
+    assert_series_mix(synth.patch().routing, 0.6, 0.4);
+
+    set_parameter_plain(&mut synth, 40, 0.0);
+
+    assert_body_color_mix(synth.patch().routing, 0.6, 0.4);
+}
+
+#[test]
+fn non_modal_modal_pairs_keep_raw_series_available() {
+    let mut modal_waveguide = ResonatorSynth::default();
+    set_parameter_plain(&mut modal_waveguide, 11, 0.9);
+    set_parameter_plain(&mut modal_waveguide, 12, 0.1);
+    set_parameter_plain(&mut modal_waveguide, 10, 1.0);
+    assert_series_mix(modal_waveguide.patch().routing, 0.9, 0.1);
+
+    let mut waveguide_modal = ResonatorSynth::default();
+    set_parameter_plain(&mut waveguide_modal, 11, 0.5);
+    set_parameter_plain(&mut waveguide_modal, 12, 0.5);
+    set_parameter_plain(&mut waveguide_modal, 20, 1.0);
+    set_parameter_plain(&mut waveguide_modal, 40, 0.0);
+    set_parameter_plain(&mut waveguide_modal, 10, 1.0);
+    assert_series_mix(waveguide_modal.patch().routing, 0.5, 0.5);
+
+    let mut waveguide_waveguide = ResonatorSynth::default();
+    set_parameter_plain(&mut waveguide_waveguide, 11, 0.5);
+    set_parameter_plain(&mut waveguide_waveguide, 12, 0.5);
+    set_parameter_plain(&mut waveguide_waveguide, 20, 1.0);
+    set_parameter_plain(&mut waveguide_waveguide, 10, 1.0);
+    assert_series_mix(waveguide_waveguide.patch().routing, 0.5, 0.5);
 }
 
 fn assert_resonator_model(config: ResonatorConfig, expected: u8) {
@@ -336,6 +423,13 @@ fn assert_parallel_mix(routing: ResonatorRouting, expected_a: f32, expected_b: f
 fn assert_series_mix(routing: ResonatorRouting, expected_a: f32, expected_b: f32) {
     let ResonatorRouting::Series { mix_a, mix_b } = routing else {
         panic!("expected series routing, got {routing:?}");
+    };
+    assert_mix_values(mix_a, mix_b, expected_a, expected_b);
+}
+
+fn assert_body_color_mix(routing: ResonatorRouting, expected_a: f32, expected_b: f32) {
+    let ResonatorRouting::BodyColor { mix_a, mix_b } = routing else {
+        panic!("expected body-color routing, got {routing:?}");
     };
     assert_mix_values(mix_a, mix_b, expected_a, expected_b);
 }

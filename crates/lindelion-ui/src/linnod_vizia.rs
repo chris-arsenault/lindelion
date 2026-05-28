@@ -82,6 +82,15 @@ pub enum LinnodEditorTriggerMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LinnodEditorPitchShiftAlgorithm {
+    #[default]
+    SpectralPeak,
+    Varispeed,
+    TimeStretch,
+    ResampleStretch,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LinnodEditorPlaybackMode {
     #[default]
     OneShot,
@@ -249,6 +258,7 @@ pub struct LinnodEditorPatchSummary {
     pub playback: LinnodEditorPlaybackConfig,
     pub detection: LinnodEditorDetectionConfig,
     pub trigger_mode: LinnodEditorTriggerMode,
+    pub pitch_shift_algorithm: LinnodEditorPitchShiftAlgorithm,
     pub tuning_reference_hz: f32,
     pub tuning_root_label: String,
     pub tuning_scale_label: String,
@@ -268,6 +278,7 @@ impl Default for LinnodEditorPatchSummary {
             playback: LinnodEditorPlaybackConfig::default(),
             detection: LinnodEditorDetectionConfig::default(),
             trigger_mode: LinnodEditorTriggerMode::Pad,
+            pitch_shift_algorithm: LinnodEditorPitchShiftAlgorithm::SpectralPeak,
             tuning_reference_hz: 440.0,
             tuning_root_label: "A".to_string(),
             tuning_scale_label: "Chromatic".to_string(),
@@ -304,6 +315,7 @@ pub enum LinnodEditorCommand {
     TuneAllSlices,
     SnapAllSlicesToScale,
     SetTriggerMode(LinnodEditorTriggerMode),
+    SetPitchShiftAlgorithm(LinnodEditorPitchShiftAlgorithm),
     SelectPad(PadId),
 }
 

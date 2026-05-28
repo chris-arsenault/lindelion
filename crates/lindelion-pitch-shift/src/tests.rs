@@ -1,7 +1,14 @@
+use super::*;
+use lindelion_dsp_utils::analysis::{
+    fitted_sine_rms_error, high_frequency_artifact_ratio, rms_difference,
+};
 use lindelion_onset_detect::{MarkerKind, SliceMarker};
 use lindelion_pitch_detect::{PitchContour, PitchFrame};
 
-use super::*;
+mod resample_pro;
+mod resample_stretch;
+mod sax_fixture;
+mod varispeed;
 
 #[test]
 fn source_cache_key_is_deterministic_and_source_derived() {
@@ -174,8 +181,13 @@ fn synthesis_shifts_sine_to_expected_output_frequency() {
     .analyze(&audio, sample_rate, &contour, &markers(&[0]))
     .unwrap();
 
-    for (semitones, expected_hz) in [(-12.0, 110.0), (7.0, 329.63), (12.0, 440.0)] {
-        let pitch_ratio = PitchShiftRatios::from_semitones_cents(semitones, 0.0).pitch_ratio;
+    for (semitones, cents, expected_hz) in [
+        (-12.0, 0.0, 110.0),
+        (0.0, 50.0, 226.446),
+        (7.0, 0.0, 329.63),
+        (12.0, 0.0, 440.0),
+    ] {
+        let pitch_ratio = PitchShiftRatios::from_semitones_cents(semitones, cents).pitch_ratio;
         let rendered = PitchShiftEngine
             .render_slice(
                 &audio,
@@ -199,11 +211,84 @@ fn synthesis_shifts_sine_to_expected_output_frequency() {
             sample_rate as f32,
         )
         .unwrap();
+        let steady = &rendered[2_048..rendered.len() - 2_048];
+        let fitted_error = fitted_sine_rms_error(steady, sample_rate as f32, expected_hz);
+        let high_artifact_ratio =
+            high_frequency_artifact_ratio(steady, sample_rate as f32, expected_hz);
         assert!(
             (estimated_hz - expected_hz).abs() < 2.0,
-            "expected {expected_hz:.2} Hz from {semitones:+.0} st, got {estimated_hz:.2} Hz"
+            "expected {expected_hz:.2} Hz from {semitones:+.0} st {cents:+.0} c, got {estimated_hz:.2} Hz"
+        );
+        assert!(
+            fitted_error < 0.01,
+            "sine shift {semitones:+.0} st {cents:+.0} c should remain near-sinusoidal; fitted_error={fitted_error}"
+        );
+        assert!(
+            high_artifact_ratio < 0.002,
+            "sine shift {semitones:+.0} st {cents:+.0} c added high-frequency artifact ratio={high_artifact_ratio}"
         );
     }
+}
+
+#[test]
+fn synthesis_one_cent_sine_is_near_ideal_and_low_artifact() {
+    let sample_rate = 48_000;
+    let source_f0_hz = 220.0;
+    let audio = sine_wave(source_f0_hz, sample_rate, sample_rate as usize);
+    let contour = constant_pitch_contour(sample_rate, source_f0_hz, audio.len());
+    let source_cache = PitchShiftAnalyzer::new(PitchShiftAnalysisConfig {
+        frame_size: 4096,
+        envelope_points: 128,
+        ..PitchShiftAnalysisConfig::default()
+    })
+    .analyze(&audio, sample_rate, &contour, &markers(&[0]))
+    .unwrap();
+    let pitch_ratio = PitchShiftRatios::from_semitones_cents(0.0, 1.0).pitch_ratio;
+    let rendered = PitchShiftEngine
+        .render_slice(
+            &audio,
+            &source_cache,
+            PitchShiftSliceRenderRequest {
+                slice_index: 0,
+                config: PitchShiftRenderConfig {
+                    ratios: PitchShiftRatios {
+                        pitch_ratio,
+                        formant_ratio: Some(pitch_ratio),
+                    },
+                    residual_policy: ResidualMixPolicy::Muted,
+                    ..PitchShiftRenderConfig::default()
+                },
+            },
+        )
+        .unwrap();
+    let steady = &rendered[4_096..rendered.len() - 4_096];
+    let target_hz = source_f0_hz * pitch_ratio;
+    let estimated_hz = lindelion_dsp_utils::analysis::estimate_frequency_zero_crossings(
+        steady,
+        sample_rate as f32,
+    )
+    .unwrap();
+    let ideal = sine_wave(target_hz, sample_rate, rendered.len());
+    let ideal_steady = &ideal[4_096..ideal.len() - 4_096];
+    let fitted_error = fitted_sine_rms_error(steady, sample_rate as f32, target_hz);
+    let high_artifact_ratio = high_frequency_artifact_ratio(steady, sample_rate as f32, target_hz);
+
+    assert!(
+        (estimated_hz - target_hz).abs() < 0.2,
+        "expected {target_hz:.3} Hz, got {estimated_hz:.3} Hz"
+    );
+    assert!(
+        fitted_error < 0.003,
+        "1-cent sine shift should stay near sinusoidal; fitted_error={fitted_error}"
+    );
+    assert!(
+        rms_difference(steady, ideal_steady) < 0.01,
+        "1-cent sine shift should stay close to ideal shifted sine"
+    );
+    assert!(
+        high_artifact_ratio < 0.002,
+        "unexpected high-frequency artifact energy ratio={high_artifact_ratio}"
+    );
 }
 
 #[test]

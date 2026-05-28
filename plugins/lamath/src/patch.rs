@@ -57,6 +57,16 @@ impl Default for ResonatorSynthPatch {
     }
 }
 
+impl ResonatorSynthPatch {
+    pub(crate) fn normalize_routing_for_resonator_models(&mut self) {
+        self.routing = normalize_routing_for_resonator_models(
+            self.routing,
+            self.resonator_a,
+            self.resonator_b,
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AudioInputConfig {
     pub mode: AudioInputMode,
@@ -228,6 +238,22 @@ pub(crate) const fn default_boundary_reflection() -> f32 {
 pub enum ResonatorRouting {
     Parallel { mix_a: f32, mix_b: f32 },
     Series { mix_a: f32, mix_b: f32 },
+    BodyColor { mix_a: f32, mix_b: f32 },
+}
+
+pub(crate) fn normalize_routing_for_resonator_models(
+    routing: ResonatorRouting,
+    resonator_a: ResonatorConfig,
+    resonator_b: ResonatorConfig,
+) -> ResonatorRouting {
+    match (routing, resonator_a, resonator_b) {
+        (
+            ResonatorRouting::Series { mix_a, mix_b },
+            ResonatorConfig::Modal(_),
+            ResonatorConfig::Modal(_),
+        ) => ResonatorRouting::BodyColor { mix_a, mix_b },
+        (routing, _, _) => routing,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

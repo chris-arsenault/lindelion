@@ -13,215 +13,9 @@ impl Default for ResonatorEditorSize {
     }
 }
 
-const STYLE: &str = r#"
-    :root {
-        background-color: #101315;
-        color: #d9e1dd;
-        font-size: 12px;
-    }
-
-    label {
-        color: #cbd4cf;
-    }
-
-    .muted {
-        color: #7e8a86;
-    }
-
-    .title {
-        font-size: 17px;
-        color: #edf5ef;
-    }
-
-    .section-title {
-        font-size: 12px;
-        color: #edf5ef;
-    }
-
-    .root {
-        background-color: #101315;
-    }
-
-    .topbar {
-        background-color: #171b1d;
-        border-width: 1px;
-        border-color: #283036;
-        border-radius: 8px;
-        padding: 14px;
-    }
-
-    .panel {
-        background-color: #151a1d;
-        border-width: 1px;
-        border-color: #283139;
-        border-radius: 8px;
-        padding: 14px;
-    }
-
-    .strip {
-        background-color: #111619;
-        border-width: 1px;
-        border-color: #263239;
-        border-radius: 6px;
-    }
-
-    .slot-row {
-        background-color: #1b2124;
-        border-width: 1px;
-        border-color: #2f3a40;
-        border-radius: 6px;
-        padding: 9px;
-    }
-
-    .slot-active {
-        border-color: #6da684;
-    }
-
-    .sample-row {
-        background-color: #1b2124;
-        border-width: 1px;
-        border-color: #2f3a40;
-        border-radius: 6px;
-        padding: 6px;
-    }
-
-    .sample-selected {
-        border-color: #7fc49c;
-        background-color: #202a25;
-    }
-
-    .chip {
-        background-color: #20282d;
-        border-width: 1px;
-        border-color: #37434a;
-        border-radius: 6px;
-        color: #b9c7c0;
-        font-size: 10px;
-        padding-left: 8px;
-        padding-right: 8px;
-    }
-
-    .chip-on {
-        background-color: #26392f;
-        border-color: #6da684;
-        color: #d8efe0;
-    }
-
-    .chip-warm {
-        background-color: #3a3124;
-        border-color: #b2844c;
-        color: #efd8b7;
-    }
-
-    button.toolbar-button {
-        background-color: #20272b;
-        border-width: 1px;
-        border-color: #39454d;
-        border-radius: 6px;
-        color: #dce6e0;
-    }
-
-    button.toolbar-button:hover {
-        background-color: #263139;
-        border-color: #6d91a6;
-    }
-
-    .segmented {
-        background-color: #0f1417;
-        border-width: 1px;
-        border-color: #2c373e;
-        border-radius: 6px;
-        padding: 2px;
-    }
-
-    button.seg-button {
-        background-color: transparent;
-        border-width: 0px;
-        border-radius: 4px;
-        color: #8f9c97;
-        font-size: 10px;
-    }
-
-    button.seg-button:hover {
-        background-color: #20282d;
-        color: #d9e1dd;
-    }
-
-    button.seg-active {
-        background-color: #2b4436;
-        color: #e5f5e9;
-    }
-
-    .toolbar-icon {
-        color: #dce6e0;
-        width: 17px;
-        height: 17px;
-    }
-
-    .meter-label {
-        color: #8f9c97;
-        font-size: 10px;
-    }
-
-    .value-label {
-        color: #e8f0ea;
-        font-size: 11px;
-    }
-
-    knob {
-        width: 54px;
-        height: 54px;
-    }
-
-    .knob-track {
-        color: #7fc49c;
-        background-color: #263036;
-    }
-
-    .knob-head {
-        color: #eef6f0;
-    }
-
-    .knob-tick {
-        background-color: #eef6f0;
-        width: 3px;
-        height: 16px;
-        border-radius: 2px;
-    }
-
-    slider {
-        height: 22px;
-    }
-
-    slider .track {
-        background-color: #253038;
-        border-radius: 4px;
-    }
-
-    slider .active {
-        background-color: #82bc98;
-        border-radius: 4px;
-    }
-
-    slider .thumb {
-        background-color: #e8f0ea;
-        border-color: #0f1214;
-        border-width: 1px;
-        border-radius: 6px;
-        width: 13px;
-        height: 18px;
-    }
-
-    .tooltip {
-        background-color: #20272b;
-        border-width: 1px;
-        border-color: #48545c;
-        border-radius: 5px;
-    }
-"#;
-
 pub struct ResonatorViziaEditor {
     window: WindowHandle,
+    drop_targets: Option<platform_drop::NativeLayerDropTargets>,
 }
 
 impl ResonatorViziaEditor {
@@ -236,12 +30,17 @@ impl ResonatorViziaEditor {
         let window =
             unsafe { build_resonator_application_with_parent(host, size, parent_view) }
                 .open_parented(&parent);
-        Self { window }
+        let drop_targets = platform_drop::NativeLayerDropTargets::install(&window, host);
+        Self {
+            window,
+            drop_targets,
+        }
     }
 }
 
 impl Drop for ResonatorViziaEditor {
     fn drop(&mut self) {
+        self.drop_targets.take();
         if self.window.is_open() {
             self.window.close();
         }
@@ -263,7 +62,7 @@ impl EditorValues {
         Self {
             parameters: unsafe { EditorParameterValues::from_host(host) },
             selected_slot: 0.0,
-            selected_sample: 0.0,
+            selected_sample: -1.0,
             command_status: None,
             telemetry: unsafe { host.telemetry() },
             summary: unsafe { host.summary() },
@@ -392,6 +191,9 @@ struct EditorSignals {
     patch_name: Signal<String>,
     slot_summaries: Signal<[ResonatorEditorSlotSummary; 4]>,
     library_samples: Signal<Vec<ResonatorEditorSampleSummary>>,
+    library_page_start: Signal<usize>,
+    library_location: Signal<String>,
+    settings_open: Signal<bool>,
 }
 
 impl EditorSignals {
@@ -455,7 +257,13 @@ impl PendingEditorDialog {
 enum EditorEvent {
     SetParameter { id: u32, normalized: f32 },
     Command(UiCommand),
-    SelectLibrarySample(usize),
+    UseLibrarySample(usize),
+    ChooseSampleFile,
+    AddLibrarySample,
+    LibraryPagePrevious,
+    LibraryPageNext,
+    ToggleSettings,
+    CloseSettings,
     SyncFromController,
 }
 
@@ -494,9 +302,75 @@ impl Model for EditorModel {
                 }
                 self.signals.command_status.set(Some(dispatch.command));
             }
-            EditorEvent::SelectLibrarySample(index) => {
+            EditorEvent::UseLibrarySample(index) => {
+                if self.signals.library_samples.get().get(*index).is_none() {
+                    return;
+                }
                 self.selected_library_sample = Some(*index);
                 self.signals.selected_sample.set(*index as f32);
+                let dispatch = self.command_bus.dispatch(UiCommand::LoadSelectedExcitationSlot);
+                if let Some(slot) = dispatch.selected_slot {
+                    self.signals.selected_slot.set(f32::from(slot.0 - 1));
+                }
+                handle_editor_command(
+                    self.host,
+                    Some(dispatch.command),
+                    self.selected_library_sample,
+                    None,
+                );
+                unsafe {
+                    sync_summary_from_controller(self.host, self.signals);
+                }
+                self.signals.command_status.set(Some(dispatch.command));
+            }
+            EditorEvent::ChooseSampleFile => {
+                self.selected_library_sample = None;
+                self.signals.selected_sample.set(-1.0);
+                let dispatch = self.command_bus.dispatch(UiCommand::LoadSelectedExcitationSlot);
+                if let Some(slot) = dispatch.selected_slot {
+                    self.signals.selected_slot.set(f32::from(slot.0 - 1));
+                }
+                if let Some(pending) = start_editor_dialog(
+                    self.host,
+                    self.signals.dialog_parent,
+                    dispatch.command,
+                    None,
+                ) {
+                    self.pending_dialog = Some(pending);
+                }
+                self.signals.command_status.set(Some(dispatch.command));
+            }
+            EditorEvent::AddLibrarySample => {
+                self.selected_library_sample = None;
+                self.signals.selected_sample.set(-1.0);
+                let command = UiCommand::OpenLibrary;
+                let directories = unsafe { self.host.directories() };
+                self.pending_dialog = Some(PendingEditorDialog::pick_file(
+                    command,
+                    None,
+                    wav_audio_dialog(&directories.sample_directory, self.signals.dialog_parent),
+                ));
+                self.signals.command_status.set(Some(command));
+            }
+            EditorEvent::LibraryPagePrevious => {
+                let current = self.signals.library_page_start.get();
+                self.signals
+                    .library_page_start
+                    .set(current.saturating_sub(LIBRARY_BROWSER_ROWS));
+            }
+            EditorEvent::LibraryPageNext => {
+                let sample_count = self.signals.library_samples.get().len();
+                let current = self.signals.library_page_start.get();
+                self.signals.library_page_start.set(clamped_library_page_start(
+                    current.saturating_add(LIBRARY_BROWSER_ROWS),
+                    sample_count,
+                ));
+            }
+            EditorEvent::ToggleSettings => {
+                self.signals.settings_open.set(!self.signals.settings_open.get());
+            }
+            EditorEvent::CloseSettings => {
+                self.signals.settings_open.set(false);
             }
             EditorEvent::SyncFromController => unsafe {
                 self.complete_pending_dialog();
@@ -506,6 +380,42 @@ impl Model for EditorModel {
             },
         });
     }
+}
+
+const LIBRARY_BROWSER_ROWS: usize = 3;
+
+fn clamped_library_page_start(start: usize, sample_count: usize) -> usize {
+    if sample_count <= LIBRARY_BROWSER_ROWS {
+        0
+    } else {
+        start.min(sample_count - LIBRARY_BROWSER_ROWS)
+    }
+}
+
+fn clamp_library_page_signal(signals: EditorSignals, sample_count: usize) {
+    let current = signals.library_page_start.get();
+    signals
+        .library_page_start
+        .set(clamped_library_page_start(current, sample_count));
+}
+
+fn is_resonator_supported_audio_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("wav") || extension.eq_ignore_ascii_case("wave")
+        })
+}
+
+fn transient_exciter_audio_path() -> PathBuf {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    env::temp_dir().join(format!(
+        "lamath-exciter-audio-{}-{timestamp}.wav",
+        process::id()
+    ))
 }
 
 impl EditorModel {

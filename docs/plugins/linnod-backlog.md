@@ -25,12 +25,12 @@ This file tracks work that is not part of the current implemented Linnod spec in
 
 ## Product Extensions
 
+- Add bounded chromatic Resample Stretch variant preparation. Chromatic mode plays one selected slice across the keyboard, so a Resample Stretch patch needs a defined MIDI-note range, memory limit, and setup-time policy for pre-rendering shifted variants of that slice. Until that policy exists, Linnod prepares only the selected root-note variant and treats any unprepared shifted chromatic note as silence rather than falling back to unshifted audio or another pitch algorithm.
 - Multiple banks of 16 pads.
 - Multiple source samples per patch.
 - Per-slice modulation slots.
 - MIDI export for common chop patterns.
 - Stereo source preservation.
-- Optional phase-vocoder pitch-shift mode for non-pitched or polyphonic content.
 
 ---
 

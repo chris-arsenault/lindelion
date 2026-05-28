@@ -38,7 +38,7 @@ fn draw_waveform_body(
     let source_span = source_span_samples(summary).max(1) as f32;
     let start = range.start as f32 / source_span;
     let end = range.end as f32 / source_span;
-    let target_points = rect.w.ceil().clamp(16.0, 2048.0) as usize;
+    let target_points = (rect.w.ceil() * 2.0).clamp(32.0, 4096.0) as usize;
     let points = crate::waveform_points_for_view(waveform, start, end, target_points);
     let gain = crate::waveform_display_normalization_gain(waveform);
     draw_peak_area(rect, canvas, &points, gain, compact);
@@ -307,6 +307,92 @@ fn draw_viewport_overview(
         vg::Rect::new(left, rect.y + 2.0, right.max(left + 3.0), rect.y + rect.h - 2.0),
         &paint,
     );
+}
+
+fn draw_waveform_overview(
+    rect: WaveformRect,
+    canvas: &Canvas,
+    summary: &LinnodEditorPatchSummary,
+    range: WaveformRange,
+) {
+    let full_range = WaveformRange {
+        start: 0,
+        end: source_span_samples(summary),
+    };
+    draw_selected_slice_region(rect, canvas, summary, full_range);
+    draw_waveform_body(rect, canvas, &summary.waveform, summary, full_range, true);
+    draw_viewport_overview(rect, canvas, summary, range);
+}
+
+fn draw_waveform_controls(bounds: BoundingBox, canvas: &Canvas) {
+    for (control, rect) in waveform_control_rects(bounds) {
+        draw_waveform_control(rect, canvas, control);
+    }
+}
+
+fn draw_waveform_control(rect: WaveformRect, canvas: &Canvas, control: WaveformControl) {
+    draw_rect(
+        canvas,
+        vg::Rect::new(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h),
+        Color::rgba(23, 30, 32, 220),
+    );
+    draw_waveform_control_border(rect, canvas);
+    match control {
+        WaveformControl::ZoomOut => draw_zoom_minus(rect, canvas),
+        WaveformControl::Focus => draw_focus_icon(rect, canvas),
+        WaveformControl::ZoomIn => draw_zoom_plus(rect, canvas),
+    }
+}
+
+fn draw_waveform_control_border(rect: WaveformRect, canvas: &Canvas) {
+    let mut paint = vg::Paint::default();
+    paint.set_color(Color::rgba(116, 134, 137, 175));
+    paint.set_stroke_width(1.0);
+    paint.set_style(vg::PaintStyle::Stroke);
+    paint.set_anti_alias(true);
+    canvas.draw_rect(
+        vg::Rect::new(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h),
+        &paint,
+    );
+}
+
+fn draw_zoom_minus(rect: WaveformRect, canvas: &Canvas) {
+    let center_y = rect.y + rect.h * 0.5;
+    draw_line(
+        canvas,
+        rect.x + 5.0,
+        center_y,
+        rect.x + rect.w - 5.0,
+        center_y,
+        Color::rgba(226, 236, 229, 230),
+        1.5,
+    );
+}
+
+fn draw_zoom_plus(rect: WaveformRect, canvas: &Canvas) {
+    draw_zoom_minus(rect, canvas);
+    let center_x = rect.x + rect.w * 0.5;
+    draw_line(
+        canvas,
+        center_x,
+        rect.y + 5.0,
+        center_x,
+        rect.y + rect.h - 5.0,
+        Color::rgba(226, 236, 229, 230),
+        1.5,
+    );
+}
+
+fn draw_focus_icon(rect: WaveformRect, canvas: &Canvas) {
+    let left = rect.x + 5.0;
+    let right = rect.x + rect.w - 5.0;
+    let top = rect.y + 5.0;
+    let bottom = rect.y + rect.h - 5.0;
+    let color = Color::rgba(242, 168, 75, 235);
+    draw_line(canvas, left, top, right, top, color, 1.35);
+    draw_line(canvas, right, top, right, bottom, color, 1.35);
+    draw_line(canvas, right, bottom, left, bottom, color, 1.35);
+    draw_line(canvas, left, bottom, left, top, color, 1.35);
 }
 
 fn draw_empty_wave(rect: WaveformRect, canvas: &Canvas) {

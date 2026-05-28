@@ -27,6 +27,7 @@ pub use lindelion_audio_expression::{
     streaming_audio_analysis_note_detector,
 };
 pub use parameters::PARAMETERS;
+pub(crate) use patch::normalize_routing_for_resonator_models;
 pub use patch::{
     AudioExpressionConfig, AudioInputConfig, AudioInputMode, EnvelopeConfig, ExcitationSlot,
     FilterMode, LfoConfig, LfoShape, LiveExcitationConfig, LiveExcitationMode, ModalConfig,
@@ -58,6 +59,8 @@ use lindelion_plugin_shell::PluginDescriptor;
 
 #[cfg(test)]
 pub(crate) use parameters::ParameterCodec;
+#[cfg(test)]
+pub(crate) use parameters::RESONATOR_MIX_PARAMETER_ID;
 #[cfg(test)]
 pub(crate) use parameters::patch_parameter_plain_value;
 pub(crate) use parameters::{

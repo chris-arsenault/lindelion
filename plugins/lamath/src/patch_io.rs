@@ -11,27 +11,27 @@ pub type PatchIoError = TomlPatchError;
 const PATCH_FORMAT: TomlPatchFormat<ResonatorSynthPatch> = TomlPatchFormat::new(FORMAT_VERSION);
 
 pub fn to_toml_string(patch: &ResonatorSynthPatch) -> Result<String, PatchIoError> {
-    PATCH_FORMAT.to_toml_string(patch)
+    PATCH_FORMAT.to_toml_string(&normalized_patch(patch.clone()))
 }
 
 pub fn from_toml_str(input: &str) -> Result<ResonatorSynthPatch, PatchIoError> {
-    PATCH_FORMAT.from_toml_str(input)
+    PATCH_FORMAT.from_toml_str(input).map(normalized_patch)
 }
 
 pub fn save_patch(path: impl AsRef<Path>, patch: &ResonatorSynthPatch) -> Result<(), PatchIoError> {
-    PATCH_FORMAT.save_patch(path, patch)
+    PATCH_FORMAT.save_patch(path, &normalized_patch(patch.clone()))
 }
 
 pub fn load_patch(path: impl AsRef<Path>) -> Result<ResonatorSynthPatch, PatchIoError> {
-    PATCH_FORMAT.load_patch(path)
+    PATCH_FORMAT.load_patch(path).map(normalized_patch)
 }
 
 pub fn to_plugin_state(patch: &ResonatorSynthPatch) -> Result<PluginState, PatchIoError> {
-    PATCH_FORMAT.to_plugin_state(patch)
+    PATCH_FORMAT.to_plugin_state(&normalized_patch(patch.clone()))
 }
 
 pub fn from_plugin_state(state: PluginState) -> Result<ResonatorSynthPatch, PatchIoError> {
-    PATCH_FORMAT.from_plugin_state(state)
+    PATCH_FORMAT.from_plugin_state(state).map(normalized_patch)
 }
 
 pub fn save_library_patch(
@@ -45,10 +45,18 @@ pub fn load_library_patch(path: impl AsRef<Path>) -> Result<ResonatorSynthPatch,
     load_patch(path)
 }
 
+fn normalized_patch(mut patch: ResonatorSynthPatch) -> ResonatorSynthPatch {
+    patch.normalize_routing_for_resonator_models();
+    patch
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AudioInputMode, FilterMode, LiveExcitationMode, OutputConfig};
+    use crate::{
+        AudioInputMode, FilterMode, LiveExcitationMode, ModalConfig, OutputConfig, ResonatorConfig,
+        ResonatorRouting,
+    };
 
     #[test]
     fn patch_toml_roundtrips_v2_surface() {
@@ -109,6 +117,29 @@ mod tests {
         );
         assert_eq!(restored.name, "Patch TOML");
         assert_v2_surface_matches(&restored);
+    }
+
+    #[test]
+    fn patch_io_canonicalizes_modal_modal_series_to_body_color() {
+        let mut patch = ResonatorSynthPatch {
+            resonator_b: ResonatorConfig::Modal(ModalConfig::default()),
+            routing: ResonatorRouting::Series {
+                mix_a: 0.7,
+                mix_b: 0.3,
+            },
+            ..ResonatorSynthPatch::default()
+        };
+
+        let encoded = to_toml_string(&patch).unwrap();
+        let decoded = from_toml_str(&encoded).unwrap();
+        assert_body_color_mix(decoded.routing, 0.7, 0.3);
+
+        let restored = from_plugin_state(to_plugin_state(&patch).unwrap()).unwrap();
+        assert_body_color_mix(restored.routing, 0.7, 0.3);
+
+        patch.resonator_a = ResonatorConfig::Waveguide(Default::default());
+        let mixed = from_toml_str(&to_toml_string(&patch).unwrap()).unwrap();
+        assert!(matches!(mixed.routing, ResonatorRouting::Series { .. }));
     }
 
     #[test]
@@ -188,5 +219,13 @@ mod tests {
         assert!((patch.live_excitation.latch_window_ms - 180.0).abs() < 0.001);
         assert!((patch.live_excitation.latch_pre_roll_ms - 30.0).abs() < 0.001);
         assert!((patch.live_excitation.latch_fade_ms - 10.0).abs() < 0.001);
+    }
+
+    fn assert_body_color_mix(routing: ResonatorRouting, expected_a: f32, expected_b: f32) {
+        let ResonatorRouting::BodyColor { mix_a, mix_b } = routing else {
+            panic!("expected body-color routing, got {routing:?}");
+        };
+        assert!((mix_a - expected_a).abs() < 0.001, "mix_a={mix_a}");
+        assert!((mix_b - expected_b).abs() < 0.001, "mix_b={mix_b}");
     }
 }

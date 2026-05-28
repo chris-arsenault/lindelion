@@ -43,8 +43,8 @@ pub fn from_plugin_state(state: PluginState) -> Result<LinnodPatch, PatchIoError
 mod tests {
     use super::*;
     use crate::patch::{
-        ChokeGroupId, EnvelopeConfig, PadEdit, PadId, PitchOffset, PlaybackEdit, PlaybackMode,
-        SLICE_COUNT, SliceEdit, TriggerMode,
+        ChokeGroupId, EngineConfig, EnvelopeConfig, PadEdit, PadId, PitchOffset,
+        PitchShiftAlgorithm, PlaybackEdit, PlaybackMode, SLICE_COUNT, SliceEdit, TriggerMode,
     };
     use lindelion_midi::{RootNote, Scale};
 
@@ -63,6 +63,9 @@ mod tests {
     fn schema_roundtrip_patch() -> LinnodPatch {
         let mut patch = LinnodPatch {
             name: "Roundtrip".to_string(),
+            engine: EngineConfig {
+                pitch_shift_algorithm: PitchShiftAlgorithm::ResampleStretch,
+            },
             trigger_mode: TriggerMode::Chromatic,
             ..LinnodPatch::default()
         };
@@ -99,6 +102,7 @@ mod tests {
 
     fn assert_encoded_schema(encoded: &str) {
         assert!(encoded.contains("format_version = 1"));
+        assert!(encoded.contains("[patch.engine]"));
         assert!(encoded.contains("[patch.playback]"));
         assert!(encoded.contains("[patch.tuning]"));
         assert!(encoded.contains("choke_group"));
@@ -107,6 +111,10 @@ mod tests {
 
     fn assert_decoded_patch_header(decoded: &LinnodPatch) {
         assert_eq!(decoded.name, "Roundtrip");
+        assert_eq!(
+            decoded.engine.pitch_shift_algorithm,
+            PitchShiftAlgorithm::ResampleStretch
+        );
         assert_eq!(decoded.trigger_mode, TriggerMode::Chromatic);
         assert_eq!(decoded.playback.mode, PlaybackMode::Continue);
         assert_eq!(decoded.playback.envelope.release_ms, 160.0);

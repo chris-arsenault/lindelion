@@ -4,9 +4,13 @@ pub mod envelope;
 pub mod filters;
 pub mod interpolation;
 pub mod math;
+pub mod ola;
 pub mod params;
+pub mod phase;
 pub mod playback;
+pub mod resampling;
 pub mod smoothing;
+pub mod window;
 
 pub fn db_to_gain(db: f32) -> f32 {
     if db.is_finite() {

@@ -4,6 +4,7 @@ pub(crate) enum ParameterPath {
     RoutingMode,
     ParallelMixA,
     ParallelMixB,
+    ParallelMixBalance,
     RetriggerResonators,
     AudioInputMode,
     AudioExpression(AudioExpressionParameter),
@@ -32,9 +33,15 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
     fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
         match self {
             Self::Output(parameter) => parameter.plain_value(patch.output),
-            Self::RoutingMode => RoutingMode::from_routing(patch.routing).plain(),
+            Self::RoutingMode => RoutingMode::from_routing(crate::normalize_routing_for_resonator_models(
+                patch.routing,
+                patch.resonator_a,
+                patch.resonator_b,
+            ))
+            .plain(),
             Self::ParallelMixA => parallel_mix_a(patch.routing),
             Self::ParallelMixB => parallel_mix_b(patch.routing),
+            Self::ParallelMixBalance => parallel_mix_balance(patch.routing),
             Self::RetriggerResonators => bool_plain(patch.retrigger_resonators),
             Self::AudioInputMode => patch.audio_input.mode.plain(),
             Self::AudioExpression(parameter) => parameter.plain_value(patch),
@@ -64,6 +71,9 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             }
             Self::ParallelMixB => {
                 patch.routing = set_parallel_mix(patch.routing, MixSide::B, value)
+            }
+            Self::ParallelMixBalance => {
+                patch.routing = set_parallel_mix_balance(patch.routing, value)
             }
             Self::RetriggerResonators => patch.retrigger_resonators = bool_from_plain(value),
             Self::AudioInputMode => patch.audio_input.mode = AudioInputMode::from_plain(value),
@@ -100,6 +110,7 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
                 parameter.apply_plain(&mut patch.modulation, slot, value);
             }
         }
+        patch.normalize_routing_for_resonator_models();
     }
 }
 

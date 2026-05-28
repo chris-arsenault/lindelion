@@ -308,24 +308,3 @@ fn assert_resonator_b_boundary_reflection(patch: &ResonatorSynthPatch, expected:
     };
     assert!((config.boundary_reflection - expected).abs() < 0.001);
 }
-
-fn rms_difference(a: &[f32], b: &[f32]) -> f32 {
-    let len = a.len().min(b.len()).max(1);
-    let sum = a
-        .iter()
-        .copied()
-        .zip(b.iter().copied())
-        .map(|(a, b)| {
-            let diff = a - b;
-            diff * diff
-        })
-        .sum::<f32>();
-    (sum / len as f32).sqrt()
-}
-
-fn max_adjacent_delta(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .map(|window| (window[1] - window[0]).abs())
-        .fold(0.0, f32::max)
-}

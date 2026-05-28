@@ -81,6 +81,14 @@ fn formatters_are_owned_by_bindings() {
 }
 
 #[test]
+fn routing_formatter_covers_body_color_mode() {
+    assert_eq!(
+        parameter_binding(10).unwrap().format_plain_value(2.0),
+        "Body Color"
+    );
+}
+
+#[test]
 fn live_smoothed_parameters_are_declared_in_registry() {
     for id in [
         MASTER_GAIN_PARAMETER_ID,
@@ -352,7 +360,11 @@ fn enum_codecs_round_trip() {
         LiveExcitationMode::NoteLatched,
         LiveExcitationMode::ContinuousAndNoteLatched,
     ]);
-    assert_codec_roundtrip(&[RoutingMode::Parallel, RoutingMode::Series]);
+    assert_codec_roundtrip(&[
+        RoutingMode::Parallel,
+        RoutingMode::Series,
+        RoutingMode::BodyColor,
+    ]);
     assert_codec_roundtrip(&[ResonatorModel::Modal, ResonatorModel::Waveguide]);
     assert_codec_roundtrip(&[
         ModalPreset::Kalimba,

@@ -35,12 +35,13 @@ fn glirdir_parameter_control(cx: &mut Context, control: EditorParameterControl) 
                 },
             )
         }
-        GlirdirEditorControlKind::Selector { labels, .. } => crate::vizia_controls::parameter_stepper(
+        GlirdirEditorControlKind::Selector { labels, width } => crate::vizia_controls::parameter_cycle_selector(
             cx,
             control.editor.label(),
             control.value_text(),
             control.signal,
             labels.len(),
+            width,
             move |cx, normalized| {
                 cx.emit(EditorEvent::SetParameter {
                     id: control.id,

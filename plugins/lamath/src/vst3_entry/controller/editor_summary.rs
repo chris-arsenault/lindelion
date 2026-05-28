@@ -313,8 +313,8 @@ impl EditorSlotSummary {
             .and_then(|name| name.to_str())
             .unwrap_or("Sample");
         Self {
-            label: format!("Slot {}", index + 1),
-            detail: filename.to_string(),
+            label: format!("Layer {}", index + 1),
+            detail: layer_detail(filename, slot),
             sample_backed: true,
             pitch_track: slot.pitch_track,
             looping: slot.looping,
@@ -323,8 +323,8 @@ impl EditorSlotSummary {
 
     fn builtin(slot: &crate::ExcitationSlot) -> Self {
         Self {
-            label: "Slot 1".to_string(),
-            detail: "Built-in pluck".to_string(),
+            label: "Layer 1".to_string(),
+            detail: layer_detail("Built-in pluck", slot),
             sample_backed: false,
             pitch_track: slot.pitch_track,
             looping: slot.looping,
@@ -333,11 +333,24 @@ impl EditorSlotSummary {
 
     fn empty(index: usize) -> Self {
         Self {
-            label: format!("Slot {}", index + 1),
+            label: format!("Layer {}", index + 1),
             detail: "Empty layer".to_string(),
             sample_backed: false,
             pitch_track: false,
             looping: false,
         }
     }
+}
+
+fn layer_detail(name: &str, slot: &crate::ExcitationSlot) -> String {
+    let pitch = if slot.pitch_track { "pitch" } else { "fixed" };
+    let loop_mode = if slot.looping { "loop" } else { "one-shot" };
+    let round_robin = slot
+        .round_robin_group
+        .map(|group| format!(" / rr {}", u16::from(group) + 1))
+        .unwrap_or_default();
+    format!(
+        "{name} / {:+.1} dB / vel {}-{} / {pitch} / {loop_mode}{round_robin}",
+        slot.gain_db, slot.velocity_low, slot.velocity_high
+    )
 }
