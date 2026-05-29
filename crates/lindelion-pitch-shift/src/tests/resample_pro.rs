@@ -36,8 +36,8 @@ fn assert_resample_pro_cache_shape(pro: &crate::ResampleProCache, sample_rate: u
 fn assert_resample_pro_config(pro: &crate::ResampleProCache, sample_rate: u32) {
     assert_eq!(pro.sample_rate, sample_rate);
     assert_eq!(pro.fft_size, 4096);
-    assert_eq!(pro.analysis_hop, 1024);
-    assert_eq!(pro.synthesis_hop, 1024);
+    assert_eq!(pro.analysis_hop, 512); // 87.5% overlap (fft_size / 8)
+    assert_eq!(pro.synthesis_hop, 512);
 }
 
 fn assert_resample_pro_window_shape(pro: &crate::ResampleProCache) {

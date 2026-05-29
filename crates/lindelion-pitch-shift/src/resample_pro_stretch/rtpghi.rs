@@ -1,10 +1,10 @@
 //! RTPGHI phase-gradient heap integration for the Resample Pro time-stretch path.
 //!
-//! Retained but **not** the active path: see [`super::RESAMPLE_PRO_PHASE_PROPAGATION`] for the
-//! bake-off result that keeps Laroche–Dolson peak-locking the default. This module holds the
-//! magnitude-ordered 2-D phase-gradient integration (Průša & Holighaus, "Phase Vocoder Done
-//! Right"). It renders at setup time (off the audio thread; see ADR-0001 / docs/performance.md),
-//! so heap allocation is permitted.
+//! The **active** phase-propagation path (see [`super::RESAMPLE_PRO_PHASE_PROPAGATION`] for the
+//! real-material bake-off that selected it over peak-locking at 87.5 % overlap). This module
+//! holds the magnitude-ordered 2-D phase-gradient integration (Průša & Holighaus, "Phase Vocoder
+//! Done Right"). It renders at setup time (off the audio thread; see ADR-0001 /
+//! docs/performance.md), so heap allocation is permitted.
 
 use std::cmp::Ordering;
 
@@ -15,25 +15,25 @@ use super::{ResampleProCache, ResampleProStretchState};
 /// Phase-propagation strategy for the variable-rate (time-stretch) path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PhasePropagation {
-    /// Laroche–Dolson identity peak phase-locking. Active default.
-    PeakLocked,
-    /// RTPGHI 2-D phase-gradient heap integration. Intentionally retained but not constructed by
-    /// the active config; flip [`RESAMPLE_PRO_PHASE_PROPAGATION`] to use.
+    /// Laroche–Dolson identity peak phase-locking. Retained and selectable, but not the active
+    /// default; flip [`RESAMPLE_PRO_PHASE_PROPAGATION`] to use.
     #[allow(dead_code)]
+    PeakLocked,
+    /// RTPGHI 2-D phase-gradient heap integration (Průša & Holighaus). Active default.
     Rtpghi,
 }
 
 /// Compile-time selection of the phase-propagation strategy.
 ///
-/// Peak-locking is the active path. RTPGHI is implemented and validated ([`ResampleProStretchState::propagate_rtpghi_frame`])
-/// but **intentionally not the default**: an objective bake-off (the `resample_pro_fidelity`
-/// battery, synthetic + real sax fixtures) found it neutral-to-mixed against peak-locking here —
-/// peak-locking already sits at the inter-partial-floor measurement floor on periodic material,
-/// so there is no phasiness headroom to recover, and RTPGHI raised the high-frequency artifact
-/// ratio at extreme upshift (e.g. +12 st on the sax fixture). It is kept for future work on
-/// broadband/polyphonic material (where its 2-D coherence is expected to help) and can be made
-/// active by switching this constant.
-pub(crate) const RESAMPLE_PRO_PHASE_PROPAGATION: PhasePropagation = PhasePropagation::PeakLocked;
+/// RTPGHI is the active path. The choice was settled by re-running the bake-off on the **real**
+/// fixture library at 87.5 % overlap — the synthetic battery sat at the inter-partial measurement
+/// floor and could not discriminate. On real tonal/vocal material RTPGHI lowers the phasiness
+/// floor vs peak-locking (e.g. cello −129 → −144 dB, sung vocal −68 → −73 dB) and, crucially,
+/// **resolves the high-frequency-artifact regression that had kept it inactive at 75 % overlap**:
+/// at +12 st it is now cleaner than peak-locking (sax −20.8 → −25.3 dB, sung vocal −14.2 →
+/// −26.7 dB HF artifact). Peak-locking ([`ResampleProStretchState::propagate_phase_locked_frame`])
+/// is retained and selectable by switching this constant.
+pub(crate) const RESAMPLE_PRO_PHASE_PROPAGATION: PhasePropagation = PhasePropagation::Rtpghi;
 
 /// Only bins at least this fraction of the frame's peak magnitude are eligible to be a
 /// time-integration anchor. A windowed sinusoid has a local magnitude maximum at every
@@ -90,9 +90,7 @@ impl ResampleProStretchState {
     /// coherence) and their neighbourhoods fill via frequency integration of the across-bin
     /// gradient `∆_fφ` (vertical coherence), which peak-locking structurally discards.
     ///
-    /// Retained but **not** the active path (see [`super::RESAMPLE_PRO_PHASE_PROPAGATION`]): the
-    /// objective bake-off found no fidelity gain over peak-locking on the available fixtures and
-    /// a high-frequency artifact increase at extreme upshift. Reachable by switching that const.
+    /// The active phase-propagation path (see [`super::RESAMPLE_PRO_PHASE_PROPAGATION`]).
     pub(super) fn propagate_rtpghi_frame(&mut self, cache: &ResampleProCache, reset_phase: bool) {
         let hop = cache.synthesis_hop.max(1) as f64;
         let bins = self.bin_phases.len();

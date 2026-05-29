@@ -61,7 +61,8 @@ impl ResampleProStretchState {
         self.transient_handling = handling;
     }
 
-    /// Propagate synthesis phase by Laroche–Dolson identity peak phase-locking (active default).
+    /// Propagate synthesis phase by Laroche–Dolson identity peak phase-locking (retained,
+    /// selectable; RTPGHI is the active default).
     /// Peak bins advance by their instantaneous frequency; every other bin is rigidly locked to
     /// its region peak by the analysis phase offset, preserving intra-region coherence. A
     /// transient frame is reinitialised per [`Self::transient_handling`]: whole-frame reset

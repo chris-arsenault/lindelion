@@ -4,15 +4,16 @@ use realfft::RealFftPlanner;
 use crate::{PitchShiftAnalysisConfig, ResampleProCache, ResampleProFrame};
 use lindelion_onset_detect::SliceMarker;
 
-/// STFT overlap factor: `analysis_hop = fft_size / OVERLAP_FACTOR`. 4 → 75 % overlap.
+/// STFT overlap factor: `analysis_hop = fft_size / OVERLAP_FACTOR`. 8 → 87.5 % overlap.
 ///
-/// An M4 overlap/window sweep across the fidelity battery picked 75 % as the sweet spot here.
-/// 87.5 % overlap (factor 8) does lower the synthetic-tonal residual (e.g. −63.9 → −71.5 dB at
-/// FFT 4096) and pre-echo, but both residuals are already inaudible while it softens transients
-/// (impulse crest 25.5 → 19.9) at twice the frame count — the modulation-sideband win
-/// Laroche–Dolson cite is already at the measurement floor on this material. Larger FFT helps
-/// bass tonal (−55 → −70 dB) but halves time resolution; 4096 is the balance.
-const OVERLAP_FACTOR: usize = 4;
+/// Chosen from the M4 overlap sweep re-run on the **real** fixture library. The synthetic
+/// battery sat at the inter-partial measurement floor and showed only sub-audible differences
+/// (which had pointed at 75 %); on real tonal/vocal material 87.5 % overlap lowers the
+/// inter-partial phasiness floor by 8–15 dB vs 75 % (e.g. cello −118 → −129 dB, sung vocal
+/// −59 → −68 dB) with no measured transient softening on the real transients tested (the
+/// synthetic pure-impulse crest drop was an artifact of that fixture). The doubled frame count
+/// is an offline-analysis cost only — the render path is setup-time, not the audio thread.
+const OVERLAP_FACTOR: usize = 8;
 
 pub(crate) fn analyze_resample_pro(
     audio: &[f32],
