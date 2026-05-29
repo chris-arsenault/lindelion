@@ -1,3 +1,4 @@
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use lindelion_dsp_utils::{ola, phase};
@@ -8,6 +9,14 @@ use crate::{
     PitchShiftRatios, PitchShiftSourceCache, ResampleProCache, ResampleProFrame,
     synthesis_support::{frame_at_position, spectral_envelope_formant_gain},
 };
+
+mod peak_lock;
+mod rtpghi;
+
+pub(crate) use peak_lock::TransientHandling;
+use peak_lock::{PhaseReset, RESAMPLE_PRO_TRANSIENT_HANDLING};
+pub(crate) use rtpghi::PhasePropagation;
+use rtpghi::{HeapEntry, RESAMPLE_PRO_PHASE_PROPAGATION};
 
 const MIN_STRETCH_RATIO: f64 = 0.125;
 const MAX_STRETCH_RATIO: f64 = 8.0;
@@ -32,9 +41,25 @@ pub(crate) struct ResampleProStretchState {
     magnitudes: Vec<f64>,
     analysis_phases: Vec<f64>,
     inst_freqs: Vec<f64>,
+    bin_phases: Vec<f64>,
+    // Peak-locking state (active default).
     peak_owner_by_bin: Vec<u16>,
     peak_phases: Vec<f64>,
-    bin_phases: Vec<f64>,
+    // RTPGHI phase-gradient heap integration state (retained, inactive). This path renders at
+    // setup time (off the audio thread; see ADR-0001 / docs/performance.md), so heap allocation
+    // is permitted.
+    tgrad: Vec<f64>,
+    fgrad: Vec<f64>,
+    prev_tgrad: Vec<f64>,
+    prev_magnitudes: Vec<f64>,
+    synth_phase: Vec<f64>,
+    assigned: Vec<bool>,
+    heap: BinaryHeap<HeapEntry>,
+    // Active strategies. Initialised from the compile-time defaults; production never changes
+    // them. Test-only setters flip them to keep the retained RTPGHI / bin-level COG paths from
+    // bit-rotting.
+    phase_propagation: PhasePropagation,
+    transient_handling: TransientHandling,
 }
 
 impl ResampleProStretchState {
@@ -58,9 +83,18 @@ impl ResampleProStretchState {
             magnitudes: vec![0.0; bin_count],
             analysis_phases: vec![0.0; bin_count],
             inst_freqs: vec![0.0; bin_count],
+            bin_phases: vec![0.0; bin_count],
             peak_owner_by_bin: vec![0; bin_count],
             peak_phases: vec![0.0; bin_count],
-            bin_phases: vec![0.0; bin_count],
+            tgrad: vec![0.0; bin_count],
+            fgrad: vec![0.0; bin_count],
+            prev_tgrad: vec![0.0; bin_count],
+            prev_magnitudes: vec![0.0; bin_count],
+            synth_phase: vec![0.0; bin_count],
+            assigned: vec![false; bin_count],
+            heap: BinaryHeap::with_capacity(bin_count * 2),
+            phase_propagation: RESAMPLE_PRO_PHASE_PROPAGATION,
+            transient_handling: RESAMPLE_PRO_TRANSIENT_HANDLING,
         })
     }
 
@@ -133,9 +167,15 @@ impl ResampleProStretchState {
             || self.magnitudes.len() != bin_count
             || self.analysis_phases.len() != bin_count
             || self.inst_freqs.len() != bin_count
+            || self.bin_phases.len() != bin_count
             || self.peak_owner_by_bin.len() != bin_count
             || self.peak_phases.len() != bin_count
-            || self.bin_phases.len() != bin_count
+            || self.tgrad.len() != bin_count
+            || self.fgrad.len() != bin_count
+            || self.prev_tgrad.len() != bin_count
+            || self.prev_magnitudes.len() != bin_count
+            || self.synth_phase.len() != bin_count
+            || self.assigned.len() != bin_count
             || self.time_domain.len() != cache.fft_size
         {
             return Err(ResampleProStretchError::OutputTooLong);
@@ -176,8 +216,10 @@ impl ResampleProStretchState {
         output_len: usize,
     ) -> Result<(), ResampleProStretchError> {
         let cache = &source_cache.resample_pro;
-        self.peak_phases.fill(0.0);
         self.bin_phases.fill(0.0);
+        self.peak_phases.fill(0.0);
+        self.prev_tgrad.fill(0.0);
+        self.prev_magnitudes.fill(0.0);
 
         let hop = cache.synthesis_hop.max(1);
         let mut output_start = 0usize;
@@ -195,10 +237,20 @@ impl ResampleProStretchState {
             )?;
             apply_formant_compensation(source_cache, source_start, ratios, &mut self.magnitudes);
             let protected_transient = protected_transient_at(cache, source_start);
-            self.propagate_phase_locked_frame(
-                cache,
-                output_frame_index == 0 || protected_transient.is_some(),
-            );
+            let reset = if output_frame_index == 0 {
+                PhaseReset::FullFrame
+            } else if let Some(transient) = protected_transient {
+                PhaseReset::Transient {
+                    attack_from_center: transient.source_sample as f64
+                        - (source_start + cache.fft_size as f64 * 0.5),
+                }
+            } else {
+                PhaseReset::None
+            };
+            match self.phase_propagation {
+                PhasePropagation::PeakLocked => self.propagate_phase_locked_frame(cache, reset),
+                PhasePropagation::Rtpghi => self.propagate_rtpghi_frame(cache, reset.is_reset()),
+            }
             locked_spectrum_into(
                 cache,
                 &self.magnitudes,
@@ -228,34 +280,6 @@ impl ResampleProStretchState {
             output_frame_index += 1;
         }
         Ok(())
-    }
-
-    fn propagate_phase_locked_frame(&mut self, cache: &ResampleProCache, reset_phase: bool) {
-        if reset_phase {
-            self.bin_phases.copy_from_slice(&self.analysis_phases);
-            self.peak_phases.copy_from_slice(&self.analysis_phases);
-            return;
-        }
-
-        let hop = cache.synthesis_hop.max(1) as f64;
-        for bin in 0..self.peak_phases.len() {
-            if peak_owner(&self.peak_owner_by_bin, bin) == bin {
-                self.peak_phases[bin] =
-                    phase::principal_angle(self.peak_phases[bin] + self.inst_freqs[bin] * hop);
-            }
-        }
-
-        for bin in 0..self.bin_phases.len() {
-            let owner = peak_owner(&self.peak_owner_by_bin, bin);
-            if owner >= self.bin_phases.len() {
-                self.bin_phases[bin] =
-                    phase::principal_angle(self.bin_phases[bin] + self.inst_freqs[bin] * hop);
-                continue;
-            }
-            let local_offset =
-                phase::principal_angle(self.analysis_phases[bin] - self.analysis_phases[owner]);
-            self.bin_phases[bin] = phase::principal_angle(self.peak_phases[owner] + local_offset);
-        }
     }
 }
 

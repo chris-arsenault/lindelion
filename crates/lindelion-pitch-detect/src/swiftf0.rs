@@ -5,8 +5,8 @@ use std::{
 
 use lindelion_dsp_utils::{
     analysis::{self, append_sanitized_audio, sanitize_audio_to_vec},
-    interpolation,
     math::{finite_clamp, finite_or},
+    resampling::WindowedSincResampler,
 };
 use tract_onnx::prelude::*;
 
@@ -159,8 +159,12 @@ impl SwiftF0StreamingPitchTracker {
             return;
         }
 
+        // The windowed-sinc kernel needs `half_taps` source samples of look-ahead
+        // beyond the read position; defer those samples until enough source has
+        // arrived (the tail is flushed with a truncated kernel in `finish`).
+        let lookahead = analysis_resampler_half_taps() as f32;
         let last_source_position = self.source_samples_seen.saturating_sub(1) as f32;
-        while self.next_analysis_source_position() <= last_source_position {
+        while self.next_analysis_source_position() + lookahead <= last_source_position {
             self.push_next_analysis_sample();
         }
     }
@@ -177,8 +181,12 @@ impl SwiftF0StreamingPitchTracker {
             self.analysis_buffer.last().copied().unwrap_or(0.0)
         } else {
             let local_position =
-                self.next_analysis_source_position() - self.source_buffer_start as f32;
-            interpolation::linear(&self.source_buffer, local_position)
+                f64::from(self.next_analysis_source_position()) - self.source_buffer_start as f64;
+            analysis_resampler().sample(
+                &self.source_buffer,
+                local_position,
+                self.analysis_cutoff_ratio(),
+            )
         };
         self.analysis_buffer.push(finite_or(sample, 0.0));
         self.next_analysis_sample_index += 1;
@@ -271,6 +279,13 @@ impl SwiftF0StreamingPitchTracker {
             / SWIFTF0_TARGET_SAMPLE_RATE as f32
     }
 
+    fn analysis_cutoff_ratio(&self) -> f64 {
+        let read_ratio = f64::from(self.source_sample_rate) / f64::from(SWIFTF0_TARGET_SAMPLE_RATE);
+        analysis_resampler()
+            .quality()
+            .cutoff_ratio_for_read_ratio(read_ratio)
+    }
+
     fn expected_analysis_sample_len(&self) -> usize {
         ((self.source_samples_seen as f64 * SWIFTF0_TARGET_SAMPLE_RATE as f64)
             / self.source_sample_rate as f64)
@@ -283,7 +298,10 @@ impl SwiftF0StreamingPitchTracker {
             return;
         }
 
-        let retain_from = self.next_analysis_source_position().floor().max(1.0) as usize - 1;
+        // Retain `half_taps` source samples behind the read position so the
+        // windowed-sinc kernel keeps full left-hand support.
+        let retain_from = (self.next_analysis_source_position().floor().max(0.0) as usize)
+            .saturating_sub(analysis_resampler_half_taps());
         let drain_len = retain_from
             .saturating_sub(self.source_buffer_start)
             .min(self.source_buffer.len());
@@ -325,16 +343,23 @@ pub fn resample_to_swiftf0_rate(audio: &[f32], source_sample_rate: u32) -> Vec<f
         return sanitize_audio_to_vec(audio);
     }
 
-    let target_len = ((audio.len() as f64 * SWIFTF0_TARGET_SAMPLE_RATE as f64)
+    let sanitized = sanitize_audio_to_vec(audio);
+    let target_len = ((sanitized.len() as f64 * SWIFTF0_TARGET_SAMPLE_RATE as f64)
         / source_sample_rate.max(1) as f64)
         .ceil()
         .max(1.0) as usize;
-    let source_step = source_sample_rate.max(1) as f32 / SWIFTF0_TARGET_SAMPLE_RATE as f32;
-    let mut out = Vec::with_capacity(target_len);
-    for index in 0..target_len {
-        out.push(interpolation::linear(audio, index as f32 * source_step));
-    }
-    sanitize_audio_to_vec(&out)
+    let read_ratio = source_sample_rate.max(1) as f64 / SWIFTF0_TARGET_SAMPLE_RATE as f64;
+    let mut out = vec![0.0; target_len];
+    analysis_resampler().render_to(&sanitized, read_ratio, &mut out);
+    out
+}
+
+fn analysis_resampler() -> WindowedSincResampler {
+    WindowedSincResampler::default()
+}
+
+fn analysis_resampler_half_taps() -> usize {
+    analysis_resampler().taps() / 2
 }
 
 fn run_swiftf0(audio_16k: &[f32]) -> Result<(Vec<f32>, Vec<f32>), PitchDetectionError> {

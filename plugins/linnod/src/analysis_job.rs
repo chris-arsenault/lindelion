@@ -34,6 +34,7 @@ pub enum SourceAnalysisStatus {
 pub struct SourceAnalysisJob {
     pub sequence: SourceAnalysisSequence,
     pub request: SourceLoadRequest,
+    marker_policy: SourceMarkerPolicy,
     patch: LinnodPatch,
     library_root: PathBuf,
 }
@@ -44,9 +45,37 @@ impl SourceAnalysisJob {
         patch: &LinnodPatch,
         library_root: PathBuf,
     ) -> Option<Self> {
+        Self::load_with_marker_policy(
+            sequence,
+            patch,
+            library_root,
+            SourceMarkerPolicy::UseSavedMarkersOrDetect,
+        )
+    }
+
+    pub(crate) fn redetect(
+        sequence: SourceAnalysisSequence,
+        patch: &LinnodPatch,
+        library_root: PathBuf,
+    ) -> Option<Self> {
+        Self::load_with_marker_policy(
+            sequence,
+            patch,
+            library_root,
+            SourceMarkerPolicy::DetectAndMergeUserMarkers,
+        )
+    }
+
+    pub(crate) fn load_with_marker_policy(
+        sequence: SourceAnalysisSequence,
+        patch: &LinnodPatch,
+        library_root: PathBuf,
+        marker_policy: SourceMarkerPolicy,
+    ) -> Option<Self> {
         patch.source_sample.as_ref().map(|reference| Self {
             sequence,
             request: SourceLoadRequest::Reference(reference.clone()),
+            marker_policy,
             patch: patch.clone(),
             library_root,
         })
@@ -61,9 +90,14 @@ impl SourceAnalysisJob {
         Self {
             sequence,
             request: SourceLoadRequest::Ingest(path.into()),
+            marker_policy: SourceMarkerPolicy::DetectAndMergeUserMarkers,
             patch: patch.clone(),
             library_root,
         }
+    }
+
+    pub const fn marker_policy(&self) -> SourceMarkerPolicy {
+        self.marker_policy
     }
 
     pub fn run(self) -> SourceAnalysisJobResult {
@@ -95,7 +129,18 @@ impl SourceAnalysisJob {
         O: OnsetDetector,
     {
         let (metadata, audio) = self.load_source()?;
-        Ok(analyzer.analyze(metadata, audio, self.patch.detection, &self.patch.markers)?)
+        let analysis = match self.marker_policy {
+            SourceMarkerPolicy::UseSavedMarkersOrDetect => analyzer.analyze_with_saved_markers(
+                metadata,
+                audio,
+                self.patch.detection,
+                &self.patch.markers,
+            ),
+            SourceMarkerPolicy::DetectAndMergeUserMarkers => {
+                analyzer.analyze(metadata, audio, self.patch.detection, &self.patch.markers)
+            }
+        }?;
+        Ok(analysis)
     }
 
     fn load_source(&self) -> Result<(SampleMetadata, OwnedMonoAudioBuffer), SourceLoadError> {
@@ -125,6 +170,12 @@ impl SourceAnalysisJob {
 pub enum SourceLoadRequest {
     Reference(SampleReference),
     Ingest(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMarkerPolicy {
+    UseSavedMarkersOrDetect,
+    DetectAndMergeUserMarkers,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -354,6 +405,56 @@ mod tests {
         assert_eq!(
             analysis.source.reference.last_known_path,
             PathBuf::from("Samples/moved/source.wav")
+        );
+    }
+
+    #[test]
+    fn source_load_reuses_saved_markers_and_redetect_forces_detector() {
+        let root = temp_root("linnod-source-saved-markers");
+        let source = root.join("source.wav");
+        let samples = vec![0.2; 4_800];
+        write_test_wav(&source, &samples);
+        let library_root = root.join("Library");
+        let mut library = FileSampleLibrary::open(LibraryPaths::from_root(&library_root)).unwrap();
+        let metadata = library.ingest(source).unwrap();
+        let saved_markers = vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 2_400,
+                kind: MarkerKind::Auto,
+            },
+        ];
+        let patch = LinnodPatch {
+            source_sample: Some(metadata.reference.clone()),
+            markers: saved_markers.clone(),
+            ..LinnodPatch::default()
+        };
+        let analyzer = LinnodSourceAnalyzer::new(FixedPitchDetector, FixedOnsetDetector);
+
+        let load_job = SourceAnalysisJob::load(8, &patch, library_root.clone()).unwrap();
+        assert_eq!(
+            load_job.marker_policy(),
+            SourceMarkerPolicy::UseSavedMarkersOrDetect
+        );
+        let loaded = load_job.run_with_analyzer(&analyzer).result.unwrap();
+
+        let redetect_job = SourceAnalysisJob::redetect(9, &patch, library_root).unwrap();
+        assert_eq!(
+            redetect_job.marker_policy(),
+            SourceMarkerPolicy::DetectAndMergeUserMarkers
+        );
+        let redetected = redetect_job.run_with_analyzer(&analyzer).result.unwrap();
+
+        assert_eq!(loaded.markers, saved_markers);
+        assert_eq!(
+            redetected.markers,
+            vec![SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            }]
         );
     }
 

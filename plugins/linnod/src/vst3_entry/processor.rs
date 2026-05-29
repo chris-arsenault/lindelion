@@ -145,10 +145,34 @@ impl LinnodVst3Processor {
     }
 
     fn schedule_source_load(&self) -> tresult {
+        self.schedule_source_job(Linnod::request_source_load_job)
+    }
+
+    fn schedule_source_redetect(&self) -> tresult {
+        self.schedule_source_job(Linnod::request_source_redetect_job)
+    }
+
+    fn schedule_pending_source_load(&self) -> tresult {
+        let pending = self
+            .plugin
+            .try_borrow()
+            .map(|plugin| plugin.source_status() == SourceAnalysisStatus::PendingLoad)
+            .unwrap_or(false);
+        if pending {
+            self.schedule_source_job(Linnod::request_pending_source_load_job)
+        } else {
+            kResultOk
+        }
+    }
+
+    fn schedule_source_job(
+        &self,
+        request_job: fn(&mut Linnod) -> Option<SourceAnalysisJob>,
+    ) -> tresult {
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
             return kResultFalse;
         };
-        let Some(job) = plugin.request_source_load_job() else {
+        let Some(job) = request_job(&mut plugin) else {
             return self.send_status_update(LinnodStatusMessage::Status);
         };
         drop(plugin);
@@ -294,19 +318,6 @@ impl LinnodVst3Processor {
             self.send_status_update(LinnodStatusMessage::Analysis)
         } else {
             status
-        }
-    }
-
-    fn schedule_pending_source_load(&self) -> tresult {
-        let pending = self
-            .plugin
-            .try_borrow()
-            .map(|plugin| plugin.source_status() == SourceAnalysisStatus::PendingLoad)
-            .unwrap_or(false);
-        if pending {
-            self.schedule_source_load()
-        } else {
-            kResultOk
         }
     }
 
@@ -551,9 +562,8 @@ impl IConnectionPointTrait for LinnodVst3Processor {
         };
         match message {
             LinnodPluginMessage::PatchUpdate(payload) => self.apply_patch_payload(&payload),
-            LinnodPluginMessage::SourceLoadRequest | LinnodPluginMessage::RedetectSlices => {
-                self.schedule_source_load()
-            }
+            LinnodPluginMessage::SourceLoadRequest => self.schedule_source_load(),
+            LinnodPluginMessage::RedetectSlices => self.schedule_source_redetect(),
             LinnodPluginMessage::SourceIngestRequest(payload) => {
                 self.schedule_source_ingest(&payload)
             }

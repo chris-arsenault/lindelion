@@ -1,4 +1,5 @@
 mod energy;
+mod flux_threshold;
 mod manual_grid;
 mod markers;
 mod pitch_stability;
@@ -482,5 +483,7 @@ pub(crate) fn onset_profile(config: DetectionConfig) -> OnsetDetectionProfile {
     profile.sanitized()
 }
 
+#[cfg(test)]
+mod spectral_flux_tests;
 #[cfg(test)]
 mod tests;

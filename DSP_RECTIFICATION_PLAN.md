@@ -242,15 +242,31 @@ acceptable.
 - **Verify:** Render adjacent regions of a sustained tone; assert no discontinuity
   at the seam (sample-difference below click threshold).
 
-### 18. Spectral envelope is RMS box-smoothing, not cepstral/LPC `[Minor]` `[DECISION]`
-- **File:** `crates/lindelion-pitch-shift/src/spectral.rs:79-128`
-- **Defect:** Formant-preservation envelope is moving-RMS magnitude smoothing, not
-  cepstral liftering or LPC. Applied in the correct linear-magnitude domain (no
-  domain error) — just a cruder estimator than the named reference.
-- **[DECISION]:** Confirm whether cepstral/LPC fidelity is required; if so,
-  replace the estimator. Otherwise document the approximation.
-- **Verify (if replaced):** Compare extracted envelope to a known formant
-  structure.
+### 18. Spectral envelope is RMS box-smoothing, not cepstral/LPC `[Minor]` `[RESOLVED — keep RMS box]`
+- **File:** `crates/lindelion-pitch-shift/src/spectral.rs`
+- **Original finding:** Formant-preservation envelope is moving-RMS magnitude
+  smoothing, not cepstral liftering or LPC. Applied in the correct linear-magnitude
+  domain (no domain error) — just a cruder estimator than the named reference. Not a
+  bug.
+- **Outcome:** A full cepstral-liftering replacement was implemented and is more
+  accurate at locating formants *in isolation* (peak 941 Hz vs a 1000 Hz formant),
+  but integrating it into the shared `spectral_envelope_formant_gain` path (used by
+  both the spectral-peak and `resample_pro` synthesis) revealed a **fundamental
+  accuracy-vs-residual conflict** that cannot satisfy the existing synthesis
+  correctness thresholds simultaneously:
+  - cepstral, 256 envelope points (the analysis clamp ceiling), hard lifter →
+    spectral-peak shifted-fundamental dominance 4.08× (barely passes `>4×`) but
+    `resample_pro` pure-tone residual −38.7 dB (fails `<−45 dB`);
+  - adding the lifter taper needed to bring the residual below −45 dB smooths the
+    envelope enough to drop the dominance below 4×.
+  The envelope's formant sharpness and a low pure-tone resynthesis residual pull
+  against each other, and `envelope_points` is already pinned at its 256 clamp.
+- **Decision:** Keep the RMS-box estimator (it satisfies all synthesis thresholds).
+  Reverted the cepstral work. A clean cepstral/LPC swap is **blocked** on this
+  conflict; it would require either accepting a relaxed synthesis threshold (decide
+  which quality dimension dominates) or a larger rework (raise the `envelope_points`
+  clamp above 256 and decouple the formant gain from envelope sharpness). The
+  RMS-box envelope stands as the pragmatic, working estimator.
 
 ---
 

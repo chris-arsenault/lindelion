@@ -8,7 +8,7 @@ use lindelion_sample_library::RuntimeMonoAudioBuffer;
 
 use crate::{
     SourceAnalysis, SourceAnalysisCache, SourceAnalysisJob, SourceAnalysisJobResult,
-    SourceAnalysisSequence, SourceAnalysisStatus, SourceLoadError,
+    SourceAnalysisSequence, SourceAnalysisStatus, SourceLoadError, SourceMarkerPolicy,
     parameters::{self, ParameterApplyKind},
     patch::LinnodPatch,
     patch_io,
@@ -25,6 +25,7 @@ pub struct Linnod {
     patch: LinnodPatch,
     source_cache: SourceAnalysisCache,
     next_source_sequence: SourceAnalysisSequence,
+    pending_marker_policy: SourceMarkerPolicy,
     library_root: PathBuf,
     processor: LinnodProcessor,
 }
@@ -36,6 +37,7 @@ impl Default for Linnod {
             patch: LinnodPatch::default(),
             source_cache: SourceAnalysisCache::default(),
             next_source_sequence: 0,
+            pending_marker_policy: SourceMarkerPolicy::UseSavedMarkersOrDetect,
             library_root: lindelion_sample_library::music_library_root(DEFAULT_LIBRARY_DIR),
             processor: LinnodProcessor::new(ProcessSetup::default().sample_rate as f32),
         }
@@ -76,9 +78,31 @@ impl Linnod {
     }
 
     pub fn request_source_load_job(&mut self) -> Option<SourceAnalysisJob> {
+        self.request_source_job(SourceMarkerPolicy::UseSavedMarkersOrDetect)
+    }
+
+    pub fn request_source_redetect_job(&mut self) -> Option<SourceAnalysisJob> {
+        self.request_source_job(SourceMarkerPolicy::DetectAndMergeUserMarkers)
+    }
+
+    pub fn request_pending_source_load_job(&mut self) -> Option<SourceAnalysisJob> {
+        self.request_source_job(self.pending_marker_policy)
+    }
+
+    fn request_source_job(
+        &mut self,
+        marker_policy: SourceMarkerPolicy,
+    ) -> Option<SourceAnalysisJob> {
         self.patch.source_sample.as_ref()?;
         let sequence = self.advance_source_sequence();
-        let job = SourceAnalysisJob::load(sequence, &self.patch, self.library_root.clone())?;
+        let job = match marker_policy {
+            SourceMarkerPolicy::UseSavedMarkersOrDetect => {
+                SourceAnalysisJob::load(sequence, &self.patch, self.library_root.clone())?
+            }
+            SourceMarkerPolicy::DetectAndMergeUserMarkers => {
+                SourceAnalysisJob::redetect(sequence, &self.patch, self.library_root.clone())?
+            }
+        };
         self.source_cache.mark_analyzing(sequence);
         Some(job)
     }
@@ -116,15 +140,27 @@ impl Linnod {
     ) -> Option<ParameterApplyKind> {
         let apply = parameters::apply_parameter_normalized(&mut self.patch, id.0, normalized);
         if matches!(apply, Some(ParameterApplyKind::Analysis)) {
-            self.mark_source_pending_or_idle();
+            self.mark_source_pending_or_idle(SourceMarkerPolicy::DetectAndMergeUserMarkers);
         }
         apply
     }
 
     pub(crate) fn set_patch(&mut self, patch: LinnodPatch) {
+        self.set_patch_with_marker_policy(patch, SourceMarkerPolicy::UseSavedMarkersOrDetect);
+    }
+
+    pub(crate) fn set_patch_redetecting_source(&mut self, patch: LinnodPatch) {
+        self.set_patch_with_marker_policy(patch, SourceMarkerPolicy::DetectAndMergeUserMarkers);
+    }
+
+    fn set_patch_with_marker_policy(
+        &mut self,
+        patch: LinnodPatch,
+        marker_policy: SourceMarkerPolicy,
+    ) {
         self.patch = patch;
         self.processor.clear_voices();
-        self.mark_source_pending_or_idle();
+        self.mark_source_pending_or_idle(marker_policy);
     }
 
     pub(crate) fn set_patch_preserving_source_analysis(&mut self, patch: LinnodPatch) {
@@ -135,11 +171,13 @@ impl Linnod {
         }
     }
 
-    fn mark_source_pending_or_idle(&mut self) {
+    fn mark_source_pending_or_idle(&mut self, marker_policy: SourceMarkerPolicy) {
         let sequence = self.advance_source_sequence();
         if self.patch.source_sample.is_some() {
+            self.pending_marker_policy = marker_policy;
             self.source_cache.mark_pending_load(sequence);
         } else {
+            self.pending_marker_policy = SourceMarkerPolicy::UseSavedMarkersOrDetect;
             self.source_cache.mark_idle(sequence);
         }
     }
@@ -277,6 +315,29 @@ mod tests {
         plugin.load_state(state);
 
         assert_eq!(plugin.source_status(), SourceAnalysisStatus::PendingLoad);
+        let job = plugin.request_pending_source_load_job().unwrap();
+        assert_eq!(
+            job.marker_policy(),
+            SourceMarkerPolicy::UseSavedMarkersOrDetect
+        );
+    }
+
+    #[test]
+    fn redetecting_patch_marks_source_pending_for_detector() {
+        let patch = LinnodPatch {
+            source_sample: Some(SampleReference::new("hash", "source.wav")),
+            ..LinnodPatch::default()
+        };
+        let mut plugin = Linnod::default();
+
+        plugin.set_patch_redetecting_source(patch);
+
+        assert_eq!(plugin.source_status(), SourceAnalysisStatus::PendingLoad);
+        let job = plugin.request_pending_source_load_job().unwrap();
+        assert_eq!(
+            job.marker_policy(),
+            SourceMarkerPolicy::DetectAndMergeUserMarkers
+        );
     }
 
     #[test]

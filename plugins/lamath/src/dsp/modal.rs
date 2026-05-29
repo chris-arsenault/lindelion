@@ -5,6 +5,12 @@ use crate::{
     dsp::constants::{DSP_FALLBACK_SAMPLE_RATE, STRIKE_POSITION},
 };
 
+/// Soft ceiling for the modal bank output. Struck play peaks well below this
+/// (~60 worst case), so normal play passes transparently; a sustained tone parked
+/// on a mode frequency would otherwise ring up `∝ 1/(1-r)` (tens of thousands), and
+/// this bounds it so the downstream chain stays in a sane range.
+const MODAL_OUTPUT_CEILING: f32 = 256.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModalBankParams {
     pub fundamental_hz: f32,
@@ -116,8 +122,12 @@ impl ModalBank {
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let base = template.mode(index);
             let stretch = 1.0 + params.inharmonicity * (index as f32 / mode_count as f32).powi(2);
-            let frequency_hz =
-                (params.fundamental_hz * base.ratio * stretch.max(0.05)).min(nyquist * 0.95);
+            let raw_frequency_hz = params.fundamental_hz * base.ratio * stretch.max(0.05);
+            // `retune` keeps a stable mode set (preserving state), so out-of-band
+            // partials are silenced rather than clamped onto a single near-Nyquist
+            // frequency, matching how `configure` drops them.
+            let out_of_band = raw_frequency_hz >= nyquist * 0.95;
+            let frequency_hz = raw_frequency_hz.min(nyquist * 0.95);
             let normalized_index = if mode_count == 1 {
                 0.0
             } else {
@@ -130,7 +140,11 @@ impl ModalBank {
             let decay_tilt = 1.0 - params.decay_tilt.clamp(0.0, 1.0) * normalized_index * 0.75;
             let decay_seconds =
                 base.decay_seconds * params.decay_global.max(0.01) * decay_tilt.max(0.05);
-            let gain = base.gain * strike_gain * brightness_gain;
+            let gain = if out_of_band {
+                0.0
+            } else {
+                base.gain * strike_gain * brightness_gain
+            };
 
             mode.retune(self.sample_rate, frequency_hz, decay_seconds, gain);
         }
@@ -144,7 +158,11 @@ impl ModalBank {
             .map(|mode| mode.process_sample(input))
             .sum::<f32>();
 
-        math::snap_to_zero(sum * self.output_scale)
+        // Soft ceiling limiter: transparent for struck play (peaks far below the
+        // ceiling), bounds the sustained-resonance runaway (peak gain ∝ 1/(1-r)).
+        let scaled = sum * self.output_scale;
+        let limited = MODAL_OUTPUT_CEILING * (scaled / MODAL_OUTPUT_CEILING).tanh();
+        math::snap_to_zero(limited)
     }
 
     pub fn reset(&mut self) {
@@ -237,11 +255,20 @@ struct Template {
 
 impl Template {
     fn mode(self, index: usize) -> TemplateMode {
-        let ratio = self
-            .special_ratios
-            .get(index)
-            .copied()
-            .unwrap_or_else(|| (index as f32 + 1.0).powf(self.harmonicity));
+        let ratio = self.special_ratios.get(index).copied().unwrap_or_else(|| {
+            let power_law = (index as f32 + 1.0).powf(self.harmonicity);
+            // Continue smoothly from the last tabulated ratio, but never above the
+            // natural power-law series. Presets whose partials already track the
+            // power law (e.g. Marimba) are unchanged; inharmonic tables that end well
+            // below it (e.g. Bell) continue smoothly instead of jumping up to it.
+            match self.special_ratios.last().copied() {
+                Some(last) => {
+                    let anchor = self.special_ratios.len() as f32;
+                    power_law.min(last * ((index as f32 + 1.0) / anchor).powf(self.harmonicity))
+                }
+                None => power_law,
+            }
+        });
         let normalized = index as f32 + 1.0;
 
         TemplateMode {
@@ -384,6 +411,93 @@ mod tests {
 
             assert_all_finite(&output);
             assert!(peak_abs(&output) < 20.0);
+        }
+    }
+
+    #[test]
+    fn modal_bank_output_limiter_bounds_sustained_resonance() {
+        // A sustained tone parked on a mode frequency would otherwise ring up to
+        // tens of thousands x (sympathetic resonance, peak gain ∝ 1/(1-r)). The soft
+        // ceiling limiter on the bank output bounds it while leaving struck play
+        // (peaks well below the ceiling) transparent.
+        let sample_rate = 48_000.0;
+        let frequency_hz = 220.0;
+        let mut bank = ModalBank::new(
+            sample_rate,
+            ModalBankParams {
+                fundamental_hz: frequency_hz,
+                mode_count: 8,
+                preset: ModalPreset::GenericStrike,
+                inharmonicity: 0.0,
+                brightness: 0.5,
+                decay_global: 2.0,
+                decay_tilt: 0.0,
+                position_of_strike: 0.37,
+            },
+        );
+        let total = (sample_rate * 1.0) as usize;
+        let mut peak = 0.0_f32;
+        for index in 0..total {
+            let drive = (std::f32::consts::TAU * frequency_hz * index as f32 / sample_rate).sin();
+            let output = bank.process_sample(drive);
+            if index >= total / 2 {
+                peak = peak.max(output.abs());
+            }
+        }
+
+        assert!(peak.is_finite());
+        assert!(
+            peak <= MODAL_OUTPUT_CEILING * 1.02,
+            "sustained resonance should be bounded by the limiter; peak={peak}"
+        );
+    }
+
+    #[test]
+    fn retune_silences_out_of_band_modes_without_nyquist_pileup() {
+        let sample_rate = 48_000.0;
+        let nyquist = sample_rate * 0.5;
+        let low = ModalBankParams {
+            fundamental_hz: 110.0,
+            mode_count: 32,
+            preset: ModalPreset::Bell,
+            inharmonicity: 0.0,
+            brightness: 0.5,
+            decay_global: 1.0,
+            decay_tilt: 0.0,
+            position_of_strike: 0.37,
+        };
+        let mut bank = ModalBank::new(sample_rate, low);
+        let mode_count_before = bank.modes().len();
+
+        // Retune up to a high fundamental: most partials now exceed Nyquist. They
+        // must be silenced, not clamped onto a single near-Nyquist frequency.
+        bank.retune(ModalBankParams {
+            fundamental_hz: 3_000.0,
+            ..low
+        });
+        assert_eq!(bank.modes().len(), mode_count_before);
+
+        let mut output = Vec::new();
+        for index in 0..8192 {
+            output.push(bank.process_sample(if index == 0 { 1.0 } else { 0.0 }));
+        }
+        assert_all_finite(&output);
+        let pileup = dft_magnitude_at(&output, sample_rate, nyquist * 0.95);
+        assert!(pileup < 0.01, "near-Nyquist pileup energy={pileup}");
+    }
+
+    #[test]
+    fn bell_partial_series_has_no_large_gap_beyond_special_ratios() {
+        // The Bell special ratios end at 3.76 (index 7); the fallback for higher
+        // modes must continue smoothly rather than jumping to (index+1)^harmonicity.
+        let template = template_for(ModalPreset::Bell);
+        let ratios: Vec<f32> = (0..16).map(|index| template.mode(index).ratio).collect();
+        for pair in ratios.windows(2) {
+            assert!(pair[1] > pair[0], "ratios not monotonic: {ratios:?}");
+            assert!(
+                pair[1] / pair[0] < 2.0,
+                "large gap in partial series: {ratios:?}"
+            );
         }
     }
 

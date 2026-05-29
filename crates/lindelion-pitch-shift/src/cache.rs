@@ -85,7 +85,6 @@ pub struct ResampleProCache {
     pub analysis_hop: usize,
     pub synthesis_hop: usize,
     pub window: Vec<f64>,
-    pub window_ola_normalization: Vec<f64>,
     pub frames: Vec<ResampleProFrame>,
     pub transient_frames: Vec<usize>,
     #[serde(default)]

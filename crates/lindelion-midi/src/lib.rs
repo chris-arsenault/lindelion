@@ -226,7 +226,7 @@ impl MidiClip {
 
     pub fn to_smf_bytes(&self) -> Result<Vec<u8>, std::io::Error> {
         let mut events = Vec::new();
-        let tempo = 60_000_000u32 / u32::from(self.bpm.max(1));
+        let tempo = (60_000_000.0_f64 / f64::from(self.bpm.max(1))).round() as u32;
         events.push(AbsoluteEvent {
             tick: 0,
             order: 0,
@@ -423,7 +423,7 @@ fn nearest_scale_degree(note: f32, root: RootNote, scale: &Scale) -> i16 {
     let root = root.pitch_class();
     let intervals = scale.intervals();
     let rounded = note.round() as i16;
-    let mut best_note = rounded;
+    let mut best_note: Option<i16> = None;
     let mut best_distance = f32::MAX;
 
     for candidate in (rounded - 24)..=(rounded + 24) {
@@ -435,14 +435,16 @@ fn nearest_scale_degree(note: f32, root: RootNote, scale: &Scale) -> i16 {
             continue;
         }
 
+        // Round half up: `<=` lets the higher (later) candidate win an exact tie, so
+        // a pitch midway between two scale degrees snaps to the higher one.
         let distance = (note - candidate as f32).abs();
-        if distance < best_distance {
+        if distance <= best_distance {
             best_distance = distance;
-            best_note = candidate;
+            best_note = Some(candidate);
         }
     }
 
-    best_note.clamp(0, 127)
+    best_note.unwrap_or(rounded).clamp(0, 127)
 }
 
 fn velocity_from_rms(peak_rms: f32, capture_peak_rms: f32, amount: f32) -> u8 {

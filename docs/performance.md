@@ -41,4 +41,9 @@ In Rust, that rule is meaningful: ordinary stack values, slices, fixed-size arra
 - Patch load/save.
 - Sample ingest/decode/analysis.
 - UI operations.
-- Offline preparation before a patch becomes active.
+- Offline preparation before a patch becomes active. This includes the full pitch-shift
+  path: source analysis **and** the Resample Pro stretch/render itself. In Linnod the
+  Resample Pro variants are rendered to buffers during `prepare()`; the audio thread only
+  samples those pre-rendered buffers (`PreparedResampleProSlices::sample`). The stretch
+  algorithm (e.g. RTPGHI phase-gradient heap integration) therefore runs off the audio
+  thread and may allocate.

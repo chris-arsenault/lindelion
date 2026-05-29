@@ -55,7 +55,7 @@ pub(super) fn loop_damping(sample_rate: f32, params: WaveguideParams) -> LoopDam
     );
     let filter_delay_samples =
         filter_group_delay_samples(coefficients, sample_rate, params.frequency_hz);
-    let frequency_hz = tuned_frequency(sample_rate, params.frequency_hz);
+    let frequency_hz = sanitize_frequency(sample_rate, params.frequency_hz);
     let period_samples = sample_rate / frequency_hz;
     let decay_seconds = decay_seconds_from_loop_gain(params.loop_gain);
     let decay_gain = gain_for_t60(period_samples, sample_rate, decay_seconds);
@@ -91,13 +91,7 @@ pub(super) fn delay_tuning(
     delay_offset_samples: f32,
 ) -> DelayTuning {
     let cycle_divisor = cycle_divisor.max(1.0);
-    let min_frequency = sample_rate / (delay_capacity.max(1) as f32 * cycle_divisor);
-    let frequency_hz = math::finite_clamp(
-        frequency_hz,
-        min_frequency,
-        sample_rate * 0.45,
-        min_frequency,
-    );
+    let frequency_hz = sanitize_frequency(sample_rate, frequency_hz);
     let delay_samples = (sample_rate / (frequency_hz * cycle_divisor) - delay_offset_samples)
         .clamp(1.0, delay_capacity as f32 - 3.0);
     let integer_delay = delay_samples.floor();
@@ -152,7 +146,9 @@ fn loop_filter_coefficients(
     BiquadCoefficients::lowpass(sample_rate, loop_filter_cutoff, q)
 }
 
-fn tuned_frequency(sample_rate: f32, frequency_hz: f32) -> f32 {
+/// Shared frequency sanitizer used for both the delay length and the filter-delay
+/// compensation, so they always agree on the frequency the string is tuned to.
+pub(super) fn sanitize_frequency(sample_rate: f32, frequency_hz: f32) -> f32 {
     math::finite_clamp(frequency_hz, 1.0, sample_rate * 0.45, 220.0)
 }
 
@@ -188,7 +184,7 @@ fn filter_group_delay_samples(
     sample_rate: f32,
     frequency_hz: f32,
 ) -> f32 {
-    let omega = std::f32::consts::TAU * tuned_frequency(sample_rate, frequency_hz) / sample_rate;
+    let omega = std::f32::consts::TAU * sanitize_frequency(sample_rate, frequency_hz) / sample_rate;
     let delta = GROUP_DELAY_PROBE_RADIANS;
     let low = (omega - delta).clamp(delta, std::f32::consts::PI - delta);
     let high = (omega + delta).clamp(delta, std::f32::consts::PI - delta);

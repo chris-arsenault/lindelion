@@ -18,13 +18,25 @@ fn smf_contains_clip_tempo_and_time_signature() {
 }
 
 #[test]
+fn smf_tempo_rounds_for_non_divisor_bpm() {
+    // 60_000_000 / 127 = 472440.94..., which must round to 472441, not truncate.
+    let bytes = MidiClip::empty_with_time_signature(127, 4, 4)
+        .to_smf_bytes()
+        .unwrap();
+    let smf = Smf::parse(&bytes).unwrap();
+
+    assert_eq!(tempo_meta(&smf), Some(472_441));
+}
+
+#[test]
 fn empty_capture_exports_metadata_only() {
     let bytes = MidiClip::empty_with_time_signature(90, 3, 4)
         .to_smf_bytes()
         .unwrap();
     let smf = Smf::parse(&bytes).unwrap();
 
-    assert_eq!(tempo_meta(&smf), Some(60_000_000 / 90));
+    // 60_000_000 / 90 = 666666.67..., rounded (not truncated) to 666667.
+    assert_eq!(tempo_meta(&smf), Some(666_667));
     assert_eq!(time_signature_meta(&smf), Some((3, 2, 24, 8)));
     assert_eq!(midi_event_count(&smf), 0);
 }

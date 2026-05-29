@@ -105,8 +105,7 @@ impl FirstOrderAllpass {
         let coefficient = math::snap_to_zero(self.coefficient).clamp(-0.5, 1.0);
         self.coefficient = coefficient;
         self.z1 = math::snap_to_zero(self.z1);
-        let output = coefficient * (input - self.z1);
-        let output = output + self.z1;
+        let output = coefficient * input + self.z1;
         self.z1 = math::snap_to_zero(input - coefficient * output);
         math::snap_to_zero(output)
     }
@@ -181,6 +180,61 @@ mod tests {
 
         assert_all_finite(&output);
         assert!(output.iter().all(|sample| sample.abs() <= 1.25));
+    }
+
+    #[test]
+    fn allpass_impulse_response_matches_reference() {
+        // First-order allpass H(z) = (c + z^-1) / (1 + c z^-1) has the closed-form
+        // impulse response h[0] = c, h[n] = (1 - c^2)(-c)^(n-1) for n >= 1.
+        // For c = 0.5: [0.5, 0.75, -0.375, 0.1875, -0.09375].
+        let mut allpass = FirstOrderAllpass::default();
+        allpass.set_coefficient(0.5);
+
+        let mut response = Vec::new();
+        response.push(allpass.process(1.0));
+        for _ in 0..4 {
+            response.push(allpass.process(0.0));
+        }
+
+        let expected = [0.5_f32, 0.75, -0.375, 0.1875, -0.09375];
+        for (index, (got, want)) in response.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "h[{index}] = {got}, expected {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn allpass_magnitude_response_is_flat() {
+        // A true first-order allpass has unity magnitude at every frequency.
+        // Evaluate |H(e^{jw})| = |sum_n h[n] e^{-jwn}| from the impulse response.
+        for &coefficient in &[-0.5_f32, -0.25, 0.25, 0.5] {
+            let mut allpass = FirstOrderAllpass::default();
+            allpass.set_coefficient(coefficient);
+
+            let mut response = Vec::new();
+            response.push(allpass.process(1.0));
+            for _ in 0..511 {
+                response.push(allpass.process(0.0));
+            }
+
+            for step in 0..=16 {
+                let omega = std::f64::consts::PI * f64::from(step) / 16.0;
+                let mut real = 0.0_f64;
+                let mut imag = 0.0_f64;
+                for (n, &sample) in response.iter().enumerate() {
+                    let angle = omega * n as f64;
+                    real += f64::from(sample) * angle.cos();
+                    imag -= f64::from(sample) * angle.sin();
+                }
+                let magnitude = real.hypot(imag);
+                assert!(
+                    (magnitude - 1.0).abs() < 1e-6,
+                    "coefficient {coefficient}, omega {omega}: |H| = {magnitude}"
+                );
+            }
+        }
     }
 
     #[test]

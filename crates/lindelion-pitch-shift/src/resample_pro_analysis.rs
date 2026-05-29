@@ -1,8 +1,18 @@
-use lindelion_dsp_utils::{ola, phase, window};
+use lindelion_dsp_utils::{phase, window};
 use realfft::RealFftPlanner;
 
 use crate::{PitchShiftAnalysisConfig, ResampleProCache, ResampleProFrame};
 use lindelion_onset_detect::SliceMarker;
+
+/// STFT overlap factor: `analysis_hop = fft_size / OVERLAP_FACTOR`. 4 → 75 % overlap.
+///
+/// An M4 overlap/window sweep across the fidelity battery picked 75 % as the sweet spot here.
+/// 87.5 % overlap (factor 8) does lower the synthetic-tonal residual (e.g. −63.9 → −71.5 dB at
+/// FFT 4096) and pre-echo, but both residuals are already inaudible while it softens transients
+/// (impulse crest 25.5 → 19.9) at twice the frame count — the modulation-sideband win
+/// Laroche–Dolson cite is already at the measurement floor on this material. Larger FFT helps
+/// bass tonal (−55 → −70 dB) but halves time resolution; 4096 is the balance.
+const OVERLAP_FACTOR: usize = 4;
 
 pub(crate) fn analyze_resample_pro(
     audio: &[f32],
@@ -11,12 +21,11 @@ pub(crate) fn analyze_resample_pro(
     config: PitchShiftAnalysisConfig,
 ) -> ResampleProCache {
     let fft_size = config.frame_size.clamp(1024, 8192).next_power_of_two();
-    let analysis_hop = (fft_size / 4).max(1);
+    let analysis_hop = (fft_size / OVERLAP_FACTOR).max(1);
     let synthesis_hop = analysis_hop;
     let window = (0..fft_size)
         .map(|index| window::sqrt_hann_f64(index, fft_size))
         .collect::<Vec<_>>();
-    let window_ola_normalization = ola::steady_state_squared_window_sum(&window, synthesis_hop);
     let frames = analyze_frames(audio, fft_size, analysis_hop, &window);
     let transient_samples = transient_samples(markers, audio.len());
     let transient_frames = transient_frames(&transient_samples, &frames);
@@ -27,7 +36,6 @@ pub(crate) fn analyze_resample_pro(
         analysis_hop,
         synthesis_hop,
         window,
-        window_ola_normalization,
         frames,
         transient_frames,
         transient_samples,

@@ -47,6 +47,8 @@ mod tests {
         PitchShiftAlgorithm, PlaybackEdit, PlaybackMode, SLICE_COUNT, SliceEdit, TriggerMode,
     };
     use lindelion_midi::{RootNote, Scale};
+    use lindelion_onset_detect::{MarkerKind, SliceMarker};
+    use lindelion_sample_library::SampleReference;
 
     #[test]
     fn patch_toml_roundtrips_schema() {
@@ -57,6 +59,7 @@ mod tests {
 
         assert_encoded_schema(&encoded);
         assert_decoded_patch_header(&decoded);
+        assert_decoded_source_markers(&decoded);
         assert_decoded_slice_state(&decoded);
     }
 
@@ -69,6 +72,21 @@ mod tests {
             trigger_mode: TriggerMode::Chromatic,
             ..LinnodPatch::default()
         };
+        patch.source_sample = Some(SampleReference::new("hash", "Samples/source.wav"));
+        patch.markers = vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 12_000,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 18_000,
+                kind: MarkerKind::User,
+            },
+        ];
         patch.tuning.scale = Scale::PentatonicMinor;
         patch.tuning.root = RootNote::FSharp;
         patch.apply_playback_edit(PlaybackEdit::Mode(PlaybackMode::Continue));
@@ -105,6 +123,9 @@ mod tests {
         assert!(encoded.contains("[patch.engine]"));
         assert!(encoded.contains("[patch.playback]"));
         assert!(encoded.contains("[patch.tuning]"));
+        assert!(encoded.contains("[[patch.markers]]"));
+        assert!(encoded.contains("kind = \"Auto\""));
+        assert!(encoded.contains("kind = \"User\""));
         assert!(encoded.contains("choke_group"));
         assert!(!encoded.contains("analysis"));
     }
@@ -121,6 +142,30 @@ mod tests {
         assert_eq!(decoded.tuning.scale, Scale::PentatonicMinor);
         assert_eq!(decoded.tuning.root, RootNote::FSharp);
         assert_eq!(decoded.pad_map[2].choke_group, Some(ChokeGroupId(2)));
+    }
+
+    fn assert_decoded_source_markers(decoded: &LinnodPatch) {
+        assert_eq!(
+            decoded.source_sample.as_ref().unwrap().last_known_path,
+            std::path::PathBuf::from("Samples/source.wav")
+        );
+        assert_eq!(
+            decoded.markers,
+            vec![
+                SliceMarker {
+                    position_samples: 0,
+                    kind: MarkerKind::Auto,
+                },
+                SliceMarker {
+                    position_samples: 12_000,
+                    kind: MarkerKind::Auto,
+                },
+                SliceMarker {
+                    position_samples: 18_000,
+                    kind: MarkerKind::User,
+                },
+            ]
+        );
     }
 
     fn assert_decoded_slice_state(decoded: &LinnodPatch) {

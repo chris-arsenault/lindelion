@@ -6,10 +6,35 @@ use crate::dsp::{
 use lindelion_dsp_utils::{
     analysis::{
         assert_all_finite, audio_window_metrics, estimate_f0_autocorrelation,
-        first_index_above_abs, rms_difference,
+        first_index_above_abs, peak_abs, rms, rms_difference,
     },
     math::cents_between,
 };
+
+#[test]
+fn string_dispersion_loop_stays_bounded_and_decays() {
+    // With unity-gain dispersion the feedback loop is bounded by loop_gain < 1, so a
+    // single impulse rings down rather than accumulating energy, even at high loop
+    // gain and maximum dispersion.
+    let sample_rate = 48_000.0;
+    let params = WaveguideParams {
+        style: WaveguideStyle::String,
+        frequency_hz: 220.0,
+        loop_gain: 0.99,
+        dispersion: 1.0,
+        ..WaveguideParams::default()
+    };
+    let mut waveguide = WaveguideResonator::new(sample_rate, 20.0);
+    let output = (0..48_000)
+        .map(|index| waveguide.process_sample((index == 0) as u8 as f32, params))
+        .collect::<Vec<_>>();
+
+    assert_all_finite(&output);
+    assert!(peak_abs(&output) < 2.0, "peak_abs={}", peak_abs(&output));
+    let early = rms(&output[..4_800]);
+    let late = rms(&output[43_200..]);
+    assert!(late < early * 0.7, "early={early}, late={late}");
+}
 
 #[test]
 fn measurement_harness_covers_excitation_styles() {

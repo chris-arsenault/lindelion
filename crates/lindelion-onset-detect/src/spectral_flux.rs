@@ -9,7 +9,7 @@ use realfft::{RealFftPlanner, RealToComplex};
 
 use crate::{
     AlgorithmParams, DetectionConfig, MarkerKind, OnsetDetectionInput, OnsetDetector, SliceMarker,
-    StreamingOnsetDetector, dedupe_markers, onset_profile,
+    StreamingOnsetDetector, dedupe_markers, flux_threshold::local_flux_threshold, onset_profile,
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -243,6 +243,7 @@ pub struct StreamingSuperFluxDetector {
     min_gap_samples: usize,
     lookback_frames: usize,
     history: Vec<f32>,
+    running_peak: f32,
     last_peak: usize,
     emitted_initial_marker: bool,
     block_markers: Vec<SliceMarker>,
@@ -257,6 +258,7 @@ impl StreamingSuperFluxDetector {
             min_gap_samples: ms_to_samples(config.min_slice_ms, sample_rate),
             lookback_frames: profile.lookback_frames as usize,
             history: Vec::new(),
+            running_peak: 0.0,
             last_peak: 0,
             emitted_initial_marker: false,
             block_markers: Vec::new(),
@@ -283,7 +285,18 @@ impl StreamingSuperFluxDetector {
         }
 
         let candidate = self.history.len() - 2;
-        let threshold = flux_peak_threshold(&self.history[..=candidate], self.sensitivity);
+        // Running peak over history[0..=candidate], matching the batch causal max.
+        self.running_peak = if candidate == 1 {
+            self.history[0].max(self.history[1])
+        } else {
+            self.running_peak.max(self.history[candidate])
+        };
+        let threshold = local_flux_threshold(
+            &self.history,
+            candidate,
+            self.sensitivity,
+            self.running_peak,
+        );
         let lookback_frames = self.lookback_frames.max(1);
         let lookback_start = candidate.saturating_sub(lookback_frames);
         let lookback_peak = self.history[lookback_start..candidate]
@@ -327,6 +340,7 @@ impl StreamingOnsetDetector for StreamingSuperFluxDetector {
     fn reset(&mut self) {
         self.flux.reset();
         self.history.clear();
+        self.running_peak = 0.0;
         self.last_peak = 0;
         self.emitted_initial_marker = false;
         self.block_markers.clear();
@@ -375,7 +389,7 @@ fn markers_from_novelty(
     )
 }
 
-fn complex_flux(
+pub(crate) fn complex_flux(
     audio: &[f32],
     frame_size: usize,
     hop_size: usize,
@@ -408,8 +422,10 @@ fn complex_flux(
                     ) - 2.0 * magnitude * previous_magnitudes[bin] * phase_error.cos())
                     .max(0.0)
                     .sqrt();
-                frame_flux += (magnitude - previous_magnitudes[bin]).max(0.0)
-                    + group_delay_weight * phase_distance;
+                // Complex-domain distance |X_t - X_pred| already incorporates the
+                // magnitude deviation, so it is the whole novelty term; adding a
+                // separate magnitude flux would double-count it.
+                frame_flux += group_delay_weight * phase_distance;
             }
             previous_previous_phases[bin] = previous_phases[bin];
             previous_phases[bin] = phase;
@@ -520,18 +536,20 @@ fn pick_flux_peaks(
         return Vec::new();
     }
 
-    let threshold = flux_peak_threshold(flux, sensitivity);
     let mut peaks = vec![0];
     let mut last_peak = 0usize;
+    let mut running_peak = flux[0];
 
     let lookback_frames = lookback_frames.max(1);
     for index in 1..flux.len().saturating_sub(1) {
+        running_peak = running_peak.max(flux[index]);
         let position = index * hop_size;
         let lookback_start = index.saturating_sub(lookback_frames);
         let lookback_peak = flux[lookback_start..index]
             .iter()
             .copied()
             .fold(0.0, f32::max);
+        let threshold = local_flux_threshold(flux, index, sensitivity, running_peak);
         if flux[index] >= threshold
             && flux[index] >= lookback_peak
             && flux[index] >= flux[index + 1]
@@ -543,24 +561,6 @@ fn pick_flux_peaks(
     }
 
     peaks
-}
-
-fn flux_peak_threshold(flux: &[f32], sensitivity: f32) -> f32 {
-    if flux.is_empty() {
-        return 0.05;
-    }
-
-    let mean = flux.iter().copied().sum::<f32>() / flux.len() as f32;
-    let variance = flux
-        .iter()
-        .map(|value| {
-            let delta = *value - mean;
-            delta * delta
-        })
-        .sum::<f32>()
-        / flux.len() as f32;
-    let std_dev = variance.sqrt();
-    (mean + std_dev * (1.5 - sensitivity.clamp(0.0, 1.0))).max(0.05)
 }
 
 fn normalize_flux(flux: &mut [f32]) {

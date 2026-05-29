@@ -1,4 +1,5 @@
 use lindelion_dsp_utils::{math::finite_or, window};
+use realfft::num_complex::Complex32;
 use realfft::{RealFftPlanner, RealToComplex};
 
 use crate::{
@@ -43,7 +44,7 @@ pub fn analyze_spectral_frame(
         rms: frame_rms(audio, start_sample, end_sample),
         harmonic_magnitudes: harmonic_magnitudes(&magnitudes, bin_hz, f0_hz),
         spectral_peaks: spectral_peaks(&spectrum, &magnitudes, bin_hz, f0_hz),
-        envelope: spectral_envelope(&magnitudes, bin_hz, f0_hz, config),
+        envelope: spectral_envelope(&magnitudes, bin_hz, f0_hz, config, &*fft),
         residual,
     }
 }
@@ -76,15 +77,27 @@ fn frame_spectrum(
     spectrum
 }
 
+/// Iterative true-envelope budget. The estimator usually converges in well under this
+/// many passes; the cap bounds the offline analysis cost (Röbel & Rodet, DAFx-05).
+const TRUE_ENVELOPE_MAX_ITERS: usize = 16;
+/// Convergence reached once the original spectrum rises no more than this above the
+/// smoothed envelope anywhere (the envelope rides all peaks within tolerance).
+const TRUE_ENVELOPE_THRESHOLD_DB: f32 = 2.0;
+/// Magnitude floor before taking the log, so spectral zeros do not produce `-inf`.
+const TRUE_ENVELOPE_LOG_FLOOR: f32 = 1.0e-9;
+
 fn spectral_envelope(
     magnitudes: &[f32],
     bin_hz: f32,
     f0_hz: Option<f32>,
     config: PitchShiftAnalysisConfig,
+    fft: &dyn RealToComplex<f32>,
 ) -> SpectralEnvelope {
     let point_count = config.envelope_points.min(magnitudes.len()).max(1);
     let nyquist_hz = bin_hz * magnitudes.len().saturating_sub(1) as f32;
-    let smoothing_hz = envelope_smoothing_hz(bin_hz, f0_hz, config);
+    let lifter_order = true_envelope_lifter_order(magnitudes.len(), bin_hz, f0_hz);
+    let envelope = true_envelope_magnitudes(magnitudes, lifter_order, fft);
+    let last_bin = envelope.len().saturating_sub(1);
     let points = (0..point_count)
         .map(|index| {
             let frequency_hz = if point_count == 1 {
@@ -92,9 +105,10 @@ fn spectral_envelope(
             } else {
                 nyquist_hz * index as f32 / (point_count - 1) as f32
             };
+            let bin = (frequency_hz / bin_hz.max(f32::EPSILON)).round() as usize;
             SpectralEnvelopePoint {
                 frequency_hz,
-                magnitude: smoothed_magnitude(magnitudes, bin_hz, frequency_hz, smoothing_hz),
+                magnitude: envelope.get(bin.min(last_bin)).copied().unwrap_or(0.0),
             }
         })
         .collect();
@@ -104,27 +118,107 @@ fn spectral_envelope(
     }
 }
 
-fn envelope_smoothing_hz(bin_hz: f32, f0_hz: Option<f32>, config: PitchShiftAnalysisConfig) -> f32 {
-    f0_hz
-        .map(|f0| f0 * config.envelope_smoothing_harmonics)
-        .unwrap_or(bin_hz * 6.0)
-        .max(bin_hz)
+/// Cepstral lifter order `P ≈ sr / (2·f0)`: high enough to resolve formant structure but
+/// kept below the pitch rahmonic at `sr / f0`, so the envelope cannot latch onto
+/// individual harmonics. Falls back to `n / 12` when f0 is unknown.
+fn true_envelope_lifter_order(half_len: usize, bin_hz: f32, f0_hz: Option<f32>) -> usize {
+    let n = half_len.saturating_sub(1) * 2;
+    let sample_rate = bin_hz * n as f32;
+    let order = match f0_hz.filter(|f0| f0.is_finite() && *f0 > 0.0) {
+        Some(f0) => sample_rate / (2.0 * f0.max(bin_hz)),
+        None => n as f32 / 12.0,
+    };
+    (order.round() as usize).clamp(2, half_len.saturating_sub(1).max(2))
 }
 
-fn smoothed_magnitude(
+/// Iterative true envelope (Imai/Röbel & Rodet): start from the log spectrum and
+/// repeatedly take the max of the *original* spectrum and its Hamming-liftered cepstral
+/// smoothing. The `max` pushes the envelope up to ride the spectral peaks rather than the
+/// mean, and the Hamming lifter suppresses the Gibbs ringing a rectangular lifter leaves.
+/// Returns the converged smooth envelope as linear magnitudes.
+fn true_envelope_magnitudes(
     magnitudes: &[f32],
-    bin_hz: f32,
-    frequency_hz: f32,
-    smoothing_hz: f32,
-) -> f32 {
-    if magnitudes.is_empty() || bin_hz <= 0.0 {
-        return 0.0;
+    lifter_order: usize,
+    fft: &dyn RealToComplex<f32>,
+) -> Vec<f32> {
+    let half = magnitudes.len();
+    let n = half.saturating_sub(1) * 2;
+    if n < 4 || half < 3 {
+        return magnitudes.to_vec();
     }
-    let center_bin = (frequency_hz / bin_hz).round() as usize;
-    let radius = (smoothing_hz / bin_hz).ceil().max(1.0) as usize;
-    let start = center_bin.saturating_sub(radius);
-    let end = (center_bin + radius + 1).min(magnitudes.len());
-    rms_magnitude(&magnitudes[start..end])
+    let target: Vec<f32> = magnitudes
+        .iter()
+        .map(|m| m.max(TRUE_ENVELOPE_LOG_FLOOR).ln())
+        .collect();
+    let mut estimate = target.clone();
+    let mut smoothed = vec![0.0_f32; half];
+    let mut full = fft.make_input_vec();
+    let mut spectrum = fft.make_output_vec();
+    let threshold = TRUE_ENVELOPE_THRESHOLD_DB * std::f32::consts::LN_10 / 20.0;
+
+    for _ in 0..TRUE_ENVELOPE_MAX_ITERS {
+        cepstral_smooth(
+            &estimate,
+            lifter_order,
+            fft,
+            &mut full,
+            &mut spectrum,
+            &mut smoothed,
+        );
+        let max_excess = (0..half)
+            .map(|k| target[k] - smoothed[k])
+            .fold(0.0_f32, f32::max);
+        if max_excess <= threshold {
+            break;
+        }
+        for k in 0..half {
+            estimate[k] = target[k].max(smoothed[k]);
+        }
+    }
+    smoothed.iter().map(|value| value.exp()).collect()
+}
+
+/// One cepstral smoothing pass: even-symmetric DFT of the log spectrum → real cepstrum →
+/// Hamming lifter keeping `|quefrency| ≤ order` → DFT back to the smoothed log spectrum.
+/// `full` (length `n`) and `spectrum` (length `n/2+1`) are reused FFT scratch buffers.
+fn cepstral_smooth(
+    log_half: &[f32],
+    lifter_order: usize,
+    fft: &dyn RealToComplex<f32>,
+    full: &mut [f32],
+    spectrum: &mut [Complex32],
+    out: &mut [f32],
+) {
+    let half = log_half.len();
+    let n = full.len();
+    for (slot, &value) in full.iter_mut().zip(log_half.iter()) {
+        *slot = value;
+    }
+    for k in 1..half.saturating_sub(1) {
+        full[n - k] = log_half[k];
+    }
+    let _ = fft.process(full, spectrum);
+    // Real cepstrum c[k] = Re(DFT(log))/n, even-symmetric in k ↔ n-k; apply the Hamming
+    // lifter and rebuild the symmetric sequence in `full` for the inverse pass.
+    let order = lifter_order.max(1);
+    for k in 0..n {
+        let quefrency = k.min(n - k);
+        let coeff = if k < half {
+            spectrum[k].re
+        } else {
+            spectrum[n - k].re
+        } / n as f32;
+        let weight = if quefrency <= order {
+            0.54 + 0.46 * (std::f32::consts::PI * quefrency as f32 / order as f32).cos()
+        } else {
+            0.0
+        };
+        full[k] = coeff * weight;
+    }
+    let _ = fft.process(full, spectrum);
+    for (slot, bin) in out.iter_mut().zip(spectrum.iter()) {
+        *slot = bin.re;
+    }
 }
 
 fn residual_descriptor(

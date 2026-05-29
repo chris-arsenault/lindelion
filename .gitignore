@@ -11,3 +11,6 @@ dist/
 *.tfstate.backup
 .terraform.lock.hcl
 .idea/
+
+# Regeneratable Resample Pro fidelity baseline outputs (run the #[ignore] generators)
+docs/plots/data/resample_pro_fidelity/

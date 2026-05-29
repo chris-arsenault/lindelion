@@ -1,3 +1,15 @@
+//! Formant-tracking pitch-synchronous granular resampler.
+//!
+//! This is the synthesis path selected when the formant ratio tracks the pitch
+//! ratio (`formant_ratio == pitch_ratio`). Grains are read from the source at
+//! `pitch_ratio` speed (`source_center + distance * pitch_ratio`), so the spectral
+//! envelope — including formants — shifts *with* the pitch, like tape/varispeed.
+//!
+//! It is therefore **not** textbook (formant-preserving) PSOLA: formant-preserving
+//! shifts are handled by the spectral-peak path instead. The overlap-add here is
+//! amplitude-normalized (`weighted_sum / weight_sum`) so the level stays flat
+//! across shift ratios; this is intentional for a granular resampler.
+
 use lindelion_dsp_utils::interpolation;
 
 use crate::{
@@ -6,9 +18,9 @@ use crate::{
     synthesis_support::{frame_at_position, raised_cosine_window},
 };
 
-const PSOLA_CENTER_SEARCH_RADIUS: isize = 4;
-const PSOLA_MIN_WINDOW_RADIUS_SAMPLES: f32 = 32.0;
-const PSOLA_MAX_WINDOW_RADIUS_SAMPLES: f32 = 4096.0;
+const GRAIN_CENTER_SEARCH_RADIUS: isize = 4;
+const GRAIN_MIN_WINDOW_RADIUS_SAMPLES: f32 = 32.0;
+const GRAIN_MAX_WINDOW_RADIUS_SAMPLES: f32 = 4096.0;
 
 pub(crate) fn pitch_synchronous_sample(
     source: &[f32],
@@ -37,13 +49,13 @@ pub(crate) fn pitch_synchronous_sample(
         return None;
     }
 
-    let origin = psola_origin_offset(cache, start_sample)?;
+    let origin = grain_origin_offset(cache, start_sample)?;
     let nearest_center = ((offset_samples - origin) / target_period).round() as isize;
-    let window_radius = psola_window_radius(source_period, target_period);
+    let window_radius = grain_window_radius(source_period, target_period);
     let mut weighted_sum = 0.0;
     let mut weight_sum = 0.0;
     for center_index in
-        nearest_center - PSOLA_CENTER_SEARCH_RADIUS..=nearest_center + PSOLA_CENTER_SEARCH_RADIUS
+        nearest_center - GRAIN_CENTER_SEARCH_RADIUS..=nearest_center + GRAIN_CENTER_SEARCH_RADIUS
     {
         let synth_center = origin + center_index as f32 * target_period;
         let distance = offset_samples - synth_center;
@@ -65,7 +77,7 @@ pub(crate) fn pitch_synchronous_sample(
     (weight_sum > f32::EPSILON).then_some(weighted_sum / weight_sum * config.harmonic_level)
 }
 
-fn psola_origin_offset(cache: &PitchShiftSourceCache, start_sample: usize) -> Option<f32> {
+fn grain_origin_offset(cache: &PitchShiftSourceCache, start_sample: usize) -> Option<f32> {
     nearest_epoch_sample(cache, start_sample as f64).map(|epoch| epoch as f32 - start_sample as f32)
 }
 
@@ -95,9 +107,9 @@ fn nearest_epoch_sample(cache: &PitchShiftSourceCache, position_samples: f64) ->
     }
 }
 
-fn psola_window_radius(source_period: f32, target_period: f32) -> f32 {
+fn grain_window_radius(source_period: f32, target_period: f32) -> f32 {
     (source_period * 1.5).max(target_period * 0.75).clamp(
-        PSOLA_MIN_WINDOW_RADIUS_SAMPLES,
-        PSOLA_MAX_WINDOW_RADIUS_SAMPLES,
+        GRAIN_MIN_WINDOW_RADIUS_SAMPLES,
+        GRAIN_MAX_WINDOW_RADIUS_SAMPLES,
     )
 }

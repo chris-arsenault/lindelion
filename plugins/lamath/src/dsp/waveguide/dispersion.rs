@@ -73,8 +73,8 @@ pub(super) fn dispersion_profile(sample_rate: f32, params: WaveguideParams) -> D
     let sample_rate = core::sanitize_sample_rate(sample_rate);
     let primary_coefficient = PRIMARY_COEFFICIENT_AT_MAX * amount.powf(1.35);
     let secondary_coefficient = SECONDARY_COEFFICIENT_AT_MAX * amount.powf(1.8);
-    let omega =
-        std::f32::consts::TAU * tuned_frequency(sample_rate, params.frequency_hz) / sample_rate;
+    let omega = std::f32::consts::TAU * core::sanitize_frequency(sample_rate, params.frequency_hz)
+        / sample_rate;
     let delay_compensation_samples = (first_order_group_delay_samples(primary_coefficient, omega)
         + first_order_group_delay_samples(secondary_coefficient, omega))
     .clamp(0.0, MAX_DELAY_COMPENSATION_SAMPLES);
@@ -84,10 +84,6 @@ pub(super) fn dispersion_profile(sample_rate: f32, params: WaveguideParams) -> D
         secondary_coefficient,
         delay_compensation_samples,
     }
-}
-
-fn tuned_frequency(sample_rate: f32, frequency_hz: f32) -> f32 {
-    math::finite_clamp(frequency_hz, 1.0, sample_rate * 0.45, 220.0)
 }
 
 fn first_order_group_delay_samples(coefficient: f32, omega: f32) -> f32 {
@@ -193,6 +189,43 @@ mod tests {
 
         assert_all_finite(&output);
         assert!(output.iter().all(|sample| sample.abs() < 0.000_001));
+    }
+
+    #[test]
+    fn dispersion_cascade_magnitude_is_flat() {
+        // The dispersion sections are first-order allpasses, so the cascade
+        // redistributes phase only: |H(e^{jw})| == 1 at every frequency. (This is
+        // what keeps the dispersion from adding energy inside the feedback loop.)
+        let profile = dispersion_profile(
+            48_000.0,
+            WaveguideParams {
+                frequency_hz: 220.0,
+                dispersion: 1.0,
+                ..WaveguideParams::default()
+            },
+        );
+        let mut stage = WaveguideDispersion::new();
+        let mut response = Vec::with_capacity(512);
+        response.push(stage.process_sample(1.0, profile));
+        for _ in 0..511 {
+            response.push(stage.process_sample(0.0, profile));
+        }
+
+        for step in 0..=16 {
+            let omega = std::f64::consts::PI * f64::from(step) / 16.0;
+            let mut real = 0.0_f64;
+            let mut imag = 0.0_f64;
+            for (n, &sample) in response.iter().enumerate() {
+                let angle = omega * n as f64;
+                real += f64::from(sample) * angle.cos();
+                imag -= f64::from(sample) * angle.sin();
+            }
+            let magnitude = real.hypot(imag);
+            assert!(
+                (magnitude - 1.0).abs() < 1e-4,
+                "omega {omega}: |H| = {magnitude}"
+            );
+        }
     }
 
     fn render_stage(stage: &mut WaveguideDispersion, profile: DispersionProfile) -> Vec<f32> {

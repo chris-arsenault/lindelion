@@ -1,7 +1,4 @@
-use lindelion_dsp_utils::{
-    math::{self, cents_between},
-    soft_saturate,
-};
+use lindelion_dsp_utils::{filters::BiquadCoefficients, math, soft_saturate};
 
 use super::{
     WaveguideParams,
@@ -39,7 +36,7 @@ impl String1dParams {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct String1d {
+pub(super) struct String1d {
     sample_rate: f32,
     waves: TravelingWavePair,
     terminations: BoundaryFilters,
@@ -49,7 +46,7 @@ struct String1d {
 }
 
 impl String1d {
-    fn new(sample_rate: f32) -> Self {
+    pub(super) fn new(sample_rate: f32) -> Self {
         let sample_rate = core::sanitize_sample_rate(sample_rate);
         Self {
             sample_rate,
@@ -61,12 +58,18 @@ impl String1d {
         }
     }
 
-    fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.waves.clear();
         self.terminations.reset();
         self.left_dispersion.reset();
         self.right_dispersion.reset();
         self.body.reset();
+    }
+
+    /// Production entry point: drive the two-rail string from `WaveguideParams`,
+    /// mirroring `Tube1d::process_sample`.
+    pub(super) fn process(&mut self, excitation: f32, params: WaveguideParams) -> f32 {
+        self.process_sample(excitation, String1dParams::from_waveguide(params))
     }
 
     fn process_sample(&mut self, excitation: f32, params: String1dParams) -> f32 {
@@ -79,12 +82,18 @@ impl String1d {
             self.waves.capacity(),
             params.frequency_hz,
             2.0,
-            1.0 + damping.filter_delay_samples + dispersion_profile.delay_compensation_samples,
+            // The loop filter is applied at one termination only (once per round
+            // trip), so it contributes half its group delay per one-way pass.
+            1.0 + 0.5 * damping.filter_delay_samples
+                + dispersion_profile.delay_compensation_samples,
         );
         let one_way_delay = tuning.integer_delay + tuning.fractional_delay;
 
+        // Apply the loop filter at a single termination (once per round trip): the
+        // gain compensation in `loop_damping` divides out one filter peak, so a
+        // second pass would make the resonant round-trip gain exceed unity.
         self.terminations
-            .set_coefficients(damping.coefficients, damping.coefficients);
+            .set_coefficients(damping.coefficients, BiquadCoefficients::identity());
 
         let boundary = self.waves.boundary_samples(one_way_delay);
         let pickup = self
@@ -169,6 +178,7 @@ mod tests {
         assert_all_finite, audio_window_metrics, estimate_f0_autocorrelation,
         first_index_above_abs, rms_difference,
     };
+    use lindelion_dsp_utils::math::cents_between;
 
     #[test]
     fn string_1d_renders_finite_decaying_audio() {
@@ -323,6 +333,68 @@ mod tests {
 
         assert_all_finite(&output);
         assert!(audio_window_metrics(&output, sample_rate).peak_abs < 0.000_001);
+    }
+
+    #[test]
+    fn string_1d_low_note_near_capacity_tracks_target() {
+        // A low note near the buffer-capacity limit must still track its target;
+        // this guards the shared frequency sanitizer used by both the delay length
+        // and the filter-delay compensation.
+        let sample_rate = 48_000.0;
+        let target_hz = 35.0;
+        let output = render_string_1d(
+            sample_rate,
+            String1dParams {
+                frequency_hz: target_hz,
+                loop_filter_cutoff: 16_000.0,
+                loop_filter_resonance: 0.0,
+                loop_gain: 0.99,
+                loop_nonlinearity: 0.0,
+                dispersion: 0.0,
+                strike_position: 0.4,
+                pickup_position: 0.7,
+            },
+            32_000,
+            RenderExcitation::Impulse,
+        );
+        let estimate = estimate_f0_autocorrelation(
+            &output[2_048..],
+            sample_rate,
+            target_hz * 0.8,
+            target_hz * 1.25,
+        )
+        .unwrap();
+        let cents = cents_between(target_hz, estimate);
+        assert!(cents < 80.0, "estimate={estimate}, cents={cents}");
+    }
+
+    #[test]
+    fn string_1d_resonant_loop_decays_without_high_frequency_growth() {
+        // Regression for the loop filter being applied at both terminations: with a
+        // low cutoff and a resonant loop, the round-trip peak gain exceeded 1 and
+        // the partials grew over time. Applying the filter once per round trip keeps
+        // the decay monotonic.
+        let sample_rate = 48_000.0;
+        let output = render_string_1d(
+            sample_rate,
+            String1dParams {
+                frequency_hz: 220.0,
+                loop_filter_cutoff: 2_400.0,
+                loop_filter_resonance: 0.1,
+                loop_gain: 0.975,
+                loop_nonlinearity: 0.0,
+                dispersion: 0.0,
+                strike_position: 0.42,
+                pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
+            },
+            24_000,
+            RenderExcitation::ShapedPluck,
+        );
+        let early = audio_window_metrics(&output[512..2_560], sample_rate);
+        let late = audio_window_metrics(&output[20_000..22_048], sample_rate);
+
+        assert_all_finite(&output);
+        assert!(early.rms > late.rms, "early={early:?}, late={late:?}");
     }
 
     fn render_string_1d(

@@ -5,9 +5,12 @@ use lindelion_dsp_utils::analysis::{
 use lindelion_onset_detect::{MarkerKind, SliceMarker};
 use lindelion_pitch_detect::{PitchContour, PitchFrame};
 
+mod fidelity_battery;
+mod real_fixtures;
 mod resample_pro;
 mod resample_stretch;
 mod sax_fixture;
+mod synthesis_quality;
 mod varispeed;
 
 #[test]
@@ -85,6 +88,57 @@ fn pitch_adaptive_envelope_tracks_source_formant_peak() {
         cache.frames[1].spectral_envelope.harmonic_spacing_hz,
         Some(110.0)
     );
+}
+
+#[test]
+fn true_envelope_rides_harmonic_peaks_across_fundamentals() {
+    // The iterative true envelope is an *upper* envelope: it sits at the harmonic-peak
+    // level rather than the inter-harmonic mean. The previous moving-RMS box averaged each
+    // harmonic down toward its neighbouring valleys, so the envelope at a harmonic fell well
+    // below that harmonic's measured magnitude (ride ratio ~0.64-0.80). Assert peak-riding
+    // (ratio near 1.0) holds across fundamentals, and the formant peak stays pinned near
+    // 1 kHz (stability across shifts).
+    let analyzer = PitchShiftAnalyzer::new(PitchShiftAnalysisConfig {
+        frame_size: 4096,
+        envelope_points: 256,
+        ..PitchShiftAnalysisConfig::default()
+    });
+    for f0 in [90.0_f32, 110.0] {
+        let audio = harmonic_stack_with_formant(f0, 1_000.0, 48_000, 8_192);
+        let contour = constant_pitch_contour(48_000, f0, 8_192);
+        let cache = analyzer
+            .analyze(&audio, 48_000, &contour, &markers(&[0]))
+            .unwrap();
+        let frame = &cache.frames[1];
+        let envelope = &frame.spectral_envelope;
+        let harmonics = &frame.harmonic_magnitudes;
+        let strongest = harmonics
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max)
+            .max(1.0e-9);
+
+        let mut ride_sum = 0.0;
+        let mut ride_count = 0;
+        for (index, &magnitude) in harmonics.iter().enumerate() {
+            if magnitude >= 0.25 * strongest {
+                let frequency_hz = (index + 1) as f32 * f0;
+                ride_sum += envelope.magnitude_at(frequency_hz) / magnitude;
+                ride_count += 1;
+            }
+        }
+        let ride_ratio = ride_sum / ride_count.max(1) as f32;
+        assert!(
+            ride_ratio >= 0.86,
+            "f0={f0}: envelope rode harmonic peaks at only {ride_ratio:.3} of their magnitude"
+        );
+
+        let peak_hz = envelope_peak_hz(&frame.spectral_envelope);
+        assert!(
+            (peak_hz - 1_000.0).abs() < 80.0,
+            "f0={f0}: formant peak landed at {peak_hz} Hz"
+        );
+    }
 }
 
 #[test]

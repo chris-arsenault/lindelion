@@ -152,7 +152,7 @@ pub(crate) const RESONATOR_POSITION_MOD_DEPTH: f32 = 0.5;
 pub(crate) const WAVEGUIDE_DAMPING_MOD_DEPTH: f32 = 0.25;
 
 pub(crate) const TUBE_BOUNDARY: TubeBoundaryModel =
-    TubeBoundaryModel::new(FloatRange::new(-1.0, 1.0, 0.75), 0.25, 0.5, 0.8, 0.2);
+    TubeBoundaryModel::new(FloatRange::new(-1.0, 1.0, -0.75), 0.25, 0.5, 0.8, 0.2);
 
 pub(crate) const SERIES_CONDITIONER: SeriesConditionerParams =
     SeriesConditionerParams::new(80.0, DEFAULT_BIQUAD_Q, 0.01, 0.000_2, 1.0e-6, 0.04, 0.96);
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn boundary_model_numerics_are_pinned() {
-        assert_eq!(TUBE_BOUNDARY.reflection(f32::NAN), 0.75);
+        assert_eq!(TUBE_BOUNDARY.reflection(f32::NAN), -0.75);
         assert_eq!(TUBE_BOUNDARY.reflection(2.0), 1.0);
         assert_eq!(TUBE_BOUNDARY.excitation_coupling(0.75), 0.8125);
         assert!((TUBE_BOUNDARY.output_gain(0.75) - 0.95).abs() < 0.000_001);

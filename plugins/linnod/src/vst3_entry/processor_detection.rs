@@ -17,7 +17,7 @@ impl LinnodVst3Processor {
         if !apply_detection_edit_message(&mut patch, edit) {
             return kInvalidArgument;
         }
-        plugin.set_patch(patch);
+        plugin.set_patch_redetecting_source(patch);
         drop(plugin);
         self.send_patch_update()
     }

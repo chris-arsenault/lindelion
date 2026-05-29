@@ -9,10 +9,11 @@ fn hard_snap_moves_to_scale_degree() {
         ..QuantizeSettings::default()
     };
 
-    assert_eq!(snap_midi_note(66.0, &settings), 65);
+    // 66.0 (F#) is an exact tie between F (65) and G (67); round-half-up snaps up.
+    assert_eq!(snap_midi_note(66.0, &settings), 67);
     assert_eq!(
         snap_midi_note_to_scale(66.0, RootNote::C, &Scale::Major, SnapMode::Hard, 50.0),
-        65
+        67
     );
 }
 
@@ -30,10 +31,21 @@ fn soft_snap_preserves_out_of_key_chromatic_note() {
 }
 
 #[test]
+fn exact_tie_rounds_half_up_to_higher_scale_degree() {
+    // 64.5 is exactly between E (64) and F (65), both in C major; round-half-up
+    // resolves the tie to the higher degree.
+    assert_eq!(
+        nearest_scale_midi_note(64.5, RootNote::C, &Scale::Major),
+        65
+    );
+}
+
+#[test]
 fn nearest_scale_midi_note_is_shared_without_quantize_settings() {
+    // 66.0 is an exact tie between F (65) and G (67); round-half-up snaps up.
     assert_eq!(
         nearest_scale_midi_note(66.0, RootNote::C, &Scale::Major),
-        65
+        67
     );
     assert_eq!(
         nearest_scale_midi_note(66.8, RootNote::C, &Scale::Major),

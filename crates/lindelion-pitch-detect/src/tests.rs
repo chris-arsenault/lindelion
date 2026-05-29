@@ -1,4 +1,5 @@
 use super::*;
+use lindelion_dsp_utils::analysis::windowed_dft_magnitude_at;
 use lindelion_dsp_utils::math::cents_between;
 
 #[test]
@@ -12,6 +13,31 @@ fn resampling_preserves_duration() {
     let resampled = resample_to_swiftf0_rate(&audio, 48_000);
 
     assert_eq!(resampled.len(), 16_000);
+}
+
+#[test]
+fn downsampling_rejects_above_nyquist_alias() {
+    // A 10 kHz tone at 48 kHz sits above the 8 kHz Nyquist of the 16 kHz analysis
+    // rate; pure decimation folds it to a 6 kHz alias. The band-limited resampler
+    // must reject it instead of aliasing it down.
+    let source_rate = 48_000u32;
+    let tone_hz = 10_000.0;
+    let alias_hz = 6_000.0;
+    let input: Vec<f32> = (0..source_rate)
+        .map(|index| (std::f32::consts::TAU * tone_hz * index as f32 / source_rate as f32).sin())
+        .collect();
+
+    let resampled = resample_to_swiftf0_rate(&input, source_rate);
+
+    let trim = 128;
+    let body = &resampled[trim..resampled.len() - trim];
+    let alias = windowed_dft_magnitude_at(body, SWIFTF0_TARGET_SAMPLE_RATE as f32, alias_hz);
+    let source_level = windowed_dft_magnitude_at(&input, source_rate as f32, tone_hz);
+
+    assert!(
+        alias < source_level * 0.05,
+        "alias at {alias_hz} Hz should be >= 26 dB below the source tone; alias={alias}, source_level={source_level}"
+    );
 }
 
 #[test]

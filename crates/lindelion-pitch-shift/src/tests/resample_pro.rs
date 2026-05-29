@@ -12,6 +12,7 @@ use super::{constant_pitch_contour, markers, sine_wave};
 use crate::{PitchShiftAnalysisConfig, PitchShiftAnalyzer, PitchShiftEngine, PitchShiftRatios};
 
 mod alias_rejection;
+mod retained_paths;
 mod transient_slice;
 mod wind_fixture;
 
@@ -41,12 +42,6 @@ fn assert_resample_pro_config(pro: &crate::ResampleProCache, sample_rate: u32) {
 
 fn assert_resample_pro_window_shape(pro: &crate::ResampleProCache) {
     assert_eq!(pro.window.len(), pro.fft_size);
-    assert_eq!(pro.window_ola_normalization.len(), pro.fft_size);
-    assert!(
-        pro.window_ola_normalization
-            .iter()
-            .all(|value| *value > 0.0)
-    );
 }
 
 fn assert_resample_pro_frame_shape(pro: &crate::ResampleProCache) {

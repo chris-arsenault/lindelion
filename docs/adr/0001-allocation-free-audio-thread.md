@@ -21,6 +21,6 @@ All audio-thread paths in Lindelion plugins are allocation-free, lock-free, and 
 
 - Audio-thread buffers, voice state, latch buffers, pre-roll rings, and per-mode arrays are preallocated during `prepare()` or structural patch application.
 - Hard caps on per-sample iteration are stated explicitly (e.g., 256-mode modal limit).
-- Allowed allocation zones are plugin construction, patch load/save, sample ingest/decode/analysis, UI operations, and offline preparation. These are listed in `docs/performance.md`.
+- Allowed allocation zones are plugin construction, patch load/save, sample ingest/decode/analysis, UI operations, and offline preparation. These are listed in `docs/performance.md`. Offline preparation covers the entire pitch-shift path — source analysis and the Resample Pro stretch/render. In Linnod the Resample Pro variants are rendered to buffers during `prepare()` and the audio thread only samples those pre-rendered buffers, so the stretch algorithm (including RTPGHI phase-gradient heap integration) runs off the audio thread and may allocate.
 - Audio output is validated as finite by `lindelion-dsp-utils::analysis::assert_all_finite` in tests across parameter sweeps.
 - Filter state is flushed against denormals using `lindelion-dsp-utils::math::snap_to_zero`.

@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     ChokeGroupId, LinnodPatch, PadId, PitchShiftAlgorithm, SourceAnalysisJobResult,
-    SourceAnalysisStatus, parameters::MASTER_GAIN_PARAMETER_ID, patch_io,
+    SourceAnalysisStatus, SourceMarkerPolicy, parameters::MASTER_GAIN_PARAMETER_ID, patch_io,
 };
 use fixtures::{source_analysis, source_summary_payload, status_payload};
 use lindelion_sample_library::SampleReference;
@@ -433,6 +433,10 @@ fn processor_restore_loads_source_without_controller_notify() {
     let state = patch_io::to_plugin_state(&patch).unwrap();
 
     let result = processor.restore_plugin_state_with_source_runner(state, |job| {
+        assert_eq!(
+            job.marker_policy(),
+            SourceMarkerPolicy::UseSavedMarkersOrDetect
+        );
         SourceAnalysisJobResult::ready(job.sequence, source_analysis())
     });
 

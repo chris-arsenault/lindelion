@@ -433,7 +433,10 @@ fn render_sample_at_offset(
         .clamp(0.0, source.len().saturating_sub(1) as f64) as usize;
     let frame = frame_at_position(&cache.frames, source_index);
     let source_sample = interpolation::linear_f64(source, source_position);
-    let harmonic = voiced_harmonic_sample(frame, offsets.source, cache.sample_rate as f32, config);
+    // Drive the harmonic phase from the absolute sample position (like the
+    // spectral-peak path), so adjacent regions/slices join without a phase reset.
+    let phase_position = start_sample as f64 + offsets.phase as f64;
+    let harmonic = voiced_harmonic_sample(frame, phase_position, cache.sample_rate as f32, config);
     let residual = residual_sample(source_sample, frame, config);
     snap_to_zero(harmonic + residual)
 }
@@ -499,9 +502,14 @@ fn render_algorithm_sample(
     }
 }
 
+/// Additive harmonic (sinusoidal) resynthesis fallback: reconstructs the voiced
+/// frame as a sum of harmonics whose phase is anchored to the absolute sample
+/// position. This is not a phase vocoder — there is no inter-frame phase
+/// accumulation; `phase_position` is the absolute sample index for the harmonic
+/// phase so adjacent regions stay phase-continuous.
 fn voiced_harmonic_sample(
     frame: &PitchShiftFrameAnalysis,
-    offset_samples: f32,
+    phase_position: f64,
     sample_rate: f32,
     config: PitchShiftRenderConfig,
 ) -> f32 {
@@ -541,7 +549,7 @@ fn voiced_harmonic_sample(
         } else {
             magnitude.max(preserve_floor)
         };
-        let phase = std::f64::consts::TAU * frequency * offset_samples as f64 / sample_rate;
+        let phase = std::f64::consts::TAU * frequency * phase_position / sample_rate;
         sample += phase.sin() * magnitude as f64;
         magnitude_sum += magnitude.abs() as f64;
     }

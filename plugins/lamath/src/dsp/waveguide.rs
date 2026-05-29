@@ -1,8 +1,3 @@
-use lindelion_dsp_utils::{
-    delay::{DelayLine, FirstOrderAllpass},
-    filters::{Biquad, BiquadCoefficients},
-    math, soft_saturate,
-};
 use serde::{Deserialize, Serialize};
 
 use super::constants::{
@@ -15,7 +10,6 @@ mod core;
 mod dispersion;
 #[cfg(test)]
 mod mesh_2d;
-#[cfg(test)]
 mod string_1d;
 mod traveling;
 mod tube_1d;
@@ -68,87 +62,28 @@ impl Default for WaveguideParams {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaveguideResonator {
-    sample_rate: f32,
-    delay: DelayLine,
-    fractional_delay: FirstOrderAllpass,
-    loop_filter: Biquad,
-    dispersion: dispersion::WaveguideDispersion,
-    body: body::WaveguideBody,
+    string: string_1d::String1d,
     tube: tube_1d::Tube1d,
 }
 
 impl WaveguideResonator {
     pub fn new(sample_rate: f32, lowest_frequency_hz: f32) -> Self {
-        let sample_rate = core::sanitize_sample_rate(sample_rate);
-        let max_delay = core::max_delay_samples(sample_rate, lowest_frequency_hz, 1.0);
         Self {
-            sample_rate,
-            delay: DelayLine::new(max_delay),
-            fractional_delay: FirstOrderAllpass::default(),
-            loop_filter: Biquad::new(BiquadCoefficients::identity()),
-            dispersion: dispersion::WaveguideDispersion::new(),
-            body: body::WaveguideBody::new(sample_rate),
+            string: string_1d::String1d::new(sample_rate),
             tube: tube_1d::Tube1d::new(sample_rate, lowest_frequency_hz),
         }
     }
 
     pub fn reset(&mut self) {
-        self.delay.clear();
-        self.fractional_delay.reset();
-        self.loop_filter.reset();
-        self.dispersion.reset();
-        self.body.reset();
+        self.string.reset();
         self.tube.reset();
     }
 
     pub fn process_sample(&mut self, excitation: f32, params: WaveguideParams) -> f32 {
-        if params.style == WaveguideStyle::Tube {
-            return self.tube.process_sample(excitation, params);
+        match params.style {
+            WaveguideStyle::Tube => self.tube.process_sample(excitation, params),
+            WaveguideStyle::String => self.string.process(excitation, params),
         }
-
-        let damping = core::loop_damping(self.sample_rate, params);
-        let dispersion_profile = dispersion::dispersion_profile(self.sample_rate, params);
-        let geometry = core::waveguide_geometry(params.position_of_strike, params.pickup_position);
-        let tuning = core::delay_tuning(
-            self.sample_rate,
-            self.delay.capacity(),
-            params.frequency_hz,
-            1.0,
-            1.0 + damping.filter_delay_samples + dispersion_profile.delay_compensation_samples,
-        );
-        self.fractional_delay
-            .set_fractional_delay(tuning.fractional_delay);
-        self.loop_filter.set_coefficients(damping.coefficients);
-
-        let delay_tap = self.delay.read(tuning.integer_delay);
-        let delayed = self.fractional_delay.process(delay_tap);
-        let loop_delay = tuning.integer_delay + tuning.fractional_delay;
-        let pickup = self.delay.read(core::position_delay_samples(
-            loop_delay,
-            geometry.pickup_position,
-        ));
-        let damped = self.loop_filter.process(delayed);
-        let loop_nonlinearity = math::finite_clamp(params.loop_nonlinearity, 0.0, 1.0, 0.0);
-        let nonlinear = if loop_nonlinearity > 0.0 {
-            soft_saturate(damped, loop_nonlinearity)
-        } else {
-            damped
-        };
-
-        let dispersed = self
-            .dispersion
-            .process_sample(nonlinear, dispersion_profile);
-        let feedback = dispersed * damping.loop_gain;
-        self.delay.push(math::snap_to_zero(feedback));
-        let excitation = math::snap_to_zero(excitation);
-        for tap in geometry.excitation_taps {
-            self.delay.add_at(
-                core::position_delay_samples(loop_delay, tap.position),
-                math::snap_to_zero(excitation * tap.gain),
-            );
-        }
-
-        self.body.process_sample(pickup, params)
     }
 }
 
@@ -350,27 +285,20 @@ mod tests {
             dispersion: 0.9,
             ..base
         };
-        let damping = core::loop_damping(sample_rate, dispersed_params);
-        let profile = dispersion::dispersion_profile(sample_rate, dispersed_params);
-        let tuning = core::delay_tuning(
-            sample_rate,
-            WaveguideResonator::new(sample_rate, 20.0).delay.capacity(),
-            target,
-            1.0,
-            1.0 + damping.filter_delay_samples + profile.delay_compensation_samples,
-        );
-        let compensated_period = tuning.integer_delay
-            + tuning.fractional_delay
-            + 1.0
-            + damping.filter_delay_samples
-            + profile.delay_compensation_samples;
         let natural = render_impulse(sample_rate, base, 18_000);
         let dispersed = render_impulse(sample_rate, dispersed_params, 18_000);
 
         assert_all_finite(&natural);
         assert_all_finite(&dispersed);
         assert!(rms_difference(&natural[512..], &dispersed[512..]) > 0.000_001);
-        assert!((compensated_period - sample_rate / target).abs() < 0.001);
+        let estimate = estimate_f0_autocorrelation(
+            &dispersed[1_024..],
+            sample_rate,
+            target * 0.8,
+            target * 1.25,
+        )
+        .unwrap();
+        assert!((estimate - target).abs() < 12.0, "estimate={estimate}");
     }
 
     #[test]
@@ -565,7 +493,13 @@ mod tests {
         }
 
         assert_all_finite(&output);
-        assert!(peak_abs(&output) < 10.0);
+        // Unity-gain dispersion keeps the swept loop bounded well below the old 10.0
+        // ceiling (measured peak ~0.19); a dispersion energy leak would breach this.
+        assert!(
+            peak_abs(&output) < 1.0,
+            "sweep peak_abs={}",
+            peak_abs(&output)
+        );
     }
 
     fn render_impulse(sample_rate: f32, params: WaveguideParams, sample_count: usize) -> Vec<f32> {

@@ -1,3 +1,11 @@
+//! Additive sinusoidal / spectral-peak resynthesis (McAulay–Quatieri style): each
+//! cached spectral peak is reconstructed as an oscillator whose phase is anchored
+//! to its measured phase intercept at an absolute sample position, summed across
+//! peaks. This is **not** a phase vocoder — there is no STFT/ISTFT or inter-frame
+//! principal-argument phase accumulation here. The genuine phase vocoder (with
+//! instantaneous-frequency phase advance and Laroche–Dolson peak locking) lives in
+//! the `resample_pro_*` modules.
+
 use crate::{
     PitchShiftFrameAnalysis, PitchShiftSourceCache,
     synthesis::PitchShiftRenderConfig,

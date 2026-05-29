@@ -2,7 +2,8 @@ use std::{error::Error, fmt};
 
 use lindelion_onset_detect::{
     ConfiguredOnsetDetector, DetectionConfig, MarkerReconcileOutcome, MarkerReconcilePolicy,
-    OnsetDetectionInput, OnsetDetector, SliceMarker, reconcile_markers, select_strongest_markers,
+    OnsetDetectionInput, OnsetDetector, SliceMarker, normalize_markers, reconcile_markers,
+    select_strongest_markers,
 };
 use lindelion_pitch_detect::{
     PitchContour, PitchDetectionConfig, PitchDetectionError, PitchDetector, SwiftF0Detector,
@@ -115,6 +116,39 @@ where
         detection: DetectionConfig,
         patch_markers: &[SliceMarker],
     ) -> Result<SourceAnalysis, SourceAnalysisError> {
+        self.analyze_with_marker_policy(
+            source,
+            audio,
+            detection,
+            patch_markers,
+            MarkerAnalysisPolicy::DetectAndMergeUserMarkers,
+        )
+    }
+
+    pub fn analyze_with_saved_markers(
+        &self,
+        source: SampleMetadata,
+        audio: OwnedMonoAudioBuffer,
+        detection: DetectionConfig,
+        patch_markers: &[SliceMarker],
+    ) -> Result<SourceAnalysis, SourceAnalysisError> {
+        self.analyze_with_marker_policy(
+            source,
+            audio,
+            detection,
+            patch_markers,
+            MarkerAnalysisPolicy::UseSavedMarkers,
+        )
+    }
+
+    fn analyze_with_marker_policy(
+        &self,
+        source: SampleMetadata,
+        audio: OwnedMonoAudioBuffer,
+        detection: DetectionConfig,
+        patch_markers: &[SliceMarker],
+        marker_policy: MarkerAnalysisPolicy,
+    ) -> Result<SourceAnalysis, SourceAnalysisError> {
         if audio.samples.is_empty() {
             return Err(SourceAnalysisError::EmptySource);
         }
@@ -124,27 +158,33 @@ where
             audio.sample_rate,
             PitchDetectionConfig::default(),
         )?;
-        let onset_input = OnsetDetectionInput::new(&audio.samples, audio.sample_rate)
-            .with_pitch_contour(&pitch_contour);
         let min_gap_samples =
             lindelion_dsp_utils::math::ms_to_samples(detection.min_slice_ms, audio.sample_rate);
-        let auto_markers = select_strongest_markers(
-            self.onset_detector.detect(onset_input, detection),
-            &audio.samples,
-            SLICE_COUNT,
-            min_gap_samples,
-        );
-        let MarkerReconcileOutcome::Applied(markers) = reconcile_markers(
-            auto_markers,
-            patch_markers,
-            MarkerReconcilePolicy::MergeUserMarkers,
-            min_gap_samples,
-            audio.samples.len(),
-        ) else {
-            unreachable!("merge policy always applies")
+        let markers = match marker_policy {
+            MarkerAnalysisPolicy::DetectAndMergeUserMarkers => {
+                self.detect_and_merge_markers(MarkerDetectionInput {
+                    audio: &audio.samples,
+                    sample_rate: audio.sample_rate,
+                    detection,
+                    pitch_contour: &pitch_contour,
+                    patch_markers,
+                    min_gap_samples,
+                })
+            }
+            MarkerAnalysisPolicy::UseSavedMarkers => {
+                saved_markers_for_analysis(patch_markers, audio.samples.len(), min_gap_samples)
+                    .unwrap_or_else(|| {
+                        self.detect_and_merge_markers(MarkerDetectionInput {
+                            audio: &audio.samples,
+                            sample_rate: audio.sample_rate,
+                            detection,
+                            pitch_contour: &pitch_contour,
+                            patch_markers,
+                            min_gap_samples,
+                        })
+                    })
+            }
         };
-        let markers =
-            select_strongest_markers(markers, &audio.samples, SLICE_COUNT, min_gap_samples);
         let pitch_shift_cache = PitchShiftAnalyzer::default().analyze(
             &audio.samples,
             audio.sample_rate,
@@ -160,6 +200,55 @@ where
             pitch_shift_cache,
         })
     }
+
+    fn detect_and_merge_markers(&self, input: MarkerDetectionInput<'_>) -> Vec<SliceMarker> {
+        let onset_input = OnsetDetectionInput::new(input.audio, input.sample_rate)
+            .with_pitch_contour(input.pitch_contour);
+        let auto_markers = select_strongest_markers(
+            self.onset_detector.detect(onset_input, input.detection),
+            input.audio,
+            SLICE_COUNT,
+            input.min_gap_samples,
+        );
+        let MarkerReconcileOutcome::Applied(markers) = reconcile_markers(
+            auto_markers,
+            input.patch_markers,
+            MarkerReconcilePolicy::MergeUserMarkers,
+            input.min_gap_samples,
+            input.audio.len(),
+        ) else {
+            unreachable!("merge policy always applies")
+        };
+        select_strongest_markers(markers, input.audio, SLICE_COUNT, input.min_gap_samples)
+    }
+}
+
+struct MarkerDetectionInput<'a> {
+    audio: &'a [f32],
+    sample_rate: u32,
+    detection: DetectionConfig,
+    pitch_contour: &'a PitchContour,
+    patch_markers: &'a [SliceMarker],
+    min_gap_samples: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarkerAnalysisPolicy {
+    DetectAndMergeUserMarkers,
+    UseSavedMarkers,
+}
+
+fn saved_markers_for_analysis(
+    markers: &[SliceMarker],
+    source_len: usize,
+    min_gap_samples: usize,
+) -> Option<Vec<SliceMarker>> {
+    if markers.is_empty() {
+        return None;
+    }
+    let mut markers = normalize_markers(markers.iter().copied(), min_gap_samples, source_len);
+    markers.truncate(SLICE_COUNT);
+    Some(markers)
 }
 
 #[cfg(test)]
@@ -274,6 +363,41 @@ mod tests {
     }
 
     #[test]
+    fn source_analyzer_reuses_saved_auto_markers_without_onset_detection() {
+        let analyzer = LinnodSourceAnalyzer::new(FixedPitchDetector, PanicOnsetDetector);
+        let audio = OwnedMonoAudioBuffer::new(vec![0.2; 4_800], 48_000);
+        let saved_markers = vec![
+            SliceMarker {
+                position_samples: 0,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 1_200,
+                kind: MarkerKind::Auto,
+            },
+            SliceMarker {
+                position_samples: 2_400,
+                kind: MarkerKind::User,
+            },
+        ];
+
+        let result = analyzer
+            .analyze_with_saved_markers(
+                metadata(),
+                audio,
+                DetectionConfig {
+                    min_slice_ms: 10.0,
+                    ..DetectionConfig::default()
+                },
+                &saved_markers,
+            )
+            .unwrap();
+
+        assert_eq!(result.markers, saved_markers);
+        assert_eq!(result.slice_pitch_summaries().len(), saved_markers.len());
+    }
+
+    #[test]
     fn source_analyzer_limits_markers_to_playable_slice_count_by_salience() {
         let mut markers = Vec::new();
         let mut audio = vec![0.0; 48_000];
@@ -347,6 +471,19 @@ mod tests {
         ) -> Vec<SliceMarker> {
             assert!(input.pitch_track.is_some());
             self.markers.clone()
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct PanicOnsetDetector;
+
+    impl OnsetDetector for PanicOnsetDetector {
+        fn detect(
+            &self,
+            _input: OnsetDetectionInput<'_>,
+            _config: DetectionConfig,
+        ) -> Vec<SliceMarker> {
+            panic!("saved marker restore must not run onset detection");
         }
     }
 

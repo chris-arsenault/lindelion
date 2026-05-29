@@ -14,7 +14,7 @@ pub mod worker;
 pub use analysis::{LinnodSourceAnalyzer, SlicePitchSummary, SourceAnalysis, SourceAnalysisError};
 pub use analysis_job::{
     SourceAnalysisCache, SourceAnalysisJob, SourceAnalysisJobResult, SourceAnalysisSequence,
-    SourceAnalysisStatus, SourceLoadError, SourceLoadRequest,
+    SourceAnalysisStatus, SourceLoadError, SourceLoadRequest, SourceMarkerPolicy,
 };
 pub use parameters::PARAMETERS;
 pub use patch::{
