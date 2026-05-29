@@ -11,6 +11,7 @@ use crate::{
         ChokeGroupId, EnvelopeConfig, LinnodPatch, PlaybackMode, SLICE_COUNT, SliceParams,
         TriggerMode, pad_assignment_for_note,
     },
+    tuning::chromatic_auto_tune_pitch_ratio,
 };
 
 use super::declick::PlaybackDeclick;
@@ -65,7 +66,22 @@ pub(super) fn voice_trigger_from_note(
         return None;
     }
 
-    let pitch_ratio = slice.pitch.ratio() * semitones_to_ratio(resolved.chromatic_semitones);
+    let auto_tune_pitch_ratio = if patch
+        .effective_auto_tune_config(resolved.slice_index)
+        .enabled
+    {
+        chromatic_auto_tune_pitch_ratio(
+            &analysis.pitch_shift_cache,
+            resolved.slice_index,
+            &patch.tuning,
+        )
+        .unwrap_or(1.0)
+    } else {
+        1.0
+    };
+    let pitch_ratio = slice.pitch.ratio()
+        * auto_tune_pitch_ratio
+        * semitones_to_ratio(resolved.chromatic_semitones);
     let playback_pitch_ratio = patch.playback_pitch_ratio(pitch_ratio);
     Some(LinnodVoiceTrigger {
         slice_index: resolved.slice_index,

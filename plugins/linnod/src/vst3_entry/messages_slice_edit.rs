@@ -36,6 +36,14 @@ pub(super) enum LinnodSliceEditMessage {
         slice_index: usize,
         envelope: EnvelopeConfig,
     },
+    AutoTuneOverride {
+        slice_index: usize,
+        enabled: bool,
+    },
+    AutoTuneEnabled {
+        slice_index: usize,
+        enabled: bool,
+    },
     Offsets {
         slice_index: usize,
         start_offset_ms: f32,
@@ -79,6 +87,14 @@ impl LinnodSliceEditMessage {
             } => {
                 format!("envelope\n{slice_index}\n{}", encode_envelope(*envelope))
             }
+            Self::AutoTuneOverride {
+                slice_index,
+                enabled,
+            } => format!("auto_tune_override\n{slice_index}\n{}", u8::from(*enabled)),
+            Self::AutoTuneEnabled {
+                slice_index,
+                enabled,
+            } => format!("auto_tune_enabled\n{slice_index}\n{}", u8::from(*enabled)),
             Self::Offsets {
                 slice_index,
                 start_offset_ms,
@@ -166,6 +182,14 @@ fn decode_slice_playback_edit(
         "envelope" => Some(LinnodSliceEditMessage::Envelope {
             slice_index,
             envelope: decode_envelope(value)?,
+        }),
+        "auto_tune_override" => Some(LinnodSliceEditMessage::AutoTuneOverride {
+            slice_index,
+            enabled: bool_from_id(value)?,
+        }),
+        "auto_tune_enabled" => Some(LinnodSliceEditMessage::AutoTuneEnabled {
+            slice_index,
+            enabled: bool_from_id(value)?,
         }),
         _ => None,
     }

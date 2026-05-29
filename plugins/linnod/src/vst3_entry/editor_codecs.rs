@@ -1,14 +1,22 @@
 use lindelion_ui::linnod_vizia::{
-    LinnodEditorEnvelope, LinnodEditorPlaybackConfig, LinnodEditorPlaybackMode,
+    LinnodEditorAutoTuneConfig, LinnodEditorEnvelope, LinnodEditorPlaybackConfig,
+    LinnodEditorPlaybackMode,
 };
 
-use crate::{EnvelopeConfig, PlaybackConfig, PlaybackMode};
+use crate::{AutoTuneConfig, EnvelopeConfig, PlaybackConfig, PlaybackMode};
 
 pub(super) fn editor_playback_config(config: PlaybackConfig) -> LinnodEditorPlaybackConfig {
     let config = config.sanitized();
     LinnodEditorPlaybackConfig {
         mode: editor_playback_mode(config.mode),
         envelope: editor_envelope(config.envelope),
+    }
+}
+
+pub(super) fn editor_auto_tune_config(config: AutoTuneConfig) -> LinnodEditorAutoTuneConfig {
+    let config = config.sanitized();
+    LinnodEditorAutoTuneConfig {
+        enabled: config.enabled,
     }
 }
 

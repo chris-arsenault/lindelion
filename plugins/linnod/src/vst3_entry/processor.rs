@@ -35,6 +35,8 @@ use super::{
     processor_notifications::send_source_summary_update,
 };
 
+#[path = "processor_auto_tune.rs"]
+mod processor_auto_tune;
 #[path = "processor_detection.rs"]
 mod processor_detection;
 #[path = "processor_playback.rs"]
@@ -573,6 +575,7 @@ impl IConnectionPointTrait for LinnodVst3Processor {
             LinnodPluginMessage::MarkerEdit(payload) => self.apply_marker_edit(&payload),
             LinnodPluginMessage::PadEdit(payload) => self.apply_pad_edit(&payload),
             LinnodPluginMessage::PlaybackEdit(payload) => self.apply_playback_edit(&payload),
+            LinnodPluginMessage::AutoTuneEdit(payload) => self.apply_auto_tune_edit(&payload),
             LinnodPluginMessage::DetectionEdit(payload) => self.apply_detection_edit(&payload),
             LinnodPluginMessage::SliceEdit(payload) => self.apply_slice_edit(&payload),
             LinnodPluginMessage::StatusRequest => {

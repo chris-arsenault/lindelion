@@ -2,14 +2,17 @@ use lindelion_plugin_shell::vst3::{PluginMessage, PluginMessageDecodeError, Plug
 use vst3::Steinberg::Vst::{IConnectionPointTrait, IMessage};
 use vst3::Steinberg::*;
 
+#[path = "tests/auto_tune_messages.rs"]
+mod auto_tune_messages;
 mod fixtures;
 
 use super::{
     LinnodMessageKind, LinnodPluginMessage, LinnodVst3Controller, LinnodVst3Processor,
     controller::{normalized_parameter_value, parameter_index},
     messages::{
-        LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodPlaybackEditMessage, LinnodSliceEditMessage, LinnodTelemetryPayload,
+        LinnodAutoTuneEditMessage, LinnodDetectionEditMessage, LinnodMarkerEditMessage,
+        LinnodPadEditMessage, LinnodPlaybackEditMessage, LinnodSliceEditMessage,
+        LinnodTelemetryPayload,
     },
 };
 use crate::{
@@ -39,6 +42,13 @@ fn plugin_messages_roundtrip_typed_payloads() {
         }
         .encode(),
     ));
+    assert_message_roundtrip(LinnodPluginMessage::SliceEdit(
+        LinnodSliceEditMessage::AutoTuneEnabled {
+            slice_index: 2,
+            enabled: true,
+        }
+        .encode(),
+    ));
     assert_message_roundtrip(LinnodPluginMessage::PadEdit(
         LinnodPadEditMessage::ChokeGroup {
             pad: PadId(3),
@@ -48,6 +58,9 @@ fn plugin_messages_roundtrip_typed_payloads() {
     ));
     assert_message_roundtrip(LinnodPluginMessage::PlaybackEdit(
         LinnodPlaybackEditMessage::Mode(crate::PlaybackMode::Continue).encode(),
+    ));
+    assert_message_roundtrip(LinnodPluginMessage::AutoTuneEdit(
+        LinnodAutoTuneEditMessage::Enabled(true).encode(),
     ));
     assert_message_roundtrip(LinnodPluginMessage::DetectionEdit(
         LinnodDetectionEditMessage::Algorithm(
@@ -261,12 +274,12 @@ fn controller_patch_mirror_tracks_parameter_edits() {
 #[test]
 fn controller_applies_slice_edit_through_typed_message_surface() {
     let controller = LinnodVst3Controller::new();
-    let edit = LinnodSliceEditMessage::Reverse {
+    let reverse = LinnodSliceEditMessage::Reverse {
         slice_index: 0,
         reverse: true,
     };
 
-    assert_eq!(controller.apply_slice_edit(edit), kResultFalse);
+    assert_eq!(controller.apply_slice_edit(reverse), kResultFalse);
 
     assert!(controller.patch.borrow().slices[0].reverse);
 }

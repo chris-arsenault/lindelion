@@ -34,6 +34,7 @@ fn playback_global_panel<'a>(cx: &'a mut Context, signals: EditorSignals) -> Han
     VStack::new(cx, move |cx| {
         HStack::new(cx, move |cx| {
             playback_mode_selector(cx, signals.summary, PlaybackEditTarget::Global);
+            auto_tune_toggle(cx, signals.summary, PlaybackEditTarget::Global);
             Spacer::new(cx);
             Label::new(cx, global_playback_mode_text(signals.summary)).class("ll-control-value");
         })
@@ -50,6 +51,8 @@ fn playback_selected_panel<'a>(cx: &'a mut Context, signals: EditorSignals) -> H
         HStack::new(cx, move |cx| {
             playback_override_toggle(cx, signals.summary);
             playback_mode_selector(cx, signals.summary, PlaybackEditTarget::Selected);
+            auto_tune_override_toggle(cx, signals.summary);
+            auto_tune_toggle(cx, signals.summary, PlaybackEditTarget::Selected);
             crate::vizia_controls::compact_text_button(cx, "rev", "Toggle reverse")
                 .on_press(move |cx| cx.emit(slice_reverse_event(signals.summary)))
                 .toggle_class(
@@ -107,6 +110,58 @@ fn playback_override_toggle(cx: &mut Context, summary: Signal<LinnodEditorPatchS
         summary.map(|summary| selected_slice(summary).use_playback_override),
     )
     .width(Pixels(86.0))
+    .height(Pixels(24.0));
+}
+
+fn auto_tune_override_toggle(cx: &mut Context, summary: Signal<LinnodEditorPatchSummary>) {
+    Button::new(cx, move |cx| {
+        HStack::new(cx, move |cx| {
+            Element::new(cx)
+                .class("ll-check-indicator")
+                .toggle_class(
+                    "ll-check-indicator-on",
+                    summary.map(|summary| selected_slice(summary).use_auto_tune_override),
+                );
+            Label::new(cx, "tune ovrd").class("ll-control-label");
+        })
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(5.0))
+    })
+    .on_press(move |cx| cx.emit(slice_auto_tune_override_event(summary)))
+    .class("ll-check-button")
+    .toggle_class(
+        "ll-check-on",
+        summary.map(|summary| selected_slice(summary).use_auto_tune_override),
+    )
+    .width(Pixels(92.0))
+    .height(Pixels(24.0));
+}
+
+fn auto_tune_toggle(
+    cx: &mut Context,
+    summary: Signal<LinnodEditorPatchSummary>,
+    target: PlaybackEditTarget,
+) {
+    Button::new(cx, move |cx| {
+        HStack::new(cx, move |cx| {
+            Element::new(cx)
+                .class("ll-check-indicator")
+                .toggle_class(
+                    "ll-check-indicator-on",
+                    summary.map(move |summary| auto_tune_enabled_for_target(summary, target)),
+                );
+            Label::new(cx, "tune").class("ll-control-label");
+        })
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(5.0))
+    })
+    .on_press(move |cx| emit_auto_tune_enabled_edit(cx, summary, target))
+    .class("ll-check-button")
+    .toggle_class(
+        "ll-check-on",
+        summary.map(move |summary| auto_tune_enabled_for_target(summary, target)),
+    )
+    .width(Pixels(68.0))
     .height(Pixels(24.0));
 }
 
@@ -215,6 +270,14 @@ fn slice_playback_override_event(summary: Signal<LinnodEditorPatchSummary>) -> E
     })
 }
 
+fn slice_auto_tune_override_event(summary: Signal<LinnodEditorPatchSummary>) -> EditorEvent {
+    let slice = selected_slice(&summary.get());
+    EditorEvent::SliceEdit(LinnodEditorSliceEdit::AutoTuneOverride {
+        slice_index: slice.index,
+        enabled: !slice.use_auto_tune_override,
+    })
+}
+
 fn emit_playback_mode_edit(
     cx: &mut EventContext,
     summary: Signal<LinnodEditorPatchSummary>,
@@ -238,6 +301,36 @@ fn emit_playback_mode_edit(
             cx.emit(EditorEvent::SliceEdit(LinnodEditorSliceEdit::PlaybackMode {
                 slice_index: slice.index,
                 mode,
+            }));
+        }
+    }
+}
+
+fn emit_auto_tune_enabled_edit(
+    cx: &mut EventContext,
+    summary: Signal<LinnodEditorPatchSummary>,
+    target: PlaybackEditTarget,
+)
+{
+    let summary_value = summary.get();
+    let enabled = !auto_tune_enabled_for_target(&summary_value, target);
+    match target {
+        PlaybackEditTarget::Global => {
+            cx.emit(EditorEvent::AutoTuneEdit(
+                LinnodEditorAutoTuneEdit::Enabled { enabled },
+            ));
+        }
+        PlaybackEditTarget::Selected => {
+            let slice = selected_slice(&summary_value);
+            if !slice.use_auto_tune_override {
+                cx.emit(EditorEvent::SliceEdit(LinnodEditorSliceEdit::AutoTuneOverride {
+                    slice_index: slice.index,
+                    enabled: true,
+                }));
+            }
+            cx.emit(EditorEvent::SliceEdit(LinnodEditorSliceEdit::AutoTuneEnabled {
+                slice_index: slice.index,
+                enabled,
             }));
         }
     }
@@ -309,6 +402,23 @@ fn envelope_for_target(
     }
 }
 
+fn auto_tune_enabled_for_target(
+    summary: &LinnodEditorPatchSummary,
+    target: PlaybackEditTarget,
+) -> bool {
+    match target {
+        PlaybackEditTarget::Global => summary.auto_tune.enabled,
+        PlaybackEditTarget::Selected => {
+            let slice = selected_slice(summary);
+            if slice.use_auto_tune_override {
+                slice.auto_tune_enabled
+            } else {
+                summary.auto_tune.enabled
+            }
+        }
+    }
+}
+
 fn set_envelope_field(envelope: &mut LinnodEditorEnvelope, field: EnvelopeField, value: f32) {
     match field {
         EnvelopeField::Attack => envelope.attack_ms = value,
@@ -357,7 +467,11 @@ fn playback_scope_detail(
         let summary = summary.get();
         match scope.get() {
             ControlScope::Global => {
-                format!("all slices / {}", playback_mode_label(summary.playback.mode))
+                format!(
+                    "all slices / {} / {}",
+                    playback_mode_label(summary.playback.mode),
+                    auto_tune_label(summary.auto_tune.enabled)
+                )
             }
             ControlScope::Selected => {
                 let slice = selected_slice(&summary);
@@ -367,8 +481,12 @@ fn playback_scope_detail(
                     "global"
                 };
                 format!(
-                    "{source} / {}",
+                    "{source} / {} / {}",
                     playback_mode_label(playback_mode_for_target(
+                        &summary,
+                        PlaybackEditTarget::Selected
+                    )),
+                    auto_tune_label(auto_tune_enabled_for_target(
                         &summary,
                         PlaybackEditTarget::Selected
                     ))
@@ -379,7 +497,14 @@ fn playback_scope_detail(
 }
 
 fn global_playback_mode_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
-    Memo::new(move |_| playback_mode_label(summary.get().playback.mode).to_string())
+    Memo::new(move |_| {
+        let summary = summary.get();
+        format!(
+            "{} / {}",
+            playback_mode_label(summary.playback.mode),
+            auto_tune_label(summary.auto_tune.enabled)
+        )
+    })
 }
 
 fn playback_mode_label(mode: LinnodEditorPlaybackMode) -> &'static str {
@@ -389,4 +514,8 @@ fn playback_mode_label(mode: LinnodEditorPlaybackMode) -> &'static str {
         LinnodEditorPlaybackMode::Looped => "loop",
         LinnodEditorPlaybackMode::Continue => "continue",
     }
+}
+
+fn auto_tune_label(enabled: bool) -> &'static str {
+    if enabled { "tune on" } else { "tune off" }
 }

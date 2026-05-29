@@ -20,14 +20,14 @@ use vizia::{
 
 use super::{
     LINNOD_EDITOR_HEIGHT, LINNOD_EDITOR_PARAMETER_BINDING_COUNT, LINNOD_EDITOR_WIDTH,
-    LinnodEditorCommand, LinnodEditorCommandRequest, LinnodEditorControlKind,
-    LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit, LinnodEditorEnvelope,
-    LinnodEditorHost, LinnodEditorMarker, LinnodEditorMarkerEdit, LinnodEditorMarkerKind,
-    LinnodEditorPadEdit, LinnodEditorPadSummary, LinnodEditorParameterBinding,
-    LinnodEditorPatchSummary, LinnodEditorPitchShiftAlgorithm, LinnodEditorPlaybackEdit,
-    LinnodEditorPlaybackMode, LinnodEditorSliceEdit, LinnodEditorSliceSummary,
-    LinnodEditorSourceStatus, LinnodEditorStatus, LinnodEditorSurfaceSlot, LinnodEditorTelemetry,
-    LinnodEditorTriggerMode,
+    LinnodEditorAutoTuneEdit, LinnodEditorCommand, LinnodEditorCommandRequest,
+    LinnodEditorControlKind, LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit,
+    LinnodEditorEnvelope, LinnodEditorHost, LinnodEditorMarker, LinnodEditorMarkerEdit,
+    LinnodEditorMarkerKind, LinnodEditorPadEdit, LinnodEditorPadSummary,
+    LinnodEditorParameterBinding, LinnodEditorPatchSummary, LinnodEditorPitchShiftAlgorithm,
+    LinnodEditorPlaybackEdit, LinnodEditorPlaybackMode, LinnodEditorSliceEdit,
+    LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorStatus,
+    LinnodEditorSurfaceSlot, LinnodEditorTelemetry, LinnodEditorTriggerMode,
 };
 use crate::{PadId, WaveformPoint};
 

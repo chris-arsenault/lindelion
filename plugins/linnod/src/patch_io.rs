@@ -43,7 +43,7 @@ pub fn from_plugin_state(state: PluginState) -> Result<LinnodPatch, PatchIoError
 mod tests {
     use super::*;
     use crate::patch::{
-        ChokeGroupId, EngineConfig, EnvelopeConfig, PadEdit, PadId, PitchOffset,
+        AutoTuneEdit, ChokeGroupId, EngineConfig, EnvelopeConfig, PadEdit, PadId, PitchOffset,
         PitchShiftAlgorithm, PlaybackEdit, PlaybackMode, SLICE_COUNT, SliceEdit, TriggerMode,
     };
     use lindelion_midi::{RootNote, Scale};
@@ -89,6 +89,7 @@ mod tests {
         ];
         patch.tuning.scale = Scale::PentatonicMinor;
         patch.tuning.root = RootNote::FSharp;
+        patch.apply_auto_tune_edit(AutoTuneEdit::Enabled(true));
         patch.apply_playback_edit(PlaybackEdit::Mode(PlaybackMode::Continue));
         patch.apply_playback_edit(PlaybackEdit::Envelope(EnvelopeConfig {
             attack_ms: 2.0,
@@ -105,6 +106,8 @@ mod tests {
         );
         patch.apply_slice_edit(2, SliceEdit::PlaybackOverride(true));
         patch.apply_slice_edit(2, SliceEdit::PlaybackMode(PlaybackMode::Looped));
+        patch.apply_slice_edit(2, SliceEdit::AutoTuneOverride(true));
+        patch.apply_slice_edit(2, SliceEdit::AutoTuneEnabled(false));
         patch.apply_pad_edit(PadId(3), PadEdit::ChokeGroup(Some(ChokeGroupId(2))));
         patch.apply_slice_edit(
             2,
@@ -119,10 +122,19 @@ mod tests {
     }
 
     fn assert_encoded_schema(encoded: &str) {
+        assert_encoded_patch_sections(encoded);
+        assert_encoded_marker_schema(encoded);
+    }
+
+    fn assert_encoded_patch_sections(encoded: &str) {
         assert!(encoded.contains("format_version = 1"));
         assert!(encoded.contains("[patch.engine]"));
         assert!(encoded.contains("[patch.playback]"));
+        assert!(encoded.contains("[patch.auto_tune]"));
         assert!(encoded.contains("[patch.tuning]"));
+    }
+
+    fn assert_encoded_marker_schema(encoded: &str) {
         assert!(encoded.contains("[[patch.markers]]"));
         assert!(encoded.contains("kind = \"Auto\""));
         assert!(encoded.contains("kind = \"User\""));
@@ -139,6 +151,7 @@ mod tests {
         assert_eq!(decoded.trigger_mode, TriggerMode::Chromatic);
         assert_eq!(decoded.playback.mode, PlaybackMode::Continue);
         assert_eq!(decoded.playback.envelope.release_ms, 160.0);
+        assert!(decoded.auto_tune.enabled);
         assert_eq!(decoded.tuning.scale, Scale::PentatonicMinor);
         assert_eq!(decoded.tuning.root, RootNote::FSharp);
         assert_eq!(decoded.pad_map[2].choke_group, Some(ChokeGroupId(2)));
@@ -172,6 +185,8 @@ mod tests {
         assert_eq!(decoded.slices[2].pitch.semitones, 7);
         assert!(decoded.slices[2].use_playback_override);
         assert_eq!(decoded.slices[2].playback_mode, PlaybackMode::Looped);
+        assert!(decoded.slices[2].use_auto_tune_override);
+        assert!(!decoded.slices[2].auto_tune_enabled);
         assert_eq!(decoded.slices.len(), SLICE_COUNT);
     }
 

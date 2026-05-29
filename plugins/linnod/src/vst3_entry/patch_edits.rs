@@ -3,8 +3,8 @@ use lindelion_onset_detect::{MarkerKind, SliceMarker, normalize_markers};
 use crate::{
     DetectionEdit, LinnodPatch, PlaybackEdit, SliceEdit,
     vst3_entry::messages::{
-        LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodPlaybackEditMessage, LinnodSliceEditMessage,
+        LinnodAutoTuneEditMessage, LinnodDetectionEditMessage, LinnodMarkerEditMessage,
+        LinnodPadEditMessage, LinnodPlaybackEditMessage, LinnodSliceEditMessage,
     },
 };
 
@@ -59,6 +59,13 @@ pub(super) fn apply_playback_edit_message(
         LinnodPlaybackEditMessage::Mode(mode) => PlaybackEdit::Mode(mode),
         LinnodPlaybackEditMessage::Envelope(envelope) => PlaybackEdit::Envelope(envelope),
     })
+}
+
+pub(super) fn apply_auto_tune_edit_message(
+    patch: &mut LinnodPatch,
+    edit: LinnodAutoTuneEditMessage,
+) -> bool {
+    patch.apply_auto_tune_edit(edit.edit())
 }
 
 pub(super) fn apply_marker_edit_message(
@@ -121,6 +128,14 @@ pub(super) fn apply_slice_edit_message(
             slice_index,
             envelope,
         } => patch.apply_slice_edit(slice_index, SliceEdit::Envelope(envelope)),
+        LinnodSliceEditMessage::AutoTuneOverride {
+            slice_index,
+            enabled,
+        } => patch.apply_slice_edit(slice_index, SliceEdit::AutoTuneOverride(enabled)),
+        LinnodSliceEditMessage::AutoTuneEnabled {
+            slice_index,
+            enabled,
+        } => patch.apply_slice_edit(slice_index, SliceEdit::AutoTuneEnabled(enabled)),
         LinnodSliceEditMessage::Offsets {
             slice_index,
             start_offset_ms,

@@ -18,15 +18,16 @@ pub use analysis_job::{
 };
 pub use parameters::PARAMETERS;
 pub use patch::{
-    ChokeGroupId, DetectionEdit, EngineConfig, EngineEdit, EnvelopeConfig, LinnodPatch,
-    OutputConfig, PadAssignment, PadEdit, PadId, PitchOffset, PitchShiftAlgorithm, PlaybackConfig,
-    PlaybackEdit, PlaybackMode, SliceEdit, SliceParams, TriggerMode, TuningConfig,
-    default_pad_assignments, normalize_pad_assignments, pad_assignment_for_note,
-    slice_index_for_pad,
+    AutoTuneConfig, AutoTuneEdit, ChokeGroupId, DetectionEdit, EngineConfig, EngineEdit,
+    EnvelopeConfig, LinnodPatch, OutputConfig, PadAssignment, PadEdit, PadId, PitchOffset,
+    PitchShiftAlgorithm, PlaybackConfig, PlaybackEdit, PlaybackMode, SliceEdit, SliceParams,
+    TriggerMode, TuningConfig, default_pad_assignments, normalize_pad_assignments,
+    pad_assignment_for_note, slice_index_for_pad,
 };
 pub use plugin::{DESCRIPTOR, Linnod};
 pub use tuning::{
-    SliceTuneTarget, SliceTuningInfo, slice_tuning_info, snap_all_slices_to_scale,
+    SliceTuneTarget, SliceTuningInfo, chromatic_auto_tune_correction_cents,
+    chromatic_auto_tune_pitch_ratio, slice_tuning_info, snap_all_slices_to_scale,
     snap_slice_to_scale, tune_all_slices_to_nearest_notes, tune_slice_to_nearest_note,
 };
 pub use worker::{LinnodWorker, LinnodWorkerQueue, LinnodWorkerResult, SourceAnalysisJobRunner};

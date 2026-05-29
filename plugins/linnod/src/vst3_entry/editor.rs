@@ -7,10 +7,10 @@ use lindelion_plugin_shell::vst3::{
     FixedSizePlugView, FixedSizePlugViewDelegate, FixedSizePlugViewSize, PlugViewKeyEvent,
 };
 use lindelion_ui::linnod_vizia::{
-    LINNOD_EDITOR_HEIGHT, LINNOD_EDITOR_WIDTH, LinnodEditorCallbacks, LinnodEditorCommand,
-    LinnodEditorCommandRequest, LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit,
-    LinnodEditorDirectories, LinnodEditorHost, LinnodEditorMarkerEdit, LinnodEditorPadEdit,
-    LinnodEditorPlaybackEdit, LinnodEditorSliceEdit, LinnodEditorTelemetry,
+    LINNOD_EDITOR_HEIGHT, LINNOD_EDITOR_WIDTH, LinnodEditorAutoTuneEdit, LinnodEditorCallbacks,
+    LinnodEditorCommand, LinnodEditorCommandRequest, LinnodEditorDetectionAlgorithm,
+    LinnodEditorDetectionEdit, LinnodEditorDirectories, LinnodEditorHost, LinnodEditorMarkerEdit,
+    LinnodEditorPadEdit, LinnodEditorPlaybackEdit, LinnodEditorSliceEdit, LinnodEditorTelemetry,
 };
 use vst3::{ComWrapper, Steinberg::*};
 
@@ -22,8 +22,8 @@ use super::{
     controller_helpers::editor_source_status,
     editor_codecs::{envelope_from_editor, playback_mode_from_editor},
     messages::{
-        LinnodDetectionEditMessage, LinnodMarkerEditMessage, LinnodPadEditMessage,
-        LinnodPlaybackEditMessage, LinnodSliceEditMessage,
+        LinnodAutoTuneEditMessage, LinnodDetectionEditMessage, LinnodMarkerEditMessage,
+        LinnodPadEditMessage, LinnodPlaybackEditMessage, LinnodSliceEditMessage,
     },
 };
 
@@ -128,6 +128,7 @@ pub(super) fn linnod_editor_host(controller: *const LinnodVst3Controller) -> Lin
             edit_marker,
             edit_pad,
             edit_playback,
+            edit_auto_tune,
             edit_detection,
             edit_slice,
         },
@@ -323,6 +324,13 @@ unsafe fn edit_playback(context: usize, edit: LinnodEditorPlaybackEdit) {
     controller.apply_playback_edit(playback_edit_message(edit));
 }
 
+unsafe fn edit_auto_tune(context: usize, edit: LinnodEditorAutoTuneEdit) {
+    let Some(controller) = (unsafe { controller(context) }) else {
+        return;
+    };
+    controller.apply_auto_tune_edit(auto_tune_edit_message(edit));
+}
+
 unsafe fn edit_detection(context: usize, edit: LinnodEditorDetectionEdit) {
     let Some(controller) = (unsafe { controller(context) }) else {
         return;
@@ -337,6 +345,14 @@ fn playback_edit_message(edit: LinnodEditorPlaybackEdit) -> LinnodPlaybackEditMe
         }
         LinnodEditorPlaybackEdit::Envelope { envelope } => {
             LinnodPlaybackEditMessage::Envelope(envelope_from_editor(envelope))
+        }
+    }
+}
+
+fn auto_tune_edit_message(edit: LinnodEditorAutoTuneEdit) -> LinnodAutoTuneEditMessage {
+    match edit {
+        LinnodEditorAutoTuneEdit::Enabled { enabled } => {
+            LinnodAutoTuneEditMessage::Enabled(enabled)
         }
     }
 }
@@ -485,6 +501,20 @@ fn slice_edit_message(edit: LinnodEditorSliceEdit) -> Option<LinnodSliceEditMess
         } => Some(LinnodSliceEditMessage::Envelope {
             slice_index,
             envelope: envelope_from_editor(envelope),
+        }),
+        LinnodEditorSliceEdit::AutoTuneOverride {
+            slice_index,
+            enabled,
+        } => Some(LinnodSliceEditMessage::AutoTuneOverride {
+            slice_index,
+            enabled,
+        }),
+        LinnodEditorSliceEdit::AutoTuneEnabled {
+            slice_index,
+            enabled,
+        } => Some(LinnodSliceEditMessage::AutoTuneEnabled {
+            slice_index,
+            enabled,
         }),
         LinnodEditorSliceEdit::FilterCutoff {
             slice_index,

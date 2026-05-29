@@ -11,6 +11,8 @@ use lindelion_sample_library::{
 };
 use lindelion_test_allocator::assert_no_allocations;
 
+#[path = "tests/auto_tune.rs"]
+mod auto_tune;
 #[path = "tests/crunch_fixture.rs"]
 mod crunch_fixture;
 #[path = "tests/pitch_quality.rs"]

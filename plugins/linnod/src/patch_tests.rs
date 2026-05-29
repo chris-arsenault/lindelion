@@ -11,11 +11,21 @@ fn default_patch_has_sixteen_slices_and_pad_assignments() {
     assert_eq!(patch.pad_map[0].midi_note, 36);
     assert_eq!(patch.pad_map[15].midi_note, 51);
     assert_eq!(patch.playback.mode, PlaybackMode::OneShot);
+    assert!(!patch.auto_tune.enabled);
     assert_eq!(
         patch.engine.pitch_shift_algorithm,
         PitchShiftAlgorithm::SpectralPeak
     );
     assert!(!patch.slices[0].use_playback_override);
+}
+
+#[test]
+fn default_patch_disables_auto_tune_globally_and_per_slice() {
+    let patch = LinnodPatch::default();
+
+    assert!(!patch.auto_tune.enabled);
+    assert!(!patch.slices[0].use_auto_tune_override);
+    assert!(!patch.slices[0].auto_tune_enabled);
 }
 
 #[test]
@@ -106,6 +116,20 @@ fn playback_edit_and_effective_config_use_global_then_slice_override() {
         PlaybackMode::Looped
     );
     assert_eq!(patch.effective_playback_config(0).envelope.attack_ms, 1.0);
+}
+
+#[test]
+fn auto_tune_edit_and_effective_config_use_global_then_slice_override() {
+    let mut patch = LinnodPatch::default();
+
+    assert!(patch.apply_auto_tune_edit(AutoTuneEdit::Enabled(true)));
+    assert!(patch.effective_auto_tune_config(0).enabled);
+
+    patch.apply_slice_edit(0, SliceEdit::AutoTuneOverride(true));
+    patch.apply_slice_edit(0, SliceEdit::AutoTuneEnabled(false));
+
+    assert!(!patch.effective_auto_tune_config(0).enabled);
+    assert!(patch.effective_auto_tune_config(1).enabled);
 }
 
 #[test]

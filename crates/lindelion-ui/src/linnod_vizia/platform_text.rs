@@ -283,7 +283,7 @@ fn selected_pitch_diagnostic_text(summary: Signal<LinnodEditorPatchSummary>) -> 
         let slice = selected_slice(&summary);
         let detected = detected_pitch_text(&slice);
         let shift = selected_pitch_shift_text(&slice);
-        let target = selected_pitch_target_text_for_slice(&slice, summary.tuning_reference_hz);
+        let target = selected_pitch_target_text_for_slice(&summary, &slice);
         let pad = selected_pad(&summary)
             .map(|pad| format!("pad MIDI {}", pad.midi_note))
             .unwrap_or_else(|| "pad MIDI --".to_string());
@@ -362,16 +362,52 @@ fn selected_pitch_shift_text(slice: &LinnodEditorSliceSummary) -> String {
 }
 
 fn selected_pitch_target_text_for_slice(
+    summary: &LinnodEditorPatchSummary,
     slice: &LinnodEditorSliceSummary,
-    reference_hz: f32,
 ) -> String {
-    match slice.root_target_f0_hz {
+    match selected_output_f0_hz(summary, slice) {
         Some(frequency) => format!(
             "out {frequency:.1}Hz {}",
-            midi_note_text(midi_note_from_frequency(frequency, reference_hz))
+            midi_note_text(midi_note_from_frequency(frequency, summary.tuning_reference_hz))
         ),
         None => "out --".to_string(),
     }
+}
+
+fn selected_output_f0_hz(
+    summary: &LinnodEditorPatchSummary,
+    slice: &LinnodEditorSliceSummary,
+) -> Option<f32> {
+    let detected = slice.detected_f0_hz?;
+    let manual_cents = slice.pitch_semitones as f32 * 100.0 + slice.pitch_cents;
+    let auto_cents = effective_auto_tune_correction_cents(summary, slice).unwrap_or(0) as f32;
+    Some(detected * pitch_ratio_from_cents(manual_cents + auto_cents))
+}
+
+fn effective_auto_tune_correction_cents(
+    summary: &LinnodEditorPatchSummary,
+    slice: &LinnodEditorSliceSummary,
+) -> Option<i32> {
+    if !effective_auto_tune_enabled(summary, slice) {
+        return None;
+    }
+    let correction = (-slice.cents_deviation?).round();
+    Some(correction.clamp(-50.0, 50.0) as i32)
+}
+
+fn effective_auto_tune_enabled(
+    summary: &LinnodEditorPatchSummary,
+    slice: &LinnodEditorSliceSummary,
+) -> bool {
+    if slice.use_auto_tune_override {
+        slice.auto_tune_enabled
+    } else {
+        summary.auto_tune.enabled
+    }
+}
+
+fn pitch_ratio_from_cents(cents: f32) -> f32 {
+    2.0_f32.powf(cents / 1200.0)
 }
 
 fn midi_note_text(note: f32) -> String {

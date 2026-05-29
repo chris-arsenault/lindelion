@@ -14,10 +14,16 @@ use lindelion_ui::{
 
 const LINNOD_WAVEFORM_PREVIEW_POINTS: usize = 32_768;
 
-use crate::{LinnodPatch, patch::TriggerMode, tuning::slice_tuning_info};
+use crate::{
+    LinnodPatch,
+    patch::TriggerMode,
+    tuning::{chromatic_auto_tune_pitch_ratio, slice_tuning_info},
+};
 
 use super::{
-    editor_codecs::{editor_envelope, editor_playback_config, editor_playback_mode},
+    editor_codecs::{
+        editor_auto_tune_config, editor_envelope, editor_playback_config, editor_playback_mode,
+    },
     messages::{LinnodSourceSlicePayload, LinnodSourceSummaryPayload},
 };
 
@@ -35,6 +41,7 @@ pub(super) fn editor_summary_from_patch(patch: &LinnodPatch) -> LinnodEditorPatc
             .collect(),
         slices: patch.slices.iter().enumerate().map(editor_slice).collect(),
         playback: editor_playback_config(patch.playback),
+        auto_tune: editor_auto_tune_config(patch.auto_tune),
         detection: editor_detection(patch.detection),
         trigger_mode: editor_trigger_mode(patch.trigger_mode),
         pitch_shift_algorithm: editor_pitch_shift_algorithm(patch.engine.pitch_shift_algorithm),
@@ -80,7 +87,11 @@ pub(super) fn source_summary_payload_from_plugin(
                     nearest_scale_midi_note_hz: tuning_info
                         .map(|info| info.nearest_scale_midi_note_hz),
                     cents_deviation: tuning_info.map(|info| info.cents_deviation),
-                    root_target_f0_hz: root_target_f0_hz(plugin.patch(), summary),
+                    root_target_f0_hz: root_target_f0_hz(
+                        plugin.patch(),
+                        &analysis.pitch_shift_cache,
+                        summary,
+                    ),
                 }
             })
             .collect(),
@@ -112,11 +123,20 @@ pub(super) fn apply_source_summary_payload(
 
 fn root_target_f0_hz(
     patch: &LinnodPatch,
+    cache: &lindelion_pitch_shift::PitchShiftSourceCache,
     summary: &lindelion_pitch_shift::PitchShiftSliceSummary,
 ) -> Option<f32> {
     let detected_f0_hz = summary.detected_f0_hz?;
     let slice = patch.slice(summary.slice_index)?;
-    Some(detected_f0_hz * slice.pitch.ratio())
+    let auto_tune_ratio = if patch
+        .effective_auto_tune_config(summary.slice_index)
+        .enabled
+    {
+        chromatic_auto_tune_pitch_ratio(cache, summary.slice_index, &patch.tuning).unwrap_or(1.0)
+    } else {
+        1.0
+    };
+    Some(detected_f0_hz * slice.pitch.ratio() * auto_tune_ratio)
 }
 
 fn source_label(patch: &LinnodPatch) -> String {
@@ -264,6 +284,8 @@ fn editor_slice((index, slice): (usize, &crate::SliceParams)) -> LinnodEditorSli
         use_playback_override: slice.use_playback_override,
         playback_mode: editor_playback_mode(slice.playback_mode),
         envelope: editor_envelope(slice.envelope),
+        use_auto_tune_override: slice.use_auto_tune_override,
+        auto_tune_enabled: slice.auto_tune_enabled,
         filter_cutoff_hz: slice.filter_cutoff,
     }
 }

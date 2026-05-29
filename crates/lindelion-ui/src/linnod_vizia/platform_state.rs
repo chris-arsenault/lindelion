@@ -187,6 +187,7 @@ enum EditorEvent {
     SliceEdit(LinnodEditorSliceEdit),
     PadEdit(LinnodEditorPadEdit),
     PlaybackEdit(LinnodEditorPlaybackEdit),
+    AutoTuneEdit(LinnodEditorAutoTuneEdit),
     SetControlScope(ControlScope),
     ToggleSettings,
     CloseSettings,
@@ -246,6 +247,10 @@ impl Model for EditorModel {
             },
             EditorEvent::PlaybackEdit(edit) => unsafe {
                 self.host.edit_playback(*edit);
+                sync_after_edit(self.host, self.signals, None);
+            },
+            EditorEvent::AutoTuneEdit(edit) => unsafe {
+                self.host.edit_auto_tune(*edit);
                 sync_after_edit(self.host, self.signals, None);
             },
             EditorEvent::SetControlScope(scope) => {

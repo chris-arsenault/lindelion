@@ -2,7 +2,9 @@ use lindelion_plugin_shell::vst3::{PluginMessageDecodeError, PluginMessagePayloa
 use lindelion_ui::WaveformPoint;
 use serde::{Deserialize, Serialize};
 
-use crate::{ChokeGroupId, EnvelopeConfig, PadEdit, PadId, PlaybackMode, SourceAnalysisStatus};
+use crate::{
+    AutoTuneEdit, ChokeGroupId, EnvelopeConfig, PadEdit, PadId, PlaybackMode, SourceAnalysisStatus,
+};
 
 lindelion_plugin_shell::define_vst3_plugin_messages! {
     pub(super) enum LinnodMessageKind;
@@ -27,6 +29,7 @@ lindelion_plugin_shell::define_vst3_plugin_messages! {
             MarkerEdit(Vec<u8>) => "marker_edit",
             PadEdit(Vec<u8>) => "pad_edit",
             PlaybackEdit(Vec<u8>) => "playback_edit",
+            AutoTuneEdit(Vec<u8>) => "auto_tune_edit",
             DetectionEdit(Vec<u8>) => "detection_edit",
             SliceEdit(Vec<u8>) => "slice_edit",
             StatusResponse(LinnodStatusPayload) => "status_response",
@@ -287,6 +290,11 @@ pub(super) enum LinnodPlaybackEditMessage {
     Envelope(EnvelopeConfig),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LinnodAutoTuneEditMessage {
+    Enabled(bool),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum LinnodDetectionEditMessage {
     Algorithm(lindelion_onset_detect::DetectionAlgorithm),
@@ -387,6 +395,30 @@ impl LinnodDetectionEditMessage {
             "energy_frame_size" => Some(Self::EnergyFrameSize(value.parse().ok()?)),
             "manual_grid_divisions" => Some(Self::ManualGridDivisions(value.parse().ok()?)),
             "manual_grid_offset_ms" => Some(Self::ManualGridOffsetMs(value.parse().ok()?)),
+            _ => None,
+        }
+    }
+}
+
+impl LinnodAutoTuneEditMessage {
+    pub(super) fn edit(self) -> AutoTuneEdit {
+        match self {
+            Self::Enabled(enabled) => AutoTuneEdit::Enabled(enabled),
+        }
+    }
+
+    pub(super) fn encode(self) -> Vec<u8> {
+        match self {
+            Self::Enabled(enabled) => format!("enabled\n{}", u8::from(enabled)),
+        }
+        .into_bytes()
+    }
+
+    pub(super) fn decode(payload: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(payload).ok()?;
+        let (kind, value) = text.split_once('\n')?;
+        match kind {
+            "enabled" => Some(Self::Enabled(bool_from_id(value)?)),
             _ => None,
         }
     }

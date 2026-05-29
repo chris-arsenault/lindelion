@@ -32,6 +32,23 @@ pub fn slice_tuning_info(
     tuning_info_from_summary(cache.slice_summary(slice_index)?, tuning)
 }
 
+pub fn chromatic_auto_tune_correction_cents(
+    cache: &PitchShiftSourceCache,
+    slice_index: usize,
+    tuning: &TuningConfig,
+) -> Option<i32> {
+    slice_tuning_info(cache, slice_index, tuning)
+        .and_then(|info| correction_cents_from_midi_note(info.detected_midi_note))
+}
+
+pub fn chromatic_auto_tune_pitch_ratio(
+    cache: &PitchShiftSourceCache,
+    slice_index: usize,
+    tuning: &TuningConfig,
+) -> Option<f32> {
+    chromatic_auto_tune_correction_cents(cache, slice_index, tuning).map(pitch_ratio_from_cents)
+}
+
 pub fn tune_slice_to_nearest_note(
     patch: &mut LinnodPatch,
     cache: &PitchShiftSourceCache,
@@ -138,6 +155,19 @@ pub(crate) fn hz_from_midi_note_with_reference(note: f32, reference_hz: f32) -> 
     sanitized_reference_hz(reference_hz) * 2.0_f32.powf((note - 69.0) / 12.0)
 }
 
+fn correction_cents_from_midi_note(detected_midi_note: f32) -> Option<i32> {
+    if !detected_midi_note.is_finite() {
+        return None;
+    }
+    let nearest_chromatic = detected_midi_note.round();
+    let correction = ((nearest_chromatic - detected_midi_note) * 100.0).round();
+    Some(correction.clamp(-50.0, 50.0) as i32)
+}
+
+fn pitch_ratio_from_cents(cents: i32) -> f32 {
+    2.0_f32.powf(cents as f32 / 1200.0)
+}
+
 fn sanitized_reference_hz(reference_hz: f32) -> f32 {
     finite_clamp(
         reference_hz,
@@ -164,6 +194,23 @@ mod tests {
         assert_eq!(info.nearest_midi_note, 69);
         assert!((info.nearest_midi_note_hz - 440.0).abs() < 0.01);
         assert!((info.cents_deviation - 11.76).abs() < 0.1);
+    }
+
+    #[test]
+    fn auto_tune_correction_uses_nearest_chromatic_whole_cents() {
+        let cache = cache_with_summaries(&[(0, 443.0), (1, 218.0)]);
+
+        assert_eq!(
+            chromatic_auto_tune_correction_cents(&cache, 0, &TuningConfig::default()),
+            Some(-12)
+        );
+        assert_eq!(
+            chromatic_auto_tune_correction_cents(&cache, 1, &TuningConfig::default()),
+            Some(16)
+        );
+
+        let ratio = chromatic_auto_tune_pitch_ratio(&cache, 0, &TuningConfig::default()).unwrap();
+        assert!((443.0 * ratio - 439.94).abs() < 0.01);
     }
 
     #[test]

@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::patch_detection::DetectionEdit;
 pub use crate::patch_engine::{EngineConfig, EngineEdit, PitchShiftAlgorithm};
+#[path = "patch_pad.rs"]
+mod patch_pad;
+pub use patch_pad::{
+    ChokeGroupId, PadAssignment, PadId, default_pad_assignments, normalize_pad_assignments,
+    pad_assignment_for_note, slice_index_for_pad,
+};
 
 pub const SLICE_COUNT: usize = 16;
 pub const FIRST_PAD_MIDI_NOTE: u8 = 36;
@@ -34,6 +40,8 @@ pub struct LinnodPatch {
     #[serde(default)]
     pub playback: PlaybackConfig,
     #[serde(default)]
+    pub auto_tune: AutoTuneConfig,
+    #[serde(default)]
     pub source_sample: Option<SampleReference>,
     #[serde(default)]
     pub detection: DetectionConfig,
@@ -58,6 +66,7 @@ impl Default for LinnodPatch {
             engine: EngineConfig::default(),
             output: OutputConfig::default(),
             playback: PlaybackConfig::default(),
+            auto_tune: AutoTuneConfig::default(),
             source_sample: None,
             detection: DetectionConfig::default(),
             markers: Vec::new(),
@@ -97,6 +106,11 @@ impl LinnodPatch {
         true
     }
 
+    pub fn apply_auto_tune_edit(&mut self, edit: AutoTuneEdit) -> bool {
+        self.auto_tune.apply_edit(edit);
+        true
+    }
+
     pub fn apply_engine_edit(&mut self, edit: EngineEdit) -> bool {
         self.engine.apply_edit(edit);
         true
@@ -106,6 +120,13 @@ impl LinnodPatch {
         let global = self.playback.sanitized();
         self.slice(slice_index)
             .map(|slice| slice.effective_playback_config(global))
+            .unwrap_or(global)
+    }
+
+    pub fn effective_auto_tune_config(&self, slice_index: usize) -> AutoTuneConfig {
+        let global = self.auto_tune.sanitized();
+        self.slice(slice_index)
+            .map(|slice| slice.effective_auto_tune_config(global))
             .unwrap_or(global)
     }
 
@@ -136,6 +157,7 @@ impl LinnodPatch {
     pub fn normalize_layout(&mut self) {
         self.engine = self.engine.sanitized();
         self.playback = self.playback.sanitized();
+        self.auto_tune = self.auto_tune.sanitized();
         if self.slices.len() < SLICE_COUNT {
             let start = self.slices.len() + 1;
             self.slices
@@ -179,71 +201,6 @@ impl Default for OutputConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PadAssignment {
-    pub pad: PadId,
-    pub slice_index: usize,
-    pub midi_note: u8,
-    #[serde(default)]
-    pub choke_group: Option<ChokeGroupId>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PadId(pub u8);
-
-impl PadId {
-    pub const fn new(index: u8) -> Option<Self> {
-        if index >= 1 && index <= SLICE_COUNT as u8 {
-            Some(Self(index))
-        } else {
-            None
-        }
-    }
-
-    pub const fn index(self) -> usize {
-        self.0.saturating_sub(1) as usize
-    }
-
-    pub const fn sanitized(self) -> Self {
-        if self.0 < 1 {
-            Self(1)
-        } else if self.0 > SLICE_COUNT as u8 {
-            Self(SLICE_COUNT as u8)
-        } else {
-            self
-        }
-    }
-}
-
-impl Default for PadId {
-    fn default() -> Self {
-        Self(1)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ChokeGroupId(pub u8);
-
-impl ChokeGroupId {
-    pub const fn new(index: u8) -> Option<Self> {
-        if index >= 1 && index <= SLICE_COUNT as u8 {
-            Some(Self(index))
-        } else {
-            None
-        }
-    }
-
-    pub const fn sanitized(self) -> Self {
-        if self.0 < 1 {
-            Self(1)
-        } else if self.0 > SLICE_COUNT as u8 {
-            Self(SLICE_COUNT as u8)
-        } else {
-            self
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerMode {
     #[default]
@@ -264,6 +221,10 @@ pub struct SliceParams {
     pub use_playback_override: bool,
     pub playback_mode: PlaybackMode,
     pub envelope: EnvelopeConfig,
+    #[serde(default)]
+    pub use_auto_tune_override: bool,
+    #[serde(default)]
+    pub auto_tune_enabled: bool,
     pub filter_cutoff: f32,
 }
 
@@ -280,6 +241,8 @@ impl SliceParams {
             use_playback_override: false,
             playback_mode: PlaybackMode::OneShot,
             envelope: EnvelopeConfig::default(),
+            use_auto_tune_override: false,
+            auto_tune_enabled: false,
             filter_cutoff: DEFAULT_FILTER_CUTOFF_HZ,
         }
     }
@@ -303,6 +266,8 @@ impl SliceParams {
             SliceEdit::PlaybackOverride(enabled) => self.use_playback_override = enabled,
             SliceEdit::PlaybackMode(playback_mode) => self.playback_mode = playback_mode,
             SliceEdit::Envelope(envelope) => self.envelope = envelope.sanitized(),
+            SliceEdit::AutoTuneOverride(enabled) => self.use_auto_tune_override = enabled,
+            SliceEdit::AutoTuneEnabled(enabled) => self.auto_tune_enabled = enabled,
             SliceEdit::FilterCutoff(cutoff) => {
                 self.filter_cutoff = finite_clamp(
                     cutoff,
@@ -315,15 +280,42 @@ impl SliceParams {
     }
 
     pub fn effective_playback_config(&self, global: PlaybackConfig) -> PlaybackConfig {
-        if self.use_playback_override {
+        SliceOverride::new(
+            self.use_playback_override,
             PlaybackConfig {
                 mode: self.playback_mode,
                 envelope: self.envelope,
             }
-            .sanitized()
-        } else {
-            global
-        }
+            .sanitized(),
+        )
+        .effective(global)
+    }
+
+    pub fn effective_auto_tune_config(&self, global: AutoTuneConfig) -> AutoTuneConfig {
+        SliceOverride::new(
+            self.use_auto_tune_override,
+            AutoTuneConfig {
+                enabled: self.auto_tune_enabled,
+            }
+            .sanitized(),
+        )
+        .effective(global)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SliceOverride<T> {
+    enabled: bool,
+    value: T,
+}
+
+impl<T: Copy> SliceOverride<T> {
+    const fn new(enabled: bool, value: T) -> Self {
+        Self { enabled, value }
+    }
+
+    fn effective(self, global: T) -> T {
+        if self.enabled { self.value } else { global }
     }
 }
 
@@ -341,6 +333,8 @@ pub enum SliceEdit {
     PlaybackOverride(bool),
     PlaybackMode(PlaybackMode),
     Envelope(EnvelopeConfig),
+    AutoTuneOverride(bool),
+    AutoTuneEnabled(bool),
     FilterCutoff(f32),
 }
 
@@ -348,6 +342,11 @@ pub enum SliceEdit {
 pub enum PlaybackEdit {
     Mode(PlaybackMode),
     Envelope(EnvelopeConfig),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoTuneEdit {
+    Enabled(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -435,6 +434,26 @@ impl Default for PlaybackConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoTuneConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl AutoTuneConfig {
+    pub fn sanitized(self) -> Self {
+        Self {
+            enabled: self.enabled,
+        }
+    }
+
+    pub fn apply_edit(&mut self, edit: AutoTuneEdit) {
+        match edit {
+            AutoTuneEdit::Enabled(enabled) => self.enabled = enabled,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EnvelopeConfig {
     pub attack_ms: f32,
@@ -490,81 +509,6 @@ fn default_slices() -> Vec<SliceParams> {
 
 fn loaded_slice_uses_playback_override() -> bool {
     true
-}
-
-pub fn default_pad_assignments() -> Vec<PadAssignment> {
-    (1..=SLICE_COUNT)
-        .map(|index| PadAssignment {
-            pad: PadId(index as u8),
-            slice_index: index - 1,
-            midi_note: FIRST_PAD_MIDI_NOTE + index as u8 - 1,
-            choke_group: None,
-        })
-        .collect()
-}
-
-pub fn normalize_pad_assignments(input: &[PadAssignment]) -> Vec<PadAssignment> {
-    let mut pad_map = default_pad_assignments();
-    for assignment in input {
-        let pad = assignment.pad.sanitized();
-        let index = pad.index();
-        pad_map[index] = PadAssignment {
-            pad,
-            slice_index: assignment.slice_index.min(SLICE_COUNT - 1),
-            midi_note: assignment.midi_note,
-            choke_group: assignment.choke_group.map(ChokeGroupId::sanitized),
-        };
-    }
-    pad_map
-}
-
-pub fn pad_assignment_for_note(pad_map: &[PadAssignment], note: u8) -> Option<PadAssignment> {
-    pad_map
-        .iter()
-        .find(|assignment| assignment.midi_note == note)
-        .map(normalize_pad_assignment)
-}
-
-pub fn slice_index_for_pad(pad_map: &[PadAssignment], pad: PadId) -> Option<usize> {
-    let pad = pad.sanitized();
-    pad_map
-        .iter()
-        .find(|assignment| assignment.pad.sanitized() == pad)
-        .map(|assignment| assignment.slice_index.min(SLICE_COUNT - 1))
-        .or_else(|| {
-            default_pad_assignments()
-                .get(pad.index())
-                .map(|assignment| assignment.slice_index)
-        })
-}
-
-impl LinnodPatch {
-    pub fn apply_pad_edit(&mut self, pad: PadId, edit: PadEdit) -> bool {
-        let pad = pad.sanitized();
-        self.normalize_layout();
-        let Some(assignment) = self
-            .pad_map
-            .iter_mut()
-            .find(|assignment| assignment.pad.sanitized() == pad)
-        else {
-            return false;
-        };
-        match edit {
-            PadEdit::ChokeGroup(group) => {
-                assignment.choke_group = group.map(ChokeGroupId::sanitized);
-            }
-        }
-        true
-    }
-}
-
-fn normalize_pad_assignment(assignment: &PadAssignment) -> PadAssignment {
-    PadAssignment {
-        pad: assignment.pad.sanitized(),
-        slice_index: assignment.slice_index.min(SLICE_COUNT - 1),
-        midi_note: assignment.midi_note,
-        choke_group: assignment.choke_group.map(ChokeGroupId::sanitized),
-    }
 }
 
 fn sanitize_non_negative_ms(value: f32) -> f32 {
