@@ -24,6 +24,22 @@ Per-product backlogs cover product-specific work:
 
 - Add a self-hosted Linux runner for `make bench` with baseline storage and regression diffs.
 
+## Pitch-shift fidelity (Resample Pro)
+
+See the technique catalog at [dsp/pitch-shift-techniques.md](dsp/pitch-shift-techniques.md) for
+the active and retained techniques.
+
+- Add a multiresolution / dual-window STFT analysis to Resample Pro: a long window at low
+  frequencies for bass resolution, a short window at high frequencies for transients, recovering
+  the ~15 dB bass-resolution headroom a single 4096 window trades away.
+- Add an isolated drum-kit fixture (kick, snare, hi-hat, toms, and a loop) to `testdata/audio/`
+  so transient-handling techniques and the 87.5 %-overlap transient behavior can be evaluated on
+  percussive material.
+- Evaluate an HPSS dual-path (median-filter harmonic/percussive split, phase-vocoder harmonic
+  plus short-frame overlap-add percussive) for Resample Pro once a drum/mix fixture exists.
+- Evaluate noise morphing (re-excite the stochastic component with fresh phase) for the Resample
+  Pro residual on breathy and noisy material.
+
 ## DSP documentation
 
 - Document the remaining DSP modules: `WaveguideResonator`, `SynthEngine`, `Svf`, `DelayLine`, `FirstOrderAllpass`, smoothing types, onset detector, pitch detector, phrase analysis.
