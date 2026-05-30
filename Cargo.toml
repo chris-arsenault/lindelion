@@ -2,6 +2,8 @@
 resolver = "3"
 members = [
     "crates/lindelion-dsp-utils",
+    "crates/lindelion-effect",
+    "crates/lindelion-fidelity",
     "crates/lindelion-test-allocator",
     "crates/lindelion-capture",
     "crates/lindelion-audio-expression",
@@ -17,6 +19,27 @@ members = [
     "plugins/glirdir",
     "plugins/lamath",
     "plugins/linnod",
+    "speech/air-exciter",
+    "speech/bass-enhancer",
+    "speech/compressor",
+    "speech/consonant-transient",
+    "speech/de-esser",
+    "speech/dereverberation",
+    "speech/dynamic-eq",
+    "speech/fft-noise-removal",
+    "speech/five-band-eq",
+    "speech/gain",
+    "speech/high-pass",
+    "speech/limiter",
+    "speech/noise-gate",
+    "speech/room-tone",
+    "speech/saturation",
+    "speech/signals",
+    "speech/spectral-contrast",
+    "speech/speech-denoiser",
+    "speech/upward-expander",
+    "speech/vitalizer",
+    "speech/voice-gate",
     "xtask",
 ]
 
@@ -29,6 +52,9 @@ authors = ["Ahara"]
 [workspace.dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 lindelion-dsp-utils = { path = "crates/lindelion-dsp-utils" }
+lindelion-effect = { path = "crates/lindelion-effect" }
+lindelion-fidelity = { path = "crates/lindelion-fidelity" }
+lindelion-speech-signals = { path = "speech/signals" }
 lindelion-test-allocator = { path = "crates/lindelion-test-allocator" }
 lindelion-capture = { path = "crates/lindelion-capture" }
 lindelion-audio-expression = { path = "crates/lindelion-audio-expression" }

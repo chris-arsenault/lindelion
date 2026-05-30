@@ -16,7 +16,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check bench-smoke
 
@@ -37,6 +37,11 @@ clippy:
 
 test:
 	cargo test --workspace
+
+# Heavy model-integration tests (ONNX Runtime inference). Excluded from `make ci` because they
+# saturate the CPU; run them on their own, less frequently.
+test-models:
+	cargo test -p lindelion-speech-denoiser -p lindelion-speech-voice-gate --test integration -- --include-ignored
 
 bench:
 	cargo bench --workspace --no-fail-fast

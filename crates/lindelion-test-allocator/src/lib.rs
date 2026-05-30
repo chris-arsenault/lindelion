@@ -47,6 +47,15 @@ pub fn assert_no_allocations<R>(label: &str, run: impl FnOnce() -> R) -> R {
     result
 }
 
+/// Run `run` and return the number of allocations it made on this thread. Use when a bounded,
+/// non-zero allocation count is acceptable (for example neural-network inference per ADR-0014);
+/// ordinary realtime code should use [`assert_no_allocations`].
+pub fn count_allocations(run: impl FnOnce()) -> usize {
+    let mut guard = AllocationCountGuard::start();
+    run();
+    guard.finish()
+}
+
 fn record_allocation() {
     ALLOCATION_COUNT.with(|count| {
         if let Some(value) = count.get() {

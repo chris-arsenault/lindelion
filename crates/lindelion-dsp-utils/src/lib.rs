@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod delay;
 pub mod envelope;
+pub mod envelope_follower;
 pub mod filters;
 pub mod interpolation;
 pub mod math;
@@ -9,8 +10,13 @@ pub mod params;
 pub mod phase;
 pub mod playback;
 pub mod resampling;
+pub mod saturation;
 pub mod smoothing;
+pub mod stft;
 pub mod window;
+
+#[cfg(test)]
+lindelion_test_allocator::install_test_allocator!();
 
 pub fn db_to_gain(db: f32) -> f32 {
     if db.is_finite() {

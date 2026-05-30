@@ -24,11 +24,15 @@ Agent guide for sessions in the Lindelion repository.
 - Run `make ci` as the normal verification path before committing unless the user explicitly asks for a checkpoint commit.
 - Do not run lower-level formatter, lint, test, package-specific, or size-lint commands as routine verification. `make ci` already applies the repository's required Rustfmt, clippy, file/function size lint, and test settings. Use narrower commands only when the user explicitly asks for them or when debugging a specific failure after `make ci` reports one.
 - Keep the realtime DSP path allocation-free. New audio-thread behavior needs focused no-allocation tests (see [ADR-0001](docs/adr/0001-allocation-free-audio-thread.md)).
+- Keep heavy CPU tests (e.g. neural-network inference that runs the model many times) out of the `make ci` unit path: they saturate the CPU and destabilize timing-sensitive tests elsewhere. Put them in a separate `#[ignore]`d integration suite (a `tests/integration.rs`) and run them via `make test-models`. Cheap, model-free contract tests still belong in the unit path.
 - Treat required DSP algorithms as product requirements, not optional implementation details. If pitch shifting, pitch detection, onset detection, resonators, or other difficult audio algorithms behave badly, work through the algorithm and add objective audio tests; do not replace the requested behavior with a simpler design, different semantics, or a bypass unless the user explicitly approves that change.
 - Put temporary implementation plans intended for immediate consumption at the repository root. Do not file them in `docs/`, backlog files, or index/link surfaces unless the user explicitly asks for durable documentation.
 - Follow `../ahara/CI-WORKFLOW.md` for shared CI shape, `../ahara/INTEGRATION.md` for platform metadata, and `../ahara/skills/repo-docs/SKILL.md` for repository documentation conventions.
 - Do not add a plugin framework such as JUCE, nih-plug, or iPlug2 unless the user explicitly changes the architecture (see [ADR-0002](docs/adr/0002-no-plugin-framework.md)).
 - Do not treat Linux cross-checks for macOS as real macOS bundle builds; final `.vst3` linking and signing need Apple tooling (see [ADR-0007](docs/adr/0007-macos-vst3-build-path.md)).
+- The speech effect port under `speech/` targets spoken-word clarity and intelligibility, not musicality. Tune its defaults, thresholds, band centers, and tests for speech, and keep speech-specific tuning out of the shared `crates/` foundations (see [ADR-0012](docs/adr/0012-speech-effect-port-shared-workspace.md)).
+- Keep the effect core host-agnostic: `lindelion-effect` and the `speech/` effect crates depend only on the pure-DSP crates (`lindelion-dsp-utils`, `lindelion-pitch-detect`, `lindelion-onset-detect`), never on `lindelion-plugin-shell`, `vst3`, or `lindelion-ui`. Do not add VST3 entry points, app shells, or a fixed signal flow to ported effects in this phase (see [ADR-0013](docs/adr/0013-host-agnostic-effect-core.md)).
+- Reuse existing Lindelion DSP where it overlaps, re-tuned for speech; build new only where the existing primitive is musical or absent (envelope follower, saturation, standalone STFT). See [HOTMIC-PORT-PLAN.md](HOTMIC-PORT-PLAN.md).
 
 ## Product Names
 
@@ -56,6 +60,9 @@ Agent guide for sessions in the Lindelion repository.
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, SMF emission. |
 | `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, product Vizia editors. |
+| `crates/lindelion-effect` | Host-agnostic effect-processor trait and neutral parameter/state/latency primitives (distinct from `plugin-shell`'s VST-coupled `AudioPlugin`). |
+| `crates/lindelion-fidelity` | Shared general-signal audio-fidelity test harness for effect crates. |
+| `speech/` | Speech-effect port of `hot-mic`: per-effect crates plus `speech/signals` analysis-signal derivation, tuned for spoken word. |
 | `plugins/lamath` | Lamath patch model, DSP runtime, VST3 adapter, tests. |
 | `plugins/linnod` | Linnod source analysis, patch model, runtime, VST3 adapter, editor bridge, and tests. |
 | `plugins/glirdir` | Glirdir capture, analysis, audition, VST3 adapter, editor, drag/export, sample-library save, bundle metadata. |
@@ -73,3 +80,4 @@ Agent guide for sessions in the Lindelion repository.
 | `make validate-vst3 PLUGIN=linnod` | Inspect and run Steinberg validator against the installed Linnod bundle on macOS. |
 | `make bench` | Run the full workspace Criterion benchmark suite. |
 | `make bench-smoke` | Compile workspace benches without running Criterion measurements. |
+| `make test-models` | Run the heavy NN model-integration tests (ONNX Runtime inference); excluded from `make ci`. |

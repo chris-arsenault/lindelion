@@ -12,6 +12,17 @@ Lindelion is a Rust workspace for audio instruments and shared plugin infrastruc
 | Linnod | Sindarin measured verse unit, from the `lind`/`lin-` song root | VST3 melodic slicer instrument with source analysis, slice playback, editor surface, and bundle support | [README](plugins/linnod/README.md), [spec](docs/plugins/linnod.md), [backlog](docs/plugins/linnod-backlog.md) |
 | Glirdir | Sindarin `glir-` + `-dir`, "singer" or "song-bearer" | VST3 sing-to-MIDI scratchpad with editor, drag/export, sample-library save, and bundle support | [README](plugins/glirdir/README.md), [spec](docs/plugins/glirdir.md), [backlog](docs/plugins/glirdir-backlog.md) |
 
+## Speech effects
+
+A port of the `hot-mic` microphone-processor effects into Rust, tuned for spoken word in a
+meeting / oration context. Packaging is undecided and kept open behind a host-agnostic core.
+
+| Topic | Link |
+| ---- | ---- |
+| Speech effects family | [speech/README.md](speech/README.md) |
+| Shared workspace decision | [ADR-0012](docs/adr/0012-speech-effect-port-shared-workspace.md) |
+| Host-agnostic effect core | [ADR-0013](docs/adr/0013-host-agnostic-effect-core.md) |
+
 ## Docs
 
 | Topic | Link |

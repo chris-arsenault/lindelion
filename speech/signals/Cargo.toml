@@ -1,0 +1,21 @@
+[package]
+name = "lindelion-speech-signals"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-onset-detect.workspace = true
+lindelion-pitch-detect.workspace = true
+realfft.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }
+lindelion-test-allocator.workspace = true
+
+[[bench]]
+name = "signals"
+harness = false
