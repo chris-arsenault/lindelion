@@ -87,12 +87,12 @@ lindelion_plugin_shell::define_parameter_bindings! {
         editor: Some(EditorParameterBinding::knob(EditorSurfaceSlot::ResonatorMix, EditorSurfaceGroup::Routing, 1, "Mix")),
     },
 
-    ParameterInfo::stepped(20, "Resonator A Model", "", ParameterRange::linear(0.0, 1.0, 0.0), 1) => {
+    ParameterInfo::stepped(20, "Resonator A Model", "", ParameterRange::linear(0.0, 2.0, 0.0), 2) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Model },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(resonator_model_label_from_plain),
-        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::ResonatorAModel, EditorSurfaceGroup::ResonatorAHeader, 0, "Type", "Modal", "Wave", 118.0)),
+        editor: Some(EditorParameterBinding::selector(EditorSurfaceSlot::ResonatorAModel, EditorSurfaceGroup::ResonatorAHeader, 0, "Type", <ResonatorModel as ParameterCodec>::LABELS, 118.0)),
     },
     ParameterInfo::stepped(21, "Resonator A Modal Preset", "", ParameterRange::linear(0.0, 6.0, 1.0), 6) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Modal(ModalParameter::Preset) },
@@ -173,12 +173,12 @@ lindelion_plugin_shell::define_parameter_bindings! {
         editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorADispersion, EditorSurfaceGroup::ResonatorAControls, 7, "Disp")),
     },
 
-    ParameterInfo::stepped(40, "Resonator B Model", "", ParameterRange::linear(0.0, 1.0, 1.0), 1) => {
+    ParameterInfo::stepped(40, "Resonator B Model", "", ParameterRange::linear(0.0, 2.0, 1.0), 2) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Model },
         apply: NOTE_BOUNDARY,
         runtime: RuntimeParameterTarget::None,
         format: ParameterFormatter::Label(resonator_model_label_from_plain),
-        editor: Some(EditorParameterBinding::binary(EditorSurfaceSlot::ResonatorBModel, EditorSurfaceGroup::ResonatorBHeader, 0, "Type", "Modal", "Wave", 118.0)),
+        editor: Some(EditorParameterBinding::selector(EditorSurfaceSlot::ResonatorBModel, EditorSurfaceGroup::ResonatorBHeader, 0, "Type", <ResonatorModel as ParameterCodec>::LABELS, 118.0)),
     },
     ParameterInfo::stepped(41, "Resonator B Modal Preset", "", ParameterRange::linear(0.0, 6.0, 1.0), 6) => {
         path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Modal(ModalParameter::Preset) },
@@ -456,4 +456,15 @@ lindelion_plugin_shell::define_parameter_bindings! {
     ParameterInfo::stepped(93, "Mod 4 Source", "", ParameterRange::linear(0.0, 5.0, 2.0), 5) => { path: ParameterPath::ModulationSlot { slot: 3, parameter: ModulationSlotParameter::Source }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Label(format_modulation_source_label), editor: None, },
     ParameterInfo::stepped(94, "Mod 4 Destination", "", ParameterRange::linear(0.0, 6.0, 0.0), 6) => { path: ParameterPath::ModulationSlot { slot: 3, parameter: ModulationSlotParameter::Destination }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Label(format_modulation_destination_label), editor: None, },
     ParameterInfo::continuous(95, "Mod 4 Amount", "", ParameterRange::linear(-1.0, 1.0, 0.0)) => { path: ParameterPath::ModulationSlot { slot: 3, parameter: ModulationSlotParameter::Amount }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: None, },
+
+    ParameterInfo::continuous(130, "Resonator A Mesh Material", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Mesh(MeshParameter::Material) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorAMeshMaterial, EditorSurfaceGroup::ResonatorAControls, 8, "Material")), },
+    ParameterInfo::continuous(131, "Resonator A Mesh Size", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Mesh(MeshParameter::Size) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorAMeshSize, EditorSurfaceGroup::ResonatorAControls, 9, "Size")), },
+    ParameterInfo::continuous(132, "Resonator A Mesh Damping", "", ParameterRange::linear(0.0, 1.0, 0.3)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Mesh(MeshParameter::Damping) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorAMeshDamping, EditorSurfaceGroup::ResonatorAControls, 10, "Damp")), },
+    ParameterInfo::continuous(133, "Resonator A Mesh Tension", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Mesh(MeshParameter::Tension) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorAMeshTension, EditorSurfaceGroup::ResonatorAControls, 11, "Tension")), },
+    ParameterInfo::continuous(134, "Resonator A Mesh Pickup Spread", "", ParameterRange::linear(0.0, 1.0, 0.3)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::A, parameter: ResonatorParameter::Mesh(MeshParameter::PickupSpread) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorAMeshPickupSpread, EditorSurfaceGroup::ResonatorAControls, 12, "Spread")), },
+    ParameterInfo::continuous(135, "Resonator B Mesh Material", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::Material) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshMaterial, EditorSurfaceGroup::ResonatorBControls, 8, "Material")), },
+    ParameterInfo::continuous(136, "Resonator B Mesh Size", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::Size) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshSize, EditorSurfaceGroup::ResonatorBControls, 9, "Size")), },
+    ParameterInfo::continuous(137, "Resonator B Mesh Damping", "", ParameterRange::linear(0.0, 1.0, 0.3)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::Damping) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshDamping, EditorSurfaceGroup::ResonatorBControls, 10, "Damp")), },
+    ParameterInfo::continuous(138, "Resonator B Mesh Tension", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::Tension) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshTension, EditorSurfaceGroup::ResonatorBControls, 11, "Tension")), },
+    ParameterInfo::continuous(139, "Resonator B Mesh Pickup Spread", "", ParameterRange::linear(0.0, 1.0, 0.3)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::PickupSpread) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshPickupSpread, EditorSurfaceGroup::ResonatorBControls, 12, "Spread")), },
 }

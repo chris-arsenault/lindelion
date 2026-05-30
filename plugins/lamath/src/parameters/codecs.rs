@@ -8,6 +8,7 @@ enum MixSide {
 enum ResonatorModel {
     Modal,
     Waveguide,
+    Mesh,
 }
 
 impl ResonatorModel {
@@ -15,6 +16,7 @@ impl ResonatorModel {
         match config {
             ResonatorConfig::Modal(_) => Self::Modal,
             ResonatorConfig::Waveguide(_) => Self::Waveguide,
+            ResonatorConfig::Mesh(_) => Self::Mesh,
         }
     }
 
@@ -22,6 +24,7 @@ impl ResonatorModel {
         match self {
             Self::Modal => ResonatorConfig::Modal(modal_config_from(current)),
             Self::Waveguide => ResonatorConfig::Waveguide(waveguide_config_from(current)),
+            Self::Mesh => ResonatorConfig::Mesh(mesh_config_from(current)),
         }
     }
 }
@@ -94,12 +97,51 @@ lindelion_plugin_shell::define_parameter_codec! {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MeshParameter {
+    Material,
+    Size,
+    Damping,
+    Tension,
+    PickupSpread,
+}
+
+impl MeshParameter {
+    fn plain_value(self, config: MeshConfig) -> f32 {
+        match self {
+            Self::Material => config.material,
+            Self::Size => config.size,
+            Self::Damping => config.damping,
+            Self::Tension => config.tension,
+            Self::PickupSpread => config.pickup_spread,
+        }
+    }
+
+    fn apply_if_selected(self, config: &mut ResonatorConfig, value: f32) {
+        if let ResonatorConfig::Mesh(mesh) = config {
+            self.apply_plain(mesh, value);
+        }
+    }
+
+    fn apply_plain(self, config: &mut MeshConfig, value: f32) {
+        let value = finite_value(value, 0.0, 1.0, 0.5);
+        match self {
+            Self::Material => config.material = value,
+            Self::Size => config.size = value,
+            Self::Damping => config.damping = value,
+            Self::Tension => config.tension = value,
+            Self::PickupSpread => config.pickup_spread = value,
+        }
+    }
+}
+
 lindelion_plugin_shell::define_parameter_codec! {
     impl ParameterCodec for ResonatorModel {
-        max: 1;
+        max: 2;
         fallback: Self::Modal;
         0 => Self::Modal, "Modal";
         1 => Self::Waveguide, "Waveguide";
+        2 => Self::Mesh, "Mesh";
     }
 }
 

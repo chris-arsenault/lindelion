@@ -336,6 +336,7 @@ pub(crate) enum ResonatorParameter {
     Model,
     Modal(ModalParameter),
     Waveguide(WaveguideParameter),
+    Mesh(MeshParameter),
 }
 
 impl ResonatorParameter {
@@ -344,6 +345,7 @@ impl ResonatorParameter {
             Self::Model => ResonatorModel::from_config(config).plain(),
             Self::Modal(parameter) => parameter.plain_value(modal_config_from(config)),
             Self::Waveguide(parameter) => parameter.plain_value(waveguide_config_from(config)),
+            Self::Mesh(parameter) => parameter.plain_value(mesh_config_from(config)),
         }
     }
 
@@ -352,6 +354,7 @@ impl ResonatorParameter {
             Self::Model => *config = ResonatorModel::from_plain(value).config_from(*config),
             Self::Modal(parameter) => parameter.apply_if_selected(config, value),
             Self::Waveguide(parameter) => parameter.apply_if_selected(config, value),
+            Self::Mesh(parameter) => parameter.apply_if_selected(config, value),
         }
     }
 }
@@ -401,6 +404,16 @@ impl ModalParameter {
                     _ => {}
                 }
             }
+            ResonatorConfig::Mesh(mesh) => match self {
+                Self::Semitone => {
+                    mesh.semitone_offset = finite_value(value, -24.0, 24.0, 0.0).round() as i8;
+                }
+                Self::Cents => mesh.cent_offset = finite_value(value, -100.0, 100.0, 0.0),
+                Self::StrikePosition => {
+                    mesh.position_of_strike = STRIKE_POSITION.clamp(value);
+                }
+                _ => {}
+            },
         }
     }
 
@@ -457,6 +470,11 @@ impl WaveguideParameter {
             ResonatorConfig::Modal(modal) => {
                 if self == Self::Position {
                     modal.position_of_strike = STRIKE_POSITION.clamp(value);
+                }
+            }
+            ResonatorConfig::Mesh(mesh) => {
+                if self == Self::Position {
+                    mesh.position_of_strike = STRIKE_POSITION.clamp(value);
                 }
             }
         }

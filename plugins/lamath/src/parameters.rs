@@ -24,9 +24,9 @@ use crate::dsp::constants::{
     TUBE_BOUNDARY, WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
 };
 use crate::{
-    AudioInputMode, EnvelopeConfig, FilterMode, LfoShape, LiveExcitationMode, ModalConfig,
-    ModalPreset, ModulationConfig, ModulationDestination, ModulationSource, ResonatorConfig,
-    ResonatorRouting, ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
+    AudioInputMode, EnvelopeConfig, FilterMode, LfoShape, LiveExcitationMode, MeshConfig,
+    ModalConfig, ModalPreset, ModulationConfig, ModulationDestination, ModulationSource,
+    ResonatorConfig, ResonatorRouting, ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
 };
 
 const LIVE: ParameterApplyKind = ParameterApplyKind::Live;

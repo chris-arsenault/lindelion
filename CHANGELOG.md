@@ -9,6 +9,9 @@ All notable user-visible changes to Lindelion are recorded here.
 - Implemented the Lamath v2 sidechain workflow: optional audio input bus, audio-created notes from sidechain onsets, continuous and note-latched live excitation modes, and per-patch audio/MIDI interaction policy.
 - Added typed parameter bindings for audio input mode, audio expression mapping, note detection thresholds, live excitation mode, latch window, and latch fade.
 - Added preallocated sidechain scratch, pre-roll, and per-voice latch buffers so the v2 audio path remains allocation-free on the audio thread.
+- Corrected Tube waveguide tuning to the bore's quarter-wave termination relationship and compensated both boundary filters' phase delay, so `frequency_hz` is the played pitch (within 3 cents through the low–mid range; accuracy tapers in the top octave, where the quarter-wave loop is only a few samples long). Existing Tube patches now sound an octave higher, since the Tube previously resonated roughly an octave flat above ~165 Hz.
+- Added a Mesh resonator model: a rectangular 2D digital-waveguide mesh (plate/membrane), selectable per resonator slot alongside Modal and Waveguide, with material, size, damping, tension, strike-position, and pickup-spread controls. The model is opt-in, so existing patches and the default patch are unaffected.
+- Calibrated waveguide loop damping to an explicit frequency-dependent T60(f): the played pitch now decays in the requested time and higher partials decay measurably faster, where they previously shared a single decay time that the loop filter only approximated.
 
 ### Glirdir
 
@@ -19,6 +22,7 @@ All notable user-visible changes to Lindelion are recorded here.
 - Extracted shared Glirdir/Lamath surfaces into reusable crates: `lindelion-capture`, `lindelion-audio-expression`, `lindelion-phrase-analysis`, and `lindelion-midi`.
 - Added host-agnostic Criterion benchmarks for `lindelion-dsp-utils`, Lamath modal/waveguide/engine paths, and Glirdir's offline analysis job.
 - Added `make bench` and `make bench-smoke` targets and per-crate perf records under `docs/perf/`.
+- Upgraded the shared `DelayLine` fractional read to 4-point Lagrange (cubic) interpolation, flattening fractional-delay group delay so waveguide loops stay in tune at high frequencies; String waveguide tuning is now within ~1.5 cents across 30 Hz–4 kHz.
 
 ### Code organization
 

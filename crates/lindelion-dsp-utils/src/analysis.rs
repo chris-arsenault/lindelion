@@ -2,6 +2,7 @@ use crate::{math::finite_or, window};
 
 mod artifact;
 mod measurements;
+mod pitch;
 
 pub use artifact::{
     InterPeakFloorBand, fixed_analysis_region, folded_frequency_hz, inter_peak_floor_ratio,
@@ -12,6 +13,7 @@ pub use measurements::{
     AudioWindowMetrics, HarmonicDecayMeasurement, audio_window_metrics, first_index_above_abs,
     harmonic_decay_profile,
 };
+pub use pitch::{estimate_f0_autocorrelation_refined, estimate_f0_dft_peak};
 
 pub fn peak_abs(buffer: &[f32]) -> f32 {
     buffer

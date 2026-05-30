@@ -2,6 +2,9 @@ use lindelion_dsp_utils::math;
 
 use super::core;
 
+mod runtime;
+pub use runtime::{MeshResonator, MeshVoiceParams};
+
 const MIN_MESH_SIZE: usize = 3;
 const MAX_MESH_SIZE: usize = 48;
 
@@ -83,6 +86,7 @@ impl MeshBoundaryConfig {
         }
     }
 
+    #[cfg(test)]
     fn fixed_edges(left: f32, right: f32, top: f32, bottom: f32) -> Self {
         Self {
             left: MeshBoundaryEdge::fixed(left),
@@ -105,6 +109,7 @@ struct RectangularMesh2dConfig {
     strike_position: MeshPoint,
     pickup_position: MeshPoint,
     excitation_width: f32,
+    pickup_width: f32,
 }
 
 impl RectangularMesh2dConfig {
@@ -120,9 +125,11 @@ impl RectangularMesh2dConfig {
             strike_position: self.strike_position,
             pickup_position: self.pickup_position,
             excitation_width: math::finite_clamp(self.excitation_width, 0.005, 0.4, 0.06),
+            pickup_width: math::finite_clamp(self.pickup_width, 0.005, 0.4, 0.025),
         }
     }
 
+    #[cfg(test)]
     fn mode_frequency_hz(self, mode_x: usize, mode_y: usize) -> f32 {
         let config = self.sanitized();
         let kx = mode_x as f32 / config.physical_width_m;
@@ -144,6 +151,7 @@ impl Default for RectangularMesh2dConfig {
             strike_position: MeshPoint::new(0.35, 0.42),
             pickup_position: MeshPoint::new(0.72, 0.58),
             excitation_width: 0.055,
+            pickup_width: 0.025,
         }
     }
 }
@@ -161,11 +169,22 @@ struct SpatialWeights {
 
 impl SpatialWeights {
     fn new(point: MeshPoint, width: usize, height: usize, width_fraction: f32) -> Self {
+        // Capacity is the full grid, so later in-place recomputes never reallocate.
+        let mut weights = Self {
+            weights: Vec::with_capacity(width * height),
+        };
+        weights.recompute(point, width, height, width_fraction);
+        weights
+    }
+
+    /// Recompute the Gaussian spatial weights in place: `clear` + `push` reuses
+    /// the grid-sized capacity, so re-tuning a live voice never allocates.
+    fn recompute(&mut self, point: MeshPoint, width: usize, height: usize, width_fraction: f32) {
+        self.weights.clear();
         let center_x = point.x * (width - 1) as f32;
         let center_y = point.y * (height - 1) as f32;
         let sigma = (width.min(height) as f32 * width_fraction).max(0.35);
         let radius = (sigma * 2.5).ceil() as isize;
-        let mut weights = Vec::new();
         let mut sum = 0.0;
 
         for y in (center_y.floor() as isize - radius)..=(center_y.floor() as isize + radius) {
@@ -179,7 +198,7 @@ impl SpatialWeights {
                 if weight <= 1.0e-6 {
                     continue;
                 }
-                weights.push(SpatialWeight {
+                self.weights.push(SpatialWeight {
                     index: y as usize * width + x as usize,
                     weight,
                 });
@@ -188,20 +207,19 @@ impl SpatialWeights {
         }
 
         if sum <= f32::EPSILON {
+            self.weights.clear();
             let x = center_x.round().clamp(0.0, (width - 1) as f32) as usize;
             let y = center_y.round().clamp(0.0, (height - 1) as f32) as usize;
-            return Self {
-                weights: vec![SpatialWeight {
-                    index: y * width + x,
-                    weight: 1.0,
-                }],
-            };
+            self.weights.push(SpatialWeight {
+                index: y * width + x,
+                weight: 1.0,
+            });
+            return;
         }
 
-        for weight in &mut weights {
+        for weight in &mut self.weights {
             weight.weight /= sum;
         }
-        Self { weights }
     }
 
     fn inject_pressure(&self, waves: &mut DirectionalWaves, pressure: f32) {
@@ -261,6 +279,7 @@ impl DirectionalWaves {
         self.from_bottom[index] = math::snap_to_zero(self.from_bottom[index] + component);
     }
 
+    #[cfg(test)]
     fn energy(&self) -> f32 {
         self.from_left
             .iter()
@@ -299,9 +318,34 @@ impl RectangularMesh2d {
                 config.pickup_position,
                 config.width,
                 config.height,
-                0.025,
+                config.pickup_width,
             ),
         }
+    }
+
+    /// Adopt a new configuration without reallocating: the grid (and therefore
+    /// all buffers) is fixed at construction, so only the non-grid fields and the
+    /// in-place spatial weights change. Allocation-free for live re-tuning.
+    fn reconfigure(&mut self, config: RectangularMesh2dConfig) {
+        let config = RectangularMesh2dConfig {
+            width: self.config.width,
+            height: self.config.height,
+            ..config
+        }
+        .sanitized();
+        self.config = config;
+        self.source_weights.recompute(
+            config.strike_position,
+            config.width,
+            config.height,
+            config.excitation_width,
+        );
+        self.pickup_weights.recompute(
+            config.pickup_position,
+            config.width,
+            config.height,
+            config.pickup_width,
+        );
     }
 
     fn process_sample(&mut self, excitation: f32) -> f32 {
@@ -317,10 +361,12 @@ impl RectangularMesh2d {
         self.next.clear();
     }
 
+    #[cfg(test)]
     fn total_energy(&self) -> f32 {
         self.current.energy()
     }
 
+    #[cfg(test)]
     fn mode_frequency_hz(&self, mode_x: usize, mode_y: usize) -> f32 {
         self.config.mode_frequency_hz(mode_x, mode_y)
     }

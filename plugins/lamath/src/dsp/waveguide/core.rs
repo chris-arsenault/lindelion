@@ -58,10 +58,24 @@ pub(super) fn loop_damping(sample_rate: f32, params: WaveguideParams) -> LoopDam
     let frequency_hz = sanitize_frequency(sample_rate, params.frequency_hz);
     let period_samples = sample_rate / frequency_hz;
     let decay_seconds = decay_seconds_from_loop_gain(params.loop_gain);
-    let decay_gain = gain_for_t60(period_samples, sample_rate, decay_seconds);
+    let fundamental_gain = gain_for_t60(period_samples, sample_rate, decay_seconds);
+    // Calibrate the loop gain so the played pitch decays in the requested T60,
+    // dividing out the loop filter's own attenuation at the fundamental. The
+    // filter's roll-off then gives higher partials an explicit, calibrated
+    // frequency-dependent T60(f) — they decay measurably faster than the
+    // fundamental — instead of the fundamental and partials sharing one
+    // untargeted decay time that the loop lowpass only approximates.
+    let fundamental_omega = std::f32::consts::TAU * frequency_hz / sample_rate;
+    let fundamental_magnitude = biquad_magnitude_at(coefficients, fundamental_omega).max(1.0e-4);
     let filter_peak = measured_filter_peak(coefficients);
-    let passive_filter_gain = 1.0 / filter_peak.max(1.0);
-    let loop_gain = math::finite_clamp(decay_gain * passive_filter_gain, 0.0, 0.999, 0.0);
+    // Keep the worst-case round-trip magnitude below unity across every partial.
+    let stability_limit = 0.999 / filter_peak.max(1.0);
+    let loop_gain = math::finite_clamp(
+        fundamental_gain / fundamental_magnitude,
+        0.0,
+        stability_limit,
+        0.0,
+    );
 
     LoopDamping {
         coefficients,
@@ -152,7 +166,7 @@ pub(super) fn sanitize_frequency(sample_rate: f32, frequency_hz: f32) -> f32 {
     math::finite_clamp(frequency_hz, 1.0, sample_rate * 0.45, 220.0)
 }
 
-fn decay_seconds_from_loop_gain(loop_gain: f32) -> f32 {
+pub(super) fn decay_seconds_from_loop_gain(loop_gain: f32) -> f32 {
     let normalized = WAVEGUIDE_LOOP_GAIN.clamp(loop_gain) / WAVEGUIDE_LOOP_GAIN.max;
     if normalized <= 0.0 {
         return 0.0;
@@ -177,6 +191,25 @@ fn measured_filter_peak(coefficients: BiquadCoefficients) -> f32 {
         peak = peak.max(biquad_magnitude_at(coefficients, omega));
     }
     math::finite_clamp(peak, 0.0, 32.0, 1.0)
+}
+
+/// Phase delay (−phase / ω) of a biquad at `frequency_hz`, in samples.
+///
+/// Loop resonance is set by the *phase* the wave accumulates per round trip, so
+/// a resonator tuned to a target pitch must compensate each loop filter's phase
+/// delay — not its group delay, which only matches near DC and drifts as the
+/// played pitch approaches the filter cutoff.
+pub(super) fn filter_phase_delay_samples(
+    coefficients: BiquadCoefficients,
+    sample_rate: f32,
+    frequency_hz: f32,
+) -> f32 {
+    let omega = std::f32::consts::TAU * sanitize_frequency(sample_rate, frequency_hz) / sample_rate;
+    if omega <= f32::EPSILON {
+        return 0.0;
+    }
+    let phase_delay = -biquad_phase_at(coefficients, omega) / omega;
+    math::finite_clamp(phase_delay, 0.0, MAX_FILTER_DELAY_COMPENSATION_SAMPLES, 0.0)
 }
 
 fn filter_group_delay_samples(

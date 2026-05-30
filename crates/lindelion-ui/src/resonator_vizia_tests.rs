@@ -8,7 +8,7 @@ fn host_requires_complete_parameter_surface() {
     assert!(matches!(
         ResonatorEditorHost::new(0, bindings, mock_callbacks()),
         Err(ResonatorEditorHostError::MissingSlot(
-            ResonatorEditorSurfaceSlot::LiveExcitationLatchFade
+            ResonatorEditorSurfaceSlot::ResonatorBMeshPickupSpread
         ))
     ));
 }

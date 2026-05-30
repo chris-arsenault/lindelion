@@ -13,6 +13,7 @@ Per-module reference docs for DSP types in the Lindelion workspace. Each doc fol
 | [Adsr](adsr.md) | `crates/lindelion-dsp-utils/src/envelope.rs` | Linear-step ADSR envelope state machine |
 | [ModalBank](modal-bank.md) | `plugins/lamath/src/dsp/modal.rs` | Bank of second-order resonant filters per vibrational mode |
 | [WaveguideResonator](waveguide.md) | `plugins/lamath/src/dsp/waveguide.rs` | Karplus-Strong-style digital waveguide with string/tube boundaries |
+| [Waveguide resonator techniques](waveguide-techniques.md) | `plugins/lamath/src/dsp/waveguide/` | Catalog of waveguide tuning, damping, and 2D-mesh techniques with implementation pointers ([ADR-0011](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md)) |
 | [Onset detection](onset-detect.md) | `crates/lindelion-onset-detect/` | SuperFlux / energy / pitch-stability / manual-grid onset detectors, batch + streaming |
 | [Pitch detection](pitch-detect.md) | `crates/lindelion-pitch-detect/` | SwiftF0 ONNX-backed pitch tracker plus zero-crossing fallback |
 | [Phrase analysis](phrase-analysis.md) | `crates/lindelion-phrase-analysis/` | Pipeline orchestrator: pitch → onsets → note segmentation |

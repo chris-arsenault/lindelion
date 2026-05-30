@@ -1,6 +1,6 @@
 use lindelion_dsp_utils::{
     filters::{Biquad, BiquadCoefficients},
-    math::{finite_clamp, finite_or, semitones_to_ratio, snap_to_zero},
+    math::{finite_clamp, finite_or, snap_to_zero},
     params::{StructuralChangePolicy, StructuralParam},
 };
 use lindelion_plugin_shell::SmoothedAtomicParam;
@@ -18,12 +18,14 @@ use super::{
 use crate::dsp::{
     constants::{
         LOWEST_RESONATOR_FREQUENCY_HZ, MODAL_DAMPING_MOD_OCTAVES, RESONATOR_POSITION_MOD_DEPTH,
-        SERIES_CONDITIONER, STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_DISPERSION,
-        WAVEGUIDE_LOOP_GAIN, WAVEGUIDE_PICKUP_POSITION,
+        SERIES_CONDITIONER, STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_LOOP_GAIN,
     },
     modal::{ModalBank, ModalBankParams},
-    waveguide::{WaveguideParams, WaveguideResonator},
+    waveguide::{MeshResonator, WaveguideParams, WaveguideResonator},
 };
+
+mod mapping;
+use mapping::{mesh_params_from_config, modal_params_from_config, waveguide_params_from_config};
 
 const BODY_COLOR_WINDOW_MS: f32 = 35.0;
 const BODY_COLOR_RETRIGGER_MS: f32 = 80.0;
@@ -247,6 +249,7 @@ enum ResonatorKind {
     Silent,
     Modal,
     Waveguide,
+    Mesh,
 }
 
 #[derive(Debug)]
@@ -255,6 +258,7 @@ struct ResonatorEngine {
     modal: ModalBank,
     waveguide: WaveguideResonator,
     waveguide_params: WaveguideParams,
+    mesh: MeshResonator,
 }
 
 impl ResonatorEngine {
@@ -264,6 +268,7 @@ impl ResonatorEngine {
             modal: ModalBank::with_capacity(sample_rate, 256, ModalBankParams::default()),
             waveguide: WaveguideResonator::new(sample_rate, LOWEST_RESONATOR_FREQUENCY_HZ),
             waveguide_params: WaveguideParams::default(),
+            mesh: MeshResonator::new(sample_rate),
         }
     }
 
@@ -283,6 +288,12 @@ impl ResonatorEngine {
                 self.kind = ResonatorKind::Waveguide;
                 self.waveguide_params = waveguide_params_from_config(config, base_frequency);
                 self.waveguide.reset();
+            }
+            ResonatorConfig::Mesh(config) => {
+                self.kind = ResonatorKind::Mesh;
+                self.mesh
+                    .configure(mesh_params_from_config(config, base_frequency));
+                self.mesh.reset();
             }
         }
     }
@@ -306,6 +317,11 @@ impl ResonatorEngine {
                 self.waveguide_params = waveguide_params_from_config(config, base_frequency);
                 true
             }
+            (ResonatorKind::Mesh, ResonatorConfig::Mesh(config)) => {
+                self.mesh
+                    .configure(mesh_params_from_config(config, base_frequency));
+                true
+            }
             _ => false,
         }
     }
@@ -319,6 +335,10 @@ impl ResonatorEngine {
             (ResonatorKind::Waveguide, ResonatorConfig::Waveguide(config)) => {
                 self.waveguide_params = waveguide_params_from_config(config, base_frequency);
             }
+            (ResonatorKind::Mesh, ResonatorConfig::Mesh(config)) => {
+                self.mesh
+                    .configure(mesh_params_from_config(config, base_frequency));
+            }
             _ => self.configure(config, base_frequency, true),
         }
     }
@@ -327,6 +347,7 @@ impl ResonatorEngine {
         self.kind = ResonatorKind::Silent;
         self.modal.reset();
         self.waveguide.reset();
+        self.mesh.reset();
     }
 
     pub(super) fn process_sample(&mut self, input: f32) -> f32 {
@@ -334,6 +355,7 @@ impl ResonatorEngine {
             ResonatorKind::Silent => 0.0,
             ResonatorKind::Modal => self.modal.process_sample(input),
             ResonatorKind::Waveguide => self.waveguide.process_sample(input, self.waveguide_params),
+            ResonatorKind::Mesh => self.mesh.process_sample(input),
         }
     }
 
@@ -449,44 +471,6 @@ fn decay_to_floor(sample_rate: f32, duration_ms: f32) -> f32 {
     0.001_f32.powf(1.0 / samples)
 }
 
-fn modal_params_from_config(config: &ModalConfig, base_frequency: f32) -> ModalBankParams {
-    ModalBankParams {
-        fundamental_hz: tuned_frequency(base_frequency, config.semitone_offset, config.cent_offset),
-        mode_count: config.mode_count as usize,
-        preset: config.preset,
-        inharmonicity: config.inharmonicity,
-        brightness: config.brightness,
-        decay_global: config.decay_global,
-        decay_tilt: config.decay_tilt,
-        position_of_strike: config.position_of_strike,
-    }
-}
-
-fn waveguide_params_from_config(config: &WaveguideConfig, base_frequency: f32) -> WaveguideParams {
-    WaveguideParams {
-        style: config.style,
-        frequency_hz: tuned_frequency(base_frequency, config.semitone_offset, config.cent_offset),
-        loop_filter_cutoff: config.loop_filter_cutoff,
-        loop_filter_resonance: config.loop_filter_resonance,
-        loop_gain: config.loop_gain,
-        loop_nonlinearity: config.loop_nonlinearity,
-        dispersion: WAVEGUIDE_DISPERSION.clamp(config.dispersion),
-        position_of_strike: config.position_of_strike,
-        pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
-        boundary_reflection: config.boundary_reflection,
-    }
-}
-
-fn tuned_frequency(base_frequency: f32, semitone_offset: i8, cent_offset: f32) -> f32 {
-    let base_frequency = if base_frequency.is_finite() && base_frequency > 0.0 {
-        base_frequency
-    } else {
-        LOWEST_RESONATOR_FREQUENCY_HZ
-    };
-    let cent_offset = finite_or(cent_offset, 0.0);
-    snap_to_zero(base_frequency * semitones_to_ratio(semitone_offset as f32 + cent_offset / 100.0))
-}
-
 fn sanitize_routing(routing: ResonatorRouting) -> ResonatorRouting {
     match routing {
         ResonatorRouting::Parallel { mix_a, mix_b } => ResonatorRouting::Parallel {
@@ -569,6 +553,15 @@ fn modulated_resonator_config(
             config.position_of_strike = STRIKE_POSITION
                 .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
             ResonatorConfig::Waveguide(config)
+        }
+        ResonatorConfig::Mesh(mut config) => {
+            // Positive damping modulation lengthens the decay, so it lowers the
+            // mesh's boundary loss.
+            config.damping =
+                (config.damping - damping_mod * WAVEGUIDE_DAMPING_MOD_DEPTH).clamp(0.0, 1.0);
+            config.position_of_strike = STRIKE_POSITION
+                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
+            ResonatorConfig::Mesh(config)
         }
     }
 }

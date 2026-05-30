@@ -2,6 +2,13 @@
 
 Karplus-Strong-style digital waveguide with selectable string or tube boundary behavior, fractional-delay tuning, loop low-pass damping, and optional nonlinear saturation.
 
+> **Note.** Sections 2–3 describe the single-loop model. The implementation is now split into
+> `string_1d.rs` (half-wave) and `tube_1d.rs` (quarter-wave) loops with corrected tube tuning,
+> phase-delay boundary compensation, cubic fractional-delay reads, and a calibrated T60(f) damping;
+> a rectangular 2D mesh is a sibling resonator model. See the
+> [waveguide technique catalog](waveguide-techniques.md) and
+> [ADR-0011](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md) for the current behavior.
+
 ## 1. Purpose
 
 Single-loop digital waveguide composed of an integer-delay ring buffer, a fractional-sample all-pass for tuning resolution, and a low-pass biquad in the feedback path for frequency-dependent damping. Two boundary models:
@@ -173,4 +180,6 @@ for sample in &mut output[1..] {
 - Source: [`plugins/lamath/src/dsp/waveguide.rs`](../../plugins/lamath/src/dsp/waveguide.rs).
 - Building blocks: [`DelayLine`](delay-line.md), [`FirstOrderAllpass`](allpass.md), [`Biquad`](biquad.md).
 - Sibling resonator: [`ModalBank`](modal-bank.md).
+- Technique catalog: [Waveguide resonator techniques](waveguide-techniques.md).
 - ADR-0001: [Allocation-free audio thread](../adr/0001-allocation-free-audio-thread.md).
+- ADR-0011: [Waveguide tube tuning correction and 2D mesh resonator](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md).

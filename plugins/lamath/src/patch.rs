@@ -157,6 +157,7 @@ impl Default for ExcitationSlot {
 pub enum ResonatorConfig {
     Modal(ModalConfig),
     Waveguide(WaveguideConfig),
+    Mesh(MeshConfig),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +230,35 @@ impl Default for WaveguideConfig {
             dispersion: default_waveguide_dispersion(),
             position_of_strike: STRIKE_POSITION.default,
             boundary_reflection: default_boundary_reflection(),
+        }
+    }
+}
+
+/// Physical controls for the 2D-mesh (plate/membrane) resonator model. Every
+/// control except the pitch offsets is normalised `0..1`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MeshConfig {
+    pub semitone_offset: i8,
+    pub cent_offset: f32,
+    pub material: f32,
+    pub size: f32,
+    pub damping: f32,
+    pub tension: f32,
+    pub position_of_strike: f32,
+    pub pickup_spread: f32,
+}
+
+impl Default for MeshConfig {
+    fn default() -> Self {
+        Self {
+            semitone_offset: 0,
+            cent_offset: 0.0,
+            material: 0.5,
+            size: 0.5,
+            damping: 0.3,
+            tension: 0.5,
+            position_of_strike: STRIKE_POSITION.default,
+            pickup_spread: 0.3,
         }
     }
 }

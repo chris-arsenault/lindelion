@@ -69,10 +69,20 @@ pub enum ResonatorEditorSurfaceSlot {
     LiveExcitationLatchWindow,
     LiveExcitationLatchPreRoll,
     LiveExcitationLatchFade,
+    ResonatorAMeshMaterial,
+    ResonatorAMeshSize,
+    ResonatorAMeshDamping,
+    ResonatorAMeshTension,
+    ResonatorAMeshPickupSpread,
+    ResonatorBMeshMaterial,
+    ResonatorBMeshSize,
+    ResonatorBMeshDamping,
+    ResonatorBMeshTension,
+    ResonatorBMeshPickupSpread,
 }
 
 impl ResonatorEditorSurfaceSlot {
-    pub const ALL: [Self; 54] = [
+    pub const ALL: [Self; 64] = [
         Self::Master,
         Self::Cutoff,
         Self::Saturation,
@@ -127,6 +137,16 @@ impl ResonatorEditorSurfaceSlot {
         Self::LiveExcitationLatchWindow,
         Self::LiveExcitationLatchPreRoll,
         Self::LiveExcitationLatchFade,
+        Self::ResonatorAMeshMaterial,
+        Self::ResonatorAMeshSize,
+        Self::ResonatorAMeshDamping,
+        Self::ResonatorAMeshTension,
+        Self::ResonatorAMeshPickupSpread,
+        Self::ResonatorBMeshMaterial,
+        Self::ResonatorBMeshSize,
+        Self::ResonatorBMeshDamping,
+        Self::ResonatorBMeshTension,
+        Self::ResonatorBMeshPickupSpread,
     ];
 
     pub const fn index(self) -> usize {
@@ -185,6 +205,16 @@ impl ResonatorEditorSurfaceSlot {
             Self::LiveExcitationLatchWindow => 51,
             Self::LiveExcitationLatchPreRoll => 52,
             Self::LiveExcitationLatchFade => 53,
+            Self::ResonatorAMeshMaterial => 54,
+            Self::ResonatorAMeshSize => 55,
+            Self::ResonatorAMeshDamping => 56,
+            Self::ResonatorAMeshTension => 57,
+            Self::ResonatorAMeshPickupSpread => 58,
+            Self::ResonatorBMeshMaterial => 59,
+            Self::ResonatorBMeshSize => 60,
+            Self::ResonatorBMeshDamping => 61,
+            Self::ResonatorBMeshTension => 62,
+            Self::ResonatorBMeshPickupSpread => 63,
         }
     }
 }

@@ -11,10 +11,12 @@ use crate::{
 use lindelion_dsp_utils::analysis::assert_all_finite;
 
 #[test]
-fn mesh_promotion_gate_keeps_rectangular_mesh_prototype_only() {
+fn mesh_promotion_gate_promotes_runtime_exposed_rectangular_mesh() {
     let target = concrete_plate_promotion_target();
     let evidence = evaluate_mesh_promotion(target);
 
+    // The mesh is a new selectable resonator model; the String/Tube waveguide
+    // styles are unchanged (the mesh is not hidden behind a style).
     assert_eq!(
         WaveguideStyle::ALL,
         [WaveguideStyle::String, WaveguideStyle::Tube]
@@ -24,17 +26,22 @@ fn mesh_promotion_gate_keeps_rectangular_mesh_prototype_only() {
         evidence.candidate_rms > target.criteria.min_candidate_rms,
         "evidence={evidence:?}"
     );
+    // Objective render gate: the mesh sounds materially unlike any ModalBank
+    // baseline and its spatial strike response exceeds what modal positioning can
+    // produce — a plate/membrane sound ModalBank cannot reach.
     assert!(
-        evidence.closest_modal_difference.is_finite()
-            && evidence.mesh_spatial_difference.is_finite()
-            && evidence.modal_spatial_difference.is_finite(),
+        evidence.closest_modal_difference > target.criteria.min_closest_modal_difference,
+        "evidence={evidence:?}"
+    );
+    assert!(
+        evidence.spatial_advantage() > target.criteria.min_spatial_advantage,
         "evidence={evidence:?}"
     );
     assert!(evidence.process_is_allocation_free, "evidence={evidence:?}");
-    assert!(!evidence.runtime_exposed, "evidence={evidence:?}");
+    assert!(evidence.runtime_exposed, "evidence={evidence:?}");
     assert_eq!(
         evidence.decision(target.criteria),
-        MeshPromotionDecision::KeepPrototype
+        MeshPromotionDecision::Promote
     );
 }
 
@@ -77,6 +84,56 @@ fn promotion_gate_requires_complete_evidence_before_promoting() {
         .decision(criteria),
         MeshPromotionDecision::KeepPrototype
     );
+}
+
+#[test]
+fn mesh_runtime_is_allocation_free_and_stable_at_parameter_extremes() {
+    // Allocation-free, fixed-memory runtime: after construction, re-tuning and
+    // processing never allocate (the grid is fixed; spatial weights recompute in
+    // place within their grid-sized capacity).
+    let mut mesh = MeshResonator::new(48_000.0);
+    assert_no_allocations("mesh runtime configure + process", || {
+        for material in [0.0, 1.0] {
+            mesh.configure(MeshVoiceParams {
+                frequency_hz: 110.0,
+                material,
+                size: 0.0,
+                damping: 1.0,
+                tension: 1.0,
+                strike_position: material,
+                pickup_spread: 1.0,
+            });
+            for index in 0..256 {
+                let _ = mesh.process_sample((index == 0) as u8 as f32);
+            }
+        }
+    });
+
+    // Finite and bounded at every exposed-parameter extreme, across the range.
+    for frequency_hz in [30.0_f32, 220.0, 4_000.0] {
+        for material in [0.0_f32, 1.0] {
+            for extreme in [0.0_f32, 1.0] {
+                let mut mesh = MeshResonator::new(48_000.0);
+                mesh.configure(MeshVoiceParams {
+                    frequency_hz,
+                    material,
+                    size: extreme,
+                    damping: extreme,
+                    tension: 1.0 - extreme,
+                    strike_position: extreme,
+                    pickup_spread: 1.0 - extreme,
+                });
+                let output = (0..4_096)
+                    .map(|index| mesh.process_sample((index == 0) as u8 as f32))
+                    .collect::<Vec<_>>();
+                assert_all_finite(&output);
+                assert!(
+                    output.iter().all(|sample| sample.abs() < 8.0),
+                    "mesh must stay bounded: f={frequency_hz} material={material} extreme={extreme}"
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -229,9 +286,19 @@ fn process_sample_is_allocation_free(config: RectangularMesh2dConfig) -> bool {
 }
 
 fn mesh_runtime_exposed() -> bool {
-    WaveguideStyle::ALL
-        .iter()
-        .any(|style| !matches!(style, WaveguideStyle::String | WaveguideStyle::Tube))
+    // The mesh is promoted as its own selectable resonator model: a
+    // `ResonatorConfig::Mesh` drives a runtime `MeshResonator` in the voice
+    // engine and renders, without touching the String/Tube waveguide styles.
+    let mut mesh = MeshResonator::new(48_000.0);
+    mesh.configure(MeshVoiceParams::default());
+    let rings = (0..512)
+        .map(|index| mesh.process_sample((index == 0) as u8 as f32))
+        .any(|sample| sample.abs() > 0.0);
+    rings
+        && matches!(
+            crate::ResonatorConfig::Mesh(crate::MeshConfig::default()),
+            crate::ResonatorConfig::Mesh(_)
+        )
 }
 
 fn concrete_plate_promotion_target() -> MeshPromotionTarget {

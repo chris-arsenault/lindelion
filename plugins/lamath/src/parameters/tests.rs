@@ -411,6 +411,9 @@ fn prepare_patch_for_binding(patch: &mut ResonatorSynthPatch, binding: Parameter
             ResonatorParameter::Waveguide(_) => {
                 *slot.config_mut(patch) = ResonatorConfig::Waveguide(WaveguideConfig::default());
             }
+            ResonatorParameter::Mesh(_) => {
+                *slot.config_mut(patch) = ResonatorConfig::Mesh(MeshConfig::default());
+            }
             ResonatorParameter::Model => {}
         }
     }

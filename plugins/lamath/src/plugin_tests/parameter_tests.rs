@@ -131,8 +131,9 @@ fn removed_global_loop_gain_parameter_is_ignored() {
 }
 
 #[test]
-fn model_and_retrigger_parameters_are_explicit_binary_choices() {
-    for id in [13, 20, 35, 40, 55] {
+fn model_and_retrigger_parameters_are_explicit_choices() {
+    // Retrigger and the per-slot waveguide style stay binary toggles.
+    for id in [13, 35, 55] {
         let parameter = PARAMETERS
             .iter()
             .find(|parameter| parameter.id.0 == id)
@@ -145,6 +146,22 @@ fn model_and_retrigger_parameters_are_explicit_binary_choices() {
         );
         assert_eq!(parameter.range.min, 0.0, "parameter {}", parameter.name);
         assert_eq!(parameter.range.max, 1.0, "parameter {}", parameter.name);
+    }
+
+    // The resonator model is a three-way Modal / Waveguide / Mesh selector.
+    for id in [20, 40] {
+        let parameter = PARAMETERS
+            .iter()
+            .find(|parameter| parameter.id.0 == id)
+            .expect("resonator model parameter should exist");
+        assert_eq!(
+            parameter.step_count,
+            Some(2),
+            "parameter {}",
+            parameter.name
+        );
+        assert_eq!(parameter.range.min, 0.0, "parameter {}", parameter.name);
+        assert_eq!(parameter.range.max, 2.0, "parameter {}", parameter.name);
     }
 }
 
@@ -412,6 +429,7 @@ fn resonator_model_index(config: ResonatorConfig) -> u8 {
     match config {
         ResonatorConfig::Modal(_) => 0,
         ResonatorConfig::Waveguide(_) => 1,
+        ResonatorConfig::Mesh(_) => 2,
     }
 }
 

@@ -12,3 +12,4 @@
 | [0008](0008-capture-first-analysis.md) | Capture-first voice-to-MIDI analysis | Accepted | 2026-05-23 |
 | [0009](0009-linnod-setup-time-resample-pro.md) | Linnod setup-time Resample Pro rendering | Accepted | 2026-05-28 |
 | [0010](0010-resample-pro-fidelity-strategy.md) | Resample Pro pitch-shift fidelity strategy | Accepted | 2026-05-29 |
+| [0011](0011-waveguide-tube-tuning-and-2d-mesh.md) | Waveguide tube tuning correction and 2D mesh resonator | Accepted | 2026-05-30 |

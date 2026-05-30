@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use lamath::{
+    BenchMeshResonator as MeshResonator, BenchMeshVoiceParams as MeshVoiceParams,
     BenchWaveguideParams as WaveguideParams, BenchWaveguideResonator as WaveguideResonator,
     WaveguideStyle,
 };
@@ -66,15 +67,55 @@ fn bench_waveguide_style(
     });
 }
 
+fn mesh_params() -> MeshVoiceParams {
+    MeshVoiceParams {
+        frequency_hz: 220.0,
+        material: 0.6,
+        size: 0.55,
+        damping: 0.3,
+        tension: 0.45,
+        strike_position: 0.35,
+        pickup_spread: 0.3,
+    }
+}
+
+fn process_mesh_block(input: &[f32]) -> Vec<f32> {
+    let mut mesh = MeshResonator::new(SAMPLE_RATE);
+    mesh.configure(mesh_params());
+    input
+        .iter()
+        .copied()
+        .map(|sample| mesh.process_sample(sample))
+        .collect()
+}
+
 fn bench_waveguide(criterion: &mut Criterion) {
     let input = excitation_block();
     assert_all_finite(&process_block(WaveguideStyle::String, &input));
     assert_all_finite(&process_block(WaveguideStyle::Tube, &input));
+    assert_all_finite(&process_mesh_block(&input));
 
     let mut group = criterion.benchmark_group("waveguide");
     group.throughput(Throughput::Elements(BLOCK_SIZE as u64));
     bench_waveguide_style(&mut group, "string_512", WaveguideStyle::String, &input);
     bench_waveguide_style(&mut group, "tube_512", WaveguideStyle::Tube, &input);
+    group.bench_function("mesh_512", |bench| {
+        let params = mesh_params();
+        bench.iter_batched(
+            || {
+                let mut mesh = MeshResonator::new(SAMPLE_RATE);
+                mesh.configure(params);
+                (mesh, vec![0.0; input.len()])
+            },
+            |(mut mesh, mut output)| {
+                for (output, sample) in output.iter_mut().zip(black_box(&input)) {
+                    *output = mesh.process_sample(*sample);
+                }
+                black_box(output);
+            },
+            BatchSize::SmallInput,
+        );
+    });
     group.finish();
 }
 

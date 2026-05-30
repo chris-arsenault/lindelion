@@ -8,11 +8,12 @@ use super::constants::{
 mod body;
 mod core;
 mod dispersion;
-#[cfg(test)]
 mod mesh_2d;
 mod string_1d;
 mod traveling;
 mod tube_1d;
+
+pub use mesh_2d::{MeshResonator, MeshVoiceParams};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WaveguideStyle {
@@ -375,7 +376,10 @@ mod tests {
 
         assert_all_finite(&closed);
         assert_all_finite(&open);
-        assert!(rms_difference(&closed[512..], &open[512..]) > 0.000_01);
+        // The corrected quarter-wave bore circulates less energy and renders at a
+        // lower absolute level than before, so this floor is set below it while
+        // still asserting a material boundary-dependent difference.
+        assert!(rms_difference(&closed[512..], &open[512..]) > 0.000_001);
     }
 
     #[test]

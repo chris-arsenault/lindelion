@@ -135,6 +135,12 @@ fn modal_config_from(config: ResonatorConfig) -> ModalConfig {
             position_of_strike: config.position_of_strike,
             ..ModalConfig::default()
         },
+        ResonatorConfig::Mesh(config) => ModalConfig {
+            semitone_offset: config.semitone_offset,
+            cent_offset: config.cent_offset,
+            position_of_strike: config.position_of_strike,
+            ..ModalConfig::default()
+        },
     }
 }
 
@@ -146,6 +152,30 @@ fn waveguide_config_from(config: ResonatorConfig) -> WaveguideConfig {
             cent_offset: config.cent_offset,
             position_of_strike: config.position_of_strike,
             ..WaveguideConfig::default()
+        },
+        ResonatorConfig::Mesh(config) => WaveguideConfig {
+            semitone_offset: config.semitone_offset,
+            cent_offset: config.cent_offset,
+            position_of_strike: config.position_of_strike,
+            ..WaveguideConfig::default()
+        },
+    }
+}
+
+fn mesh_config_from(config: ResonatorConfig) -> MeshConfig {
+    match config {
+        ResonatorConfig::Mesh(config) => config,
+        ResonatorConfig::Modal(config) => MeshConfig {
+            semitone_offset: config.semitone_offset,
+            cent_offset: config.cent_offset,
+            position_of_strike: config.position_of_strike,
+            ..MeshConfig::default()
+        },
+        ResonatorConfig::Waveguide(config) => MeshConfig {
+            semitone_offset: config.semitone_offset,
+            cent_offset: config.cent_offset,
+            position_of_strike: config.position_of_strike,
+            ..MeshConfig::default()
         },
     }
 }

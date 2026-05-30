@@ -55,7 +55,7 @@ impl DelayLine {
         let max_delay = (self.buffer.len() - 2) as f32;
         let delay_samples = finite_delay_samples(delay_samples, max_delay);
         let read_index = self.write_index as f32 - 1.0 - delay_samples;
-        math::snap_to_zero(interpolation::linear_wrapped(&self.buffer, read_index))
+        math::snap_to_zero(interpolation::cubic_wrapped(&self.buffer, read_index))
     }
 }
 
@@ -134,11 +134,16 @@ mod tests {
 
     #[test]
     fn fractional_delay_interpolates() {
+        // Cubic (Lagrange) interpolation reproduces a linear ramp exactly, so a
+        // half-sample read lands on the exact interpolated value. Enough ramp
+        // samples are pushed for the 4-point stencil to sit fully on the ramp.
         let mut delay = DelayLine::new(8);
-        delay.push(0.0);
-        delay.push(1.0);
+        for sample in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
+            delay.push(sample);
+        }
 
-        assert!((delay.read(0.5) - 0.5).abs() < 0.000_01);
+        assert!((delay.read(2.5) - 3.5).abs() < 0.000_01);
+        assert!((delay.read(3.5) - 2.5).abs() < 0.000_01);
     }
 
     #[test]
