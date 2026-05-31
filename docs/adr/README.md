@@ -17,3 +17,4 @@
 | [0015](0015-expressive-low-polyphony-budget.md) | Expressive low-polyphony per-voice budget | Accepted | 2026-05-30 |
 | [0016](0016-oversampled-nonlinear-inner-loop.md) | Global 2x oversampled nonlinear inner loop | Accepted | 2026-05-30 |
 | [0017](0017-additive-physical-driver-layer.md) | Additive physical-driver layer | Accepted | 2026-05-30 |
+| [0018](0018-string-two-way-body-coupling-and-output-blend.md) | String two-way body coupling and output blend | Accepted | 2026-05-31 |
