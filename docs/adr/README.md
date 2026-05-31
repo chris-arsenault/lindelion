@@ -24,4 +24,4 @@
 | [0020](0020-caloma-speech-vst-packaging.md) | Speech effects ship as a single VST3 (Calóma) | Accepted | 2026-05-31 |
 | [0021](0021-string-two-way-body-coupling-and-output-blend.md) | String two-way body coupling and output blend | Accepted | 2026-05-31 |
 | [0022](0022-windows-vst3-host.md) | Windows realtime VST3 host application | Accepted | 2026-05-31 |
-| [0023](0023-new-vsts-windows-only.md) | New VSTs target Windows: build path and egui editor | Accepted | 2026-05-31 |
+| [0023](0023-new-vsts-windows-only.md) | New VSTs target Windows: build path and Vizia editor | Accepted | 2026-05-31 |
