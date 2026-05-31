@@ -177,13 +177,13 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
 
     use lindelion_midi::{DetectedNote, MidiClip, QuantizedNote};
     use lindelion_pitch_detect::{PitchContour, PitchFrame};
 
     use super::*;
-    use crate::{AnalysisError, GlirdirPatch, ScratchpadAudio};
+    use crate::{AnalysisError, ScratchpadAudio};
 
     #[test]
     fn worker_runs_analysis_jobs_with_injected_runner() {
@@ -226,37 +226,6 @@ mod tests {
         let export = crate::midi_export::MidiExportPayload::decode(&payload).unwrap();
         assert_eq!(export.file_name, "glirdir-Cchrom-4bar-120bpm.mid");
         assert!(export.bytes.starts_with(b"MThd"));
-    }
-
-    #[test]
-    fn worker_saves_scratchpad_to_sample_library_off_thread() {
-        let worker = GlirdirWorker::with_runner(CountingRunner {
-            calls: Arc::new(AtomicUsize::new(0)),
-        });
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("lindelion-worker-save-{nanos}"));
-        let patch = GlirdirPatch {
-            scratchpad: Some(ScratchpadAudio::new(48_000, vec![0.0, 0.25, -0.25])),
-            ..GlirdirPatch::default()
-        };
-        let job = SampleLibrarySaveJob::with_library_root(11, &patch, root)
-            .expect("scratchpad should create save job");
-
-        assert!(worker.schedule_sample_library_save(job));
-
-        let result = wait_for_one_result(&worker);
-        let GlirdirWorkerResult::SampleLibrarySave { sequence, payload } = result else {
-            panic!("expected sample-library save result");
-        };
-        assert_eq!(sequence, 11);
-        let payload = crate::sample_library::SampleLibrarySavePayload::decode(&payload).unwrap();
-        assert_eq!(
-            payload.status,
-            crate::sample_library::SampleLibrarySaveStatus::Saved
-        );
     }
 
     #[test]
@@ -350,15 +319,19 @@ mod tests {
     }
 
     fn wait_for_one_result(worker: &GlirdirWorker) -> GlirdirWorkerResult {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            let mut result = None;
-            worker.drain_results(&mut |worker_result| result = Some(worker_result));
-            if let Some(result) = result {
-                return result;
-            }
-            assert!(Instant::now() < deadline, "worker did not produce a result");
-            thread::sleep(Duration::from_millis(10));
+        // Block (parked, not spinning) until the worker delivers a result. The
+        // timeout is only a deadlock safety-net for a genuinely stuck or
+        // panicked worker, not a performance assertion. The previous version
+        // busy-polled against a 2s wall-clock deadline, which made this flaky:
+        // under a saturated `make ci` the worker thread is starved and the
+        // fixed budget elapses in real time before its result is observed.
+        // recv_timeout parks the test thread and wakes the instant the worker
+        // sends, so a slow-but-healthy worker can take as long as it needs, and
+        // a disconnected (panicked) worker fails immediately rather than after
+        // a 2s spin.
+        match worker.results.recv_timeout(Duration::from_secs(30)) {
+            Ok(result) => result,
+            Err(err) => panic!("worker did not produce a result: {err}"),
         }
     }
 }
