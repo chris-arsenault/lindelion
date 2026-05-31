@@ -8,6 +8,63 @@ pub use runtime::{MeshResonator, MeshVoiceParams};
 const MIN_MESH_SIZE: usize = 3;
 const MAX_MESH_SIZE: usize = 48;
 
+/// Measured-energy (RMS) at which the geometric (von Kármán) coupling reaches its
+/// target depth; the squared, normalized drive `(energy/REF)^2` keeps soft strikes
+/// linear and concentrates the bloom on hard ones.
+const GEOMETRIC_ENERGY_REF: f32 = 0.15;
+/// Clamp on the normalized squared energy term (the coupling depth at peak energy).
+const GEOMETRIC_MAX_DRIVE: f32 = 1.0;
+/// Maximum rotation `sin` factor at full coupling: the fraction of the low mode's
+/// amplitude rotated up into the high-spatial-frequency mode each junction.
+/// Bounded below 1 so the per-junction transfer stays gentle and the scheme stays
+/// stable. Specified as `sin` (not an angle) so the rotation needs only a `sqrt`,
+/// not `sin_cos` — cheap enough for the per-junction inner loop while staying
+/// exactly energy-conserving (`cos = sqrt(1 - sin^2)`, so `sin^2 + cos^2 = 1`).
+const GEOMETRIC_MAX_SIN: f32 = 0.3;
+/// Maps the local junction displacement to the [0,1] amplitude factor: high-
+/// pressure junctions couple most (the large-deflection geometric nonlinearity).
+const GEOMETRIC_AMPLITUDE_SENS: f32 = 6.0;
+
+/// Squared, normalized energy term in `[0, GEOMETRIC_MAX_DRIVE]` setting how
+/// strongly the mesh couples at the current playing energy.
+fn drive_term(energy: f32) -> f32 {
+    let normalized = math::finite_or(energy, 0.0).max(0.0) / GEOMETRIC_ENERGY_REF;
+    math::finite_clamp(normalized * normalized, 0.0, GEOMETRIC_MAX_DRIVE, 0.0)
+}
+
+/// Energy-conserving geometric coupling at a junction (von Kármán large-deflection
+/// nonlinearity). Rotates the outgoing wave by `angle` in the plane spanning the
+/// locally-uniform mode `u = (1,1,1,1)/2` (low spatial frequency) and the
+/// alternating mode `v = (1,-1,1,-1)/2` (high spatial frequency), transferring
+/// energy from `u` to `v` — upward into higher modes. The rotation preserves
+/// `cu^2 + cv^2`, so the junction (and the mesh) never gains energy.
+fn geometric_couple(
+    outgoing: (f32, f32, f32, f32),
+    pressure: f32,
+    drive: f32,
+) -> (f32, f32, f32, f32) {
+    let drive = math::finite_clamp(drive, 0.0, GEOMETRIC_MAX_DRIVE, 0.0);
+    if drive <= f32::EPSILON {
+        return outgoing;
+    }
+    let amplitude = math::finite_clamp(pressure.abs() * GEOMETRIC_AMPLITUDE_SENS, 0.0, 1.0, 0.0);
+    // Energy-exact rotation with no transcendental: pick `sin` directly, derive
+    // `cos = sqrt(1 - sin^2)` so the (cu, cv) transfer preserves cu^2 + cv^2.
+    let sin = GEOMETRIC_MAX_SIN * drive * amplitude;
+    let cos = (1.0 - sin * sin).max(0.0).sqrt();
+    let (left, right, top, bottom) = outgoing;
+    let cu = 0.5 * (left + right + top + bottom);
+    let cv = 0.5 * (left - right + top - bottom);
+    let du = 0.5 * ((cu * cos - cv * sin) - cu);
+    let dv = 0.5 * ((cu * sin + cv * cos) - cv);
+    (
+        left + du + dv,
+        right + du - dv,
+        top + du + dv,
+        bottom + du - dv,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct MeshPoint {
     x: f32,
@@ -298,6 +355,9 @@ struct RectangularMesh2d {
     next: DirectionalWaves,
     source_weights: SpatialWeights,
     pickup_weights: SpatialWeights,
+    // Measured resonator energy (M2 bus) driving the geometric (von Kármán)
+    // coupling; set per host sample, constant across the 2x sub-samples. 0.0 => inert.
+    geometric_drive: f32,
 }
 
 impl RectangularMesh2d {
@@ -320,7 +380,15 @@ impl RectangularMesh2d {
                 config.height,
                 config.pickup_width,
             ),
+            geometric_drive: 0.0,
         }
+    }
+
+    /// Set the measured-energy drive for the geometric (von Kármán) coupling (M2
+    /// energy bus). Called once per host sample by the resonator engine; defaults
+    /// to 0.0 so callers that never set it render the linear mesh unchanged.
+    fn set_geometric_drive(&mut self, drive: f32) {
+        self.geometric_drive = drive_term(drive);
     }
 
     /// Adopt a new configuration without reallocating: the grid (and therefore
@@ -359,6 +427,7 @@ impl RectangularMesh2d {
     fn reset(&mut self) {
         self.current.clear();
         self.next.clear();
+        self.geometric_drive = 0.0;
     }
 
     #[cfg(test)]
@@ -388,6 +457,12 @@ impl RectangularMesh2d {
         let right = pressure - self.current.from_right[index];
         let top = pressure - self.current.from_top[index];
         let bottom = pressure - self.current.from_bottom[index];
+
+        // Geometric (von Kármán) coupling: at high amplitude the energy-conserving
+        // junction rotation steers energy from the low mode up into higher modes
+        // (the gong bloom). Inert at zero drive.
+        let (left, right, top, bottom) =
+            geometric_couple((left, right, top, bottom), pressure, self.geometric_drive);
 
         self.propagate_left(x, y, left);
         self.propagate_right(x, y, right);
@@ -466,135 +541,26 @@ fn mode_frequency(config: RectangularMesh2dConfig) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dsp::render_metrics::{RenderExcitation, render_metric_profile, render_response};
-    use lindelion_dsp_utils::analysis::{assert_all_finite, rms_difference};
-
-    #[test]
-    fn rectangular_mesh_renders_finite_decaying_audio() {
-        let config = RectangularMesh2dConfig::default();
-        let output = render_mesh(config, 24_000, RenderExcitation::ShapedPluck);
-        let profile = render_metric_profile(&output, config.sample_rate, mode_frequency(config));
-
-        assert_all_finite(&output);
-        assert!(profile.early.rms > 1.0e-8, "profile={profile:?}");
-        assert!(
-            profile.late.rms < profile.early.rms * 0.8,
-            "profile={profile:?}"
-        );
-        assert!(profile.harmonic_decay.len() >= 4);
-    }
-
-    #[test]
-    fn lossless_boundary_scattering_is_passive_without_new_excitation() {
-        let mut mesh = RectangularMesh2d::new(RectangularMesh2dConfig {
-            boundary: MeshBoundaryConfig::free(0.0),
-            ..RectangularMesh2dConfig::default()
-        });
-        mesh.process_sample(1.0);
-        let initial_energy = mesh.total_energy();
-
-        for _ in 0..256 {
-            mesh.process_sample(0.0);
-            assert!(
-                mesh.total_energy() <= initial_energy * 1.000_5,
-                "initial={}, current={}",
-                initial_energy,
-                mesh.total_energy()
-            );
-        }
-    }
-
-    #[test]
-    fn boundary_loss_and_asymmetry_change_the_render() {
-        let lossless = render_mesh(
-            RectangularMesh2dConfig {
-                boundary: MeshBoundaryConfig::fixed(0.0),
-                ..RectangularMesh2dConfig::default()
-            },
-            18_000,
-            RenderExcitation::Impulse,
-        );
-        let lossy = render_mesh(
-            RectangularMesh2dConfig::default(),
-            18_000,
-            RenderExcitation::Impulse,
-        );
-        let asymmetric = render_mesh(
-            RectangularMesh2dConfig {
-                boundary: MeshBoundaryConfig::fixed_edges(0.45, 0.04, 0.16, 0.28),
-                ..RectangularMesh2dConfig::default()
-            },
-            18_000,
-            RenderExcitation::Impulse,
-        );
-
-        assert_all_finite(&lossless);
-        assert_all_finite(&lossy);
-        assert_all_finite(&asymmetric);
-        assert!(rms_difference(&lossless[4_096..], &lossy[4_096..]) > 1.0e-6);
-        assert!(rms_difference(&lossy[512..], &asymmetric[512..]) > 1.0e-6);
-    }
-
-    #[test]
-    fn strike_and_pickup_positions_change_mesh_response() {
-        let center_strike = render_mesh(
-            RectangularMesh2dConfig {
-                strike_position: MeshPoint::new(0.5, 0.5),
-                pickup_position: MeshPoint::new(0.72, 0.58),
-                ..RectangularMesh2dConfig::default()
-            },
-            12_000,
-            RenderExcitation::NoiseBurst,
-        );
-        let off_axis_strike = render_mesh(
-            RectangularMesh2dConfig {
-                strike_position: MeshPoint::new(0.18, 0.73),
-                pickup_position: MeshPoint::new(0.28, 0.24),
-                ..RectangularMesh2dConfig::default()
-            },
-            12_000,
-            RenderExcitation::NoiseBurst,
-        );
-
-        assert_all_finite(&center_strike);
-        assert_all_finite(&off_axis_strike);
-        assert!(rms_difference(&center_strike[512..], &off_axis_strike[512..]) > 1.0e-5);
-    }
-
-    #[test]
-    fn wave_speed_controls_reported_physical_mode_frequency() {
-        let slow = RectangularMesh2d::new(RectangularMesh2dConfig {
-            wave_speed_mps: 180.0,
-            ..RectangularMesh2dConfig::default()
-        });
-        let fast = RectangularMesh2d::new(RectangularMesh2dConfig {
-            wave_speed_mps: 360.0,
-            ..RectangularMesh2dConfig::default()
-        });
-
-        assert!((fast.mode_frequency_hz(1, 1) / slow.mode_frequency_hz(1, 1) - 2.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn reset_clears_mesh_state() {
-        let config = RectangularMesh2dConfig::default();
-        let mut mesh = RectangularMesh2d::new(config);
-        let _ = render_response(
-            config.sample_rate,
-            mode_frequency(config),
-            2_048,
-            RenderExcitation::Impulse,
-            |sample| mesh.process_sample(sample),
-        );
-        mesh.reset();
-
-        let output = (0..512)
-            .map(|_| mesh.process_sample(0.0))
-            .collect::<Vec<_>>();
-
-        assert_all_finite(&output);
-        assert!(output.iter().all(|sample| sample.abs() < 1.0e-8));
-    }
+fn render_mesh_with_drive(
+    config: RectangularMesh2dConfig,
+    sample_count: usize,
+    drive: impl Fn(usize) -> f32,
+) -> Vec<f32> {
+    let config = config.sanitized();
+    let mut mesh = RectangularMesh2d::new(config);
+    let mut index = 0usize;
+    crate::dsp::render_metrics::render_response(
+        config.sample_rate,
+        mesh.mode_frequency_hz(1, 1),
+        sample_count,
+        crate::dsp::render_metrics::RenderExcitation::ShapedPluck,
+        |sample| {
+            mesh.set_geometric_drive(drive(index));
+            index += 1;
+            mesh.process_sample(sample)
+        },
+    )
 }
+
+#[cfg(test)]
+mod tests;

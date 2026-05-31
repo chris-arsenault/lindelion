@@ -366,6 +366,7 @@ fn enum_codecs_round_trip() {
         RoutingMode::BodyColor,
     ]);
     assert_codec_roundtrip(&[ResonatorModel::Modal, ResonatorModel::Waveguide]);
+    assert_codec_roundtrip(&[DriverType::Sample, DriverType::Pick, DriverType::Reed]);
     assert_codec_roundtrip(&[
         ModalPreset::Kalimba,
         ModalPreset::Marimba,
@@ -402,6 +403,40 @@ fn enum_codecs_round_trip() {
     assert_codec_roundtrip(&[WaveguideStyle::String, WaveguideStyle::Tube]);
 }
 
+#[test]
+fn driver_type_selector_maps_to_patch_variant() {
+    // Driver-type selector: label mapping and default 0 => Sample.
+    let driver_type = parameter_binding(DRIVER_TYPE_PARAMETER_ID).expect("driver type binding");
+    assert_eq!(driver_type.info().range.default, 0.0);
+    assert_eq!(driver_type.format_plain_value(0.0), "Sample");
+    assert_eq!(driver_type.format_plain_value(1.0), "Pick");
+    assert_eq!(driver_type.format_plain_value(2.0), "Reed");
+
+    // Selecting Pick switches the patch driver variant; the read maps back.
+    let mut patch = ResonatorSynthPatch::default();
+    assert!(matches!(patch.driver, DriverConfig::Sample));
+    driver_type.apply_plain(&mut patch, 1.0);
+    assert!(matches!(patch.driver, DriverConfig::Pick(_)));
+    assert!((driver_type.plain_value(&patch) - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn driver_continuous_parameters_expose_normalised_ranges() {
+    for id in [
+        DRIVER_PICK_HARDNESS_PARAMETER_ID,
+        DRIVER_PICK_CONTACT_TIME_PARAMETER_ID,
+        DRIVER_REED_PRESSURE_DEPTH_PARAMETER_ID,
+        DRIVER_REED_STIFFNESS_PARAMETER_ID,
+        DRIVER_REED_EMBOUCHURE_PARAMETER_ID,
+    ] {
+        let binding = parameter_binding(id).expect("driver parameter binding");
+        let range = binding.info().range;
+        assert!(range.min == 0.0 && range.max == 1.0);
+        assert!((range.default - 0.5).abs() < 0.001);
+        assert!(binding.info().name.contains("Driver"));
+    }
+}
+
 fn prepare_patch_for_binding(patch: &mut ResonatorSynthPatch, binding: ParameterBinding) {
     if let ParameterPath::Resonator { slot, parameter } = binding.path() {
         match parameter {
@@ -415,6 +450,13 @@ fn prepare_patch_for_binding(patch: &mut ResonatorSynthPatch, binding: Parameter
                 *slot.config_mut(patch) = ResonatorConfig::Mesh(MeshConfig::default());
             }
             ResonatorParameter::Model => {}
+        }
+    }
+    if let ParameterPath::Driver(parameter) = binding.path() {
+        match parameter {
+            DriverParameter::Pick(_) => patch.driver = DriverConfig::Pick(PickConfig::default()),
+            DriverParameter::Reed(_) => patch.driver = DriverConfig::Reed(ReedConfig::default()),
+            DriverParameter::Type => {}
         }
     }
 }

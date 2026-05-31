@@ -32,6 +32,8 @@ pub struct ResonatorSynthPatch {
     pub note_detection: AudioNoteDetectionConfig,
     #[serde(default)]
     pub live_excitation: LiveExcitationConfig,
+    #[serde(default)]
+    pub driver: DriverConfig,
 }
 
 impl Default for ResonatorSynthPatch {
@@ -53,6 +55,7 @@ impl Default for ResonatorSynthPatch {
             audio_expression: AudioExpressionConfig::default(),
             note_detection: AudioNoteDetectionConfig::default(),
             live_excitation: LiveExcitationConfig::default(),
+            driver: DriverConfig::default(),
         }
     }
 }
@@ -271,6 +274,63 @@ pub(crate) const fn default_boundary_reflection() -> f32 {
     TUBE_BOUNDARY.reflection.default
 }
 
+/// Selectable physical driver feeding the waveguide resonator (M8, ADR-0017). The
+/// default `Sample` driver is a transparent pass-through of the existing sample /
+/// sidechain excitation, so a patch without a driver behaves exactly as before.
+/// `Pick` is a feed-forward contact transient; `Reed` is a self-oscillating wind
+/// driver coupled two-way to the bore. Each variant's controls are normalised `0..1`
+/// and mapped to their physical range inside the driver DSP (M11 calibrates ranges).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum DriverConfig {
+    #[default]
+    Sample,
+    Pick(PickConfig),
+    Reed(ReedConfig),
+}
+
+/// Pick/hammer contact driver: a force-shaped contact transient that brightens with
+/// playing effort. The strike location stays the waveguide's own strike-position
+/// control; this shapes the contact itself.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PickConfig {
+    /// Contact hardness `0..1`: softer rounds the contact (darker), harder sharpens it.
+    pub hardness: f32,
+    /// Contact time `0..1`: longer spreads the contact pulse for a mellower attack.
+    pub contact_time: f32,
+}
+
+impl Default for PickConfig {
+    fn default() -> Self {
+        Self {
+            hardness: 0.5,
+            contact_time: 0.5,
+        }
+    }
+}
+
+/// Reed/lip pressure-flow driver: a self-oscillating wind driver coupled two-way to
+/// the bore. Mouth pressure is mapped from the effort bus; below a pressure threshold
+/// the reed is quiescent, above it the bore self-oscillates.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ReedConfig {
+    /// How much playing effort drives mouth pressure `0..1`.
+    pub pressure_depth: f32,
+    /// Reed stiffness `0..1`: sets the reed's natural cutoff (brighter when stiffer).
+    pub stiffness: f32,
+    /// Embouchure `0..1`: the reed's rest opening / bias toward the closing regime.
+    pub embouchure: f32,
+}
+
+impl Default for ReedConfig {
+    fn default() -> Self {
+        Self {
+            pressure_depth: 0.5,
+            stiffness: 0.5,
+            embouchure: 0.5,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ResonatorRouting {
     Parallel { mix_a: f32, mix_b: f32 },
@@ -445,4 +505,32 @@ pub enum ModulationDestination {
     ResonatorBPosition,
     ExcitationGain,
     LfoRate,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_patch_uses_transparent_sample_driver() {
+        assert_eq!(DriverConfig::default(), DriverConfig::Sample);
+        assert_eq!(ResonatorSynthPatch::default().driver, DriverConfig::Sample);
+    }
+
+    #[test]
+    fn patch_with_physical_driver_roundtrips_through_toml() {
+        for driver in [
+            DriverConfig::Pick(PickConfig::default()),
+            DriverConfig::Reed(ReedConfig::default()),
+        ] {
+            let patch = ResonatorSynthPatch {
+                driver,
+                ..ResonatorSynthPatch::default()
+            };
+            let encoded = crate::patch_io::to_toml_string(&patch).expect("encode patch");
+            let decoded = crate::patch_io::from_toml_str(&encoded).expect("decode patch");
+            assert_eq!(decoded.driver, driver);
+            assert_eq!(decoded, patch);
+        }
+    }
 }

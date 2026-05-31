@@ -16,6 +16,8 @@ pub(crate) use excitation::{
     ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
     MAX_EXCITATION_LAYERS, RuntimeExcitationSlot,
 };
+pub use voice::Oversampler2x;
+pub(crate) use voice::RESONATOR_OVERSAMPLING_LATENCY_SAMPLES;
 pub(crate) use voice::VoiceExpression;
 pub use voice::VoiceTrigger;
 pub use waveguide::WaveguideStyle;

@@ -24,9 +24,10 @@ use crate::dsp::constants::{
     TUBE_BOUNDARY, WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
 };
 use crate::{
-    AudioInputMode, EnvelopeConfig, FilterMode, LfoShape, LiveExcitationMode, MeshConfig,
-    ModalConfig, ModalPreset, ModulationConfig, ModulationDestination, ModulationSource,
-    ResonatorConfig, ResonatorRouting, ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
+    AudioInputMode, DriverConfig, EnvelopeConfig, FilterMode, LfoShape, LiveExcitationMode,
+    MeshConfig, ModalConfig, ModalPreset, ModulationConfig, ModulationDestination,
+    ModulationSource, PickConfig, ReedConfig, ResonatorConfig, ResonatorRouting,
+    ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
 };
 
 const LIVE: ParameterApplyKind = ParameterApplyKind::Live;
@@ -65,6 +66,12 @@ pub(crate) const LIVE_EXCITATION_GAIN_PARAMETER_ID: u32 = 121;
 pub(crate) const LIVE_EXCITATION_LATCH_WINDOW_PARAMETER_ID: u32 = 122;
 pub(crate) const LIVE_EXCITATION_LATCH_PRE_ROLL_PARAMETER_ID: u32 = 123;
 pub(crate) const LIVE_EXCITATION_LATCH_FADE_PARAMETER_ID: u32 = 124;
+pub(crate) const DRIVER_TYPE_PARAMETER_ID: u32 = 140;
+pub(crate) const DRIVER_PICK_HARDNESS_PARAMETER_ID: u32 = 141;
+pub(crate) const DRIVER_PICK_CONTACT_TIME_PARAMETER_ID: u32 = 142;
+pub(crate) const DRIVER_REED_PRESSURE_DEPTH_PARAMETER_ID: u32 = 143;
+pub(crate) const DRIVER_REED_STIFFNESS_PARAMETER_ID: u32 = 144;
+pub(crate) const DRIVER_REED_EMBOUCHURE_PARAMETER_ID: u32 = 145;
 
 pub(crate) type ParameterBinding = RegistryParameterBinding<
     ParameterPath,
@@ -86,6 +93,7 @@ pub(crate) const PARAMETER_REGISTRY: ParameterRegistry<ParameterBinding> =
     ParameterRegistry::new(PARAMETER_BINDINGS);
 include!("parameters/bindings.rs");
 include!("parameters/paths.rs");
+include!("parameters/driver.rs");
 include!("parameters/codecs.rs");
 include!("parameters/helpers.rs");
 

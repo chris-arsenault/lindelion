@@ -100,7 +100,8 @@ Helmholtz coupling): Woodhouse / euphonics.org. See memory `project_lamath_desig
 ## Milestones
 
 Foundations M1–M3 unblock everything; M4–M6 are siblings; M7 precedes M9 because the dynamic balance
-needs a real body.
+needs a real body. M11 is the final empirical calibration pass and runs last, once every subsystem
+exists and can be measured together.
 
 ### M1 — Prepared-operator / control-rate refactor
 Hoist per-sample linear derivations into a `PreparedResonatorModel` recomputed only when inputs move.
@@ -190,6 +191,25 @@ The "other surrounding effects on the sound," scaled by effort/energy.
 - Exit: `make ci` green; surrounding components scale measurably with effort and are defeatable;
   no-alloc.
 
+### M11 — Empirical tuning, parameter ranges, and level calibration [depends on M1–M10]
+The final whole-instrument calibration pass: set the shipping parameter ranges, defaults, coupling
+depths, and per-resonator output levels from measured data rather than the first-principles values
+chosen while each milestone was built. This is the milestone that resolves the calibration loose ends
+surfaced along the way (e.g. cross-resonator loudness imbalance, body/driver/balance coupling
+strength) once all subsystems exist and can be measured together.
+- Gather objective measurements across the instrument — per-resonator output level vs dynamic,
+  coupling / nonlinearity / balance depths vs effort, tuning accuracy, decay times, headroom and
+  clipping margin — and calibrate against them: equal-perceived-loudness across Modal / String / Tube
+  / Mesh for a given dynamic; internal headroom so loud gestures never clip (and/or a normalizing
+  up/down compression stage on the output); the min / max / default and taper of every
+  dynamic-response control; and the M4–M9 coupling depths re-confirmed with all stages present, not in
+  isolation.
+- **[DECISION]** Loudness / headroom target and whether output normalization is a fixed internal
+  stage or a defeatable control; final default voicing and control ranges per resonator family.
+- Exit: `make ci` green; objective fixtures show the resonator families match loudness within a stated
+  tolerance for a given dynamic and that no gesture clips; every dynamic-response control's range and
+  taper is set from data and documented; no-alloc.
+
 ### Decisions needing your input
 
 | Where | Decision you own |
@@ -203,6 +223,7 @@ The "other surrounding effects on the sound," scaled by effort/energy.
 | M8 | Which driver archetypes ship first and their parameter surface. |
 | M9 | Default source↔body balance curve and contact-model voicing. |
 | M10 | Which surrounding effects ship; sympathetic-resonance routing. |
+| M11 | Loudness/headroom target; output normalization fixed or defeatable; final per-family default voicing and control ranges. |
 
 ---
 

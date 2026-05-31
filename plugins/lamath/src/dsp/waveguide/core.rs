@@ -8,6 +8,16 @@ use crate::dsp::constants::{
 
 const WAVEGUIDE_DECAY_MIN_SECONDS: f32 = 0.02;
 const WAVEGUIDE_DECAY_MAX_SECONDS: f32 = 2.5;
+/// Smoothing time for the continuous physical inputs (loop gain/cutoff/etc.), so
+/// a control-rate parameter jump becomes a short per-sample ramp rather than a
+/// zipper step. Kept short enough to feel immediate while still gliding.
+const INPUT_SMOOTHING_SECONDS: f32 = 0.008;
+/// Relative tolerance at which a smoother snaps exactly onto its target, so a
+/// settled input stops moving and the prepared-model cache can stay warm. Set
+/// above the f32 one-pole stall floor (per-sample increments underflow once the
+/// remaining delta is a few ulp of the state) so the ramp always reaches target;
+/// the residual it absorbs is inaudible (≈2e-4 on gain, ≈0.9 Hz on a 9 kHz cutoff).
+const INPUT_SMOOTHING_SNAP_TOLERANCE: f32 = 1.0e-4;
 const FILTER_PEAK_SCAN_POINTS: usize = 96;
 const GROUP_DELAY_PROBE_RADIANS: f32 = 0.001;
 const MAX_FILTER_DELAY_COMPENSATION_SAMPLES: f32 = 8.0;
@@ -36,6 +46,56 @@ pub(super) struct PositionTap {
 pub(super) struct WaveguideGeometry {
     pub pickup_position: f32,
     pub excitation_taps: [PositionTap; 3],
+}
+
+/// One-pole smoother for a single continuous physical input. Initialized
+/// converged — the first `next` after construction or `reset` snaps to its
+/// target, so a steady input is inert (preserving exact equivalence) and only a
+/// genuine change ramps. Snaps onto the target within a relative tolerance so a
+/// settled value stops moving and the prepared-model cache stays warm.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct ScalarSmoother {
+    state: f32,
+    coefficient: f32,
+    initialized: bool,
+}
+
+impl ScalarSmoother {
+    pub(super) fn new(sample_rate: f32) -> Self {
+        let sample_rate = sanitize_sample_rate(sample_rate);
+        let coefficient =
+            math::finite_clamp(1.0 / (INPUT_SMOOTHING_SECONDS * sample_rate), 0.0, 1.0, 1.0);
+        Self {
+            state: 0.0,
+            coefficient,
+            initialized: false,
+        }
+    }
+
+    pub(super) fn reset(&mut self) {
+        self.initialized = false;
+        self.state = 0.0;
+    }
+
+    pub(super) fn next(&mut self, target: f32) -> f32 {
+        let target = math::finite_or(target, self.state);
+        if !self.initialized {
+            self.state = target;
+            self.initialized = true;
+            return self.state;
+        }
+
+        self.state += self.coefficient * (target - self.state);
+        if (self.state - target).abs() <= INPUT_SMOOTHING_SNAP_TOLERANCE * (1.0 + target.abs()) {
+            self.state = target;
+        }
+        self.state
+    }
+
+    #[cfg(test)]
+    pub(super) fn current(&self) -> f32 {
+        self.state
+    }
 }
 
 pub(super) fn sanitize_sample_rate(sample_rate: f32) -> f32 {

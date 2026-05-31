@@ -180,6 +180,20 @@ fn mesh_config_from(config: ResonatorConfig) -> MeshConfig {
     }
 }
 
+fn pick_config_from(config: DriverConfig) -> PickConfig {
+    match config {
+        DriverConfig::Pick(config) => config,
+        DriverConfig::Sample | DriverConfig::Reed(_) => PickConfig::default(),
+    }
+}
+
+fn reed_config_from(config: DriverConfig) -> ReedConfig {
+    match config {
+        DriverConfig::Reed(config) => config,
+        DriverConfig::Sample | DriverConfig::Pick(_) => ReedConfig::default(),
+    }
+}
+
 fn parallel_mix_a(routing: ResonatorRouting) -> f32 {
     match routing {
         ResonatorRouting::Parallel { mix_a, .. } => mix_a,
@@ -249,6 +263,10 @@ fn routing_label_from_plain(value: f32) -> &'static str {
 
 fn resonator_model_label_from_plain(value: f32) -> &'static str {
     ResonatorModel::label_from_plain(value)
+}
+
+fn driver_type_label_from_plain(value: f32) -> &'static str {
+    DriverType::label_from_plain(value)
 }
 
 fn modal_preset_label_from_plain(value: f32) -> &'static str {

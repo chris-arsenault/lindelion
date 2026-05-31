@@ -3,8 +3,8 @@ use std::time::Duration;
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use lamath::{
     BenchMeshResonator as MeshResonator, BenchMeshVoiceParams as MeshVoiceParams,
-    BenchWaveguideParams as WaveguideParams, BenchWaveguideResonator as WaveguideResonator,
-    WaveguideStyle,
+    BenchOversampler2x as Oversampler2x, BenchWaveguideParams as WaveguideParams,
+    BenchWaveguideResonator as WaveguideResonator, WaveguideStyle,
 };
 use lindelion_dsp_utils::analysis::assert_all_finite;
 
@@ -67,6 +67,36 @@ fn bench_waveguide_style(
     });
 }
 
+fn bench_waveguide_style_oversampled(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    style: WaveguideStyle,
+    input: &[f32],
+) {
+    let waveguide_params = params(style);
+    group.bench_function(name, |bench| {
+        bench.iter_batched(
+            || {
+                (
+                    // The core runs at 2x, mirroring ResonatorEngine.
+                    WaveguideResonator::new(2.0 * SAMPLE_RATE, 20.0),
+                    Oversampler2x::new(),
+                    vec![0.0; input.len()],
+                )
+            },
+            |(mut waveguide, mut oversampler, mut output)| {
+                for (output, sample) in output.iter_mut().zip(black_box(input)) {
+                    *output = oversampler.process(*sample, |inner| {
+                        waveguide.process_sample(inner, waveguide_params)
+                    });
+                }
+                black_box(output);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
 fn mesh_params() -> MeshVoiceParams {
     MeshVoiceParams {
         frequency_hz: 220.0,
@@ -99,6 +129,8 @@ fn bench_waveguide(criterion: &mut Criterion) {
     group.throughput(Throughput::Elements(BLOCK_SIZE as u64));
     bench_waveguide_style(&mut group, "string_512", WaveguideStyle::String, &input);
     bench_waveguide_style(&mut group, "tube_512", WaveguideStyle::Tube, &input);
+    bench_waveguide_style_oversampled(&mut group, "string_512_2x", WaveguideStyle::String, &input);
+    bench_waveguide_style_oversampled(&mut group, "tube_512_2x", WaveguideStyle::Tube, &input);
     group.bench_function("mesh_512", |bench| {
         let params = mesh_params();
         bench.iter_batched(

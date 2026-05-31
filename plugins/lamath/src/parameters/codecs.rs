@@ -30,6 +30,41 @@ impl ResonatorModel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriverType {
+    Sample,
+    Pick,
+    Reed,
+}
+
+impl DriverType {
+    fn from_config(config: DriverConfig) -> Self {
+        match config {
+            DriverConfig::Sample => Self::Sample,
+            DriverConfig::Pick(_) => Self::Pick,
+            DriverConfig::Reed(_) => Self::Reed,
+        }
+    }
+
+    fn config_from(self, current: DriverConfig) -> DriverConfig {
+        match self {
+            Self::Sample => DriverConfig::Sample,
+            Self::Pick => DriverConfig::Pick(pick_config_from(current)),
+            Self::Reed => DriverConfig::Reed(reed_config_from(current)),
+        }
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for DriverType {
+        max: 2;
+        fallback: Self::Sample;
+        0 => Self::Sample, "Sample";
+        1 => Self::Pick, "Pick";
+        2 => Self::Reed, "Reed";
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoutingMode {
     Parallel,
     Series,

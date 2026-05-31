@@ -467,4 +467,17 @@ lindelion_plugin_shell::define_parameter_bindings! {
     ParameterInfo::continuous(137, "Resonator B Mesh Damping", "", ParameterRange::linear(0.0, 1.0, 0.3)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::Damping) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshDamping, EditorSurfaceGroup::ResonatorBControls, 10, "Damp")), },
     ParameterInfo::continuous(138, "Resonator B Mesh Tension", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::Tension) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshTension, EditorSurfaceGroup::ResonatorBControls, 11, "Tension")), },
     ParameterInfo::continuous(139, "Resonator B Mesh Pickup Spread", "", ParameterRange::linear(0.0, 1.0, 0.3)) => { path: ParameterPath::Resonator { slot: ResonatorSlot::B, parameter: ResonatorParameter::Mesh(MeshParameter::PickupSpread) }, apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: Some(EditorParameterBinding::slider(EditorSurfaceSlot::ResonatorBMeshPickupSpread, EditorSurfaceGroup::ResonatorBControls, 12, "Spread")), },
+
+    ParameterInfo::stepped(DRIVER_TYPE_PARAMETER_ID, "Driver Type", "", ParameterRange::linear(0.0, 2.0, 0.0), 2) => {
+        path: ParameterPath::Driver(DriverParameter::Type),
+        apply: NOTE_BOUNDARY,
+        runtime: RuntimeParameterTarget::None,
+        format: ParameterFormatter::Label(driver_type_label_from_plain),
+        editor: None,
+    },
+    ParameterInfo::continuous(DRIVER_PICK_HARDNESS_PARAMETER_ID, "Driver Pick Hardness", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Driver(DriverParameter::Pick(PickParameter::Hardness)), apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: None, },
+    ParameterInfo::continuous(DRIVER_PICK_CONTACT_TIME_PARAMETER_ID, "Driver Pick Contact Time", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Driver(DriverParameter::Pick(PickParameter::ContactTime)), apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: None, },
+    ParameterInfo::continuous(DRIVER_REED_PRESSURE_DEPTH_PARAMETER_ID, "Driver Reed Pressure Depth", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Driver(DriverParameter::Reed(ReedParameter::PressureDepth)), apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: None, },
+    ParameterInfo::continuous(DRIVER_REED_STIFFNESS_PARAMETER_ID, "Driver Reed Stiffness", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Driver(DriverParameter::Reed(ReedParameter::Stiffness)), apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: None, },
+    ParameterInfo::continuous(DRIVER_REED_EMBOUCHURE_PARAMETER_ID, "Driver Reed Embouchure", "", ParameterRange::linear(0.0, 1.0, 0.5)) => { path: ParameterPath::Driver(DriverParameter::Reed(ReedParameter::Embouchure)), apply: NOTE_BOUNDARY, runtime: RuntimeParameterTarget::None, format: ParameterFormatter::Plain, editor: None, },
 }

@@ -1,5 +1,7 @@
+mod energy_follower;
 mod modulation_state;
 mod output_stage;
+mod oversampler;
 mod resonator_stack;
 
 #[cfg(test)]
@@ -25,6 +27,14 @@ use crate::{
 const PARAMETER_SMOOTH_MS: f32 = 20.0;
 const PARAMETER_EPSILON: f32 = 0.000_001;
 const STRUCTURAL_RAMP_MS: f32 = 1.0;
+
+pub use oversampler::Oversampler2x;
+
+/// Fixed plugin latency the 2x oversampled waveguide/mesh path adds, in host
+/// samples (ADR-0016). Surfaced for the VST3 processor to report so hosts
+/// compensate; modal-only voices add none, so this is the maximum.
+pub(crate) const RESONATOR_OVERSAMPLING_LATENCY_SAMPLES: u32 =
+    oversampler::Oversampler2x::LATENCY_SAMPLES;
 
 #[derive(Debug, Clone, Copy)]
 pub struct VoiceTrigger<'a, 'p> {
@@ -192,6 +202,7 @@ impl<'a> Voice<'a> {
         );
         self.resonators
             .set_base_configs(trigger.patch.resonator_a, trigger.patch.resonator_b);
+        self.resonators.set_driver(trigger.patch.driver);
 
         let static_sources = self.modulation.static_sources();
         self.resonators.configure_modulated(
@@ -287,7 +298,10 @@ impl<'a> Voice<'a> {
                 * self.excitation_gain
                 * (1.0 + excitation_mod).clamp(0.0, 2.0);
 
-        let resonator_output = self.resonators.process_sample(excitation);
+        let resonator_output =
+            self.resonators
+                .process_sample(excitation, sources.energy, sources.effort);
+        self.modulation.observe_energy(resonator_output);
 
         let cutoff_mod = self
             .modulation

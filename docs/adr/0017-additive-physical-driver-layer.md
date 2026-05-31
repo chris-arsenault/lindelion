@@ -37,6 +37,25 @@ blend.
 - Each driver archetype gains an objective test of its force behavior (for example reed oscillation
   threshold versus pressure, or contact brightness versus strike force).
 
+## Implementation note (M8, 2026-05-31)
+
+The first two archetypes — a feed-forward pick/hammer contact and a self-oscillating reed — landed on
+this additive model without a boundary-condition refactor, which clarifies the "additive" decision:
+
+- The additive driver is **not** limited to feed-forward shaping. Given the resonator's **input-end
+  returning wave** as feedback (the bore's mouth wave for the Tube, the bridge wave for the String,
+  exposed by the waveguide and read each oversampled sub-sample), the driver-plus-resonator loop is a
+  feedback oscillator and **self-oscillates whenever its loop gain exceeds 1**. A reed thus produces a
+  real regime change (quiescent below a mouth-pressure/effort threshold, oscillating above) while still
+  being injected as excitation — it does **not** need to replace the resonator's mouth termination.
+- The reed needs an **injection gain** to push the loop above unity, because the Tube's digital mouth
+  is a lossy reflection (~0.36) that drops the bore round-trip well below 1. The reed-table
+  nonlinearity (a clamped reflection) then bounds the result to a limit cycle, so a higher injection
+  gain raises the oscillation level rather than running away. The injection gain and the body/driver
+  coupling depths are first-principles values to be re-confirmed in the M11 calibration pass.
+- This is a correction to an earlier conclusion that the additive seam could not host a
+  self-oscillator; the model holds. See `feedback_reason_from_first_principles` in agent memory.
+
 ## Alternatives
 
 - **Drivers shape the existing excitation signal (force-dependent filtering of the sample or
