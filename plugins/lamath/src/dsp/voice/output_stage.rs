@@ -1,6 +1,6 @@
 use lindelion_dsp_utils::{
     db_to_gain,
-    filters::{Biquad, BiquadCoefficients},
+    filters::{Svf, SvfMode},
     math::{finite_clamp, snap_to_zero},
     params::{StructuralChangePolicy, StructuralParam},
     soft_saturate,
@@ -23,7 +23,7 @@ const INTERNAL_HEADROOM_DB: f32 = -12.0;
 #[derive(Debug)]
 pub(super) struct OutputStage {
     pub(super) config: OutputConfig,
-    pub(super) filter: Biquad,
+    pub(super) filter: Svf,
     pub(super) filter_mode: StructuralParam<FilterMode>,
     pub(super) filter_cutoff: SmoothedAtomicParam,
     pub(super) filter_resonance: SmoothedAtomicParam,
@@ -37,12 +37,12 @@ impl OutputStage {
         let config = OutputConfig::default();
         Self {
             config,
-            filter: Biquad::new(output_filter_coefficients(
+            filter: new_output_filter(
                 sample_rate,
                 config.filter_cutoff,
                 config.filter_resonance,
                 config.filter_mode,
-            )),
+            ),
             filter_mode: StructuralParam::with_ramp_samples(
                 config.filter_mode,
                 StructuralChangePolicy::LiveMuteRamp,
@@ -107,12 +107,12 @@ impl OutputStage {
             OUTPUT_FILTER_CUTOFF_HZ.max,
             base_cutoff,
         );
-        self.filter.set_coefficients(output_filter_coefficients(
-            sample_rate,
+        self.filter.set_sample_rate(sample_rate);
+        self.filter.set_params_q(
             filter_cutoff,
-            filter_resonance,
-            self.filter_mode.current(),
-        ));
+            OUTPUT_FILTER_Q.q_for_resonance(filter_resonance),
+            svf_mode(self.filter_mode.current()),
+        );
         let filtered = self.filter.process(input);
         let staged = filtered * db_to_gain(INTERNAL_HEADROOM_DB);
         let saturated = soft_saturate(staged, self.saturation_drive.next_sample());
@@ -159,17 +159,20 @@ fn runtime_smoothed_param(id: u32, sample_rate: f32, initial_plain: f32) -> Smoo
         .expect("live output parameter should have smoothing metadata")
 }
 
-fn output_filter_coefficients(
-    sample_rate: f32,
-    cutoff_hz: f32,
-    resonance: f32,
-    mode: FilterMode,
-) -> BiquadCoefficients {
-    let cutoff_hz = sanitize_output_filter_cutoff(cutoff_hz);
-    let q = OUTPUT_FILTER_Q.q_for_resonance(resonance);
+fn new_output_filter(sample_rate: f32, cutoff_hz: f32, resonance: f32, mode: FilterMode) -> Svf {
+    let mut filter = Svf::new(sample_rate);
+    filter.set_params_q(
+        sanitize_output_filter_cutoff(cutoff_hz),
+        OUTPUT_FILTER_Q.q_for_resonance(resonance),
+        svf_mode(mode),
+    );
+    filter
+}
+
+fn svf_mode(mode: FilterMode) -> SvfMode {
     match mode {
-        FilterMode::LowPass => BiquadCoefficients::lowpass(sample_rate, cutoff_hz, q),
-        FilterMode::BandPass => BiquadCoefficients::bandpass(sample_rate, cutoff_hz, q),
-        FilterMode::HighPass => BiquadCoefficients::highpass(sample_rate, cutoff_hz, q),
+        FilterMode::LowPass => SvfMode::Lowpass,
+        FilterMode::BandPass => SvfMode::Bandpass,
+        FilterMode::HighPass => SvfMode::Highpass,
     }
 }

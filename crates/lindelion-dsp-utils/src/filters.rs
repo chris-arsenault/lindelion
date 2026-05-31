@@ -287,7 +287,7 @@ pub enum SvfMode {
 pub struct Svf {
     sample_rate: f32,
     cutoff_hz: f32,
-    resonance: f32,
+    damping: f32,
     mode: SvfMode,
     ic1eq: f32,
     ic2eq: f32,
@@ -299,16 +299,33 @@ impl Svf {
         Self {
             sample_rate,
             cutoff_hz: 20_000.0,
-            resonance: 0.0,
+            damping: 2.0,
             mode: SvfMode::Lowpass,
             ic1eq: 0.0,
             ic2eq: 0.0,
         }
     }
 
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = usable_sample_rate(sample_rate);
+    }
+
     pub fn set_params(&mut self, cutoff_hz: f32, resonance: f32, mode: SvfMode) {
         self.cutoff_hz = cutoff_for_sample_rate(cutoff_hz, self.sample_rate, self.cutoff_hz);
-        self.resonance = math::finite_clamp(resonance, 0.0, 0.999, self.resonance);
+        let fallback_resonance = (2.0 - self.damping) / 1.9;
+        let resonance = math::finite_clamp(resonance, 0.0, 0.999, fallback_resonance);
+        self.damping = 2.0 - 1.9 * resonance;
+        self.mode = mode;
+    }
+
+    /// Set parameters by filter Q instead of the normalized-resonance mapping.
+    /// The trapezoidal SVF's resonance term is `1/Q`, so a caller that already
+    /// calibrates Q (for example an RBJ-cookbook Q) keeps that exact resonance
+    /// calibration when moving onto this zero-delay-feedback core.
+    pub fn set_params_q(&mut self, cutoff_hz: f32, q: f32, mode: SvfMode) {
+        self.cutoff_hz = cutoff_for_sample_rate(cutoff_hz, self.sample_rate, self.cutoff_hz);
+        let q = math::finite_or(q, 0.707).max(0.05);
+        self.damping = math::finite_clamp(1.0 / q, 0.05, 2.0, self.damping);
         self.mode = mode;
     }
 
@@ -318,15 +335,22 @@ impl Svf {
         self.ic2eq = math::snap_to_zero(self.ic2eq);
         let cutoff_hz = cutoff_for_sample_rate(self.cutoff_hz, self.sample_rate, 20_000.0);
         let g = (std::f32::consts::PI * cutoff_hz / self.sample_rate).tan();
-        let damping = 2.0 - 1.9 * self.resonance;
-        let h = 1.0 / (1.0 + damping * g + g * g);
+        let k = self.damping;
+        // Trapezoidal (zero-delay-feedback) state-variable filter, Simper/Zavalishin
+        // form. Unconditionally stable for g > 0, k > 0 across the full cutoff range
+        // (the earlier `high = g*high + s1` form was only correct as g -> 0 and grew
+        // without bound at high cutoff).
+        let a1 = 1.0 / (1.0 + g * (g + k));
+        let a2 = g * a1;
+        let a3 = g * a2;
 
-        let high = (input - damping * self.ic1eq - self.ic2eq) * h;
-        let band = g * high + self.ic1eq;
-        let low = g * band + self.ic2eq;
+        let v3 = input - self.ic2eq;
+        let band = a1 * self.ic1eq + a2 * v3;
+        let low = self.ic2eq + a2 * self.ic1eq + a3 * v3;
+        let high = input - k * band - low;
 
-        self.ic1eq = math::snap_to_zero(g * high + band);
-        self.ic2eq = math::snap_to_zero(g * band + low);
+        self.ic1eq = math::snap_to_zero(2.0 * band - self.ic1eq);
+        self.ic2eq = math::snap_to_zero(2.0 * low - self.ic2eq);
 
         math::snap_to_zero(match self.mode {
             SvfMode::Lowpass => low,
@@ -431,6 +455,66 @@ mod tests {
         }
 
         assert_all_finite(&output);
+    }
+
+    #[test]
+    fn svf_q_lowpass_attenuates_high_more_than_low() {
+        let sample_rate = 48_000.0;
+        let mut svf = Svf::new(sample_rate);
+        svf.set_params_q(1_000.0, 2.0, SvfMode::Lowpass);
+        let mut output = Vec::new();
+
+        for index in 0..8192 {
+            let low = (std::f32::consts::TAU * 250.0 * index as f32 / sample_rate).sin();
+            let high = (std::f32::consts::TAU * 8_000.0 * index as f32 / sample_rate).sin();
+            output.push(svf.process(low + high));
+        }
+
+        assert_all_finite(&output);
+        assert!(
+            dft_magnitude_at(&output[1024..], sample_rate, 250.0)
+                > dft_magnitude_at(&output[1024..], sample_rate, 8_000.0) * 10.0
+        );
+    }
+
+    #[test]
+    fn svf_stable_at_sustained_high_cutoff() {
+        // Regression: the earlier SVF form diverged when parked at a high cutoff.
+        // The trapezoidal form must stay bounded on a sustained input near Nyquist.
+        let sample_rate = 48_000.0;
+        for cutoff in [18_000.0, 20_000.0, 21_000.0] {
+            let mut svf = Svf::new(sample_rate);
+            svf.set_params_q(cutoff, 0.707, SvfMode::Lowpass);
+            let mut output = Vec::new();
+            for _ in 0..48_000 {
+                output.push(svf.process(1.0));
+            }
+            assert_all_finite(&output);
+            assert!(
+                peak_abs(&output) < 4.0,
+                "cutoff={cutoff} peak={}",
+                peak_abs(&output)
+            );
+        }
+    }
+
+    #[test]
+    fn svf_q_stays_bounded_under_fast_cutoff_modulation() {
+        // The case a Direct-Form-I biquad zippers on: a high-Q cutoff swept every
+        // sample. The trapezoidal SVF stays tuned and bounded.
+        let sample_rate = 48_000.0;
+        let mut svf = Svf::new(sample_rate);
+        let mut output = Vec::new();
+
+        for index in 0..20_000 {
+            let t = index as f32 / 19_999.0;
+            svf.set_params_q(200.0 + t * 18_000.0, 8.0, SvfMode::Lowpass);
+            let drive = (std::f32::consts::TAU * 220.0 * index as f32 / sample_rate).sin();
+            output.push(svf.process(drive));
+        }
+
+        assert_all_finite(&output);
+        assert!(peak_abs(&output) < 8.0, "peak_abs={}", peak_abs(&output));
     }
 
     #[test]
