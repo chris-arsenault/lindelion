@@ -53,11 +53,15 @@ fn run_ci() -> ExitCode {
         },
         CargoCommand {
             label: "clippy",
+            // Debug, never release: `make ci` must not optimize the 505-crate graph (the
+            // tract/ort ONNX stack dominates release codegen). Lint lib/bins/tests only — no
+            // benches — so nothing performance-related compiles or runs in the unit CI path.
             args: &[
                 "clippy",
                 "--workspace",
-                "--all-targets",
-                "--release",
+                "--lib",
+                "--bins",
+                "--tests",
                 "--",
                 "-D",
                 "warnings",

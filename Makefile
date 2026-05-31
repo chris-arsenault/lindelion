@@ -18,7 +18,7 @@ VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
 .PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
-ci: check host-macos-check bench-smoke
+ci: check host-macos-check
 
 cache-dir:
 	@mkdir -p "$(CACHE_DIR)" "$(LINDELION_CARGO_TARGET_DIR)" "$(VST3_STAGING_DIR)"
@@ -33,7 +33,7 @@ fmt-check:
 	cargo fmt --all -- --check
 
 clippy:
-	cargo clippy --workspace --all-targets --release -- -D warnings -W clippy::cognitive_complexity
+	cargo clippy --workspace --lib --bins --tests -- -D warnings -W clippy::cognitive_complexity
 
 test:
 	cargo test --workspace
