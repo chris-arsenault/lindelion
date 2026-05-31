@@ -38,7 +38,7 @@ associated default tuning that a patch may have customized.
 | D4 | Analysis tap point for the shared snapshot | Head, post-preprocessing (DC/HPF/pre-emphasis) |
 | D5 | Latency on order/bypass change: fixed-max (always-compensated) vs dynamic | Fixed-max (host-friendly) |
 | D6 | Default-tuning targets (integrated-loudness target; metric weights) | -16 LUFS; weights proposed in M5 |
-| D7 | Editor scope: generic param list first vs custom Vizia editor | Generic first; Vizia editor as follow-on |
+| D7 | Editor stack | **RESOLVED:** `egui` editor embedded in the VST3 `IPlugView` HWND (Windows; ADR-0023) |
 
 ## Context / reuse map
 
@@ -53,9 +53,10 @@ associated default tuning that a patch may have customized.
   (`SpeechPresence`/`SibilanceEnergy`/`FricativeActivity`) stay inline.
 - **NN effects:** DFN3 denoiser + Silero voice-gate run their own inline inference (ADR-0018); they
   are chain slots, not analysis-signal consumers.
-- **Editor:** `lindelion-ui` (Vizia editors) for the eventual custom editor.
-- **Build:** `xtask` macOS VST3 bundle automation; `lindelion-plugin-metadata`. macOS-only VST3
-  build today (ADR-0007); Windows is the separate host project.
+- **Editor:** `egui`, embedded in the VST3 `IPlugView` HWND — Calóma is **Windows-only**
+  ([ADR-0023](docs/adr/0023-new-vsts-windows-only.md)). Not `lindelion-ui` (macOS-only).
+- **Build:** a **Windows** VST3 build + bundle path with `lindelion-plugin-metadata` (ADR-0023).
+  The macOS `xtask` bundle path (ADR-0007) is for the existing instruments, not Calóma.
 - **Tests/fixtures:** `lindelion-fidelity` (general battery + the new FFT helpers); the M6
   spoken-word fixtures (clean / **noisy↔clean matched pair** / pauses / fast / slow / flat /
   animated); `make test-models` for heavy NN/chain tests.
@@ -128,8 +129,8 @@ output (latency = Σ active-slot latency, reported to host)
 
 ### M4 — VST3 adapter + editor  [depends on M2]  **`[DECISION]`** (D7)
 - VST3 adapter via `lindelion-plugin-shell` (params, state = order + patch, typed messages);
-  editor — generic param list first, Vizia editor (`lindelion-ui`) as a follow-on.
-- Verify: Steinberg validator passes (macOS, `make validate-vst3`); loads in a host; params
+  editor — an `egui` editor embedded in the VST3 `IPlugView` HWND (Windows; ADR-0023).
+- Verify: builds as a Windows VST3 and loads in the Galad host / a Windows DAW; params
   automatable; order + patch persist across reload.
 
 ### M5 — Default parameter selection via full-chain e2e tuning  [depends on M2, M3]  **`[DECISION]`** (D6)
@@ -142,7 +143,7 @@ output (latency = Σ active-slot latency, reported to host)
 - E2e on speech, per order at its default patch: clarity up; noise down (SNR vs the matched
   clean↔noisy pair); dereverb on a synthetic-reverb variant; no artifacts; target loudness;
   correct latency. Heavy (NN) → `make test-models`.
-- Exit: e2e gates green for all 3 orders; `make ci` green; VST3 validates on macOS.
+- Exit: e2e gates green for all 3 orders; `make ci` green; the Windows VST3 loads and runs in the Galad host / a Windows DAW.
 
 ## M5 in detail — default parameters from end-to-end chain audio tests
 
@@ -192,7 +193,8 @@ restarts. Keep the argmax patch.
   intelligibility metric (STOI-like) is a stretch goal, not a gate.
 - **Order-as-parameter state:** the order value lives in the patch and reloads the per-effect
   defaults when changed — program-change-like behavior to map onto VST3 parameter/state semantics.
-- **Platform:** VST3 builds are macOS-only (ADR-0007); the Windows host is a separate project.
+- **Platform:** Calóma is a **Windows-only** VST3 — Windows build + egui editor
+  ([ADR-0023](docs/adr/0023-new-vsts-windows-only.md)). The Galad host ([ADR-0022](docs/adr/0022-windows-vst3-host.md)) is a separate project that can run it.
 
 ## Decision register & handoff
 

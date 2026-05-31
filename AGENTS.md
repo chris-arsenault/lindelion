@@ -34,6 +34,7 @@ Agent guide for sessions in the Lindelion repository.
 - Keep the effect core host-agnostic: `lindelion-effect` and the `speech/` effect crates depend only on the pure-DSP crates (`lindelion-dsp-utils`, `lindelion-pitch-detect`, `lindelion-onset-detect`), never on `lindelion-plugin-shell`, `vst3`, or `lindelion-ui`. Do not add VST3 entry points, app shells, or a fixed signal flow to ported effects in this phase (see [ADR-0013](docs/adr/0013-host-agnostic-effect-core.md)).
 - Reuse existing Lindelion DSP where it overlaps, re-tuned for speech; build new only where the existing primitive is musical or absent (envelope follower, saturation, standalone STFT). See [HOTMIC-PORT-PLAN.md](HOTMIC-PORT-PLAN.md).
 - The Galad Windows host (`host/`) is a Windows-only standalone application and the *host* side of VST3 — distinct from the plugins, which are the guest side. Keep it target-gated so it never enters the Linux/macOS `make ci` path, and do not pull its Windows-only deps (WASAPI, `egui`) into shared crates. ADR-0007's macOS-only bundle path governs plugin `.vst3` bundles only, not the host (see [ADR-0022](docs/adr/0022-windows-vst3-host.md)).
+- The new VSTs (Cenedril, Calóma, Speech Coach) target **Windows only**, with a Windows VST3 build path and an **egui** editor — never `lindelion-ui` (macOS-only). Do not plan them macOS-first or defer the Windows build/editor as a "follow-on"; it is foundational. ADR-0007 (macOS bundles) governs only the existing instruments (Lamath/Linnod/Glirdir); the new VSTs follow [ADR-0023](docs/adr/0023-new-vsts-windows-only.md).
 
 ## Product Names
 
@@ -45,6 +46,7 @@ Agent guide for sessions in the Lindelion repository.
 | Calóma | Quenya `cala` (bright/clear) + `óma` (voice), "clear voice" | Planned single VST3 packaging the speech-effect chain (see [ADR-0020](docs/adr/0020-caloma-speech-vst-packaging.md)) |
 | Glirdir | Sindarin `glir-` + `-dir`, singer/song-bearer | VST3 sing-to-MIDI scratchpad |
 | Galad | Sindarin, "radiance/light" (working name) | Planned Windows realtime VST3 host application (mic → arbitrary VST3 chain → output); see [ADR-0022](docs/adr/0022-windows-vst3-host.md), plan at `GALAD-HOST-PLAN.md` |
+| Cenedril | Quenya/Sindarin "mirror, looking-glass" (working name) | Planned Windows-only passthrough Visualizer VST3 (spectrogram, level/LUFS meters, analysis readouts); see [ADR-0023](docs/adr/0023-new-vsts-windows-only.md), plan at `CENEDRIL-VST-PLAN.md` |
 
 ## Code Map
 
@@ -70,6 +72,7 @@ Agent guide for sessions in the Lindelion repository.
 | `plugins/linnod` | Linnod source analysis, patch model, runtime, VST3 adapter, editor bridge, and tests. |
 | `plugins/glirdir` | Glirdir capture, analysis, audition, VST3 adapter, editor, drag/export, sample-library save, bundle metadata. |
 | `host/` | (Reserved, not yet a workspace member) Galad — standalone Windows realtime VST3 host application: WASAPI audio I/O, host-side VST3 protocol, device management, egui UI. Target-gated; excluded from `make ci`. See [ADR-0022](docs/adr/0022-windows-vst3-host.md). |
+| `plugins/visualizer` | (Reserved, not yet a workspace member) Cenedril — Windows-only passthrough Visualizer VST3 (spectrogram, meters, analysis readouts), egui editor. See [ADR-0023](docs/adr/0023-new-vsts-windows-only.md). |
 | `xtask` | Workspace checks and macOS VST3 bundle automation. |
 
 ## Commands
