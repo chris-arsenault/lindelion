@@ -17,3 +17,4 @@
 | [0013](0013-host-agnostic-effect-core.md) | Host-agnostic effect core | Accepted | 2026-05-30 |
 | [0014](0014-nn-inference-allocation.md) | NN inference runs inline, not on an audio-through worker | Accepted | 2026-05-30 |
 | [0015](0015-denoiser-native-onnx-runtime.md) | Speech NN effects (denoiser, voice gate) run on the native ONNX Runtime (`ort`) | Accepted | 2026-05-30 |
+| [0016](0016-caloma-speech-vst-packaging.md) | Speech effects ship as a single VST3 (Calóma) | Accepted | 2026-05-31 |

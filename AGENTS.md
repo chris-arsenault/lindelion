@@ -41,6 +41,7 @@ Agent guide for sessions in the Lindelion repository.
 | Lindelion | Quenya `lindelë` + `-ion`, bearer of the art of music | Workspace/project |
 | Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs |
 | Linnod | Sindarin measured verse unit | Melodic slicer VST3 instrument |
+| Calóma | Quenya `cala` (bright/clear) + `óma` (voice), "clear voice" | Planned single VST3 packaging the speech-effect chain (see [ADR-0016](docs/adr/0016-caloma-speech-vst-packaging.md)) |
 | Glirdir | Sindarin `glir-` + `-dir`, singer/song-bearer | VST3 sing-to-MIDI scratchpad |
 
 ## Code Map

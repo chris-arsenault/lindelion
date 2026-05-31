@@ -30,8 +30,14 @@ Detailed milestones and the reuse/benchmark strategy live in
   licensing recorded.
 - Source additional public-domain / CC0 spoken-word fixtures and record provenance in
   `testdata/audio/FIXTURES.md`.
-- Choose and add a packaging adapter (standalone app, single VST, or per-effect VST) once the
-  effect set and signal-sharing decisions settle.
+- Build **Calóma**, the single VST3 packaging the speech-effect chain (signal-order parameter,
+  normal-VST patches, compute-once analysis, e2e-tuned defaults). Decided in
+  [ADR-0016](adr/0016-caloma-speech-vst-packaging.md); plan at `CALOMA-VST-PLAN.md`.
+- Build a Windows realtime VST3 host to run Calóma (and other VST3s) on live mic input
+  (`WINDOWS-HOST-PLAN.md`).
+- Build a Visualizer VST (spectrogram, meters, analysis-signal display; `VISUALIZER-VST-PLAN.md`).
+- Build a Speech Coach VST (cadence / words-per-minute, pitch dynamism, clarity feedback;
+  `SPEECH-COACH-VST-PLAN.md`).
 
 ## Host integration
 
