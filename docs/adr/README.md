@@ -23,3 +23,4 @@
 | [0019](0019-denoiser-native-onnx-runtime.md) | Speech NN effects (denoiser, voice gate) run on the native ONNX Runtime (`ort`) | Accepted | 2026-05-30 |
 | [0020](0020-caloma-speech-vst-packaging.md) | Speech effects ship as a single VST3 (Calóma) | Accepted | 2026-05-31 |
 | [0021](0021-string-two-way-body-coupling-and-output-blend.md) | String two-way body coupling and output blend | Accepted | 2026-05-31 |
+| [0022](0022-windows-vst3-host.md) | Windows realtime VST3 host application | Accepted | 2026-05-31 |
