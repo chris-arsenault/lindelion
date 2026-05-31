@@ -2,11 +2,47 @@ use lindelion_dsp_utils::{filters::BiquadCoefficients, math, soft_saturate};
 
 use super::{
     WaveguideParams,
-    body::WaveguideBody,
+    body::{BodyFamily, ReducedBody},
     core, dispersion,
     traveling::{BoundaryFilters, BoundarySide, TravelingWavePair},
 };
 use crate::dsp::constants::LOWEST_RESONATOR_FREQUENCY_HZ;
+
+/// String output blend. The String output is the body's radiated motion summed with
+/// a tap of the string at the pickup position. The pickup tap carries the bulk of
+/// the level, so the String sits at the same loudness as the Modal/Tube/Mesh
+/// resonators (the body's direct radiation alone is ~10x quieter than the old pickup
+/// EQ) and `pickup_position` stays a material control; the body radiation adds the
+/// body's own voice on top. Crucially, the two-way bridge loading colours *both*
+/// terms — it acts inside the loop the pickup reads — so the body's faster decay of
+/// near-mode partials survives even in the pickup tap, not just the radiated term.
+/// `STRING_OUTPUT_TRIM` then matches the summed level to the pre-M7 String, keeping
+/// the same peak headroom (loud plucks do not clip any more than before).
+const STRING_PICKUP_MIX: f32 = 1.0;
+const STRING_BODY_MIX: f32 = 3.0;
+const STRING_OUTPUT_TRIM: f32 = 0.85;
+
+/// Measured-energy (RMS) at which the tension bloom reaches its target depth; the
+/// squared, normalized drive `(energy/REF)^2` keeps low/medium dynamics in tune
+/// and concentrates the sharpening on hard hits.
+const STRING_TENSION_ENERGY_REF: f32 = 0.15;
+/// Fractional one-way-delay shortening at full drive. `2^(40/1200) - 1 ≈ 0.0234`
+/// gives ≈ +40 cents of transient pitch-sharpening at a hard pluck's peak energy.
+const STRING_TENSION_DEPTH: f32 = 0.0234;
+/// Clamp on the normalized squared drive, capping the peak sharpening near +40
+/// cents and keeping the modulated delay bounded well within the wave buffer.
+const STRING_TENSION_MAX_DRIVE: f32 = 1.0;
+
+/// Shorten the effective one-way delay as a function of measured energy
+/// (tension modulation; Bank/Sujbert, Tolonen/Välimäki). The delay only ever
+/// shortens (`drive >= 0`) and never below `one_way_delay / (1 + DEPTH*MAX)`, so
+/// it stays bounded and within the fixed traveling-wave capacity; at `drive == 0`
+/// it returns the nominal delay (tuning unaffected).
+fn tension_modulated_delay(one_way_delay: f32, energy: f32) -> f32 {
+    let normalized = math::finite_or(energy, 0.0).max(0.0) / STRING_TENSION_ENERGY_REF;
+    let drive = math::finite_clamp(normalized * normalized, 0.0, STRING_TENSION_MAX_DRIVE, 0.0);
+    one_way_delay / (1.0 + STRING_TENSION_DEPTH * drive)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct String1dParams {
@@ -35,6 +71,18 @@ impl String1dParams {
     }
 }
 
+/// Per-sample-invariant string operators derived from `String1dParams`. Cached
+/// behind a params dirty-check so the heavy derivations (loop damping incl. the
+/// filter-peak scan, dispersion profile, geometry, delay tuning) run at control
+/// rate, not per sample. Candidate extraction (ADR-0003): single consumer today.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PreparedStringModel {
+    dispersion_profile: dispersion::DispersionProfile,
+    geometry: core::WaveguideGeometry,
+    one_way_delay: f32,
+    reflection_gain: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct String1d {
     sample_rate: f32,
@@ -42,7 +90,30 @@ pub(super) struct String1d {
     terminations: BoundaryFilters,
     left_dispersion: dispersion::WaveguideDispersion,
     right_dispersion: dispersion::WaveguideDispersion,
-    body: WaveguideBody,
+    // Reduced modal body coupled two-way at the bridge (M7): its admittance loads
+    // the bridge reflection (so partials near body modes decay faster) and its
+    // radiated motion is the string output, replacing the heuristic pickup EQ.
+    body: ReducedBody,
+    /// Test hook scaling the two-way bridge loading (1.0 normal, 0.0 = body still
+    /// radiates but does not load the loop) to isolate the two-way effect from the
+    /// body's output coloration.
+    body_coupling_scale: f32,
+    prepared: Option<(String1dParams, PreparedStringModel)>,
+    // Per-sample smoothing of the continuous physical inputs so a control-rate
+    // jump de-zippers; frequency and positions stay un-smoothed to keep tuning
+    // and excitation timing exact.
+    loop_gain: core::ScalarSmoother,
+    loop_filter_cutoff: core::ScalarSmoother,
+    loop_filter_resonance: core::ScalarSmoother,
+    dispersion: core::ScalarSmoother,
+    // Measured resonator energy (M2 bus) driving tension modulation; set per host
+    // sample, constant across the 2x oversampled sub-samples. 0.0 => inert.
+    tension_drive: f32,
+    // The string's returning wave at the bridge (driven end), cached each sample so
+    // a physical driver (M8) can read the input-end wave it couples to.
+    bridge_incident: f32,
+    #[cfg(test)]
+    recompute_count: u32,
 }
 
 impl String1d {
@@ -54,8 +125,31 @@ impl String1d {
             terminations: BoundaryFilters::new(),
             left_dispersion: dispersion::WaveguideDispersion::new(),
             right_dispersion: dispersion::WaveguideDispersion::new(),
-            body: WaveguideBody::new(sample_rate),
+            body: ReducedBody::new(sample_rate, BodyFamily::Guitar),
+            body_coupling_scale: 1.0,
+            prepared: None,
+            loop_gain: core::ScalarSmoother::new(sample_rate),
+            loop_filter_cutoff: core::ScalarSmoother::new(sample_rate),
+            loop_filter_resonance: core::ScalarSmoother::new(sample_rate),
+            dispersion: core::ScalarSmoother::new(sample_rate),
+            tension_drive: 0.0,
+            bridge_incident: 0.0,
+            #[cfg(test)]
+            recompute_count: 0,
         }
+    }
+
+    /// The string's returning wave at the bridge (the M8 driver feedback seam).
+    /// Cached from the previous `process_sample`; 0.0 before the first sample.
+    pub(super) fn driven_feedback(&self) -> f32 {
+        self.bridge_incident
+    }
+
+    /// Set the measured-energy drive for tension modulation (M2 energy bus).
+    /// Called once per host sample by the resonator engine; defaults to 0.0 so
+    /// callers that never set it render the linear string unchanged.
+    pub(super) fn set_tension_drive(&mut self, drive: f32) {
+        self.tension_drive = math::finite_or(drive, 0.0).max(0.0);
     }
 
     pub(super) fn reset(&mut self) {
@@ -64,6 +158,13 @@ impl String1d {
         self.left_dispersion.reset();
         self.right_dispersion.reset();
         self.body.reset();
+        self.prepared = None;
+        self.loop_gain.reset();
+        self.loop_filter_cutoff.reset();
+        self.loop_filter_resonance.reset();
+        self.dispersion.reset();
+        self.tension_drive = 0.0;
+        self.bridge_incident = 0.0;
     }
 
     /// Production entry point: drive the two-rail string from `WaveguideParams`,
@@ -73,6 +174,90 @@ impl String1d {
     }
 
     fn process_sample(&mut self, excitation: f32, params: String1dParams) -> f32 {
+        let params = self.smoothed_params(params);
+        let prepared = self.prepared_model(params);
+        // Energy-dependent tension modulation: a hard pluck raises string tension,
+        // shortening the effective delay and sharpening pitch transiently; as the
+        // measured energy decays the delay returns to nominal (the "bloom").
+        let one_way_delay = tension_modulated_delay(prepared.one_way_delay, self.tension_drive);
+
+        let boundary = self.waves.boundary_samples(one_way_delay);
+        // Expose the string's returning wave at the bridge for the M8 driver feedback.
+        self.bridge_incident = boundary.left;
+
+        let left_reflection = self.reflected_sample(
+            boundary.left,
+            prepared.reflection_gain,
+            BoundarySide::Left,
+            params,
+            prepared.dispersion_profile,
+        );
+        let right_reflection = self.reflected_sample(
+            boundary.right,
+            prepared.reflection_gain,
+            BoundarySide::Right,
+            params,
+            prepared.dispersion_profile,
+        );
+
+        // Two-way bridge coupling (passive wave-digital termination): the body
+        // admittance loads the bridge reflection (|R| <= 1, dips at body modes, so
+        // those partials lose energy and decay faster — the loop loading a post-EQ
+        // cannot reproduce), and the body radiates the absorbed motion = output.
+        let (body_reflected, radiated) = self.body.bridge(left_reflection);
+        let coupled_left = math::snap_to_zero(
+            left_reflection + self.body_coupling_scale * (body_reflected - left_reflection),
+        );
+
+        // Pickup tap of the string at the pickup position (read before the loop is
+        // advanced, mirroring the pre-M7 timing). The loop it samples is already
+        // loaded two-way by the body, so this tap carries the body's decay colour.
+        let pickup = self
+            .waves
+            .pickup_samples(one_way_delay, prepared.geometry.pickup_position);
+        let pickup_tap = pickup.average();
+
+        self.waves.push(right_reflection, coupled_left);
+        self.waves.add_symmetric_excitation(
+            one_way_delay,
+            prepared.geometry.excitation_taps,
+            math::snap_to_zero(excitation),
+        );
+
+        let output =
+            STRING_OUTPUT_TRIM * (STRING_PICKUP_MIX * pickup_tap + STRING_BODY_MIX * radiated);
+        math::snap_to_zero(output)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_body_coupling_scale(&mut self, scale: f32) {
+        self.body_coupling_scale = scale;
+    }
+
+    /// Smooth the continuous physical inputs toward their targets, leaving
+    /// frequency and the strike/pickup positions untouched so tuning and
+    /// excitation timing track the requested values exactly.
+    fn smoothed_params(&mut self, params: String1dParams) -> String1dParams {
+        String1dParams {
+            loop_gain: self.loop_gain.next(params.loop_gain),
+            loop_filter_cutoff: self.loop_filter_cutoff.next(params.loop_filter_cutoff),
+            loop_filter_resonance: self
+                .loop_filter_resonance
+                .next(params.loop_filter_resonance),
+            dispersion: self.dispersion.next(params.dispersion),
+            ..params
+        }
+    }
+
+    /// Return the cached string operators, re-deriving them (and re-arming the
+    /// termination filter coefficients) only when the incoming params have moved.
+    fn prepared_model(&mut self, params: String1dParams) -> PreparedStringModel {
+        if let Some((cached_params, prepared)) = self.prepared
+            && cached_params == params
+        {
+            return prepared;
+        }
+
         let waveguide_params = waveguide_params_from_string(params);
         let damping = core::loop_damping(self.sample_rate, waveguide_params);
         let dispersion_profile = dispersion::dispersion_profile(self.sample_rate, waveguide_params);
@@ -95,35 +280,18 @@ impl String1d {
         self.terminations
             .set_coefficients(damping.coefficients, BiquadCoefficients::identity());
 
-        let boundary = self.waves.boundary_samples(one_way_delay);
-        let pickup = self
-            .waves
-            .pickup_samples(one_way_delay, geometry.pickup_position);
-
-        let reflection_gain = core::endpoint_reflection_gain(damping.loop_gain);
-        let left_reflection = self.reflected_sample(
-            boundary.left,
-            reflection_gain,
-            BoundarySide::Left,
-            params,
+        let prepared = PreparedStringModel {
             dispersion_profile,
-        );
-        let right_reflection = self.reflected_sample(
-            boundary.right,
-            reflection_gain,
-            BoundarySide::Right,
-            params,
-            dispersion_profile,
-        );
-
-        self.waves.push(right_reflection, left_reflection);
-        self.waves.add_symmetric_excitation(
+            geometry,
             one_way_delay,
-            geometry.excitation_taps,
-            math::snap_to_zero(excitation),
-        );
-
-        self.body.process_sample(pickup.average(), waveguide_params)
+            reflection_gain: core::endpoint_reflection_gain(damping.loop_gain),
+        };
+        self.prepared = Some((params, prepared));
+        #[cfg(test)]
+        {
+            self.recompute_count += 1;
+        }
+        prepared
     }
 
     fn reflected_sample(
@@ -168,248 +336,4 @@ fn waveguide_params_from_string(params: String1dParams) -> WaveguideParams {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dsp::{
-        constants::WAVEGUIDE_PICKUP_POSITION,
-        render_metrics::{RenderExcitation, render_response},
-    };
-    use lindelion_dsp_utils::analysis::{
-        assert_all_finite, audio_window_metrics, estimate_f0_autocorrelation,
-        first_index_above_abs, rms_difference,
-    };
-    use lindelion_dsp_utils::math::cents_between;
-
-    #[test]
-    fn string_1d_renders_finite_decaying_audio() {
-        let sample_rate = 48_000.0;
-        let output = render_string_1d(
-            sample_rate,
-            String1dParams {
-                frequency_hz: 220.0,
-                loop_filter_cutoff: 6_000.0,
-                loop_filter_resonance: 0.1,
-                loop_gain: 0.82,
-                loop_nonlinearity: 0.0,
-                dispersion: 0.0,
-                strike_position: 0.34,
-                pickup_position: 0.78,
-            },
-            24_000,
-            RenderExcitation::ShapedPluck,
-        );
-        let early = audio_window_metrics(&output[512..2_560], sample_rate);
-        let late = audio_window_metrics(&output[12_000..14_048], sample_rate);
-
-        assert_all_finite(&output);
-        assert!(early.rms > late.rms, "early={early:?}, late={late:?}");
-        assert!(early.peak_abs < 4.0);
-    }
-
-    #[test]
-    fn string_1d_pitch_tracks_target_matrix() {
-        for sample_rate in [44_100.0, 48_000.0, 96_000.0] {
-            for target_hz in [110.0, 220.0, 440.0, 880.0] {
-                let output = render_string_1d(
-                    sample_rate,
-                    String1dParams {
-                        frequency_hz: target_hz,
-                        loop_filter_cutoff: 18_000.0,
-                        loop_filter_resonance: 0.0,
-                        loop_gain: 0.99,
-                        loop_nonlinearity: 0.0,
-                        dispersion: 0.0,
-                        strike_position: 0.37,
-                        pickup_position: 0.73,
-                    },
-                    (sample_rate * 0.32) as usize,
-                    RenderExcitation::Impulse,
-                );
-                let estimate = estimate_f0_autocorrelation(
-                    &output[1_024..],
-                    sample_rate,
-                    target_hz * 0.8,
-                    target_hz * 1.25,
-                )
-                .unwrap();
-                let cents = cents_between(target_hz, estimate);
-
-                assert!(
-                    cents < 80.0,
-                    "sample_rate={sample_rate}, target_hz={target_hz}, estimate={estimate}, cents={cents}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn string_1d_separates_strike_and_pickup_positions() {
-        let sample_rate = 48_000.0;
-        let base = String1dParams::from_waveguide(WaveguideParams {
-            frequency_hz: 240.0,
-            loop_filter_cutoff: 12_000.0,
-            loop_filter_resonance: 0.0,
-            loop_gain: 0.96,
-            loop_nonlinearity: 0.0,
-            position_of_strike: 0.2,
-            ..WaveguideParams::default()
-        });
-        let near_pickup = render_string_1d(
-            sample_rate,
-            String1dParams {
-                pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
-                ..base
-            },
-            4_096,
-            RenderExcitation::ShapedPluck,
-        );
-        let far_pickup = render_string_1d(
-            sample_rate,
-            String1dParams {
-                pickup_position: 0.35,
-                ..base
-            },
-            4_096,
-            RenderExcitation::ShapedPluck,
-        );
-
-        let near_onset = first_index_above_abs(&near_pickup, 0.000_1).unwrap();
-        let far_onset = first_index_above_abs(&far_pickup, 0.000_1).unwrap();
-        let difference = rms_difference(&near_pickup[256..], &far_pickup[256..]);
-
-        assert_ne!(near_onset, far_onset);
-        assert!(difference > 0.000_01, "difference={difference}");
-    }
-
-    #[test]
-    fn string_1d_dispersion_materially_changes_render() {
-        let sample_rate = 48_000.0;
-        let base = String1dParams::from_waveguide(WaveguideParams {
-            frequency_hz: 220.0,
-            loop_filter_cutoff: 18_000.0,
-            loop_filter_resonance: 0.0,
-            loop_gain: 0.985,
-            loop_nonlinearity: 0.0,
-            position_of_strike: 0.37,
-            ..WaveguideParams::default()
-        });
-        let natural = render_string_1d(sample_rate, base, 16_000, RenderExcitation::ShapedPluck);
-        let dispersed = render_string_1d(
-            sample_rate,
-            String1dParams {
-                dispersion: 0.85,
-                ..base
-            },
-            16_000,
-            RenderExcitation::ShapedPluck,
-        );
-
-        assert_all_finite(&natural);
-        assert_all_finite(&dispersed);
-        assert!(rms_difference(&natural[512..], &dispersed[512..]) > 0.000_001);
-    }
-
-    #[test]
-    fn string_1d_reset_clears_state() {
-        let sample_rate = 48_000.0;
-        let params = String1dParams::from_waveguide(WaveguideParams {
-            frequency_hz: 220.0,
-            loop_gain: 0.98,
-            ..WaveguideParams::default()
-        });
-        let mut string = String1d::new(sample_rate);
-        let _ = render_response(
-            sample_rate,
-            params.frequency_hz,
-            4_096,
-            RenderExcitation::Impulse,
-            |sample| string.process_sample(sample, params),
-        );
-        string.reset();
-
-        let output = (0..512)
-            .map(|_| string.process_sample(0.0, params))
-            .collect::<Vec<_>>();
-
-        assert_all_finite(&output);
-        assert!(audio_window_metrics(&output, sample_rate).peak_abs < 0.000_001);
-    }
-
-    #[test]
-    fn string_1d_low_note_near_capacity_tracks_target() {
-        // A low note near the buffer-capacity limit must still track its target;
-        // this guards the shared frequency sanitizer used by both the delay length
-        // and the filter-delay compensation.
-        let sample_rate = 48_000.0;
-        let target_hz = 35.0;
-        let output = render_string_1d(
-            sample_rate,
-            String1dParams {
-                frequency_hz: target_hz,
-                loop_filter_cutoff: 16_000.0,
-                loop_filter_resonance: 0.0,
-                loop_gain: 0.99,
-                loop_nonlinearity: 0.0,
-                dispersion: 0.0,
-                strike_position: 0.4,
-                pickup_position: 0.7,
-            },
-            32_000,
-            RenderExcitation::Impulse,
-        );
-        let estimate = estimate_f0_autocorrelation(
-            &output[2_048..],
-            sample_rate,
-            target_hz * 0.8,
-            target_hz * 1.25,
-        )
-        .unwrap();
-        let cents = cents_between(target_hz, estimate);
-        assert!(cents < 80.0, "estimate={estimate}, cents={cents}");
-    }
-
-    #[test]
-    fn string_1d_resonant_loop_decays_without_high_frequency_growth() {
-        // Regression for the loop filter being applied at both terminations: with a
-        // low cutoff and a resonant loop, the round-trip peak gain exceeded 1 and
-        // the partials grew over time. Applying the filter once per round trip keeps
-        // the decay monotonic.
-        let sample_rate = 48_000.0;
-        let output = render_string_1d(
-            sample_rate,
-            String1dParams {
-                frequency_hz: 220.0,
-                loop_filter_cutoff: 2_400.0,
-                loop_filter_resonance: 0.1,
-                loop_gain: 0.975,
-                loop_nonlinearity: 0.0,
-                dispersion: 0.0,
-                strike_position: 0.42,
-                pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
-            },
-            24_000,
-            RenderExcitation::ShapedPluck,
-        );
-        let early = audio_window_metrics(&output[512..2_560], sample_rate);
-        let late = audio_window_metrics(&output[20_000..22_048], sample_rate);
-
-        assert_all_finite(&output);
-        assert!(early.rms > late.rms, "early={early:?}, late={late:?}");
-    }
-
-    fn render_string_1d(
-        sample_rate: f32,
-        params: String1dParams,
-        sample_count: usize,
-        excitation: RenderExcitation,
-    ) -> Vec<f32> {
-        let mut string = String1d::new(sample_rate);
-        render_response(
-            sample_rate,
-            params.frequency_hz,
-            sample_count,
-            excitation,
-            |sample| string.process_sample(sample, params),
-        )
-    }
-}
+mod tests;

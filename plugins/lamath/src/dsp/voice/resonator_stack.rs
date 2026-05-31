@@ -1,16 +1,16 @@
 use lindelion_dsp_utils::{
-    filters::{Biquad, BiquadCoefficients},
-    math::{finite_clamp, finite_or, snap_to_zero},
+    math::{finite_clamp, snap_to_zero},
     params::{StructuralChangePolicy, StructuralParam},
 };
 use lindelion_plugin_shell::SmoothedAtomicParam;
 
 use crate::{
-    ModalConfig, ModulationConfig, ModulationDestination, PARALLEL_MIX_A_PARAMETER_ID,
-    PARALLEL_MIX_B_PARAMETER_ID, ResonatorConfig, ResonatorRouting, WaveguideConfig,
-    normalize_routing_for_resonator_models, smoothed_runtime_parameter,
+    DriverConfig, ModalConfig, ModulationConfig, ModulationDestination,
+    PARALLEL_MIX_A_PARAMETER_ID, PARALLEL_MIX_B_PARAMETER_ID, ResonatorConfig, ResonatorRouting,
+    WaveguideConfig, normalize_routing_for_resonator_models, smoothed_runtime_parameter,
 };
 
+use super::oversampler::Oversampler2x;
 use super::{
     modulation_state::{ModulationSources, modulation_sum_from},
     structural_ramp_samples,
@@ -18,20 +18,19 @@ use super::{
 use crate::dsp::{
     constants::{
         LOWEST_RESONATOR_FREQUENCY_HZ, MODAL_DAMPING_MOD_OCTAVES, RESONATOR_POSITION_MOD_DEPTH,
-        SERIES_CONDITIONER, STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_LOOP_GAIN,
+        STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_LOOP_GAIN,
     },
     modal::{ModalBank, ModalBankParams},
     waveguide::{MeshResonator, WaveguideParams, WaveguideResonator},
 };
 
+mod conditioners;
+mod driver;
 mod mapping;
+use conditioners::BodyColorExciter;
+pub(super) use conditioners::SeriesConditioner;
+use driver::Driver;
 use mapping::{mesh_params_from_config, modal_params_from_config, waveguide_params_from_config};
-
-const BODY_COLOR_WINDOW_MS: f32 = 35.0;
-const BODY_COLOR_RETRIGGER_MS: f32 = 80.0;
-const BODY_COLOR_TRIGGER_THRESHOLD: f32 = 1.0e-5;
-const BODY_COLOR_TRIGGER_RATIO: f32 = 1.5;
-const BODY_COLOR_EXCITATION_GAIN: f32 = 0.006;
 
 #[derive(Debug)]
 pub(super) struct ResonatorStack {
@@ -46,6 +45,7 @@ pub(super) struct ResonatorStack {
     pub(super) parallel_mix_b: SmoothedAtomicParam,
     pub(super) series_conditioner: SeriesConditioner,
     body_color_exciter: BodyColorExciter,
+    driver_config: DriverConfig,
 }
 
 impl ResonatorStack {
@@ -72,6 +72,7 @@ impl ResonatorStack {
             parallel_mix_b: parallel_mix_b_param(sample_rate, parallel_mix_b(routing)),
             series_conditioner: SeriesConditioner::new(sample_rate),
             body_color_exciter: BodyColorExciter::new(sample_rate),
+            driver_config: DriverConfig::default(),
         }
     }
 
@@ -82,6 +83,17 @@ impl ResonatorStack {
     ) {
         self.base_resonator_a_config = resonator_a;
         self.base_resonator_b_config = resonator_b;
+    }
+
+    /// Select the physical driver (M8) for both waveguide engines. Only rebuilds when
+    /// the driver config changes, so steady playback never re-allocates or clicks;
+    /// the driver applies only on the waveguide path (Modal/Mesh ignore it).
+    pub(super) fn set_driver(&mut self, config: DriverConfig) {
+        if config != self.driver_config {
+            self.driver_config = config;
+            self.resonator_a.set_driver(config);
+            self.resonator_b.set_driver(config);
+        }
     }
 
     pub(super) fn configure_modulated(
@@ -174,25 +186,26 @@ impl ResonatorStack {
         routing_sample.gain
     }
 
-    pub(super) fn process_sample(&mut self, excitation: f32) -> f32 {
+    pub(super) fn process_sample(&mut self, excitation: f32, energy: f32, effort: f32) -> f32 {
         let excitation = snap_to_zero(excitation);
         let mix_a = self.parallel_mix_a.next_sample();
         let mix_b = self.parallel_mix_b.next_sample();
         snap_to_zero(match self.routing.current() {
             ResonatorRouting::Parallel { .. } => {
-                let a = self.resonator_a.process_sample(excitation);
-                let b = self.resonator_b.process_sample(excitation);
+                let a = self.resonator_a.process_sample(excitation, energy, effort);
+                let b = self.resonator_b.process_sample(excitation, energy, effort);
                 a * mix_a + b * mix_b
             }
             ResonatorRouting::Series { .. } => {
-                let a = self.resonator_a.process_sample(excitation);
+                let a = self.resonator_a.process_sample(excitation, energy, effort);
                 let conditioned = self.series_conditioner.process_sample(a);
-                self.resonator_b.process_sample(conditioned)
+                self.resonator_b.process_sample(conditioned, energy, effort)
             }
             ResonatorRouting::BodyColor { .. } => {
-                let a = self.resonator_a.process_sample(excitation);
+                let a = self.resonator_a.process_sample(excitation, energy, effort);
                 let colored_excitation = self.body_color_exciter.process_sample(excitation, a);
-                self.resonator_b.process_sample(colored_excitation)
+                self.resonator_b
+                    .process_sample(colored_excitation, energy, effort)
             }
         })
     }
@@ -259,17 +272,42 @@ struct ResonatorEngine {
     waveguide: WaveguideResonator,
     waveguide_params: WaveguideParams,
     mesh: MeshResonator,
+    // The waveguide/mesh cores run at 2x through this oversampler (ADR-0016), the
+    // shared substrate for the dynamic-response nonlinear stages. Modal stays at
+    // the host rate and is never oversampled (untouched reference model).
+    oversampler: Oversampler2x,
+    // Force-dependent physical driver (M8): runs inside the 2x loop on the waveguide
+    // path, driven by player effort and coupled two-way to the resonator through the
+    // waveguide's input-end returning wave. Default pass-through, so a patch with no
+    // physical driver is unaffected.
+    driver: Driver,
+    // The 2x oversample rate the driver's inner-loop DSP is built at (the driver
+    // runs inside the oversampled loop, so it must use that rate, not the host rate).
+    oversample_rate: f32,
 }
 
 impl ResonatorEngine {
     pub(super) fn new(sample_rate: f32) -> Self {
+        // Build the oversampled (waveguide/mesh) cores at twice the host rate so
+        // their pitch and decay stay correct while their inner loop runs at 2x.
+        let oversample_rate = 2.0 * sample_rate;
         Self {
             kind: ResonatorKind::Silent,
             modal: ModalBank::with_capacity(sample_rate, 256, ModalBankParams::default()),
-            waveguide: WaveguideResonator::new(sample_rate, LOWEST_RESONATOR_FREQUENCY_HZ),
+            waveguide: WaveguideResonator::new(oversample_rate, LOWEST_RESONATOR_FREQUENCY_HZ),
             waveguide_params: WaveguideParams::default(),
-            mesh: MeshResonator::new(sample_rate),
+            mesh: MeshResonator::new(oversample_rate),
+            oversampler: Oversampler2x::new(),
+            driver: Driver::default(),
+            oversample_rate,
         }
+    }
+
+    /// Select the physical driver from the patch (M8). Rebuilt allocation-free from
+    /// the config at the 2x oversample rate; the pass-through default leaves the
+    /// excitation untouched.
+    pub(super) fn set_driver(&mut self, config: DriverConfig) {
+        self.driver = Driver::from_config(config, self.oversample_rate);
     }
 
     fn configure(&mut self, config: &ResonatorConfig, base_frequency: f32, reset_state: bool) {
@@ -288,12 +326,15 @@ impl ResonatorEngine {
                 self.kind = ResonatorKind::Waveguide;
                 self.waveguide_params = waveguide_params_from_config(config, base_frequency);
                 self.waveguide.reset();
+                self.oversampler.reset();
+                self.driver.reset();
             }
             ResonatorConfig::Mesh(config) => {
                 self.kind = ResonatorKind::Mesh;
                 self.mesh
                     .configure(mesh_params_from_config(config, base_frequency));
                 self.mesh.reset();
+                self.oversampler.reset();
             }
         }
     }
@@ -348,14 +389,44 @@ impl ResonatorEngine {
         self.modal.reset();
         self.waveguide.reset();
         self.mesh.reset();
+        self.oversampler.reset();
+        self.driver.reset();
     }
 
-    pub(super) fn process_sample(&mut self, input: f32) -> f32 {
+    pub(super) fn process_sample(&mut self, input: f32, energy: f32, effort: f32) -> f32 {
         match self.kind {
             ResonatorKind::Silent => 0.0,
+            // Modal is the untouched reference: host rate, no oversampling, no driver.
             ResonatorKind::Modal => self.modal.process_sample(input),
-            ResonatorKind::Waveguide => self.waveguide.process_sample(input, self.waveguide_params),
-            ResonatorKind::Mesh => self.mesh.process_sample(input),
+            // Waveguide inner loop runs at 2x through the shared oversampler, with the
+            // M8 physical driver inside the loop (ADR-0016/0017): each sub-sample the
+            // driver shapes the excitation from player effort and the resonator's
+            // coupled-back feedback, then the waveguide processes the driven sample.
+            ResonatorKind::Waveguide => {
+                // Measured energy drives the waveguide nonlinearities (String
+                // tension M4, Tube steepening M5), set once per host sample
+                // (constant across the 2x sub-samples).
+                self.waveguide.set_energy_drive(energy);
+                let waveguide = &mut self.waveguide;
+                let driver = &mut self.driver;
+                let params = self.waveguide_params;
+                self.oversampler.process(input, |sample| {
+                    // Read the resonator's input-end returning wave (mouth/bridge)
+                    // from the previous sub-sample as the driver's coupled feedback,
+                    // then process the driven excitation through the waveguide.
+                    let feedback = waveguide.driven_feedback(params);
+                    let driven = driver.process(sample, effort, feedback);
+                    waveguide.process_sample(driven, params)
+                })
+            }
+            ResonatorKind::Mesh => {
+                // Measured energy drives the mesh geometric (von Kármán) coupling
+                // (M6), set once per host sample (constant across the 2x sub-samples).
+                self.mesh.set_geometric_drive(energy);
+                let mesh = &mut self.mesh;
+                self.oversampler
+                    .process(input, |sample| mesh.process_sample(sample))
+            }
         }
     }
 
@@ -364,111 +435,6 @@ impl ResonatorEngine {
             self.waveguide_params.loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(loop_gain);
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct SeriesConditioner {
-    highpass: Biquad,
-    fast_env: f32,
-    slow_env: f32,
-}
-
-impl SeriesConditioner {
-    pub(super) fn new(sample_rate: f32) -> Self {
-        Self {
-            highpass: Biquad::new(BiquadCoefficients::highpass(
-                sample_rate,
-                SERIES_CONDITIONER.highpass_cutoff_hz,
-                SERIES_CONDITIONER.highpass_q,
-            )),
-            fast_env: 0.0,
-            slow_env: 0.0,
-        }
-    }
-
-    pub(super) fn reset(&mut self, sample_rate: f32) {
-        self.highpass.set_coefficients(BiquadCoefficients::highpass(
-            sample_rate,
-            SERIES_CONDITIONER.highpass_cutoff_hz,
-            SERIES_CONDITIONER.highpass_q,
-        ));
-        self.highpass.reset();
-        self.fast_env = 0.0;
-        self.slow_env = 0.0;
-    }
-
-    pub(super) fn process_sample(&mut self, input: f32) -> f32 {
-        let highpassed = snap_to_zero(self.highpass.process(input));
-        let magnitude = highpassed.abs();
-
-        self.fast_env =
-            snap_to_zero(SERIES_CONDITIONER.next_fast_env(snap_to_zero(self.fast_env), magnitude));
-        self.slow_env =
-            snap_to_zero(SERIES_CONDITIONER.next_slow_env(snap_to_zero(self.slow_env), magnitude));
-
-        let transient_bias = SERIES_CONDITIONER.transient_bias(self.fast_env, self.slow_env);
-        snap_to_zero(highpassed * SERIES_CONDITIONER.output_gain(transient_bias))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct BodyColorExciter {
-    window_env: f32,
-    trigger_peak: f32,
-    window_decay: f32,
-    trigger_decay: f32,
-}
-
-impl BodyColorExciter {
-    fn new(sample_rate: f32) -> Self {
-        let mut exciter = Self {
-            window_env: 0.0,
-            trigger_peak: 0.0,
-            window_decay: 0.0,
-            trigger_decay: 0.0,
-        };
-        exciter.reset(sample_rate);
-        exciter
-    }
-
-    fn reset(&mut self, sample_rate: f32) {
-        self.window_env = 0.0;
-        self.trigger_peak = 0.0;
-        self.window_decay = decay_to_floor(sample_rate, BODY_COLOR_WINDOW_MS);
-        self.trigger_decay = decay_to_floor(sample_rate, BODY_COLOR_RETRIGGER_MS);
-    }
-
-    fn process_sample(&mut self, excitation: f32, color_sample: f32) -> f32 {
-        let excitation = snap_to_zero(excitation);
-        let color_sample = snap_to_zero(color_sample);
-        self.window_env = finite_clamp(self.window_env, 0.0, 1.0, 0.0);
-        self.trigger_peak = snap_to_zero(self.trigger_peak).max(0.0);
-        let magnitude = excitation.abs();
-        let trigger_threshold =
-            BODY_COLOR_TRIGGER_THRESHOLD.max(self.trigger_peak * BODY_COLOR_TRIGGER_RATIO);
-        if magnitude > trigger_threshold {
-            self.window_env = 1.0;
-        }
-        self.trigger_peak = self.trigger_peak.max(magnitude) * self.trigger_decay;
-
-        let colored = color_sample * self.window_env * BODY_COLOR_EXCITATION_GAIN;
-        self.window_env *= self.window_decay;
-        if self.window_env < BODY_COLOR_TRIGGER_THRESHOLD {
-            self.window_env = 0.0;
-        }
-
-        snap_to_zero(colored)
-    }
-}
-
-fn decay_to_floor(sample_rate: f32, duration_ms: f32) -> f32 {
-    let sample_rate = finite_or(
-        sample_rate,
-        super::super::constants::DSP_FALLBACK_SAMPLE_RATE,
-    );
-    let duration_ms = finite_or(duration_ms, 0.0).max(0.0);
-    let samples = (sample_rate * duration_ms * 0.001).max(1.0);
-    0.001_f32.powf(1.0 / samples)
 }
 
 fn sanitize_routing(routing: ResonatorRouting) -> ResonatorRouting {
@@ -567,26 +533,4 @@ fn modulated_resonator_config(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn series_conditioner_recovers_from_non_finite_state_and_input() {
-        let mut conditioner = SeriesConditioner::new(48_000.0);
-        conditioner.fast_env = f32::NAN;
-        conditioner.slow_env = f32::INFINITY;
-
-        assert_eq!(conditioner.process_sample(f32::NAN), 0.0);
-        assert!(conditioner.process_sample(0.25).is_finite());
-    }
-
-    #[test]
-    fn body_color_exciter_recovers_from_non_finite_state_and_input() {
-        let mut exciter = BodyColorExciter::new(48_000.0);
-        exciter.window_env = f32::NAN;
-        exciter.trigger_peak = f32::INFINITY;
-
-        assert_eq!(exciter.process_sample(f32::NAN, f32::NAN), 0.0);
-        assert!(exciter.process_sample(0.5, 0.25).is_finite());
-    }
-}
+mod tests;

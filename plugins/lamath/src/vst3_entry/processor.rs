@@ -285,7 +285,7 @@ impl IAudioProcessorTrait for ResonatorVst3Processor {
     }
 
     unsafe fn getLatencySamples(&self) -> u32 {
-        0
+        crate::dsp::RESONATOR_OVERSAMPLING_LATENCY_SAMPLES
     }
 
     unsafe fn setupProcessing(&self, setup: *mut ProcessSetup) -> tresult {

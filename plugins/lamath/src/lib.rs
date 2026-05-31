@@ -29,11 +29,11 @@ pub use lindelion_audio_expression::{
 pub use parameters::PARAMETERS;
 pub(crate) use patch::normalize_routing_for_resonator_models;
 pub use patch::{
-    AudioExpressionConfig, AudioInputConfig, AudioInputMode, EnvelopeConfig, ExcitationSlot,
-    FilterMode, LfoConfig, LfoShape, LiveExcitationConfig, LiveExcitationMode, MeshConfig,
-    ModalConfig, ModalPreset, ModulationConfig, ModulationDestination, ModulationSlot,
-    ModulationSource, OutputConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch,
-    WaveguideConfig,
+    AudioExpressionConfig, AudioInputConfig, AudioInputMode, DriverConfig, EnvelopeConfig,
+    ExcitationSlot, FilterMode, LfoConfig, LfoShape, LiveExcitationConfig, LiveExcitationMode,
+    MeshConfig, ModalConfig, ModalPreset, ModulationConfig, ModulationDestination, ModulationSlot,
+    ModulationSource, OutputConfig, PickConfig, ReedConfig, ResonatorConfig, ResonatorRouting,
+    ResonatorSynthPatch, WaveguideConfig,
 };
 pub use plugin::{
     LoadedExcitationBuffer, ResonatorSidechainTelemetry, ResonatorSynth, ResonatorTelemetry,
@@ -42,8 +42,8 @@ pub use plugin::{
 
 #[doc(hidden)]
 pub use dsp::{
-    SelectedExcitations as BenchSelectedExcitations, SynthEngine as BenchSynthEngine,
-    VoiceTrigger as BenchVoiceTrigger,
+    Oversampler2x as BenchOversampler2x, SelectedExcitations as BenchSelectedExcitations,
+    SynthEngine as BenchSynthEngine, VoiceTrigger as BenchVoiceTrigger,
     modal::{ModalBank as BenchModalBank, ModalBankParams as BenchModalBankParams},
     waveguide::{
         MeshResonator as BenchMeshResonator, MeshVoiceParams as BenchMeshVoiceParams,

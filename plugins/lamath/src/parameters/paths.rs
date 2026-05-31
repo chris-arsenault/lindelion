@@ -23,6 +23,7 @@ pub(crate) enum ParameterPath {
     LfoTempoSync,
     PitchBendRange,
     VelocityExcitationDepth,
+    Driver(DriverParameter),
     ModulationSlot {
         slot: usize,
         parameter: ModulationSlotParameter,
@@ -54,6 +55,7 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::LfoTempoSync => bool_plain(patch.modulation.lfo.tempo_sync),
             Self::PitchBendRange => patch.modulation.pitch_bend_range_semitones,
             Self::VelocityExcitationDepth => patch.modulation.velocity_to_excitation_depth,
+            Self::Driver(parameter) => parameter.plain_value(patch.driver),
             Self::ModulationSlot { slot, parameter } => parameter
                 .plain_value(&patch.modulation, slot)
                 .unwrap_or_default(),
@@ -106,6 +108,7 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::VelocityExcitationDepth => {
                 patch.modulation.velocity_to_excitation_depth = finite_value(value, 0.0, 1.0, 1.0);
             }
+            Self::Driver(parameter) => parameter.apply_plain(&mut patch.driver, value),
             Self::ModulationSlot { slot, parameter } => {
                 parameter.apply_plain(&mut patch.modulation, slot, value);
             }
@@ -330,6 +333,7 @@ impl ResonatorSlot {
         }
     }
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResonatorParameter {

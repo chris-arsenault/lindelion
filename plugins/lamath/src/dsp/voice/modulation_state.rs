@@ -8,6 +8,7 @@ use crate::{
     ModulationConfig, ModulationDestination, ModulationSource, dsp::constants::WAVEGUIDE_LOOP_GAIN,
 };
 
+use super::energy_follower::EnergyFollower;
 use super::{PARAMETER_EPSILON, PARAMETER_SMOOTH_MS, VoiceExpression};
 
 const PITCH_BEND_SMOOTH_MS: f32 = 8.0;
@@ -22,6 +23,12 @@ pub(super) struct ModulationSources {
     pub(super) aftertouch: f32,
     pub(super) mod_wheel: f32,
     pub(super) brightness: f32,
+    /// Hybrid effort/energy bus (ADR-0014), fixed internal wiring: consumed
+    /// directly by the nonlinear stages, not user-routable. `effort` is player
+    /// effort from `ExpressionStream` (drives the M8 physical driver); `energy` is
+    /// the measured resonator-energy follower (drives M4–M6 nonlinearities).
+    pub(super) effort: f32,
+    pub(super) energy: f32,
 }
 
 #[derive(Debug)]
@@ -43,6 +50,10 @@ pub(super) struct ModulationState {
     pub(super) applied_pitch_bend_semitones: f32,
     pub(super) waveguide_loop_gain: SmoothedParam,
     pub(super) applied_waveguide_loop_gain: f32,
+    /// Measured-energy half of the effort/energy bus (ADR-0014): a per-sample
+    /// follower fed the resonator output, read into the next sample's sources.
+    energy_follower: EnergyFollower,
+    energy: f32,
 }
 
 impl ModulationState {
@@ -69,6 +80,8 @@ impl ModulationState {
                 WAVEGUIDE_LOOP_GAIN.default,
             ),
             applied_waveguide_loop_gain: WAVEGUIDE_LOOP_GAIN.default,
+            energy_follower: EnergyFollower::new(sample_rate),
+            energy: 0.0,
         }
     }
 
@@ -97,6 +110,8 @@ impl ModulationState {
         self.lfo_hold = sample_and_hold_value(midi_note);
         self.pitch_bend_semitones.reset(pitch_bend);
         self.applied_pitch_bend_semitones = pitch_bend;
+        self.energy_follower.reset();
+        self.energy = 0.0;
     }
 
     pub(super) fn clear(&mut self, loop_gain: f32) {
@@ -111,6 +126,15 @@ impl ModulationState {
         self.pitch_bend_semitones.reset(0.0);
         self.applied_pitch_bend_semitones = 0.0;
         self.reset_waveguide_loop_gain(loop_gain);
+        self.energy_follower.reset();
+        self.energy = 0.0;
+    }
+
+    /// Fold the resonator output into the measured-energy follower. Called by the
+    /// voice loop after `process_sample`; the followed RMS is read into the next
+    /// sample's `ModulationSources::energy`.
+    pub(super) fn observe_energy(&mut self, sample: f32) {
+        self.energy = self.energy_follower.observe(sample);
     }
 
     pub(super) fn static_sources(&self) -> ModulationSources {
@@ -122,6 +146,8 @@ impl ModulationState {
             aftertouch: self.aftertouch,
             mod_wheel: self.mod_wheel,
             brightness: self.brightness,
+            effort: self.effort(),
+            energy: self.energy,
         }
     }
 
@@ -195,6 +221,8 @@ impl ModulationState {
             aftertouch: self.aftertouch,
             mod_wheel: self.mod_wheel,
             brightness: self.brightness,
+            effort: self.effort(),
+            energy: self.energy,
         }
     }
 
@@ -215,6 +243,8 @@ impl ModulationState {
                 aftertouch: self.aftertouch,
                 mod_wheel: self.mod_wheel,
                 brightness: self.brightness,
+                effort: self.effort(),
+                energy: self.energy,
             },
         );
         let base_rate_hz = finite_clamp(self.config.lfo.rate_hz, 0.01, 100.0, 1.0);
@@ -248,6 +278,13 @@ impl ModulationState {
         sources: ModulationSources,
     ) -> f32 {
         modulation_sum_from(self.config, destination, sources)
+    }
+
+    /// Player effort for the effort/energy bus (ADR-0014): the dominant of
+    /// velocity (attack force) and pressure/breath (sustained force). Provisional
+    /// blend — M8 (force-dependent driver) owns its refinement.
+    fn effort(&self) -> f32 {
+        finite_clamp(self.velocity.max(self.aftertouch), 0.0, 1.0, 0.0)
     }
 
     fn apply_expression_values(&mut self) {
@@ -346,4 +383,47 @@ fn waveguide_loop_gain_param(sample_rate: f32, loop_gain: f32) -> SmoothedParam 
 
 pub(super) fn sanitize_pitch_bend(semitones: f32) -> f32 {
     pitch_bend_spec().sanitize(semitones)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::voice::VoiceExpression;
+
+    #[test]
+    fn effort_is_dominant_of_velocity_and_pressure() {
+        let mut state = ModulationState::new(48_000.0);
+
+        // Velocity dominates a lighter pressure.
+        state.set_expression(VoiceExpression::with_controls(0.7, 0.0, 0.3, 0.0, 0.0));
+        let effort = state.next_sources(48_000.0).effort;
+        assert!((effort - 0.7).abs() < 1.0e-6, "effort={effort}");
+
+        // A pressure swell above the velocity raises effort to the pressure.
+        state.set_expression(VoiceExpression::with_controls(0.2, 0.0, 0.9, 0.0, 0.0));
+        let effort = state.next_sources(48_000.0).effort;
+        assert!((effort - 0.9).abs() < 1.0e-6, "effort={effort}");
+    }
+
+    #[test]
+    fn energy_source_tracks_observed_signal_rms() {
+        let mut state = ModulationState::new(48_000.0);
+
+        // At rest the energy bus reads zero.
+        assert!(state.next_sources(48_000.0).energy.abs() < 1.0e-6);
+
+        // Feed a +/-0.5 square wave (RMS == 0.5) through the follower.
+        let amplitude = 0.5_f32;
+        for index in 0..8_000 {
+            let sample = if index % 2 == 0 {
+                amplitude
+            } else {
+                -amplitude
+            };
+            state.observe_energy(sample);
+        }
+
+        let energy = state.next_sources(48_000.0).energy;
+        assert!((energy - amplitude).abs() < 0.01, "energy={energy}");
+    }
 }

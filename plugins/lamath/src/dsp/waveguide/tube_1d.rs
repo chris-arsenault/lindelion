@@ -1,4 +1,8 @@
-use lindelion_dsp_utils::{filters::BiquadCoefficients, math, soft_saturate};
+use lindelion_dsp_utils::{
+    delay::FirstOrderAllpass,
+    filters::{Biquad, BiquadCoefficients},
+    math, soft_saturate,
+};
 
 use super::{
     WaveguideParams, WaveguideStyle,
@@ -11,12 +15,76 @@ use crate::dsp::constants::{DEFAULT_BIQUAD_Q, TUBE_BOUNDARY};
 const MOUTH_REFLECTION: f32 = -0.36;
 const MIN_END_REFLECTION_MAGNITUDE: f32 = 0.08;
 
+/// Measured-energy (RMS) at which bore steepening reaches its target depth; the
+/// squared, normalized term `(energy/REF)^2` keeps soft/medium bores mellow and
+/// concentrates the brassy brightening on loud playing.
+const STEEPEN_ENERGY_REF: f32 = 0.15;
+/// Clamp on the normalized squared energy term (the steepening depth at peak
+/// energy). 1.0 is the strong cuivré bloom chosen for M5.
+const STEEPEN_MAX_ENERGY: f32 = 1.0;
+/// Maximum dispersion-allpass coefficient at full steepening. The coefficient is
+/// driven by the instantaneous wave amplitude (so it varies within a cycle —
+/// the nonlinearity that generates upper harmonics) scaled by measured energy.
+const STEEPEN_MAX_COEFF: f32 = 0.9;
+/// Maps the instantaneous wave amplitude to the [0,1] amplitude factor: the
+/// high-pressure crests get the most dispersion, sharpening the wavefronts.
+const STEEPEN_AMPLITUDE_SENS: f32 = 10.0;
+/// Bell radiation: the high-frequency content the bore transmits (radiates) out
+/// the bell rather than reflecting back. The steepening harmonics live here, so
+/// radiating them (energy-gated) is what the listener hears as brass.
+const RADIATION_CUTOFF_HZ: f32 = 500.0;
+const RADIATION_GAIN: f32 = 2.5;
+
+/// Squared, normalized energy term in `[0, STEEPEN_MAX_ENERGY]` setting how much
+/// the bore steepens at the current playing energy.
+fn steepening_energy(energy: f32) -> f32 {
+    let normalized = math::finite_or(energy, 0.0).max(0.0) / STEEPEN_ENERGY_REF;
+    math::finite_clamp(normalized * normalized, 0.0, STEEPEN_MAX_ENERGY, 0.0)
+}
+
+/// Per-sample-invariant bore operators derived from the style-normalized
+/// `WaveguideParams`. Cached behind a params dirty-check so the heavy derivations
+/// (loop damping incl. the filter-peak scan, bore profile, geometry, phase-delay
+/// compensated delay tuning) run at control rate, not per sample. Candidate
+/// extraction (ADR-0003): single consumer today.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PreparedTubeModel {
+    profile: TubeBoreProfile,
+    geometry: core::WaveguideGeometry,
+    one_way_delay: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Tube1d {
     sample_rate: f32,
     waves: TravelingWavePair,
     boundary_filters: BoundaryFilters,
     body: WaveguideBody,
+    prepared: Option<(WaveguideParams, PreparedTubeModel)>,
+    // Per-sample smoothing of the continuous physical inputs so a control-rate
+    // jump de-zippers; frequency and positions stay un-smoothed to keep tuning
+    // and excitation timing exact.
+    loop_gain: core::ScalarSmoother,
+    loop_filter_cutoff: core::ScalarSmoother,
+    loop_filter_resonance: core::ScalarSmoother,
+    boundary_reflection: core::ScalarSmoother,
+    // Measured resonator energy (M2 bus) driving finite-amplitude bore steepening;
+    // set per host sample, constant across the 2x oversampled sub-samples. 0.0 => inert.
+    steepening_drive: f32,
+    // Amplitude-dependent dispersion stage applied once per round trip at the
+    // mouth: unity magnitude (loop-stable, sustain preserved), nonlinear
+    // amplitude-driven coefficient generates the brassy upper harmonics.
+    steepening_allpass: FirstOrderAllpass,
+    // Bell radiation: highpass on the bell-incident wave, radiating the
+    // steepening harmonics to the output (energy-gated) instead of the model
+    // discarding them as loop loss.
+    radiation_highpass: Biquad,
+    // The bore's returning wave at the mouth (driven end), cached each sample so a
+    // physical driver (M8 reed) can read the actual input-end traveling wave it
+    // couples to — the energy-bearing feedback a self-oscillating reed needs.
+    mouth_incident: f32,
+    #[cfg(test)]
+    recompute_count: u32,
 }
 
 impl Tube1d {
@@ -27,20 +95,120 @@ impl Tube1d {
             waves: TravelingWavePair::new(sample_rate, lowest_frequency_hz, 4.0),
             boundary_filters: BoundaryFilters::new(),
             body: WaveguideBody::new(sample_rate),
+            prepared: None,
+            loop_gain: core::ScalarSmoother::new(sample_rate),
+            loop_filter_cutoff: core::ScalarSmoother::new(sample_rate),
+            loop_filter_resonance: core::ScalarSmoother::new(sample_rate),
+            boundary_reflection: core::ScalarSmoother::new(sample_rate),
+            steepening_drive: 0.0,
+            steepening_allpass: FirstOrderAllpass::default(),
+            radiation_highpass: Biquad::new(BiquadCoefficients::highpass(
+                sample_rate,
+                RADIATION_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
+            mouth_incident: 0.0,
+            #[cfg(test)]
+            recompute_count: 0,
         }
+    }
+
+    /// The bore's returning wave at the mouth (the M8 driver feedback seam): the
+    /// energy-bearing input-end wave a reed couples to. Cached from the previous
+    /// `process_sample`; 0.0 before the first sample.
+    pub(super) fn driven_feedback(&self) -> f32 {
+        self.mouth_incident
+    }
+
+    /// Set the measured-energy drive for finite-amplitude bore steepening (M2
+    /// energy bus). Called once per host sample by the resonator engine; defaults
+    /// to 0.0 so callers that never set it render the linear bore unchanged.
+    pub(super) fn set_steepening_drive(&mut self, drive: f32) {
+        self.steepening_drive = math::finite_or(drive, 0.0).max(0.0);
     }
 
     pub(super) fn reset(&mut self) {
         self.waves.clear();
         self.boundary_filters.reset();
         self.body.reset();
+        self.prepared = None;
+        self.loop_gain.reset();
+        self.loop_filter_cutoff.reset();
+        self.loop_filter_resonance.reset();
+        self.boundary_reflection.reset();
+        self.steepening_drive = 0.0;
+        self.steepening_allpass.reset();
+        self.radiation_highpass.reset();
+        self.mouth_incident = 0.0;
     }
 
     pub(super) fn process_sample(&mut self, excitation: f32, params: WaveguideParams) -> f32 {
-        let params = WaveguideParams {
+        let params = self.smoothed_params(WaveguideParams {
             style: WaveguideStyle::Tube,
             ..params
-        };
+        });
+        let prepared = self.prepared_model(params);
+        let profile = prepared.profile;
+        let one_way_delay = prepared.one_way_delay;
+
+        let boundary = self.waves.boundary_samples(one_way_delay);
+        // Expose the bore's returning wave at the mouth for the M8 driver feedback.
+        self.mouth_incident = boundary.left;
+        let pickup = self
+            .waves
+            .pickup_samples(one_way_delay, prepared.geometry.pickup_position);
+        let mouth_reflection =
+            self.reflected_sample(BoundarySide::Left, boundary.left, profile, params);
+        let end_reflection =
+            self.reflected_sample(BoundarySide::Right, boundary.right, profile, params);
+
+        self.waves.push(end_reflection, mouth_reflection);
+        self.waves.add_symmetric_excitation(
+            one_way_delay,
+            prepared.geometry.excitation_taps,
+            math::snap_to_zero(excitation) * profile.excitation_coupling,
+        );
+
+        let body = self
+            .body
+            .process_sample(profile.pickup_sample(pickup), params);
+
+        // Bell radiation: the bore transmits (radiates) its high-frequency content
+        // out the bell rather than reflecting it back. The in-loop steepening's
+        // harmonics ride the bell-incident wave, so radiate them to the output —
+        // energy-gated so a soft bore is unchanged and a loud bore turns brassy.
+        let radiated = self.radiation_highpass.process(boundary.right)
+            * RADIATION_GAIN
+            * steepening_energy(self.steepening_drive);
+
+        math::snap_to_zero(body + radiated)
+    }
+
+    /// Smooth the continuous physical inputs toward their targets, leaving
+    /// frequency and the strike/pickup positions untouched so tuning and
+    /// excitation timing track the requested values exactly.
+    fn smoothed_params(&mut self, params: WaveguideParams) -> WaveguideParams {
+        WaveguideParams {
+            loop_gain: self.loop_gain.next(params.loop_gain),
+            loop_filter_cutoff: self.loop_filter_cutoff.next(params.loop_filter_cutoff),
+            loop_filter_resonance: self
+                .loop_filter_resonance
+                .next(params.loop_filter_resonance),
+            boundary_reflection: self.boundary_reflection.next(params.boundary_reflection),
+            ..params
+        }
+    }
+
+    /// Return the cached bore operators, re-deriving them (and re-arming the
+    /// boundary filter coefficients) only when the incoming params have moved.
+    /// `params` must already be style-normalized to `Tube`.
+    fn prepared_model(&mut self, params: WaveguideParams) -> PreparedTubeModel {
+        if let Some((cached_params, prepared)) = self.prepared
+            && cached_params == params
+        {
+            return prepared;
+        }
+
         let damping = core::loop_damping(self.sample_rate, params);
         let profile = TubeBoreProfile::from_params(self.sample_rate, params, damping.loop_gain);
         let geometry = core::waveguide_geometry(params.position_of_strike, params.pickup_position);
@@ -71,24 +239,17 @@ impl Tube1d {
         self.boundary_filters
             .set_coefficients(profile.mouth_loss, damping.coefficients);
 
-        let boundary = self.waves.boundary_samples(one_way_delay);
-        let pickup = self
-            .waves
-            .pickup_samples(one_way_delay, geometry.pickup_position);
-        let mouth_reflection =
-            self.reflected_sample(BoundarySide::Left, boundary.left, profile, params);
-        let end_reflection =
-            self.reflected_sample(BoundarySide::Right, boundary.right, profile, params);
-
-        self.waves.push(end_reflection, mouth_reflection);
-        self.waves.add_symmetric_excitation(
+        let prepared = PreparedTubeModel {
+            profile,
+            geometry,
             one_way_delay,
-            geometry.excitation_taps,
-            math::snap_to_zero(excitation) * profile.excitation_coupling,
-        );
-
-        self.body
-            .process_sample(profile.pickup_sample(pickup), params)
+        };
+        self.prepared = Some((params, prepared));
+        #[cfg(test)]
+        {
+            self.recompute_count += 1;
+        }
+        prepared
     }
 
     fn reflected_sample(
@@ -100,12 +261,18 @@ impl Tube1d {
     ) -> f32 {
         let filtered = self.boundary_filters.process(side, input);
         let nonlinear = if side == BoundarySide::Left {
-            let drive = math::finite_clamp(params.loop_nonlinearity, 0.0, 1.0, 0.0);
-            if drive > 0.0 {
-                soft_saturate(filtered, drive)
+            // Static brassiness character (unchanged from pre-M5).
+            let static_drive = math::finite_clamp(params.loop_nonlinearity, 0.0, 1.0, 0.0);
+            let saturated = if static_drive > 0.0 {
+                soft_saturate(filtered, static_drive)
             } else {
                 filtered
-            }
+            };
+            // Energy-dependent finite-amplitude steepening: an amplitude-driven
+            // dispersion allpass once per round trip (M5). Unity magnitude keeps
+            // the loop stable; the amplitude-varying coefficient steepens the
+            // high-pressure fronts into upper harmonics, so a loud bore turns brassy.
+            self.apply_steepening(saturated)
         } else {
             filtered
         };
@@ -115,6 +282,22 @@ impl Tube1d {
         };
 
         math::snap_to_zero(nonlinear * reflection)
+    }
+
+    /// Energy-driven amplitude-dependent dispersion (finite-amplitude steepening).
+    /// The allpass coefficient is the instantaneous wave amplitude (so it varies
+    /// within each cycle — the nonlinearity) scaled by the measured-energy term,
+    /// so loud crests disperse most and sharpen into upper harmonics, while the
+    /// unity magnitude leaves the loop gain (and so the sustain) untouched.
+    fn apply_steepening(&mut self, sample: f32) -> f32 {
+        let energy = steepening_energy(self.steepening_drive);
+        if energy <= f32::EPSILON {
+            return sample;
+        }
+        let amplitude = (sample.abs() * STEEPEN_AMPLITUDE_SENS).tanh();
+        let coefficient = math::finite_clamp(STEEPEN_MAX_COEFF * energy * amplitude, 0.0, 1.0, 0.0);
+        self.steepening_allpass.set_coefficient(coefficient);
+        self.steepening_allpass.process(sample)
     }
 }
 
@@ -167,233 +350,4 @@ fn bore_end_reflection(boundary_reflection: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use lindelion_dsp_utils::analysis::{assert_all_finite, audio_window_metrics, rms_difference};
-
-    #[test]
-    fn tube_1d_renders_finite_decaying_audio() {
-        let sample_rate = 48_000.0;
-        let output = render_tube_1d(
-            sample_rate,
-            WaveguideParams {
-                style: WaveguideStyle::Tube,
-                frequency_hz: 220.0,
-                loop_filter_cutoff: 6_000.0,
-                loop_filter_resonance: 0.1,
-                loop_gain: 0.94,
-                loop_nonlinearity: 0.2,
-                position_of_strike: 0.18,
-                pickup_position: 0.72,
-                boundary_reflection: 0.8,
-                ..WaveguideParams::default()
-            },
-            24_000,
-        );
-        let early = audio_window_metrics(&output[512..2_560], sample_rate);
-        let late = audio_window_metrics(&output[12_000..14_048], sample_rate);
-
-        assert_all_finite(&output);
-        assert!(early.rms > late.rms, "early={early:?}, late={late:?}");
-        assert!(early.peak_abs < 4.0);
-    }
-
-    #[test]
-    fn tube_1d_tuning_matches_requested_pitch_across_matrix() {
-        use lindelion_dsp_utils::analysis::estimate_f0_autocorrelation_refined;
-        use lindelion_dsp_utils::math::cents_between;
-
-        let sample_rates = [44_100.0, 48_000.0, 88_200.0, 96_000.0];
-        // The quarter-wave bore tunes to < 3 cents while its round trip stays
-        // long enough that sample quantization is sub-cent. At 4 kHz / 44.1 kHz
-        // that round trip is only ~5.5 samples, so a ~0.2-sample interpolation
-        // floor becomes tens of cents; accuracy degrades monotonically above
-        // this range (an inherent limit of the short quarter-wave loop). These
-        // frequencies stay within the accurate range at every supported rate.
-        let frequencies = [30.0, 55.0, 110.0, 220.0];
-
-        for sample_rate in sample_rates {
-            for frequency in frequencies {
-                let params = WaveguideParams {
-                    style: WaveguideStyle::Tube,
-                    frequency_hz: frequency,
-                    loop_filter_cutoff: 18_000.0,
-                    loop_filter_resonance: 0.0,
-                    loop_gain: 0.992,
-                    loop_nonlinearity: 0.0,
-                    boundary_reflection: 0.85,
-                    ..WaveguideParams::default()
-                };
-                let output = render_tube_1d(sample_rate, params, 48_000);
-                assert_all_finite(&output);
-                // The bore's strike response is harmonically rich and body-coloured,
-                // so a magnitude-peak scan is pulled by the spectral envelope. Measure
-                // periodicity instead, over a sub-octave bracket.
-                let estimate = estimate_f0_autocorrelation_refined(
-                    &output,
-                    sample_rate,
-                    frequency * 0.75,
-                    frequency * 1.5,
-                )
-                .unwrap_or_else(|| {
-                    panic!("no pitch estimate at {frequency} Hz / {sample_rate} Hz")
-                });
-                let cents = cents_between(frequency, estimate);
-                assert!(
-                    cents < 3.0,
-                    "frequency={frequency} sample_rate={sample_rate} estimate={estimate} cents={cents}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn tube_1d_stays_finite_and_decays_across_full_range() {
-        // Tuning accuracy degrades above the range checked above, but the bore
-        // must still render finite, bounded, decaying output across the whole
-        // 30 Hz–4 kHz span at every supported sample rate.
-        let sample_rates = [44_100.0, 48_000.0, 88_200.0, 96_000.0];
-        let frequencies = [30.0, 220.0, 880.0, 1_500.0, 4_000.0];
-
-        for sample_rate in sample_rates {
-            for frequency in frequencies {
-                let output = render_tube_1d(
-                    sample_rate,
-                    WaveguideParams {
-                        style: WaveguideStyle::Tube,
-                        frequency_hz: frequency,
-                        loop_filter_cutoff: 18_000.0,
-                        loop_filter_resonance: 0.0,
-                        loop_gain: 0.992,
-                        loop_nonlinearity: 0.0,
-                        boundary_reflection: 0.85,
-                        ..WaveguideParams::default()
-                    },
-                    24_000,
-                );
-                assert_all_finite(&output);
-                let early = audio_window_metrics(&output[512..4_608], sample_rate);
-                let late = audio_window_metrics(&output[18_000..22_096], sample_rate);
-                assert!(
-                    early.peak_abs < 4.0,
-                    "f={frequency} sr={sample_rate} {early:?}"
-                );
-                assert!(
-                    early.rms > late.rms,
-                    "should decay; f={frequency} sr={sample_rate} early={early:?} late={late:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn tube_1d_tuning_accounts_for_bore_delay() {
-        let sample_rate = 48_000.0;
-        let target = 220.0;
-        let params = WaveguideParams {
-            style: WaveguideStyle::Tube,
-            frequency_hz: target,
-            loop_filter_cutoff: 18_000.0,
-            loop_filter_resonance: 0.0,
-            loop_gain: 0.985,
-            boundary_reflection: 0.85,
-            ..WaveguideParams::default()
-        };
-        let damping = core::loop_damping(sample_rate, params);
-        let profile = TubeBoreProfile::from_params(sample_rate, params, damping.loop_gain);
-        let mouth_phase = core::filter_phase_delay_samples(profile.mouth_loss, sample_rate, target);
-        let damping_phase =
-            core::filter_phase_delay_samples(damping.coefficients, sample_rate, target);
-        let tube = Tube1d::new(sample_rate, 20.0);
-        let tuning = core::delay_tuning(
-            sample_rate,
-            tube.waves.capacity(),
-            target,
-            4.0,
-            1.0 + 0.5 * (mouth_phase + damping_phase),
-        );
-        // Round trip = two one-way legs (each plus a one-sample push) plus each
-        // boundary filter's phase delay once.
-        let compensated_period = 2.0 * (tuning.integer_delay + tuning.fractional_delay + 1.0)
-            + mouth_phase
-            + damping_phase;
-
-        // The asymmetric bore (inverting mouth, non-inverting end) is a
-        // quarter-wave resonator: a full round trip is half a period of the
-        // played pitch, not a whole period as for the half-wave string.
-        assert!((compensated_period - sample_rate / (2.0 * target)).abs() < 0.001);
-    }
-
-    #[test]
-    fn tube_boundary_polarity_materially_changes_bore_response() {
-        let sample_rate = 48_000.0;
-        let base = WaveguideParams {
-            style: WaveguideStyle::Tube,
-            frequency_hz: 220.0,
-            loop_filter_cutoff: 8_000.0,
-            loop_filter_resonance: 0.15,
-            loop_gain: 0.97,
-            loop_nonlinearity: 0.0,
-            position_of_strike: 0.2,
-            pickup_position: 0.75,
-            ..WaveguideParams::default()
-        };
-        let closed = render_tube_1d(
-            sample_rate,
-            WaveguideParams {
-                boundary_reflection: 0.85,
-                ..base
-            },
-            12_000,
-        );
-        let open = render_tube_1d(
-            sample_rate,
-            WaveguideParams {
-                boundary_reflection: -0.85,
-                ..base
-            },
-            12_000,
-        );
-
-        assert_all_finite(&closed);
-        assert_all_finite(&open);
-        // The corrected quarter-wave loop is half its former length, so it
-        // circulates less energy and renders at a lower absolute level; the two
-        // polarities still resonate an octave apart, so their difference exceeds
-        // either render's own RMS. Assert a difference well above the noise floor.
-        assert!(rms_difference(&closed[512..], &open[512..]) > 0.000_001);
-    }
-
-    #[test]
-    fn tube_1d_reset_clears_state() {
-        let sample_rate = 48_000.0;
-        let mut tube = Tube1d::new(sample_rate, 20.0);
-        let params = WaveguideParams {
-            style: WaveguideStyle::Tube,
-            frequency_hz: 220.0,
-            loop_gain: 0.98,
-            boundary_reflection: 0.85,
-            ..WaveguideParams::default()
-        };
-        for index in 0..4_096 {
-            tube.process_sample((index == 0) as u8 as f32, params);
-        }
-        tube.reset();
-
-        let output = (0..512)
-            .map(|_| tube.process_sample(0.0, params))
-            .collect::<Vec<_>>();
-
-        assert_all_finite(&output);
-        assert!(audio_window_metrics(&output, sample_rate).peak_abs < 0.000_001);
-    }
-
-    fn render_tube_1d(sample_rate: f32, params: WaveguideParams, sample_count: usize) -> Vec<f32> {
-        let mut tube = Tube1d::new(sample_rate, 20.0);
-        let mut output = Vec::with_capacity(sample_count);
-        for index in 0..sample_count {
-            output.push(tube.process_sample((index == 0) as u8 as f32, params));
-        }
-        output
-    }
-}
+mod tests;

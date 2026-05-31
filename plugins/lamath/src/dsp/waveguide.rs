@@ -86,6 +86,24 @@ impl WaveguideResonator {
             WaveguideStyle::String => self.string.process(excitation, params),
         }
     }
+
+    /// The active style's returning wave at the driven termination (mouth for the
+    /// Tube, bridge for the String): the input-end feedback an M8 physical driver
+    /// couples to. Read before `process_sample`; reflects the previous sample.
+    pub fn driven_feedback(&self, params: WaveguideParams) -> f32 {
+        match params.style {
+            WaveguideStyle::Tube => self.tube.driven_feedback(),
+            WaveguideStyle::String => self.string.driven_feedback(),
+        }
+    }
+
+    /// Forward the measured-energy bus to the energy-dependent resonator
+    /// nonlinearities: String tension modulation (M4) and Tube bore steepening
+    /// (M5). Only the active style is processed, so setting both is harmless.
+    pub fn set_energy_drive(&mut self, drive: f32) {
+        self.string.set_tension_drive(drive);
+        self.tube.set_steepening_drive(drive);
+    }
 }
 
 #[cfg(test)]
@@ -418,9 +436,19 @@ mod tests {
         let high_position_onset = first_index_above_abs(&high_position, 0.000_1).unwrap();
         let low_position_onset = first_index_above_abs(&low_position, 0.000_1).unwrap();
 
+        // The String output is now the body radiation at the bridge summed with the
+        // pickup tap, so both strike positions produce output within a few samples —
+        // the coarse ~20-sample onset gap a single pickup-only tap once showed is
+        // gone. Strike position still moves where the excitation enters: the strike
+        // nearer the bridge (0.1) onsets no later than the far one (0.9), and, more
+        // robustly, the two renders differ materially (the strike comb moves).
         assert!(
-            low_position_onset + 20 < high_position_onset,
+            low_position_onset <= high_position_onset,
             "low_position_onset={low_position_onset}, high_position_onset={high_position_onset}"
+        );
+        assert!(
+            rms_difference(&low_position[256..], &high_position[256..]) > 0.000_01,
+            "strike position should materially change the render"
         );
     }
 

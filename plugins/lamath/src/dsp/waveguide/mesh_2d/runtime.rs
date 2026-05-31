@@ -68,6 +68,12 @@ impl MeshResonator {
     pub fn process_sample(&mut self, excitation: f32) -> f32 {
         self.mesh.process_sample(excitation)
     }
+
+    /// Forward the measured-energy bus (M2) to the mesh's geometric (von Kármán)
+    /// coupling (M6). Set once per host sample by the resonator engine.
+    pub fn set_geometric_drive(&mut self, drive: f32) {
+        self.mesh.set_geometric_drive(drive);
+    }
 }
 
 /// Map the six physical controls onto a mesh configuration, steering the lowest
