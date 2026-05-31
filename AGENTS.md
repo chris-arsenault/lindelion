@@ -47,6 +47,7 @@ Agent guide for sessions in the Lindelion repository.
 | Glirdir | Sindarin `glir-` + `-dir`, singer/song-bearer | VST3 sing-to-MIDI scratchpad |
 | Galad | Sindarin, "radiance/light" (working name) | Planned Windows realtime VST3 host application (mic → arbitrary VST3 chain → output); see [ADR-0022](docs/adr/0022-windows-vst3-host.md), plan at `GALAD-HOST-PLAN.md` |
 | Cenedril | Quenya/Sindarin "mirror, looking-glass" (working name) | Planned Windows-only passthrough Visualizer VST3 (spectrogram, level/LUFS meters, analysis readouts); see [ADR-0023](docs/adr/0023-new-vsts-windows-only.md), plan at `CENEDRIL-VST-PLAN.md` |
+| Lúmedir | Quenya `lúme` "time/rhythm" + `-dir` "keeper" (working name) | Planned Windows-only passthrough Speech-Coach VST3 (speaking rate/cadence, pitch dynamism, pause structure, clarity vs target bands); Windows-only per [ADR-0023](docs/adr/0023-new-vsts-windows-only.md), plan at `LUMEDIR-VST-PLAN.md` |
 
 ## Code Map
 
@@ -73,6 +74,7 @@ Agent guide for sessions in the Lindelion repository.
 | `plugins/glirdir` | Glirdir capture, analysis, audition, VST3 adapter, editor, drag/export, sample-library save, bundle metadata. |
 | `host/` | (Reserved, not yet a workspace member) Galad — standalone Windows realtime VST3 host application: WASAPI audio I/O, host-side VST3 protocol, device management, egui UI. Target-gated; excluded from `make ci`. See [ADR-0022](docs/adr/0022-windows-vst3-host.md). |
 | `plugins/visualizer` | (Reserved, not yet a workspace member) Cenedril — Windows-only passthrough Visualizer VST3 (spectrogram, meters, analysis readouts), egui editor. See [ADR-0023](docs/adr/0023-new-vsts-windows-only.md). |
+| `plugins/coach` | (Reserved, not yet a workspace member) Lúmedir — Windows-only passthrough Speech-Coach VST3 (delivery metrics: rate/cadence, pitch dynamism, pauses, clarity), egui editor. See [ADR-0023](docs/adr/0023-new-vsts-windows-only.md). |
 | `xtask` | Workspace checks and macOS VST3 bundle automation. |
 
 ## Commands

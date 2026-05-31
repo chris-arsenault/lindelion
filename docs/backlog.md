@@ -35,9 +35,10 @@ Detailed milestones and the reuse/benchmark strategy live in
   [ADR-0020](adr/0020-caloma-speech-vst-packaging.md); plan at `CALOMA-VST-PLAN.md`.
 - Build Galad, a Windows realtime VST3 host that runs Calóma (and any other VST3) on live mic
   input ([ADR-0022](adr/0022-windows-vst3-host.md); plan at `GALAD-HOST-PLAN.md`).
-- Build a Visualizer VST (spectrogram, meters, analysis-signal display; `VISUALIZER-VST-PLAN.md`).
-- Build a Speech Coach VST (cadence / words-per-minute, pitch dynamism, clarity feedback;
-  `SPEECH-COACH-VST-PLAN.md`).
+- Build Cenedril, a Windows-only Visualizer VST3 (spectrogram, meters, analysis-signal display;
+  [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `CENEDRIL-VST-PLAN.md`).
+- Build Lúmedir, a Windows-only Speech-Coach VST3 (cadence/rate, pitch dynamism, pauses, clarity vs
+  target bands; [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `LUMEDIR-VST-PLAN.md`).
 
 ## Host integration
 
