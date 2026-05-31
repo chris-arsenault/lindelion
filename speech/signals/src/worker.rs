@@ -6,6 +6,10 @@
 //! audio-thread operations are allocation-free and non-blocking (ADR-0001); all heavy work and
 //! allocation happen on the worker thread.
 
+// In the `sync-analysis` (test-only) build the off-thread machinery (worker loop, ring, idle
+// sleep) is unused; suppress the resulting dead-code/unused-import warnings in that build only.
+#![cfg_attr(feature = "sync-analysis", allow(dead_code, unused_imports))]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
@@ -132,27 +136,52 @@ fn worker_loop(shared: Arc<Shared>, source_sample_rate: u32) {
 
 /// Runs the heavy signal analysis on a background thread; the audio thread pushes input and reads
 /// the latest snapshot, both allocation-free.
+///
+/// With the `sync-analysis` feature (test-only), the analysis runs synchronously on `push` instead
+/// of on a background thread, so `latest()` immediately reflects the pushed audio — see the
+/// feature note in `Cargo.toml`.
 pub struct AnalysisWorker {
     shared: Arc<Shared>,
     handle: Option<JoinHandle<()>>,
+    #[cfg(feature = "sync-analysis")]
+    analyzer: std::sync::Mutex<SignalAnalyzer>,
 }
 
 impl AnalysisWorker {
     /// Spawn the worker for audio at `source_sample_rate`.
     pub fn new(source_sample_rate: u32) -> Self {
         let shared = Arc::new(Shared::new());
-        let worker_shared = Arc::clone(&shared);
-        let handle = thread::spawn(move || worker_loop(worker_shared, source_sample_rate));
-        Self {
-            shared,
-            handle: Some(handle),
+        #[cfg(not(feature = "sync-analysis"))]
+        {
+            let worker_shared = Arc::clone(&shared);
+            let handle = thread::spawn(move || worker_loop(worker_shared, source_sample_rate));
+            Self {
+                shared,
+                handle: Some(handle),
+            }
+        }
+        #[cfg(feature = "sync-analysis")]
+        {
+            Self {
+                shared,
+                handle: None,
+                analyzer: std::sync::Mutex::new(SignalAnalyzer::new(source_sample_rate)),
+            }
         }
     }
 
-    /// Hand a block of input audio to the worker. Allocation-free; non-blocking.
+    /// Hand a block of input audio to the worker. Allocation-free and non-blocking in the default
+    /// (off-thread) build. With `sync-analysis`, runs the analysis inline and publishes the
+    /// snapshot before returning.
     pub fn push(&self, block: &[f32]) {
+        #[cfg(not(feature = "sync-analysis"))]
         for &sample in block {
             self.shared.ring.push(sample);
+        }
+        #[cfg(feature = "sync-analysis")]
+        {
+            let snapshot = self.analyzer.lock().expect("analyzer mutex").process(block);
+            self.shared.publish(&snapshot);
         }
     }
 

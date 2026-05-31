@@ -10,6 +10,7 @@ use std::fmt;
 
 use lindelion_dsp_utils::analysis::{max_adjacent_delta, peak_abs, windowed_dft_magnitude_at};
 use lindelion_effect::Effect;
+use realfft::RealFftPlanner;
 
 const SAMPLE_BLOCK: usize = 4096;
 const PROBE_HZ: f32 = 220.0;
@@ -210,6 +211,99 @@ fn probe_sine(sample_rate: f32) -> Vec<f32> {
     (0..SAMPLE_BLOCK)
         .map(|n| 0.5 * (w * n as f32).sin())
         .collect()
+}
+
+// --- speech-enhancement measurement helpers --------------------------------
+// Objective measurements shared by the speech effects' "does what it claims, without artifacts"
+// tests. FFT-based, so they work on any real-speech fixture.
+
+const SPECTRUM_N: usize = 8_192;
+
+/// Root-mean-square level.
+pub fn rms(signal: &[f32]) -> f32 {
+    if signal.is_empty() {
+        return 0.0;
+    }
+    (signal.iter().map(|s| (s * s) as f64).sum::<f64>() / signal.len() as f64).sqrt() as f32
+}
+
+/// Peak absolute level.
+pub fn peak(signal: &[f32]) -> f32 {
+    peak_abs(signal)
+}
+
+/// Welch-averaged power spectrum (Hann window, 50% overlap) over the whole signal. Bin `k` is at
+/// `k * sample_rate / SPECTRUM_N` Hz.
+fn power_spectrum(signal: &[f32]) -> Vec<f64> {
+    let mut planner = RealFftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(SPECTRUM_N);
+    let mut input = fft.make_input_vec();
+    let mut spectrum = fft.make_output_vec();
+    let mut acc = vec![0.0_f64; spectrum.len()];
+    let hop = SPECTRUM_N / 2;
+    let mut segments = 0;
+    let mut start = 0;
+    while start + SPECTRUM_N <= signal.len() {
+        for (i, slot) in input.iter_mut().enumerate() {
+            let h = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / SPECTRUM_N as f32).cos();
+            *slot = signal[start + i] * h;
+        }
+        if fft.process(&mut input, &mut spectrum).is_ok() {
+            for (a, c) in acc.iter_mut().zip(spectrum.iter()) {
+                *a += c.norm_sqr() as f64;
+            }
+            segments += 1;
+        }
+        start += hop;
+    }
+    if segments > 0 {
+        for a in acc.iter_mut() {
+            *a /= segments as f64;
+        }
+    }
+    acc
+}
+
+/// Total power in the `[lo_hz, hi_hz]` band.
+pub fn band_energy(signal: &[f32], sample_rate: f32, lo_hz: f32, hi_hz: f32) -> f32 {
+    let spec = power_spectrum(signal);
+    let bin =
+        |hz: f32| ((hz * SPECTRUM_N as f32 / sample_rate).round() as usize).min(spec.len() - 1);
+    let (lo, hi) = (bin(lo_hz), bin(hi_hz));
+    spec[lo..=hi].iter().sum::<f64>() as f32
+}
+
+/// Spectral peak-to-valley contrast (dB) in the speech band: mean of the loudest quarter of bins
+/// minus the quietest quarter. Rises when peaks are sharpened and valleys deepened.
+pub fn spectral_contrast(signal: &[f32], sample_rate: f32) -> f32 {
+    let spec = power_spectrum(signal);
+    let bin =
+        |hz: f32| ((hz * SPECTRUM_N as f32 / sample_rate).round() as usize).min(spec.len() - 1);
+    let mut db: Vec<f32> = spec[bin(150.0)..=bin(8_000.0)]
+        .iter()
+        .map(|&p| 10.0 * (p.max(1e-20)).log10() as f32)
+        .collect();
+    db.sort_by(|a, b| a.total_cmp(b));
+    let q = (db.len() / 4).max(1);
+    let low: f32 = db[..q].iter().sum::<f32>() / q as f32;
+    let high: f32 = db[db.len() - q..].iter().sum::<f32>() / q as f32;
+    high - low
+}
+
+/// The baseline "no artifacts" bar for a speech effect: finite output, no clipping, and no gross
+/// level blow-up versus the dry signal. (Effect-specific transparency bounds layer on top.)
+pub fn assert_no_artifacts(dry: &[f32], wet: &[f32]) {
+    assert!(
+        wet.iter().all(|s| s.is_finite()),
+        "output has non-finite samples"
+    );
+    let pk = peak(wet);
+    assert!(pk <= 1.001, "output clips (peak {pk:.3})");
+    let (dr, wr) = (rms(dry), rms(wet));
+    assert!(
+        wr > dr * 0.2 && wr < dr * 5.0,
+        "gross level change (dry rms {dr:.4}, wet rms {wr:.4})"
+    );
 }
 
 #[cfg(test)]

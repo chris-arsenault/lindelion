@@ -42,6 +42,8 @@ test:
 # saturate the CPU; run them on their own, less frequently.
 test-models:
 	cargo test -p lindelion-speech-denoiser -p lindelion-speech-voice-gate --test integration -- --include-ignored
+	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration --features test-sync-analysis -- --include-ignored
+	cargo test -p lindelion-speech-air-exciter -p lindelion-speech-dereverberation -p lindelion-speech-room-tone -p lindelion-speech-spectral-contrast --test integration -- --include-ignored
 
 bench:
 	cargo bench --workspace --no-fail-fast

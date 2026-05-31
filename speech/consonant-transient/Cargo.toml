@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+test-sync-analysis = ["lindelion-speech-signals/sync-analysis"]
+
 [dependencies]
 lindelion-dsp-utils.workspace = true
 lindelion-effect.workspace = true
@@ -13,3 +16,4 @@ lindelion-speech-signals.workspace = true
 [dev-dependencies]
 lindelion-fidelity.workspace = true
 lindelion-test-allocator.workspace = true
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }

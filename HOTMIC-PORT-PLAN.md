@@ -564,6 +564,78 @@ speech-centric effects; record provenance in `testdata/audio/FIXTURES.md` before
 Can land incrementally alongside M1/M3/M5 as each effect needs material.
 - Exit: each new fixture committed with provenance + license in `FIXTURES.md`; `make ci` green.
 
+Expanded steps (run in order, red→green per step):
+
+1. **Choose the fixture source and scope.**  **`[DECISION]`**
+   - File(s): none (decision only).
+   - Reference: this is the phase-level `[DECISION]`. Two sub-questions:
+     (a) **Source** — you supply your own target-mic spoken-word recordings (as with
+     `vocal_spoken.wav`, which is real target-mic speech), or I source public-domain / CC0 clips
+     (LibriVox, US-gov). **Constraint:** this environment has no `ffmpeg`/`sox` (only `curl` +
+     `python3`, whose `wave` reads PCM WAV only), so a sourced clip must arrive as — or already be
+     — PCM WAV; LibriVox MP3/OGG cannot be decoded here without a tool. Supplying your own WAVs
+     sidesteps this and yields real target-mic material.
+     (b) **Scope** — how many clips and what each must exercise (continuous voiced speech; speech
+     with silence gaps for the voice gate; sibilant speech for the de-esser). Default if you do
+     not specify: one clean continuous spoken-word clip as a second independent speech source.
+   - Change: none.
+   - Verify: none — the executor stops here for your call (`[DECISION]`).
+2. **Place the fixture(s) in `testdata/audio/` in the repo's standard format.**  [depends on #1]
+   - File(s): `testdata/audio/<name>.wav` (PCM WAV, 16-bit; match existing fixtures' 44.1 kHz and
+     channel layout unless #1 specifies otherwise).
+   - Reference: existing fixtures are trimmed, encoder-metadata-stripped PCM WAV that
+     `lindelion-sample-library::decode_wav_mono` decodes (downmix → samples + rate); speech-centric
+     per the use-case-divergence section. No code.
+   - Change: add the WAV file(s) only.
+   - Verify: a test that decodes the new fixture via `decode_wav_mono` and asserts it is valid
+     (non-empty, expected channels/rate, plausible duration). Red: file/test absent (greenfield).
+     May live in the consuming effect's test crate (see #4).
+3. **Record provenance + license in `testdata/audio/FIXTURES.md`.**  [depends on #2]
+   - File(s): `testdata/audio/FIXTURES.md`.
+   - Reference: the file's licensing rule — only PD/CC0 committed; CC-BY needs attribution
+     recorded; one table row per fixture (file, what it exercises, source link, license, trim).
+     Add a spoken-word section/row mirroring the existing tables.
+   - Change: add a row/section per new fixture; no code.
+   - Verify: every new `testdata/audio/*.wav` appears in `FIXTURES.md` with source + license.
+     Red: rows absent.
+4. **Wire one speech effect to the new fixture (incremental).**  [depends on #2]  **`[DECISION]`** (which effect)
+   - File(s): the chosen effect's `tests/` (e.g. `speech/voice-gate/tests/integration.rs` opens on
+     the new clip; `speech/speech-denoiser` SNR; or a de-esser sibilance test).
+   - Reference: the effect's existing fixture-test pattern (decode → resample to 48 kHz → process).
+     Per "fixtures land incrementally as each effect needs material." Heavy/model tests go in the
+     `#[ignore]`d integration suite (`make test-models`), not `make ci` (ADR-0014 convention).
+   - Change: add a test consuming the new fixture, asserting the effect's class behavior on real
+     second-source speech.
+   - Verify: red→green — the new test fails to resolve / asserts before the fixture + wiring exist,
+     passes after.
+5. **Exit gate.**  [depends on #2, #3, #4]
+   - Verify: `make ci` green (model tests via `make test-models` if a fixture feeds an NN effect);
+     every new fixture committed with provenance in `FIXTURES.md`.
+
+**Result — DONE (sourced this pass; user to add own fixtures later).** Sourced 7 public-domain
+LibriVox spoken-word clips (decoded with ffmpeg, trimmed to 5.0 s, 48 kHz mono 16-bit, faded,
+peak-normalized; provenance + measured features in `testdata/audio/FIXTURES.md`):
+`speech_clean_continuous` (bass-rich), `speech_noisy` (= clean + pink noise @ 10 dB SNR, matched
+pair), `speech_pauses` (high dynamics), `speech_flat` (pitch-std 1.1), `speech_animated`
+(pitch-std 7.4), `speech_fast` (3.8 syl/s), `speech_slow` (2.8 syl/s) — covering clean/noisy,
+with/without pauses, fast/slow, flat/animated.
+
+**Enhancement-plugin test suite (DONE).** All **8 Enhance-* plugins** have a real-speech test
+(`speech/<effect>/tests/integration.rs`, `#[ignore]`d → `make test-models`) proving the claim plus
+`assert_no_artifacts` (finite, no clip, sane level). Measured at a realistic ~-12 dBFS operating
+level so subtle enhancement stays clean: air-exciter HF +110 %, bass-enhancer bass +198 %,
+consonant-transient HF +63 %, dereverberation reverb-tail −36 %, dynamic-eq low-warmth +67 %,
+room-tone silent-gap fill +262 %, spectral-contrast +1.5 dB, upward-expander quiet-detail +27 %.
+Shared FFT measurement helpers (`band_energy`, `spectral_contrast`, `rms`, `assert_no_artifacts`)
+live in `lindelion-fidelity`.
+
+**VoicingState-in-test solved.** Worker-driven effects (bass, consonant-transient, dynamic-eq,
+upward-expander) get deterministic voicing via a test-only **`sync-analysis`** feature on
+`lindelion-speech-signals`: it makes `AnalysisWorker::push` run the analyzer inline (no background
+thread) so `latest()` is immediately warm. Each such effect crate exposes a `test-sync-analysis`
+feature forwarding to it; `make test-models` runs those tests with `--features test-sync-analysis`.
+Production keeps the off-thread worker (feature off by default).
+
 ## Open risks
 - SwiftF0 allocation behavior under per-plugin streaming use (M2 resolves).
 - SwiftF0 fmax 2094 Hz: fine for voice f0, but anything needing higher-frequency pitch tracking

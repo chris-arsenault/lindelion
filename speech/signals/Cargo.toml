@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+# Test-only: make `AnalysisWorker` run its analysis synchronously on `push` (no background
+# thread), so `latest()` immediately reflects the pushed audio. This makes worker-driven effects
+# deterministic in offline tests, where the audio is processed far faster than a background thread
+# could keep up. Off by default; production uses the off-thread worker.
+sync-analysis = []
+
 [dependencies]
 lindelion-dsp-utils.workspace = true
 lindelion-onset-detect.workspace = true

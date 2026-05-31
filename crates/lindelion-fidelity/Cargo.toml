@@ -9,3 +9,4 @@ authors.workspace = true
 lindelion-dsp-utils.workspace = true
 lindelion-effect.workspace = true
 lindelion-test-allocator.workspace = true
+realfft.workspace = true

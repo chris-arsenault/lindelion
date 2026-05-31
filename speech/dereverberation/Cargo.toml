@@ -12,3 +12,4 @@ lindelion-effect.workspace = true
 [dev-dependencies]
 lindelion-fidelity.workspace = true
 lindelion-test-allocator.workspace = true
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }
