@@ -14,6 +14,10 @@ const WIND_REFERENCE_PEAKS_HZ: [f32; 8] = [
     466.0, 524.0, 554.0, 1_394.0, 1_577.0, 1_846.0, 2_078.0, 2_320.0,
 ];
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_wind_fixture_pitch_offsets_stay_clean_before_linnod_output() {
     let (source, known_bad_one_cent, sample_rate) =

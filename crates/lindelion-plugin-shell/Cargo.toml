@@ -10,3 +10,8 @@ lindelion-dsp-utils = { path = "../lindelion-dsp-utils" }
 serde.workspace = true
 toml.workspace = true
 vst3.workspace = true
+
+[features]
+# Integration tests (filesystem round-trips). Excluded from the default `make ci` unit run;
+# run via `make test-integration`.
+integration-tests = []

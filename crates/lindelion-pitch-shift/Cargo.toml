@@ -15,3 +15,8 @@ serde.workspace = true
 [dev-dependencies]
 lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }
 lindelion-test-allocator.workspace = true
+
+[features]
+# Heavy DSP/audio regression tests, excluded from the default `make ci` unit run
+# to keep it fast. Run them with `make test-integration`.
+integration-tests = []

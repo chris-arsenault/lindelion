@@ -184,6 +184,10 @@ fn processor_save_request_rejects_empty_scratchpad_visibly() {
     assert_eq!(payload.status, SampleLibrarySaveStatus::EmptyScratchpad);
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn processor_finalize_request_materializes_analysis_job_off_audio_path() {
     let processor = GlirdirVst3Processor::new();

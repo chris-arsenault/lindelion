@@ -313,6 +313,10 @@ mod tests {
     use super::*;
     use crate::patch::ScratchpadMetadata;
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn save_job_ingests_scratchpad_into_shared_library() {
         let root = temp_root("save");
@@ -351,6 +355,10 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn empty_scratchpad_returns_visible_failure() {
         let payload = SampleLibrarySaveJob::with_library_root(

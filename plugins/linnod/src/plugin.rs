@@ -271,6 +271,10 @@ mod tests {
         assert_eq!(restored.patch.output.master_gain_db, 12.0);
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn plugin_source_load_job_is_sequence_checked_and_updates_patch_on_publish() {
         let mut plugin = Linnod::with_library_root(PathBuf::from("Library"));

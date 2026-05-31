@@ -11,6 +11,10 @@ use crate::{
     PitchShiftRenderConfig, PitchShiftSliceRenderRequest, ResidualMixPolicy,
 };
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn synthesis_one_cent_sax_fixture_stays_close_and_low_artifact() {
     let (audio, sample_rate) = sax_fixture_audio();

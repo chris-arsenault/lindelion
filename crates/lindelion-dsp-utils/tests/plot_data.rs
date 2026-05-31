@@ -75,6 +75,7 @@ fn impulse_response<F: FnMut(f32) -> f32>(n_samples: usize, mut step: F) -> Vec<
     out
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_one_pole_lowpass_freqz() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -116,6 +117,7 @@ fn export_one_pole_lowpass_freqz() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_one_pole_lowpass_impulse() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -148,6 +150,7 @@ fn export_one_pole_lowpass_impulse() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_biquad_freqz() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -191,6 +194,7 @@ fn export_biquad_freqz() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_biquad_impulse() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -220,6 +224,7 @@ fn export_biquad_impulse() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_biquad_coefficients() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -243,6 +248,7 @@ fn export_biquad_coefficients() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_svf_freqz() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -282,6 +288,7 @@ fn export_svf_freqz() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_svf_impulse() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -308,6 +315,7 @@ fn export_svf_impulse() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_delay_line_impulse() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -342,6 +350,7 @@ fn export_delay_line_impulse() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_first_order_allpass_freqz() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -383,6 +392,7 @@ fn export_first_order_allpass_freqz() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_first_order_allpass_impulse() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -415,6 +425,7 @@ fn export_first_order_allpass_impulse() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_smoother_step() {
     let dir = ensure_output_dir().expect("create data dir");
@@ -451,6 +462,7 @@ fn export_smoother_step() {
     }
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_adsr_step() {
     let dir = ensure_output_dir().expect("create data dir");

@@ -77,6 +77,10 @@ fn measurement_harness_covers_excitation_styles() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn steady_state_tuning_within_three_cents_across_matrix() {
     let sample_rates = [44_100.0, 48_000.0, 88_200.0, 96_000.0];

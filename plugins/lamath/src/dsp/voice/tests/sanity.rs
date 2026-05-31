@@ -5,6 +5,10 @@ use crate::{
     FilterMode, ModalConfig, ModalPreset, ResonatorConfig, ResonatorRouting, WaveguideConfig,
 };
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resonator_routing_parameter_combinations_emit_sane_output() {
     let sample_rate = 48_000.0;

@@ -15,6 +15,10 @@ const BREATH_TONES_HZ: [f32; 8] = [
     13_500.0, 14_700.0, 16_100.0, 17_300.0, 18_500.0, 19_900.0, 21_100.0, 22_300.0,
 ];
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_pitch_up_sine_sweep_rejects_folded_alias_band() {
     let pitch_ratio = 2.0;

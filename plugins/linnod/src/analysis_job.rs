@@ -356,6 +356,10 @@ mod tests {
         assert_eq!(cache.status(), SourceAnalysisStatus::Analyzing);
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn source_job_ingests_decodes_and_analyzes_off_audio_thread_payload() {
         let root = temp_root("linnod-source-job");
@@ -375,6 +379,10 @@ mod tests {
         assert_eq!(analysis.markers[0].position_samples, 0);
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn source_job_loads_reference_through_hash_recovery() {
         let root = temp_root("linnod-source-recovery");
@@ -408,6 +416,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn source_load_reuses_saved_markers_and_redetect_forces_detector() {
         let root = temp_root("linnod-source-saved-markers");

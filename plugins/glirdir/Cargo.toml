@@ -32,3 +32,8 @@ rand_pcg.workspace = true
 [[bench]]
 name = "analysis"
 harness = false
+
+[features]
+# Heavy DSP/audio regression tests, excluded from the default `make ci` unit run
+# to keep it fast. Run them with `make test-integration`.
+integration-tests = []

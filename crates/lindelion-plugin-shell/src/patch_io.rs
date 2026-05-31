@@ -368,6 +368,10 @@ mod tests {
         assert_eq!(decoded, patch);
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn atomic_write_creates_parent_and_replaces_file() {
         let format = TomlPatchFormat::<SyntheticPatch>::new(1);

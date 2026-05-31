@@ -125,6 +125,10 @@ fn render_replace_outputs_finite_polyphonic_audio() {
     assert!(engine.slot_last_level(0).unwrap() > 0.0);
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn aggressive_series_dense_chord_stays_finite_and_bounded() {
     let sample_rate = 48_000.0;

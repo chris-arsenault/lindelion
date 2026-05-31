@@ -198,6 +198,10 @@ mod tests {
         assert!(early.peak_abs < 4.0);
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn tube_1d_tuning_matches_requested_pitch_across_matrix() {
         use lindelion_dsp_utils::analysis::estimate_f0_autocorrelation_refined;
@@ -247,6 +251,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn tube_1d_stays_finite_and_decays_across_full_range() {
         // Tuning accuracy degrades above the range checked above, but the bore

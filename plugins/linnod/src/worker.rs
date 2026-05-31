@@ -124,6 +124,10 @@ mod tests {
     use super::*;
     use crate::{LinnodPatch, SourceAnalysisError, SourceLoadError};
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn worker_runs_source_analysis_jobs_off_thread() {
         let calls = Arc::new(AtomicUsize::new(0));

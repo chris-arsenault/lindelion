@@ -425,6 +425,7 @@ mod tests {
     }
 
     /// Emits docs/plots/data/waveguide_impulse.csv for the WaveguideResonator doc.
+    #[ignore = "doc-data generator; run via make docs"]
     #[test]
     fn export_waveguide_impulse_csv() {
         use std::fs::{File, create_dir_all};

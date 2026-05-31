@@ -512,6 +512,7 @@ mod tests {
     }
 
     /// Emits docs/plots/data/modal_impulse.csv for the ModalBank doc.
+    #[ignore = "doc-data generator; run via make docs"]
     #[test]
     fn export_modal_bank_impulse_csv() {
         use std::fs::{File, create_dir_all};

@@ -60,6 +60,7 @@ fn loaded_excitation_buffers_render_without_audio_thread_allocations() {
     assert!(peak_abs(&left).max(peak_abs(&right)) > 0.000_001);
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn patch_sample_references_load_from_sample_library_and_render() {
     let root = temp_root("sample-ref-load");
@@ -120,6 +121,7 @@ fn patch_sample_reference_missing_reports_without_crashing() {
     assert_eq!(report.missing_samples, vec![reference]);
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn state_load_resolves_absolute_sample_references_and_preserves_render() {
     let root = temp_root("sample-state-load");

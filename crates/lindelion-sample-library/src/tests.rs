@@ -32,6 +32,10 @@ fn library_patch_file_path_sanitizes_patch_names() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn save_library_patch_to_path_uses_shared_patch_path_policy() {
     let root = temp_root("library-patch-save");
@@ -66,6 +70,10 @@ fn decoded_sample_metadata_uses_shared_preview_and_level_policy() {
     assert_eq!(metadata.waveform_preview.points.len(), 2);
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn referenced_sample_loader_resolves_slots_and_reports_missing_samples() {
     struct StaticLibrary {
@@ -109,6 +117,10 @@ fn referenced_sample_loader_resolves_slots_and_reports_missing_samples() {
     assert_eq!(report.missing_samples, vec![missing]);
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn file_library_ingests_hashes_indexes_and_previews_wav_samples() {
     let root = temp_root("ingest");
@@ -145,6 +157,10 @@ fn assert_resolves_existing_sample(library: &FileSampleLibrary, metadata: &Sampl
     ));
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn file_library_resolves_moved_samples_by_hash_and_reports_missing_samples() {
     let root = temp_root("resolve");

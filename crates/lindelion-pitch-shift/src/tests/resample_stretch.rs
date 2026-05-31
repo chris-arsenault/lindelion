@@ -8,6 +8,10 @@ use crate::{
     ResidualMixPolicy,
 };
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_stretch_compat_shifts_sine_cleanly() {
     let sample_rate = 48_000;
@@ -68,6 +72,10 @@ fn resample_stretch_compat_shifts_sine_cleanly() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_stretch_slice_render_is_guarded_resample_pro_region() {
     let sample_rate = 48_000;

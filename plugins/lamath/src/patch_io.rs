@@ -76,6 +76,10 @@ mod tests {
         assert_v2_surface_matches(&decoded);
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn library_patch_save_load_preserves_sample_references() {
         let root = std::env::temp_dir().join(format!(

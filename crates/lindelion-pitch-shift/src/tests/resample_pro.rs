@@ -245,6 +245,10 @@ fn resample_pro_one_cent_sine_has_no_broadband_crunch() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_one_cent_harmonic_stack_does_not_invent_high_band_energy() {
     let sample_rate = 48_000;
@@ -323,6 +327,10 @@ fn resample_pro_fifty_cent_shift_suppresses_original_pitch_leakage() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_formant_preserve_keeps_vowel_envelope() {
     let sample_rate = 48_000;
@@ -348,6 +356,10 @@ fn resample_pro_formant_preserve_keeps_vowel_envelope() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_formant_track_moves_vowel_envelope_with_pitch() {
     let sample_rate = 48_000;

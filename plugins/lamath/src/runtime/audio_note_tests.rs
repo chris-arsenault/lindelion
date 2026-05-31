@@ -275,6 +275,7 @@ fn sidechain_note_on_latency_is_bounded_with_small_host_blocks() {
     assert_all_finite(&rendered);
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn audio_expression_pitch_drift_updates_audio_owned_voice_without_retriggering_note() {
     let mut patch = test_patch();

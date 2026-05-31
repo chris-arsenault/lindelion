@@ -140,6 +140,10 @@ pub fn estimate_f0_autocorrelation_refined(
 mod tests {
     use super::*;
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn dft_peak_estimator_resolves_sub_cent_across_matrix() {
         let sample_rates = [44_100.0, 48_000.0, 88_200.0, 96_000.0];

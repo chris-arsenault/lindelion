@@ -185,6 +185,10 @@ mod tests {
     use super::*;
     use crate::{AnalysisError, ScratchpadAudio};
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn worker_runs_analysis_jobs_with_injected_runner() {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -206,6 +210,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn worker_exports_midi_bytes_off_thread() {
         let worker = GlirdirWorker::with_runner(CountingRunner {
@@ -228,6 +236,10 @@ mod tests {
         assert!(export.bytes.starts_with(b"MThd"));
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn worker_requantizes_without_analysis_runner() {
         let calls = Arc::new(AtomicUsize::new(0));

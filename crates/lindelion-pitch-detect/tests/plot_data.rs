@@ -20,6 +20,7 @@ fn output_dir() -> PathBuf {
         .join("data")
 }
 
+#[ignore = "doc-data generator; run via make docs"]
 #[test]
 fn export_pitch_tracking_demo() {
     let dir = output_dir();

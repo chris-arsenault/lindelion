@@ -24,7 +24,7 @@ Agent guide for sessions in the Lindelion repository.
 - Run `make ci` as the normal verification path before committing unless the user explicitly asks for a checkpoint commit.
 - Do not run lower-level formatter, lint, test, package-specific, or size-lint commands as routine verification. `make ci` already applies the repository's required Rustfmt, clippy, file/function size lint, and test settings. Use narrower commands only when the user explicitly asks for them or when debugging a specific failure after `make ci` reports one.
 - Keep the realtime DSP path allocation-free. New audio-thread behavior needs focused no-allocation tests (see [ADR-0001](docs/adr/0001-allocation-free-audio-thread.md)).
-- Keep heavy CPU tests (e.g. neural-network inference that runs the model many times) out of the `make ci` unit path: they saturate the CPU and destabilize timing-sensitive tests elsewhere. Put them in a separate `#[ignore]`d integration suite (a `tests/integration.rs`) and run them via `make test-models`. Cheap, model-free contract tests still belong in the unit path.
+- The `make ci` unit path must stay fast and deterministic: every test in the default `cargo test --workspace` run is in-memory, contention-free, and finishes in milliseconds. Unit tests must not write files, spawn threads, sleep, or read wall-clock time — those contend for shared resources and make timing non-deterministic. Gate anything that does behind the per-crate `integration-tests` feature with `#[cfg_attr(not(feature = "integration-tests"), ignore = "…")]` and run it via `make test-integration`. This same gate also holds the multi-second DSP fidelity/stability/tuning sweeps. Doc-data generators (plot/CSV/baseline writers) are `#[ignore]`d and run via `make docs`. Neural-network model-integration tests are `#[ignore]`d and run via `make test-models`. Keep a cheap, in-memory unit test for behavior wherever the heavier test is the only coverage.
 - Treat required DSP algorithms as product requirements, not optional implementation details. If pitch shifting, pitch detection, onset detection, resonators, or other difficult audio algorithms behave badly, work through the algorithm and add objective audio tests; do not replace the requested behavior with a simpler design, different semantics, or a bypass unless the user explicitly approves that change.
 - Put temporary implementation plans intended for immediate consumption at the repository root. Do not file them in `docs/`, backlog files, or index/link surfaces unless the user explicitly asks for durable documentation.
 - Follow `../ahara/CI-WORKFLOW.md` for shared CI shape, `../ahara/INTEGRATION.md` for platform metadata, and `../ahara/skills/repo-docs/SKILL.md` for repository documentation conventions.
@@ -73,7 +73,9 @@ Agent guide for sessions in the Lindelion repository.
 
 | Command | Purpose |
 | ---- | ---- |
-| `make ci` | Canonical and default local verification path; use this instead of composing separate lower-level checks. |
+| `make ci` | Canonical and default local verification path; use this instead of composing separate lower-level checks. Runs only the fast, in-memory unit suite. |
+| `make test-integration` | Run the heavier suite excluded from `make ci`: multi-second DSP fidelity/stability/tuning sweeps plus filesystem- and thread-touching tests (per-crate `integration-tests` feature). |
+| `make test-models` | Run the `#[ignore]`d neural-network model-integration tests. |
 | `make build` | Build and install all bundleable VST3 plugins on macOS. |
 | `make build PLUGIN=lamath` | Build and install only the Lamath VST3 bundle on macOS. |
 | `make build PLUGIN=glirdir` | Build and install only the Glirdir VST3 bundle on macOS. |

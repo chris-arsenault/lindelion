@@ -16,7 +16,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test test-models check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check bench-smoke
 
@@ -45,6 +45,18 @@ test-models:
 	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration --features test-sync-analysis -- --include-ignored
 	cargo test -p lindelion-speech-air-exciter -p lindelion-speech-dereverberation -p lindelion-speech-room-tone -p lindelion-speech-spectral-contrast --test integration -- --include-ignored
 
+# Integration tests: heavy DSP regression (fidelity/stability/tuning sweeps) plus filesystem- and
+# thread-touching tests. Gated behind the per-crate `integration-tests` feature, excluded from the
+# default `make ci` unit run; run them here on their own.
+test-integration:
+	cargo test -p lamath --features integration-tests
+	cargo test -p linnod --features integration-tests
+	cargo test -p glirdir --features integration-tests
+	cargo test -p lindelion-pitch-shift --features integration-tests
+	cargo test -p lindelion-dsp-utils --features integration-tests
+	cargo test -p lindelion-plugin-shell --features integration-tests
+	cargo test -p lindelion-sample-library --features integration-tests
+
 bench:
 	cargo bench --workspace --no-fail-fast
 
@@ -52,11 +64,11 @@ bench-smoke:
 	cargo bench --workspace --no-run
 
 docs:
-	cargo test -p lindelion-dsp-utils --test plot_data
-	cargo test -p lindelion-onset-detect --test plot_data
-	cargo test -p lindelion-pitch-detect --test plot_data
-	cargo test -p lamath export_modal_bank_impulse_csv
-	cargo test -p lamath export_waveguide_impulse_csv
+	cargo test -p lindelion-dsp-utils --test plot_data -- --include-ignored
+	cargo test -p lindelion-onset-detect --test plot_data -- --include-ignored
+	cargo test -p lindelion-pitch-detect --test plot_data -- --include-ignored
+	cargo test -p lamath export_modal_bank_impulse_csv -- --include-ignored
+	cargo test -p lamath export_waveguide_impulse_csv -- --include-ignored
 	@command -v python3 >/dev/null || { echo "python3 required for plot rendering. See tools/dsp-plot/README.md." >&2; exit 1; }
 	@python3 -c "import matplotlib, scipy" 2>/dev/null || { echo "matplotlib + scipy required. pip install -r tools/dsp-plot/requirements.txt" >&2; exit 1; }
 	@mkdir -p docs/plots

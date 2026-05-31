@@ -10,6 +10,10 @@ use crate::{
 };
 use lindelion_dsp_utils::analysis::assert_all_finite;
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn mesh_promotion_gate_promotes_runtime_exposed_rectangular_mesh() {
     let target = concrete_plate_promotion_target();

@@ -9,6 +9,9 @@ authors.workspace = true
 default = ["file-library"]
 file-library = ["wav-decoder", "dep:blake3", "dep:rusqlite"]
 wav-decoder = []
+# Integration tests (filesystem round-trips). Excluded from the default `make ci` unit run;
+# run via `make test-integration`.
+integration-tests = []
 
 [dependencies]
 blake3 = { version = "1.8.2", features = ["pure"], optional = true }

@@ -129,6 +129,10 @@ const FIXTURES: &[RealFixture] = &[
 /// baseline generator. Pitch is checked over the same steady window of source and output (so
 /// the shift *ratio* is verified), with the output search constrained near the target to avoid
 /// harmonic/octave mis-detection.
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn real_fixtures_pitch_shift_is_finite_bounded_and_pitched() {
     let ratio = PitchShiftRatios::from_semitones_cents(7.0, 0.0).pitch_ratio;
