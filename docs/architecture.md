@@ -33,6 +33,18 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 - `MidiEventNormalizer` converts host MIDI into internal `MidiEvent` values with plugin-provided controller routes and pitch-bend range.
 - `VoiceManager` owns allocation, stealing, retrigger reuse, active/released/idle transitions, and per-channel/per-note expression routing.
 - Pitch, onset, phrase analysis, audio-note detection, audio expression, capture, and MIDI derivation live in shared crates. Product plugins compose those crates and own product-specific policy, UI, message payloads, and host integration.
+
+## Speech Effect Layer
+
+The speech-effect port of `hot-mic` lives in the `speech/` tree and shares the workspace's DSP,
+pitch, onset, and fidelity foundations ([ADR-0012](adr/0012-speech-effect-port-shared-workspace.md)).
+Its boundary is separate from the instrument host boundary above: effects implement the
+host-agnostic `lindelion-effect` trait and depend only on pure-DSP crates, so the same effect
+runs under a standalone app, a single VST, or a per-effect VST without change
+([ADR-0013](adr/0013-host-agnostic-effect-core.md)). `lindelion-effect` (the host-free
+effect-processor contract) is distinct from `lindelion-plugin-shell`'s VST3-coupled
+`AudioPlugin`. Speech-specific tuning stays in `speech/`; the `crates/` foundations stay
+use-case-neutral.
 - Shared capture and scratchpad audio live in `lindelion-capture`; product plugins own parameter stepping, naming, MIDI context projection, and other product semantics layered on top.
 - `lindelion-ui` owns reusable editor commands, editor services, and product editor surfaces while the workspace remains small.
 

@@ -10,6 +10,35 @@ Per-product backlogs cover product-specific work:
 | Glirdir | [plugins/glirdir-backlog.md](plugins/glirdir-backlog.md) |
 | Linnod | [plugins/linnod-backlog.md](plugins/linnod-backlog.md) |
 
+## Speech effects port
+
+Port the `hot-mic` channel-strip effects into Rust under `speech/`, tuned for spoken word.
+Detailed milestones and the reuse/benchmark strategy live in
+[HOTMIC-PORT-PLAN.md](../HOTMIC-PORT-PLAN.md).
+
+- Add the host-agnostic `lindelion-effect` trait crate and the shared `lindelion-fidelity`
+  general-signal test harness, validated end-to-end against a gain effect.
+- Add the shared speech-tuned gap-fillers the music primitives lack: a peak/RMS envelope
+  follower, a saturation shaper, and an extracted allocation-free STFT.
+- Add the Tier 1 classic time-domain effects: gain, noise gate, compressor, limiter, de-esser,
+  high-pass filter, 5-band EQ, saturation, upward expander, dynamic EQ.
+- Add the `speech/signals` analysis-signal derivation library and two-axis benchmarks (N×
+  redundant CPU and allocation/realtime safety) that gate any shared analysis context.
+- Add the Tier 2 spectral effects: FFT noise removal, air exciter, bass enhancer, consonant
+  transient, dereverberation, room tone, spectral contrast, vitalizer.
+- Add the Tier 3 ML effects (RNNoise, speech denoiser, voice gate) with model sourcing and
+  licensing recorded.
+- Source additional public-domain / CC0 spoken-word fixtures and record provenance in
+  `testdata/audio/FIXTURES.md`.
+- Build **Calóma**, the single VST3 packaging the speech-effect chain (signal-order parameter,
+  normal-VST patches, compute-once analysis, e2e-tuned defaults). Decided in
+  [ADR-0020](adr/0020-caloma-speech-vst-packaging.md); plan at `CALOMA-VST-PLAN.md`.
+- Build a Windows realtime VST3 host to run Calóma (and other VST3s) on live mic input
+  (`WINDOWS-HOST-PLAN.md`).
+- Build a Visualizer VST (spectrogram, meters, analysis-signal display; `VISUALIZER-VST-PLAN.md`).
+- Build a Speech Coach VST (cadence / words-per-minute, pitch dynamism, clarity feedback;
+  `SPEECH-COACH-VST-PLAN.md`).
+
 ## Host integration
 
 - Validate Lamath, Glirdir, and Linnod as VST3 bundles in Ableton and Logic on macOS.

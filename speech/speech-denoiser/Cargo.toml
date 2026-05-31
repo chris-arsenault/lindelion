@@ -1,0 +1,16 @@
+[package]
+name = "lindelion-speech-denoiser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lindelion-effect.workspace = true
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+
+[dev-dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-fidelity.workspace = true
+lindelion-test-allocator.workspace = true
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }

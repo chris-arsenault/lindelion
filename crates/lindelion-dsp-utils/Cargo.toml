@@ -6,9 +6,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+realfft.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+lindelion-test-allocator.workspace = true
 rand.workspace = true
 rand_pcg.workspace = true
 

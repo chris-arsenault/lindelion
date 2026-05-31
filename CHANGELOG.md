@@ -36,6 +36,7 @@ All notable user-visible changes to Lindelion are recorded here.
 ### Documentation
 
 - Reorganized plugin docs and backlog tracking under `docs/plugins/` and added per-crate perf records under `docs/perf/`. Added the repository documentation convention (`AGENTS.md`, ADRs, CHANGELOG, workspace backlog) following `../ahara/REPO-DOCS.md`.
+- Established the speech-effect port of `hot-mic`: recorded the shared-workspace and host-agnostic-core decisions (ADR-0012, ADR-0013), scaffolded the `speech/` tree and the `lindelion-effect` / `lindelion-fidelity` foundation crates, and added the port milestones to the workspace backlog.
 
 ## v0.3.0 - 2026-05-23
 

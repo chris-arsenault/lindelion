@@ -89,6 +89,30 @@ impl BiquadCoefficients {
         rbj(sample_rate, cutoff_hz, q, BiquadKind::Bandpass)
     }
 
+    pub fn low_shelf(sample_rate: f32, cutoff_hz: f32, gain_db: f32) -> Self {
+        rbj_shelf_peak(
+            sample_rate,
+            cutoff_hz,
+            0.707,
+            gain_db,
+            ShelfPeakKind::LowShelf,
+        )
+    }
+
+    pub fn high_shelf(sample_rate: f32, cutoff_hz: f32, gain_db: f32) -> Self {
+        rbj_shelf_peak(
+            sample_rate,
+            cutoff_hz,
+            0.707,
+            gain_db,
+            ShelfPeakKind::HighShelf,
+        )
+    }
+
+    pub fn peaking(sample_rate: f32, cutoff_hz: f32, q: f32, gain_db: f32) -> Self {
+        rbj_shelf_peak(sample_rate, cutoff_hz, q, gain_db, ShelfPeakKind::Peaking)
+    }
+
     pub fn is_finite(self) -> bool {
         self.b0.is_finite()
             && self.b1.is_finite()
@@ -123,6 +147,67 @@ fn rbj(sample_rate: f32, cutoff_hz: f32, q: f32, kind: BiquadKind) -> BiquadCoef
     let a0 = 1.0 + alpha;
     let a1 = -2.0 * cos;
     let a2 = 1.0 - alpha;
+
+    BiquadCoefficients {
+        b0: b0 / a0,
+        b1: b1 / a0,
+        b2: b2 / a0,
+        a1: a1 / a0,
+        a2: a2 / a0,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ShelfPeakKind {
+    LowShelf,
+    HighShelf,
+    Peaking,
+}
+
+// RBJ cookbook shelving and peaking biquads, parameterized by gain in dB.
+fn rbj_shelf_peak(
+    sample_rate: f32,
+    cutoff_hz: f32,
+    q: f32,
+    gain_db: f32,
+    kind: ShelfPeakKind,
+) -> BiquadCoefficients {
+    let sample_rate = usable_sample_rate(sample_rate);
+    let cutoff_hz = cutoff_for_sample_rate(cutoff_hz, sample_rate, 1_000.0);
+    let q = math::finite_or(q, 0.707).max(0.05);
+    let a = 10f32.powf(math::finite_or(gain_db, 0.0) / 40.0);
+    let omega = std::f32::consts::TAU * cutoff_hz / sample_rate;
+    let sin = omega.sin();
+    let cos = omega.cos();
+    let alpha = sin / (2.0 * q);
+    let beta = 2.0 * a.sqrt() * alpha;
+
+    let (b0, b1, b2, a0, a1, a2) = match kind {
+        ShelfPeakKind::LowShelf => (
+            a * ((a + 1.0) - (a - 1.0) * cos + beta),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * cos),
+            a * ((a + 1.0) - (a - 1.0) * cos - beta),
+            (a + 1.0) + (a - 1.0) * cos + beta,
+            -2.0 * ((a - 1.0) + (a + 1.0) * cos),
+            (a + 1.0) + (a - 1.0) * cos - beta,
+        ),
+        ShelfPeakKind::HighShelf => (
+            a * ((a + 1.0) + (a - 1.0) * cos + beta),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * cos),
+            a * ((a + 1.0) + (a - 1.0) * cos - beta),
+            (a + 1.0) - (a - 1.0) * cos + beta,
+            2.0 * ((a - 1.0) - (a + 1.0) * cos),
+            (a + 1.0) - (a - 1.0) * cos - beta,
+        ),
+        ShelfPeakKind::Peaking => (
+            1.0 + alpha * a,
+            -2.0 * cos,
+            1.0 - alpha * a,
+            1.0 + alpha / a,
+            -2.0 * cos,
+            1.0 - alpha / a,
+        ),
+    };
 
     BiquadCoefficients {
         b0: b0 / a0,
@@ -365,5 +450,46 @@ mod tests {
         assert_eq!(filter.process(f32::NAN), 0.0);
         assert_eq!(filter.process(0.25), 0.25);
         assert!(filter.coefficients.is_finite());
+    }
+}
+
+#[cfg(test)]
+mod shelf_peak_tests {
+    use super::*;
+
+    // Analytic magnitude response (dB) of a biquad at frequency `f`.
+    fn mag_db(c: BiquadCoefficients, sample_rate: f32, f: f32) -> f32 {
+        let w = std::f32::consts::TAU * f / sample_rate;
+        let (c1, s1) = (w.cos(), w.sin());
+        let (c2, s2) = ((2.0 * w).cos(), (2.0 * w).sin());
+        let num_re = c.b0 + c.b1 * c1 + c.b2 * c2;
+        let num_im = -(c.b1 * s1 + c.b2 * s2);
+        let den_re = 1.0 + c.a1 * c1 + c.a2 * c2;
+        let den_im = -(c.a1 * s1 + c.a2 * s2);
+        let num = (num_re * num_re + num_im * num_im).sqrt();
+        let den = (den_re * den_re + den_im * den_im).sqrt();
+        20.0 * (num / den).log10()
+    }
+
+    #[test]
+    fn low_shelf_boosts_low_band_only() {
+        let c = BiquadCoefficients::low_shelf(48_000.0, 120.0, 6.0);
+        assert!((mag_db(c, 48_000.0, 20.0) - 6.0).abs() < 1.0);
+        assert!(mag_db(c, 48_000.0, 12_000.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn high_shelf_boosts_high_band_only() {
+        let c = BiquadCoefficients::high_shelf(48_000.0, 5_000.0, 6.0);
+        assert!((mag_db(c, 48_000.0, 18_000.0) - 6.0).abs() < 1.0);
+        assert!(mag_db(c, 48_000.0, 200.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn peaking_boosts_center_only() {
+        let c = BiquadCoefficients::peaking(48_000.0, 1_000.0, 1.0, 6.0);
+        assert!((mag_db(c, 48_000.0, 1_000.0) - 6.0).abs() < 0.5);
+        assert!(mag_db(c, 48_000.0, 100.0).abs() < 1.0);
+        assert!(mag_db(c, 48_000.0, 10_000.0).abs() < 1.0);
     }
 }

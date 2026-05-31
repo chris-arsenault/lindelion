@@ -76,3 +76,31 @@ battery and instrument samples cannot.
 | --- | --- | --- |
 | `vocal_sung.wav` | sung voice (sustained, pitched) | 464 Hz · 6.9 · 1655 Hz · mono · 5.97 s |
 | `vocal_spoken.wav` | spoken voice (dynamic, consonant transients) | 118 Hz · 7.1 · 1189 Hz · stereo · 4.30 s |
+
+## Added — public-domain spoken word (LibriVox, for the speech-effect port)
+
+Speech fixtures for the `speech/` effects, sourced from **LibriVox** recordings, which are
+released into the **public domain** (LibriVox dedicates all its recordings to the public domain
+worldwide). Each was downloaded from archive.org, decoded with a static ffmpeg, and trimmed to a
+5.0 s window (20 ms edge fades, peak-normalized to −3 dBFS — gain only, so dynamics / cadence /
+pitch are preserved — encoder metadata stripped), **mono 48 kHz / 16-bit** (the speech effects'
+native rate, so tests need no resampling).
+
+Features are measured on the final clip: `low`/`high` = sub-250 Hz / >4 kHz energy fraction;
+`syl/s` = envelope-peak syllable rate (cadence proxy); `pause` = fraction of low-energy frames;
+`pstd` = pitch standard deviation in semitones (flat ↔ animated); `crest` = peak/RMS (dynamics).
+
+| File | Exercises | low · high · syl/s · pause · pstd · crest | Source (LibriVox — Public domain) · trim |
+| --- | --- | --- | --- |
+| `speech_clean_continuous_48k.wav` | clean continuous speech; **bass-rich** (bass enhancer); fast | 0.78 · 0.02 · 3.7 · 0.12 · 1.9 · 4.5 | *The Forgotten Man and Other Essays* (Sumner), [forgottenman_2208](https://archive.org/details/forgottenman_2208_librivox) `forgottenman_16_sumner` · 62.5–67.5 s |
+| `speech_noisy_48k.wav` | noisy speech (denoiser; enhancement under noise) — matched pair with `speech_clean_continuous` | 0.76 · 0.04 · 3.0 · 0.00 · 1.8 · 4.6 | `speech_clean_continuous` segment + synthetic pink noise at **10 dB SNR** |
+| `speech_pauses_48k.wav` | speech **with pauses** (voice gate, cadence); **high dynamics** (expander) | 0.29 · 0.02 · 3.5 · 0.26 · 2.6 · 12.6 | *Female Scripture Characters* (Jay), [femalescripturecharacters_2405](https://archive.org/details/femalescripturecharacters_2405_librivox) `femalescripturecharacters_28_jay` · 22.5–27.5 s |
+| `speech_flat_48k.wav` | **flat / monotone** delivery (cadence) | 0.30 · 0.01 · 3.2 · 0.26 · 1.1 · 9.1 | *Poems* (Chesterton), [poems_1102](https://archive.org/details/poems_1102_librivox) `poems_11_chesterton` · 37.5–42.5 s |
+| `speech_animated_48k.wav` | **animated / expressive** delivery (cadence) | 0.10 · 0.00 · 3.7 · 0.13 · 7.4 · 5.7 | *Grimm's Fairy Tales*, [grimmsfairytales_2104](https://archive.org/details/grimmsfairytales_2104_librivox) `fairytales_34_grimm` · 38.5–43.5 s |
+| `speech_fast_48k.wav` | **fast** speech rate (cadence / WPM) | 0.45 · 0.02 · 3.8 · 0.15 · 3.6 · 5.8 | *The Divine Comedy* (dramatic reading), [divinecomedy2dramatic_1509](https://archive.org/details/divinecomedy2dramatic_1509_librivox) `divinecomedy_055_alighieri` · 81.0–86.0 s |
+| `speech_slow_48k.wav` | **slow** speech rate (cadence / WPM); continuous | 0.32 · 0.02 · 2.8 · 0.14 · 2.5 · 6.4 | *The Happiness of Hazelbrook* (dramatic reading), [happinessofhazelbrook_2605](https://archive.org/details/happinessofhazelbrook_2605_librivox) `happinesshazelbrook_05_obrien` · 39.5–44.5 s |
+
+Provenance: each source MP3 was fetched from `archive.org/download/<identifier>/<file>.mp3`,
+decoded + trimmed in-tooling; source MP3s are not committed. LibriVox license tag: **Public
+domain.** `speech_noisy_48k.wav`'s pink noise is synthetic (deterministic), so the speech content
+remains public domain.
