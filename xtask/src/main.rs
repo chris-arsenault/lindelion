@@ -10,6 +10,7 @@ const RUST_FILE_LINE_LIMIT: usize = 600;
 mod bundle;
 #[cfg(test)]
 mod tests;
+mod windows_bundle;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);

@@ -221,6 +221,10 @@ pub struct Vst3BusInfo {
     pub flags: u32,
 }
 
+// The `vst3` COM bindings type bus/component flag constants as `u32` on Linux/macOS but `i32` on
+// the Windows MSVC target; normalize with `as u32` (identity for these small flag values). The
+// allow keeps `make ci`'s clippy green on Linux, where the cast is a no-op.
+#[allow(clippy::unnecessary_cast)]
 impl Vst3BusInfo {
     pub const fn audio_input(channel_count: i32, name: &'static str) -> Self {
         Self {
@@ -229,7 +233,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 
@@ -251,7 +255,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 
@@ -262,7 +266,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 
@@ -273,7 +277,7 @@ impl Vst3BusInfo {
             channel_count,
             name,
             bus_type: BusTypes_::kMain,
-            flags: BusInfo_::BusFlags_::kDefaultActive,
+            flags: BusInfo_::BusFlags_::kDefaultActive as u32,
         }
     }
 }

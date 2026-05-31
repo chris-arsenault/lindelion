@@ -253,14 +253,20 @@ pub unsafe fn vst_event_to_host_midi(event: Event) -> Option<HostMidiEvent> {
     }
 }
 
+// `ControllerNumbers_` constants are `u32` on Linux/macOS but `i32` on the Windows MSVC target;
+// normalize to `u32` consts so the match scrutinee (`u32`) is well-typed on every platform. The
+// allow keeps Linux clippy green, where the cast is a no-op.
+#[allow(clippy::unnecessary_cast)]
 fn legacy_midi_cc_to_host_event(event: LegacyMIDICCOutEvent) -> Option<HostMidiEvent> {
+    const AFTER_TOUCH: u32 = ControllerNumbers_::kAfterTouch as u32;
+    const PITCH_BEND: u32 = ControllerNumbers_::kPitchBend as u32;
     let channel = i32::from(event.channel);
     match u32::from(event.controlNumber) {
-        ControllerNumbers_::kAfterTouch => Some(HostMidiEvent::ChannelPressure {
+        AFTER_TOUCH => Some(HostMidiEvent::ChannelPressure {
             channel,
             value: i32::from(event.value),
         }),
-        ControllerNumbers_::kPitchBend => Some(HostMidiEvent::PitchBend {
+        PITCH_BEND => Some(HostMidiEvent::PitchBend {
             channel,
             lsb: i32::from(event.value),
             msb: i32::from(event.value2),
@@ -273,8 +279,11 @@ fn legacy_midi_cc_to_host_event(event: LegacyMIDICCOutEvent) -> Option<HostMidiE
     }
 }
 
+// `ProcessContext_::StatesAndFlags` is `u32` on Linux/macOS but `i32` on the Windows MSVC target;
+// normalize with `as u32` (identity for these flags). The allow keeps Linux clippy green.
+#[allow(clippy::unnecessary_cast)]
 fn context_flag_is_set(state: u32, flag: ProcessContext_::StatesAndFlags) -> bool {
-    state & flag != 0
+    state & flag as u32 != 0
 }
 
 fn finite_context_value(

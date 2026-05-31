@@ -441,6 +441,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cenedril"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-plugin-metadata",
+ "lindelion-plugin-shell",
+ "lindelion-test-allocator",
+ "lindelion-ui",
+ "vst3",
+]
+
+[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

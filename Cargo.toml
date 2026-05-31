@@ -16,6 +16,7 @@ members = [
     "crates/lindelion-plugin-shell",
     "crates/lindelion-sample-library",
     "crates/lindelion-ui",
+    "plugins/cenedril",
     "plugins/glirdir",
     "plugins/lamath",
     "plugins/linnod",

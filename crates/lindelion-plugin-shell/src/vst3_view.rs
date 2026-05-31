@@ -1,6 +1,6 @@
 use std::{cell::Cell, ffi::c_void, ptr};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 use std::ffi::{CStr, c_char};
 
 use vst3::{Class, Steinberg::*};
@@ -67,8 +67,11 @@ impl PlugViewKeyEvent {
         self.has_modifier(KeyModifier_::kCommandKey) || self.has_modifier(KeyModifier_::kControlKey)
     }
 
+    // `KeyModifier` is `u32` on Linux/macOS but `i32` on the Windows MSVC target; normalize with
+    // `as u32` (identity for these modifier flags). The allow keeps Linux clippy green.
+    #[allow(clippy::unnecessary_cast)]
     fn has_modifier(self, modifier: KeyModifier) -> bool {
-        (u32::from(self.modifiers as u16) & modifier) != 0
+        (u32::from(self.modifiers as u16) & modifier as u32) != 0
     }
 }
 
@@ -124,14 +127,23 @@ impl<D: FixedSizePlugViewDelegate> IPlugViewTrait for FixedSizePlugView<D> {
     unsafe fn isPlatformTypeSupported(&self, r#type: FIDString) -> tresult {
         #[cfg(target_os = "macos")]
         {
-            if is_ns_view_platform(r#type) {
+            if platform_type_is(r#type, b"NSView") {
                 kResultTrue
             } else {
                 kResultFalse
             }
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            if platform_type_is(r#type, b"HWND") {
+                kResultTrue
+            } else {
+                kResultFalse
+            }
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = r#type;
             kResultFalse
@@ -146,12 +158,12 @@ impl<D: FixedSizePlugViewDelegate> IPlugViewTrait for FixedSizePlugView<D> {
             return kResultFalse;
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.delegate.attached(parent, self.size.get())
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = parent;
             kNotImplemented
@@ -214,7 +226,32 @@ impl<D: FixedSizePlugViewDelegate> IPlugViewTrait for FixedSizePlugView<D> {
     }
 }
 
-#[cfg(target_os = "macos")]
-unsafe fn is_ns_view_platform(platform: FIDString) -> bool {
-    !platform.is_null() && CStr::from_ptr(platform as *const c_char).to_bytes() == b"NSView"
+/// True when the host-supplied platform-type C string equals `expected` (e.g. `b"NSView"` on
+/// macOS, `b"HWND"` on Windows). Compiled wherever a platform branch or a test needs it.
+///
+/// # Safety
+/// `platform`, when non-null, must be a valid NUL-terminated C string.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+unsafe fn platform_type_is(platform: FIDString, expected: &[u8]) -> bool {
+    !platform.is_null() && CStr::from_ptr(platform as *const c_char).to_bytes() == expected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_type_is_matches_nul_terminated_c_string() {
+        let hwnd = b"HWND\0";
+        let nsview = b"NSView\0";
+        unsafe {
+            assert!(platform_type_is(hwnd.as_ptr() as FIDString, b"HWND"));
+            assert!(!platform_type_is(hwnd.as_ptr() as FIDString, b"NSView"));
+            assert!(platform_type_is(nsview.as_ptr() as FIDString, b"NSView"));
+            assert!(!platform_type_is(
+                ptr::null::<c_char>() as FIDString,
+                b"HWND"
+            ));
+        }
+    }
 }

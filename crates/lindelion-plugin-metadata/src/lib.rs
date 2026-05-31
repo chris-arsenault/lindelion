@@ -39,11 +39,25 @@ pub const LINNOD_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     controller_name: "Linnod Controller",
 };
 
+pub const CENEDRIL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
+    package: "cenedril",
+    bundle_name: "Cenedril",
+    executable_name: "Cenedril",
+    bundle_identifier: "com.ahara.cenedril",
+    library_stem: "cenedril",
+    vst3_sub_categories: "Fx",
+    module_sub_categories: &["Fx"],
+    processor_cid: [0xCE9ED713, 0x1A5B4C20, 0x8F3D6E94, 0xB2470FA1],
+    controller_cid: [0xCE9EDC72, 0x6D8E4F31, 0xA1B05C28, 0x73E2941D],
+    controller_name: "Cenedril Controller",
+};
+
 pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {
     match package {
         "lamath" => Some(LAMATH_VST3_BUNDLE_METADATA),
         "glirdir" => Some(GLIRDIR_VST3_BUNDLE_METADATA),
         "linnod" => Some(LINNOD_VST3_BUNDLE_METADATA),
+        "cenedril" => Some(CENEDRIL_VST3_BUNDLE_METADATA),
         _ => None,
     }
 }
@@ -65,6 +79,10 @@ mod tests {
         assert_eq!(
             metadata_for_package("linnod").unwrap(),
             LINNOD_VST3_BUNDLE_METADATA
+        );
+        assert_eq!(
+            metadata_for_package("cenedril").unwrap(),
+            CENEDRIL_VST3_BUNDLE_METADATA
         );
         assert!(metadata_for_package("unknown").is_none());
     }

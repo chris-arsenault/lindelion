@@ -15,3 +15,8 @@ raw-window-handle = "0.5"
 dispatch2 = "0.3.1"
 rfd = "0.15.4"
 vizia.workspace = true
+
+# Windows new-VST editors (ADR-0023): the Vizia/baseview stack, target-gated like the macOS one.
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.5"
+vizia.workspace = true

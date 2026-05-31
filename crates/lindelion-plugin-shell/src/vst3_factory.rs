@@ -17,6 +17,9 @@ pub struct Vst3ClassRegistration {
     pub create: Vst3CreateInstance,
 }
 
+// `ComponentFlags_::kDistributable` is `u32` on Linux/macOS but `i32` on the Windows MSVC target;
+// normalize with `as u32` (identity for this flag). The allow keeps Linux clippy green.
+#[allow(clippy::unnecessary_cast)]
 impl Vst3ClassRegistration {
     pub const fn audio_processor(
         cid: TUID,
@@ -28,7 +31,7 @@ impl Vst3ClassRegistration {
             cid,
             category: "Audio Module Class",
             name,
-            class_flags: ComponentFlags_::kDistributable,
+            class_flags: ComponentFlags_::kDistributable as u32,
             subcategories,
             create,
         }

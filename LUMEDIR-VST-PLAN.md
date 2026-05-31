@@ -8,15 +8,15 @@ summary**, scored against **configurable target bands**. It runs in the Galad ho
 ([ADR-0022](docs/adr/0022-windows-vst3-host.md)) and Windows DAWs.
 
 It is the same Windows-only passthrough-VST shell as Cenedril and **reuses Cenedril's M0/M1
-platform foundation** (the Windows VST3 build path and the egui-in-`IPlugView` editor) — no new
+platform foundation** (the Windows VST3 build path and the Windows `IPlugView`→`HWND` Vizia editor attach) — no new
 ADR; it follows [ADR-0023](docs/adr/0023-new-vsts-windows-only.md). The work here is the
 **delivery-metric layer**, which is entirely greenfield on top of the existing signal primitives.
 Built properly: phases are ordered by dependency for a complete plugin, not by shipping speed.
 
 ## Confirmed decisions
 
-- **Windows-only** VST3 + egui editor (ADR-0023), reusing **Cenedril M0/M1** (the Windows build
-  path + egui-in-`IPlugView` editor). No new platform work, no new ADR.
+- **Windows-only** VST3 + Vizia editor (ADR-0023), reusing **Cenedril M0/M1** (the Windows build
+  path + Windows `IPlugView`→`HWND` Vizia editor attach). No new platform work, no new ADR.
 - **Passthrough**, bit-exact, 0 latency, on `AudioPlugin` (mirror the Linnod/Cenedril scaffold).
 - **All delivery metrics computed off-thread** (windowed) from `SignalAnalyzer` via the
   `AnalysisWorker`; the audio thread only passes audio through and feeds the worker. The editor
@@ -27,7 +27,7 @@ Built properly: phases are ordered by dependency for a complete plugin, not by s
   pause fraction). No reference recording.
 - **Both** a live running readout **and** an end-of-session summary.
 - **CI shape:** `plugins/coach` is a `make ci` member — the cross-platform delivery-analysis DSP
-  and egui view logic are tested on Linux; only the `IPlugView` HWND embedding and the Windows
+  and Vizia view logic are tested on Linux; only the `IPlugView` HWND embedding and the Windows
   bundle are `cfg(windows)`.
 
 ## Context / reuse map
@@ -36,7 +36,7 @@ Built properly: phases are ordered by dependency for a complete plugin, not by s
 `latest()`): `pitch_hz`/`pitch_confidence`, `voicing_state` (0 silence/1 unvoiced/2 voiced),
 `onset_flux_high`, `spectral_flux`; the `SwiftF0` streaming f0 tracker (`PitchFrame`); the
 `AudioPlugin` + `vst3_entry` + `lindelion-plugin-metadata` scaffold (mirror **Linnod**);
-**Cenedril's M0/M1** Windows build path + egui editor stack. **Validation targets:**
+**Cenedril's M0/M1** Windows build path + Vizia editor stack. **Validation targets:**
 `testdata/audio/FIXTURES.md` — per-fixture `syl/s` and `pstd` (semitones): slow 2.8 / fast 3.8
 syl/s; flat **1.1** / animated **7.4** pitch-std; a pauses fixture.
 
@@ -44,16 +44,16 @@ syl/s; flat **1.1** / animated **7.4** pitch-std; a pauses fixture.
 estimator (envelope-peak rate; only the target numbers exist today); **pitch dynamism** (windowed
 voiced-f0 → semitone std); **pause structure** (run-length of silence); **clarity** (voicing-ratio
 + onset-sharpness aggregation); **WPM** (rate × factor); **target-band scoring**; **session
-accumulation**; the egui **readout + summary** views.
+accumulation**; the Vizia **readout + summary** views.
 
-*Source-of-truth ADRs:* [ADR-0023](docs/adr/0023-new-vsts-windows-only.md) (Windows-only, egui);
+*Source-of-truth ADRs:* [ADR-0023](docs/adr/0023-new-vsts-windows-only.md) (Windows-only, Vizia editor on `lindelion-ui`);
 [ADR-0001](docs/adr/0001-allocation-free-audio-thread.md) (audio thread allocation-free);
 [ADR-0022](docs/adr/0022-windows-vst3-host.md) (the host it runs in). Reserved home:
 `plugins/coach/README.md`.
 
 ## Cross-cutting constraints
 
-- **Windows-only + egui** (ADR-0023), reusing Cenedril M0/M1; HWND embedding + bundle
+- **Windows-only + Vizia** (ADR-0023), reusing Cenedril M0/M1; HWND embedding + bundle
   `cfg(windows)`; delivery DSP + view logic stay cross-platform and `make ci`-tested.
 - **Audio thread allocation-free** (ADR-0001): passthrough + feed the worker only; every delivery
   metric is windowed off-thread; the editor reads snapshots, never the audio thread.
@@ -68,7 +68,7 @@ Exit gate for every phase: **`make ci` green** (Linux: cross-platform delivery D
 
 ### M0 — Coach plugin scaffold on the shared Windows platform [depends on Cenedril M0, M1]
 A working (silent) Windows plugin that feeds the analysis worker.
-- Register `plugins/coach` reusing Cenedril's Windows VST3 build path + egui editor stack;
+- Register `plugins/coach` reusing Cenedril's Windows VST3 build path + Vizia editor stack;
   passthrough processor (bit-exact, 0 latency); feed the `AnalysisWorker`; add bundle metadata; a
   placeholder editor.
 - **[DECISION]** confirm the name **Lúmedir**; where the delivery estimators live — promoted into
@@ -95,8 +95,8 @@ The largest greenfield piece.
 - Exit: the clarity metric behaves sensibly across fixtures; a complete delivery snapshot is
   produced and consumed off the audio thread.
 
-### M4 — egui editor: live running readout [depends on M1, M2, M3]
-- The running-readout view (on Cenedril's egui stack): rate/WPM, pitch-dynamism, pause, clarity —
+### M4 — Vizia editor: live running readout [depends on M1, M2, M3]
+- The running-readout view (on Cenedril's Vizia stack): rate/WPM, pitch-dynamism, pause, clarity —
   live gauges updating from snapshots off the audio thread.
 - Exit: the live readout renders in a Windows host and updates correctly from the snapshot stream.
 
@@ -123,7 +123,7 @@ The largest greenfield piece.
 ## Handoff
 
 This plan is the single source of truth, at milestone altitude. It **depends on Cenedril's M0/M1**
-(the shared Windows VST3 build path + egui editor); build those first. Then run `plan-phase` on
+(the shared Windows VST3 build path + Vizia editor); build those first. Then run `plan-phase` on
 **M0** to expand it into red→green steps, then the EXECUTE-PHASE companion prompt; expand one
 milestone at a time. The delivery estimators (M1–M3) are the substance — each is validated against
 the `FIXTURES.md` delivery targets.

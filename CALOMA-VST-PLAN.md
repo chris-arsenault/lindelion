@@ -38,7 +38,7 @@ associated default tuning that a patch may have customized.
 | D4 | Analysis tap point for the shared snapshot | Head, post-preprocessing (DC/HPF/pre-emphasis) |
 | D5 | Latency on order/bypass change: fixed-max (always-compensated) vs dynamic | Fixed-max (host-friendly) |
 | D6 | Default-tuning targets (integrated-loudness target; metric weights) | -16 LUFS; weights proposed in M5 |
-| D7 | Editor stack | **RESOLVED:** `egui` editor embedded in the VST3 `IPlugView` HWND (Windows; ADR-0023) |
+| D7 | Editor stack | **RESOLVED:** **Vizia** (`lindelion-ui`) editor embedded in the VST3 `IPlugView` HWND via the Windows baseview attach (Windows; ADR-0023) |
 
 ## Context / reuse map
 
@@ -53,8 +53,9 @@ associated default tuning that a patch may have customized.
   (`SpeechPresence`/`SibilanceEnergy`/`FricativeActivity`) stay inline.
 - **NN effects:** DFN3 denoiser + Silero voice-gate run their own inline inference (ADR-0018); they
   are chain slots, not analysis-signal consumers.
-- **Editor:** `egui`, embedded in the VST3 `IPlugView` HWND — Calóma is **Windows-only**
-  ([ADR-0023](docs/adr/0023-new-vsts-windows-only.md)). Not `lindelion-ui` (macOS-only).
+- **Editor:** **Vizia** on the shared `lindelion-ui` stack, embedded in the VST3 `IPlugView` HWND
+  via the Windows baseview attach — Calóma is **Windows-only**
+  ([ADR-0023](docs/adr/0023-new-vsts-windows-only.md)).
 - **Build:** a **Windows** VST3 build + bundle path with `lindelion-plugin-metadata` (ADR-0023).
   The macOS `xtask` bundle path (ADR-0007) is for the existing instruments, not Calóma.
 - **Tests/fixtures:** `lindelion-fidelity` (general battery + the new FFT helpers); the M6
@@ -129,7 +130,8 @@ output (latency = Σ active-slot latency, reported to host)
 
 ### M4 — VST3 adapter + editor  [depends on M2]  **`[DECISION]`** (D7)
 - VST3 adapter via `lindelion-plugin-shell` (params, state = order + patch, typed messages);
-  editor — an `egui` editor embedded in the VST3 `IPlugView` HWND (Windows; ADR-0023).
+  editor — a **Vizia** editor (`lindelion-ui`) embedded in the VST3 `IPlugView` HWND via the
+  Windows baseview attach (Windows; ADR-0023).
 - Verify: builds as a Windows VST3 and loads in the Galad host / a Windows DAW; params
   automatable; order + patch persist across reload.
 
@@ -193,7 +195,7 @@ restarts. Keep the argmax patch.
   intelligibility metric (STOI-like) is a stretch goal, not a gate.
 - **Order-as-parameter state:** the order value lives in the patch and reloads the per-effect
   defaults when changed — program-change-like behavior to map onto VST3 parameter/state semantics.
-- **Platform:** Calóma is a **Windows-only** VST3 — Windows build + egui editor
+- **Platform:** Calóma is a **Windows-only** VST3 — Windows build + Vizia editor
   ([ADR-0023](docs/adr/0023-new-vsts-windows-only.md)). The Galad host ([ADR-0022](docs/adr/0022-windows-vst3-host.md)) is a separate project that can run it.
 
 ## Decision register & handoff

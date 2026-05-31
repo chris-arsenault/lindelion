@@ -21,9 +21,12 @@ pub(crate) fn run_bundle(args: Vec<String>) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if !options.target_is_macos() {
-        eprintln!("The VST3 bundle task currently targets macOS only.");
-        eprintln!("Pass --target aarch64-apple-darwin or run on macOS without --target.");
+    let is_windows = options.target_is_windows();
+    if !options.target_is_macos() && !is_windows {
+        eprintln!("The VST3 bundle task targets macOS or Windows (x86_64-pc-windows-msvc).");
+        eprintln!(
+            "Pass --target x86_64-pc-windows-msvc, or --target aarch64-apple-darwin / run on macOS."
+        );
         return ExitCode::from(2);
     }
     if let Err(error) = build_release(&spec, &options) {
@@ -31,7 +34,16 @@ pub(crate) fn run_bundle(args: Vec<String>) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    match create_macos_vst3_bundle(&spec, &options) {
+    let bundle_result = if is_windows {
+        crate::windows_bundle::create_windows_vst3_bundle(
+            &spec,
+            &options.bundle_dir(),
+            &source_library_path(&spec, &options),
+        )
+    } else {
+        create_macos_vst3_bundle(&spec, &options)
+    };
+    match bundle_result {
         Ok(bundle) => {
             println!("Built {}", bundle.display());
             ExitCode::SUCCESS
@@ -172,6 +184,12 @@ impl BundleOptions {
             || (self.target.is_none() && cfg!(target_os = "macos"))
     }
 
+    fn target_is_windows(&self) -> bool {
+        self.target
+            .as_deref()
+            .is_some_and(|target| target.contains("pc-windows"))
+    }
+
     fn cargo_target_dir(&self) -> PathBuf {
         let mut dir = env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
@@ -205,12 +223,15 @@ impl BundleSpec {
 }
 
 fn build_release(spec: &BundleSpec, options: &BundleOptions) -> Result<(), String> {
-    let mut args = vec![
-        "build".to_string(),
-        "-p".to_string(),
-        spec.metadata.package.to_string(),
-        "--release".to_string(),
-    ];
+    let mut args: Vec<String> = Vec::new();
+    if options.target_is_windows() {
+        // cargo-xwin supplies the MSVC CRT/SDK + lld so the MSVC-ABI DLL links from Linux.
+        args.push("xwin".to_string());
+    }
+    args.push("build".to_string());
+    args.push("-p".to_string());
+    args.push(spec.metadata.package.to_string());
+    args.push("--release".to_string());
     if let Some(target) = &options.target {
         args.push("--target".to_string());
         args.push(target.clone());
@@ -253,9 +274,12 @@ fn create_macos_vst3_bundle(spec: &BundleSpec, options: &BundleOptions) -> io::R
 }
 
 fn source_library_path(spec: &BundleSpec, options: &BundleOptions) -> PathBuf {
-    options
-        .cargo_target_dir()
-        .join(format!("lib{}.dylib", spec.metadata.library_stem))
+    let file_name = if options.target_is_windows() {
+        format!("{}.dll", spec.metadata.library_stem)
+    } else {
+        format!("lib{}.dylib", spec.metadata.library_stem)
+    };
+    options.cargo_target_dir().join(file_name)
 }
 
 fn info_plist(spec: &BundleSpec) -> String {

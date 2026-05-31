@@ -7,6 +7,11 @@ else
 BUILD_PLUGINS ?= $(PLUGIN)
 endif
 MACOS_TARGET ?= aarch64-apple-darwin
+# Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
+# Kept separate from the macOS PLUGINS list above.
+WINDOWS_TARGET ?= x86_64-pc-windows-msvc
+WINDOWS_PLUGINS ?= cenedril
+XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
 BUNDLE_NAME ?= $(shell CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$(PLUGIN)" --field bundle-file)
@@ -16,7 +21,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build build-windows bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check
 
@@ -134,6 +139,40 @@ build: cache-dir
 		echo "Published VST3 bundle in: $$installed_bundle"; \
 	done
 	@echo "Use Ableton's VST3 system folders; no custom folder is required."
+
+# Cross-build the Windows-only new VSTs (Cenedril, ...) from Linux via cargo-xwin (ADR-0023).
+# Produces the MSVC-ABI .vst3 bundle in the staging dir; load-verify it on Windows / in Galad.
+build-windows: cache-dir
+	@if ! cargo xwin --version >/dev/null 2>&1; then \
+		echo "build-windows needs cargo-xwin. Install it with: cargo install cargo-xwin"; \
+		exit 2; \
+	fi
+	@rustup target list --installed | grep -qx "$(WINDOWS_TARGET)" || rustup target add "$(WINDOWS_TARGET)"
+	@# Case-fix: lld-link is case-sensitive on Linux but some build scripts (skia) link e.g.
+	@# `Advapi32.lib` while the xwin SDK ships lowercase `advapi32.lib`. Symlink capitalized
+	@# variants once the SDK is extracted. (On a fresh cache the SDK is downloaded during the
+	@# first build, so that first run may fail at link; re-run `make build-windows` to succeed.)
+	@for d in um ucrt; do \
+		dir="$(XWIN_CACHE_DIR)/xwin/sdk/lib/$$d/x86_64"; \
+		[ -d "$$dir" ] || continue; \
+		for lib in "$$dir"/*.lib; do \
+			base="$$(basename "$$lib")"; \
+			cap="$$(printf '%s' "$$base" | sed -E 's/^(.)/\U\1/')"; \
+			if [ "$$cap" != "$$base" ] && [ ! -e "$$dir/$$cap" ]; then ln -s "$$base" "$$dir/$$cap"; fi; \
+		done; \
+	done
+	@for plugin in $(WINDOWS_PLUGINS); do \
+		bundle_name="$$(CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$$plugin" --field bundle-file)"; \
+		staged_bundle="$(VST3_STAGING_DIR)/$$bundle_name"; \
+		echo "Building Windows VST3 bundle for $$plugin..."; \
+		CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
+		CARGO_INCREMENTAL=1 \
+		XWIN_ACCEPT_LICENSE=1 \
+		LINDELION_BUNDLE_DIR="$(VST3_STAGING_DIR)" \
+		cargo run -p xtask -- bundle "$$plugin" --target "$(WINDOWS_TARGET)" || exit 1; \
+		echo "Staged Windows VST3 bundle: $$staged_bundle"; \
+	done
+	@echo "Copy the staged .vst3 to a Windows host, or load it in the Galad host, to verify."
 
 bundle-macos: build
 
