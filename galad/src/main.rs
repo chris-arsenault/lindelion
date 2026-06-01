@@ -16,6 +16,8 @@ mod vst3_host;
 #[cfg(test)]
 lindelion_test_allocator::install_test_allocator!();
 
+pub(crate) const RELAUNCH_ARG: &str = "--galad-relaunched";
+
 fn main() {
     diagnostics::init();
     let args: Vec<String> = std::env::args().collect();
@@ -25,7 +27,15 @@ fn main() {
         std::env::current_dir()
     ));
 
-    let mut rest = args.iter().skip(1).cloned();
+    let already_relaunched = args.iter().skip(1).any(|arg| arg == RELAUNCH_ARG);
+    let filtered_args: Vec<String> = args
+        .iter()
+        .skip(1)
+        .filter(|arg| arg.as_str() != RELAUNCH_ARG)
+        .cloned()
+        .collect();
+
+    let mut rest = filtered_args.into_iter();
     match rest.next().as_deref() {
         Some("spike") => run_spike_command(rest.next()),
         Some("passthrough") => run_passthrough_command(rest.next(), rest.next()),
@@ -33,7 +43,7 @@ fn main() {
         Some("session") => run_session_command(rest.next()),
         Some("editor") => run_editor_command(rest.collect()),
         Some("diagnostics") => print_diagnostics_path(),
-        None | Some("ui") => run_ui_command(),
+        None | Some("ui") => run_ui_command(already_relaunched),
         _ => print_usage(),
     }
 }
@@ -57,14 +67,20 @@ fn print_usage() {
 
 /// `galad` (no subcommand) / `galad ui` — launch the standalone Vizia host UI (M6). Windows-only.
 #[cfg(windows)]
-fn run_ui_command() {
-    diagnostics::log("main: run_ui_command enter");
+fn run_ui_command(already_relaunched: bool) {
+    diagnostics::log(format!(
+        "main: run_ui_command enter already_relaunched={already_relaunched}"
+    ));
+    if diagnostics::relaunch_without_explorer_startup(already_relaunched) {
+        diagnostics::log("main: run_ui_command relaunched child; exiting parent");
+        return;
+    }
     ui::run();
     diagnostics::log("main: run_ui_command exit");
 }
 
 #[cfg(not(windows))]
-fn run_ui_command() {
+fn run_ui_command(_already_relaunched: bool) {
     eprintln!("the Galad host UI is Windows-only; on this platform use the subcommands:\n");
     print_usage();
 }

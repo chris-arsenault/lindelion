@@ -83,10 +83,16 @@ impl PluginInstance {
 
 impl Drop for PluginInstance {
     fn drop(&mut self) {
+        crate::diagnostics::log("vst3: PluginInstance drop begin");
         unsafe {
+            self.processor.setProcessing(0);
+            crate::diagnostics::log("vst3: PluginInstance setProcessing(0) done");
             self.component.setActive(0);
+            crate::diagnostics::log("vst3: PluginInstance setActive(0) done");
             self.component.terminate();
+            crate::diagnostics::log("vst3: PluginInstance terminate done");
         }
+        crate::diagnostics::log("vst3: PluginInstance drop end");
     }
 }
 

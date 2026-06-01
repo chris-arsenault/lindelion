@@ -189,6 +189,9 @@ const STYLE: &str = r#"
 
     .modal-title { color: #f1f6f2; font-size: 14px; }
 
+    .overlay-layer { display: none; }
+    .overlay-layer.is-open { display: flex; }
+
     button {
         background-color: #1b2225;
         border-width: 1px;
@@ -583,6 +586,7 @@ impl Signals {
 }
 
 /// UI events emitted by the views and the meter timer.
+#[derive(Debug)]
 pub enum AppEvent {
     SelectInput(usize),
     SelectOutput(usize),
@@ -694,23 +698,29 @@ impl AppData {
 
     /// Push the bindable parts of `state` into the signals.
     pub fn sync(&self) {
-        self.signals
-            .input_names
-            .set(self.state.inputs.iter().map(|d| d.name.clone()).collect());
-        self.signals
-            .output_names
-            .set(self.state.outputs.iter().map(|d| d.name.clone()).collect());
-        self.signals.selected_input_index.set(selected_device_index(
-            &self.state.inputs,
-            &self.state.selected_input,
-        ));
-        self.signals
-            .selected_output_index
-            .set(selected_device_index(
-                &self.state.outputs,
-                &self.state.selected_output,
-            ));
-        self.signals.chain.set(
+        // Idempotent: only push signals whose value actually changed. `sync` runs on every ~33 ms
+        // meter tick, and `Signal::set` notifies unconditionally — without this guard the chain,
+        // catalog, and folder `Binding`s would rebuild ~30×/second, recreating every button mid-click
+        // (so clicks never complete and hover flickers). Normally only the meter levels change per
+        // tick, so only the meter bars rebuild.
+        set_if_changed(
+            &self.signals.input_names,
+            self.state.inputs.iter().map(|d| d.name.clone()).collect(),
+        );
+        set_if_changed(
+            &self.signals.output_names,
+            self.state.outputs.iter().map(|d| d.name.clone()).collect(),
+        );
+        set_if_changed(
+            &self.signals.selected_input_index,
+            selected_device_index(&self.state.inputs, &self.state.selected_input),
+        );
+        set_if_changed(
+            &self.signals.selected_output_index,
+            selected_device_index(&self.state.outputs, &self.state.selected_output),
+        );
+        set_if_changed(
+            &self.signals.chain,
             self.state
                 .chain
                 .iter()
@@ -721,7 +731,8 @@ impl AppData {
                 .collect(),
         );
         let scan_roots = self.state.plugin_scan_roots();
-        self.signals.catalog.set(
+        set_if_changed(
+            &self.signals.catalog,
             self.state
                 .catalog
                 .entries
@@ -737,24 +748,28 @@ impl AppData {
                 })
                 .collect(),
         );
-        self.signals.scan_folders.set(scan_folder_rows(&self.state));
-        self.signals.running.set(self.state.running);
-        self.signals
-            .input_left_level
-            .set(self.state.meter.input_left_peak);
-        self.signals
-            .input_right_level
-            .set(self.state.meter.input_right_peak);
-        self.signals
-            .output_left_level
-            .set(self.state.meter.output_left_peak);
-        self.signals
-            .output_right_level
-            .set(self.state.meter.output_right_peak);
-        self.signals.master_gain_db.set(self.state.master_gain_db);
-        self.signals.master_muted.set(self.state.master_muted);
+        set_if_changed(&self.signals.scan_folders, scan_folder_rows(&self.state));
+        set_if_changed(&self.signals.running, self.state.running);
+        set_if_changed(
+            &self.signals.input_left_level,
+            self.state.meter.input_left_peak,
+        );
+        set_if_changed(
+            &self.signals.input_right_level,
+            self.state.meter.input_right_peak,
+        );
+        set_if_changed(
+            &self.signals.output_left_level,
+            self.state.meter.output_left_peak,
+        );
+        set_if_changed(
+            &self.signals.output_right_level,
+            self.state.meter.output_right_peak,
+        );
+        set_if_changed(&self.signals.master_gain_db, self.state.master_gain_db);
+        set_if_changed(&self.signals.master_muted, self.state.master_muted);
         // A notice (last error/info) takes precedence in the status line; otherwise run state.
-        self.signals.status.set(match &self.state.notice {
+        let status = match &self.state.notice {
             Some(notice) => notice.clone(),
             None => if self.state.running {
                 "audio live"
@@ -762,7 +777,8 @@ impl AppData {
                 "audio off"
             }
             .to_string(),
-        });
+        };
+        set_if_changed(&self.signals.status, status);
     }
 
     // --- Controller commands (effectful) -------------------------------------------------------
@@ -947,13 +963,22 @@ impl AppData {
     }
 
     fn remove_plugin(&mut self, index: usize) {
+        diagnostics::log(format!(
+            "ui: remove_plugin begin index={index} pool_len={} running={}",
+            self.runtime.pool.len(),
+            self.runtime.is_running()
+        ));
         // Drop the pool slot (one `Arc`); any live/retired chain still referencing the instance keeps
         // it alive until reclaimed, so its teardown stays off the audio thread.
         if index < self.runtime.pool.len() {
+            diagnostics::log("ui: remove_plugin drop pool slot");
             self.runtime.pool.remove(index);
+            diagnostics::log("ui: remove_plugin pool slot dropped");
         }
         apply(&mut self.state, &UiCommand::RemovePlugin(index));
+        diagnostics::log("ui: remove_plugin republish");
         self.republish();
+        diagnostics::log("ui: remove_plugin done");
     }
 
     fn reorder(&mut self, index: usize, dir: Dir) {
@@ -1090,6 +1115,11 @@ impl AppData {
 impl Model for AppData {
     fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
         event.map(|app_event, _| {
+            // Log every interactive event (not the meter tick) so the diagnostic log shows whether a
+            // click actually reaches the controller.
+            if !matches!(app_event, AppEvent::Tick) {
+                diagnostics::log(format!("ui: event {app_event:?}"));
+            }
             match app_event {
                 AppEvent::SelectInput(index) => {
                     if let Some(device) = self.state.inputs.get(*index).cloned() {
@@ -1224,12 +1254,10 @@ pub fn run() {
         }
     })
     .title("Galad")
-    .inner_size((960u32, 640u32))
-    .min_inner_size(Some((860u32, 560u32)));
+    .inner_size((1120u32, 720u32))
+    .min_inner_size(Some((900u32, 600u32)));
 
     diagnostics::log("ui: Application::new done; run begin");
-    diagnostics::log("ui: spawn window pulse");
-    diagnostics::spawn_window_pulse("ui-run");
     diagnostics::log("ui: spawn window probe");
     diagnostics::spawn_window_probe("ui-run");
     if let Err(error) = result.run() {
@@ -1247,11 +1275,10 @@ pub fn run() {
 pub fn build_ui(cx: &mut Context, signals: Signals) {
     ZStack::new(cx, move |cx| {
         main_view(cx, signals);
-        Binding::new(cx, signals.browser_open, move |cx| {
-            if signals.browser_open.get() {
-                browser_overlay(cx, signals);
-            }
-        });
+        // The overlay is always built as a full-size top layer; it is shown/hidden via `display`
+        // (toggled by `browser_open`). Building it conditionally inside a `Binding` collapses it to a
+        // zero-size node, so the modal would never appear — hence the always-present layer.
+        browser_overlay(cx, signals);
     })
     .class("root")
     .width(Stretch(1.0))
@@ -1589,11 +1616,12 @@ fn master_bar(cx: &mut Context, signals: Signals) {
             .horizontal_gap(Pixels(8.0));
         })
         .width(Stretch(1.0))
+        .min_width(Pixels(260.0))
         .height(Auto)
         .vertical_gap(Pixels(6.0));
     })
     .class("panel")
-    .height(Pixels(88.0))
+    .height(Pixels(96.0))
     .width(Stretch(1.0))
     .padding(Pixels(12.0))
     .alignment(Alignment::Center)
@@ -1640,8 +1668,8 @@ fn transport_button(cx: &mut Context, signals: Signals) {
     })
     .class("transport-btn")
     .toggle_class("is-stop", signals.running)
-    .width(Pixels(118.0))
-    .height(Pixels(60.0));
+    .width(Pixels(104.0))
+    .height(Pixels(64.0));
 }
 
 /// A labelled L/R meter pair (IN or OUT).
@@ -1651,7 +1679,7 @@ fn meter_group(cx: &mut Context, title: &'static str, left: Signal<f32>, right: 
         meter(cx, "L", left);
         meter(cx, "R", right);
     })
-    .width(Pixels(150.0))
+    .width(Pixels(128.0))
     .height(Auto)
     .vertical_gap(Pixels(3.0));
 }
@@ -1700,6 +1728,8 @@ fn browser_overlay(cx: &mut Context, signals: Signals) {
             .height(Stretch(1.0));
         modal_panel(cx, signals);
     })
+    .class("overlay-layer")
+    .toggle_class("is-open", signals.browser_open)
     .width(Stretch(1.0))
     .height(Stretch(1.0))
     .alignment(Alignment::Center);
@@ -1899,6 +1929,14 @@ fn folder_row(cx: &mut Context, row: ScanFolderRow) {
     .width(Stretch(1.0))
     .alignment(Alignment::Center)
     .horizontal_gap(Pixels(7.0));
+}
+
+/// Set a signal only when its value actually changed, so a no-op `sync` does not notify (and rebuild)
+/// the views bound to it. Keeps the per-tick meter `sync` from churning the whole tree.
+fn set_if_changed<T: Clone + PartialEq + 'static>(signal: &Signal<T>, value: T) {
+    if signal.get() != value {
+        signal.set(value);
+    }
 }
 
 fn count_text(count: usize, noun: &str) -> String {

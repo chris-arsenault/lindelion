@@ -58,24 +58,150 @@ pub fn spawn_window_probe(label: &'static str) {
 #[cfg(not(windows))]
 pub fn spawn_window_probe(_label: &'static str) {}
 
-/// Pulse the real top-level window size during startup to force native resize/paint delivery.
+/// Relaunch Explorer-started UI processes with a clean Win32 startup context.
+///
+/// Explorer passes `STARTF_USESHOWWINDOW` plus the undocumented `STARTF_MONITOR` flag through
+/// `STARTUPINFO`. The winit/Vizia path that creates a hidden DWM-cloaked window is the broken
+/// combination, so do this before Vizia creates any HWNDs.
 #[cfg(windows)]
-pub fn spawn_window_pulse(label: &'static str) {
-    std::thread::spawn(move || {
-        let mut previous_delay_ms = 0u64;
-        for delay_ms in [250u64, 500, 1000, 2000] {
-            std::thread::sleep(std::time::Duration::from_millis(
-                delay_ms.saturating_sub(previous_delay_ms),
+pub fn relaunch_without_explorer_startup(already_relaunched: bool) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        CreateProcessW, GetStartupInfoW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION,
+        STARTF_USESHOWWINDOW, STARTUPINFOW,
+    };
+    use windows::core::{PCWSTR, PWSTR};
+
+    const STARTF_MONITOR: u32 = 0x0000_0400;
+
+    if already_relaunched {
+        log("launch: explorer startup relaunch skipped already_relaunched");
+        return false;
+    }
+
+    let mut startup = STARTUPINFOW::default();
+    unsafe { GetStartupInfoW(&mut startup) };
+    let flags = startup.dwFlags.0;
+    let explorer_startup =
+        flags & (STARTF_USESHOWWINDOW.0 | STARTF_MONITOR) == STARTF_USESHOWWINDOW.0 | STARTF_MONITOR;
+    if !explorer_startup {
+        log(format!(
+            "launch: explorer startup relaunch skipped flags=0x{flags:x}"
+        ));
+        return false;
+    }
+
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(error) => {
+            log(format!(
+                "launch: explorer startup relaunch current_exe error {error:?}"
             ));
-            previous_delay_ms = delay_ms;
-            pulse_visible_windows(label, delay_ms);
+            return false;
         }
-    });
+    };
+    let exe_arg = quote_windows_arg(&exe.to_string_lossy());
+    let command_line = format!("{exe_arg} {}", crate::RELAUNCH_ARG);
+    let mut command_line_w: Vec<u16> = command_line.encode_utf16().chain([0]).collect();
+    let exe_w: Vec<u16> = exe.as_os_str().encode_wide().chain([0]).collect();
+    let cwd_w: Option<Vec<u16>> = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.as_os_str().encode_wide().chain([0]).collect());
+    let cwd_ptr = cwd_w
+        .as_ref()
+        .map(|cwd| PCWSTR(cwd.as_ptr()))
+        .unwrap_or_else(|| PCWSTR(std::ptr::null()));
+
+    let mut child_startup = STARTUPINFOW {
+        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        ..Default::default()
+    };
+    let mut process_info = PROCESS_INFORMATION::default();
+
+    log(format!(
+        "launch: explorer startup relaunch start command={command_line:?}"
+    ));
+    let result = unsafe {
+        CreateProcessW(
+            PCWSTR(exe_w.as_ptr()),
+            Some(PWSTR(command_line_w.as_mut_ptr())),
+            None,
+            None,
+            false,
+            PROCESS_CREATION_FLAGS(0),
+            None,
+            cwd_ptr,
+            &mut child_startup,
+            &mut process_info,
+        )
+    };
+
+    match result {
+        Ok(()) => {
+            log(format!(
+                "launch: explorer startup relaunch ok pid={} process=0x{:x} thread=0x{:x}",
+                process_info.dwProcessId,
+                process_info.hProcess.0 as isize,
+                process_info.hThread.0 as isize
+            ));
+            let _ = unsafe { CloseHandle(process_info.hThread) };
+            let _ = unsafe { CloseHandle(process_info.hProcess) };
+            true
+        }
+        Err(error) => {
+            log(format!(
+                "launch: explorer startup relaunch error {error:?}; continuing current process"
+            ));
+            false
+        }
+    }
 }
 
-/// Non-Windows builds have no HWNDs to pulse.
+#[cfg(windows)]
+fn quote_windows_arg(arg: &str) -> String {
+    if !arg.is_empty()
+        && !arg
+            .chars()
+            .any(|ch| matches!(ch, ' ' | '\t' | '\n' | '\r' | '"'))
+    {
+        return arg.to_owned();
+    }
+
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0usize;
+    for ch in arg.chars() {
+        match ch {
+            '\\' => backslashes += 1,
+            '"' => {
+                for _ in 0..(backslashes * 2 + 1) {
+                    quoted.push('\\');
+                }
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                for _ in 0..backslashes {
+                    quoted.push('\\');
+                }
+                quoted.push(ch);
+                backslashes = 0;
+            }
+        }
+    }
+    for _ in 0..(backslashes * 2) {
+        quoted.push('\\');
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// Non-Windows builds have no Win32 startup context.
 #[cfg(not(windows))]
-pub fn spawn_window_pulse(_label: &'static str) {}
+pub fn relaunch_without_explorer_startup(_already_relaunched: bool) -> bool {
+    false
+}
 
 /// Probe this process's top-level windows immediately on the current thread.
 #[cfg(windows)]
@@ -86,51 +212,6 @@ pub fn log_window_probe(label: &str) {
 /// Non-Windows builds have no HWNDs to inspect.
 #[cfg(not(windows))]
 pub fn log_window_probe(_label: &str) {}
-
-#[cfg(windows)]
-fn pulse_visible_windows(label: &str, delay_ms: u64) {
-    use windows::Win32::Graphics::Gdi::{
-        RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_NOERASE, RedrawWindow, UpdateWindow,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
-    };
-
-    let (_enum_result, windows) = collect_windows();
-    let mut changed = 0usize;
-    for window in windows {
-        let Some((left, top, right, bottom)) = window.rect else {
-            continue;
-        };
-        let width = right - left;
-        let height = bottom - top;
-        if !window.visible || window.iconic || width <= 64 || height <= 64 {
-            continue;
-        }
-
-        let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
-        let grow = unsafe { SetWindowPos(window.hwnd, None, 0, 0, width + 1, height, flags) };
-        let restore = unsafe { SetWindowPos(window.hwnd, None, 0, 0, width, height, flags) };
-        let redraw = unsafe {
-            RedrawWindow(
-                Some(window.hwnd),
-                None,
-                None,
-                RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE,
-            )
-            .as_bool()
-        };
-        let update = unsafe { UpdateWindow(window.hwnd).as_bool() };
-        log(format!(
-            "diagnostics: window-pulse label={label} delay_ms={delay_ms} hwnd=0x{:x} cloaked={:?} rect={:?} grow={grow:?} restore={restore:?} redraw={} update={}",
-            window.hwnd.0 as isize, window.cloaked, window.rect, redraw, update
-        ));
-        changed += usize::from(grow.is_ok() || restore.is_ok() || redraw || update);
-    }
-    log(format!(
-        "diagnostics: window-pulse done label={label} delay_ms={delay_ms} changed={changed}"
-    ));
-}
 
 #[cfg(windows)]
 fn log_launch_context() {
