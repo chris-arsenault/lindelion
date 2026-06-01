@@ -26,7 +26,7 @@ The Galad Windows host (`galad`) is target-gated and excluded from `make ci`; it
 
 ## Release builds
 
-`make release` builds every distributable `--release` into a **separate target dir** (`$(LINDELION_RELEASE_TARGET_DIR)`, default `$(CACHE_DIR)/target-release`) so release-profile cache invalidation never touches the dev/CI cache (`./target`, used by `make ci`/tests) or the iteration cache (`$(CACHE_DIR)/target`, used by `build`/`build-windows`/`host-windows-check`). It dispatches by host OS:
+`make release` builds every distributable `--release` into a **separate in-repo target dir** (`./target-release`, gitignored; `$(LINDELION_RELEASE_TARGET_DIR)`) — release artifacts live in the repo, not a hidden home-dir cache — so release-profile cache invalidation never touches the dev/CI cache (`./target`, used by `make ci`/tests) or the iteration cache (`$(CACHE_DIR)/target`, used by `build`/`build-windows`/`host-windows-check`). It dispatches by host OS:
 
 - `make release-windows` (Linux/Windows): `galad.exe` plus the Windows VST3 plugin bundles (`$(WINDOWS_PLUGINS)`), cross-compiled via cargo-xwin.
 - `make release-macos` (macOS): the instrument VST3 bundles (`$(PLUGINS)`), staged (not installed).

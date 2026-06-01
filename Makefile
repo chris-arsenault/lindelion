@@ -14,10 +14,10 @@ WINDOWS_PLUGINS ?= cenedril
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
-# Release Windows builds use their OWN target dir so optimized artifacts never invalidate or
-# compete with the day-to-day debug/dev caches (./target for make ci/test, and the dir above for
-# the debug Windows build / macOS bundles).
-LINDELION_RELEASE_TARGET_DIR ?= $(CACHE_DIR)/target-release
+# Release builds use their OWN IN-REPO target dir (gitignored) so optimized artifacts are
+# deliverables you can grab from the repo, not a hidden home-dir cache, and so release-profile cache
+# invalidation never touches ./target (make ci/tests) or $(CACHE_DIR)/target (iteration builds).
+LINDELION_RELEASE_TARGET_DIR ?= $(CURDIR)/target-release
 BUNDLE_NAME ?= $(shell CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$(PLUGIN)" --field bundle-file)
 VST3_VALIDATOR ?= validator
 VST3_STAGING_DIR ?= $(CACHE_DIR)/bundles
@@ -234,10 +234,10 @@ host-windows-release: cache-dir windows-sdk-prep
 	cargo xwin build -p galad --release --target "$(WINDOWS_TARGET)"
 	@echo "Release galad.exe -> $(LINDELION_RELEASE_TARGET_DIR)/$(WINDOWS_TARGET)/release/galad.exe"
 
-# Full release chain: every distributable artifact, built --release into the isolated
-# $(LINDELION_RELEASE_TARGET_DIR), so release cache invalidation never touches the dev/CI cache
-# (./target, used by `make ci`/tests) or the iteration cache ($(LINDELION_CARGO_TARGET_DIR), used by
-# the debug Windows build, `build`, and `build-windows`). `make release` dispatches by host OS.
+# Full release chain: every distributable artifact, built --release into the in-repo, gitignored
+# $(LINDELION_RELEASE_TARGET_DIR) (= ./target-release), so release cache invalidation never touches
+# the dev/CI cache (./target) or the iteration cache ($(LINDELION_CARGO_TARGET_DIR)). `make release`
+# dispatches by host OS.
 release:
 	@if [ "$$(uname -s)" = "Darwin" ]; then $(MAKE) release-macos; else $(MAKE) release-windows; fi
 
@@ -250,11 +250,13 @@ release-windows: host-windows-release
 		CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
 		CARGO_INCREMENTAL=0 \
 		XWIN_ACCEPT_LICENSE=1 \
-		LINDELION_BUNDLE_DIR="$(VST3_STAGING_DIR)" \
+		LINDELION_BUNDLE_DIR="$(LINDELION_RELEASE_TARGET_DIR)/bundles" \
 		cargo run -p xtask -- bundle "$$plugin" --target "$(WINDOWS_TARGET)" || exit 1; \
-		echo "Staged Windows release VST3 bundle: $(VST3_STAGING_DIR)/$$bundle_name"; \
+		echo "Staged Windows release VST3 bundle: $(LINDELION_RELEASE_TARGET_DIR)/bundles/$$bundle_name"; \
 	done
-	@echo "Windows release: galad.exe in $(LINDELION_RELEASE_TARGET_DIR)/$(WINDOWS_TARGET)/release; .vst3 bundles in $(VST3_STAGING_DIR)."
+	@echo "Windows release artifacts:"
+	@echo "  galad.exe -> $(LINDELION_RELEASE_TARGET_DIR)/$(WINDOWS_TARGET)/release/galad.exe"
+	@echo "  .vst3     -> $(LINDELION_RELEASE_TARGET_DIR)/bundles/"
 
 # macOS release: the instrument VST3 bundles (lamath/glirdir/linnod) built --release into
 # target-release and staged (not installed). Must run on macOS.
@@ -269,12 +271,11 @@ release-macos:
 		echo "Building macOS release VST3 bundle for $$plugin..."; \
 		CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
 		CARGO_INCREMENTAL=0 \
-		LINDELION_BUNDLE_DIR="$(VST3_STAGING_DIR)" \
+		LINDELION_BUNDLE_DIR="$(LINDELION_RELEASE_TARGET_DIR)/bundles" \
 		cargo run -p xtask -- bundle "$$plugin" --target "$(MACOS_TARGET)" || exit 1; \
-		echo "Staged macOS release VST3 bundle: $(VST3_STAGING_DIR)/$$bundle_name"; \
+		echo "Staged macOS release VST3 bundle: $(LINDELION_RELEASE_TARGET_DIR)/bundles/$$bundle_name"; \
 	done
-	@echo "macOS release bundles staged in $(VST3_STAGING_DIR) (install separately if desired)."
-	@echo "Built galad for $(WINDOWS_TARGET). Run it on Windows to verify runtime behavior."
+	@echo "macOS release bundles staged in $(LINDELION_RELEASE_TARGET_DIR)/bundles (install separately if desired)."
 
 bundle-macos: build
 
