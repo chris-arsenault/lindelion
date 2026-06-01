@@ -27,7 +27,7 @@ plugin), and a new side of the VST3 protocol (host, not guest).
 ## Decision
 
 Build a standalone **general-purpose realtime VST3 host application for Windows** as a new
-**`host/` binary crate inside this workspace**, target-gated so it is excluded from the
+**`galad/` binary crate inside this workspace**, target-gated so it is excluded from the
 Linux/macOS `make ci` path and never registered as a building member on those hosts.
 
 - **General hosting, not a fixed chain.** The host loads and runs **arbitrary standard VST3
@@ -63,7 +63,7 @@ own build, and is not produced or validated by the macOS bundle path or by `make
 - **A separate repository.** The host pulls Windows-only deps (WASAPI, Vizia/winit) the rest of the
   workspace does not need. But it reuses the workspace's `vst3` binding and DSP crates and shares
   the same `make ci` toolchain; target-gating keeps the Windows deps off the Linux/macOS build.
-  Rejected in favour of an in-workspace `host/` crate.
+  Rejected in favour of an in-workspace `galad/` crate.
 - **`cpal` for audio.** Cross-platform and least code, but on Windows it is WASAPI *shared*-mode
   only, capping latency, and adds an abstraction the host does not otherwise need. Rejected for a
   realtime mic tool; native WASAPI gives exclusive-mode latency and direct device control.

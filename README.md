@@ -16,7 +16,7 @@ Lindelion is a Rust workspace for audio instruments and shared plugin infrastruc
 
 | Application | Meaning | Description | Links |
 | ---- | ---- | ---- | ---- |
-| Galad | Sindarin, "radiance/light" | Standalone Windows realtime VST3 *host*: live mic → an arbitrary VST3 plugin chain → output device | [README](host/README.md), [architecture](docs/architecture.md#windows-vst3-host-galad) |
+| Galad | Sindarin, "radiance/light" | Standalone Windows realtime VST3 *host*: live mic → an arbitrary VST3 plugin chain → output device | [README](galad/README.md), [architecture](docs/architecture.md#windows-vst3-host-galad) |
 
 ## Speech effects
 

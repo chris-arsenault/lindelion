@@ -41,4 +41,4 @@ an out-of-process plugin sandbox.
 - Incompatible and NaN-emitting plugins are contained; an aborting/UB/hanging plugin is a documented
   residual risk, surfaced to the user rather than hidden.
 - Real-plugin validation across a third-party matrix and a stability/leak soak are field activities,
-  recorded alongside the host (`host/PLUGIN-MATRIX.md`).
+  recorded alongside the host (`galad/PLUGIN-MATRIX.md`).

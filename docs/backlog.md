@@ -34,7 +34,7 @@ Detailed milestones and the reuse/benchmark strategy live in
   normal-VST patches, compute-once analysis, e2e-tuned defaults). Decided in
   [ADR-0020](adr/0020-caloma-speech-vst-packaging.md); plan at `CALOMA-VST-PLAN.md`.
 - Field-validate Galad on Windows against a matrix of third-party VST3 plugins and a stability/leak
-  soak run, recorded in [`host/PLUGIN-MATRIX.md`](../host/PLUGIN-MATRIX.md)
+  soak run, recorded in [`galad/PLUGIN-MATRIX.md`](../galad/PLUGIN-MATRIX.md)
   ([ADR-0022](adr/0022-windows-vst3-host.md)).
 - Build Cenedril, a Windows-only Visualizer VST3 (spectrogram, meters, analysis-signal display;
   [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `CENEDRIL-VST-PLAN.md`).

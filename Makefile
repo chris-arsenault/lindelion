@@ -177,7 +177,7 @@ build-windows: cache-dir
 	done
 	@echo "Copy the staged .vst3 to a Windows host, or load it in the Galad host, to verify."
 
-# Galad (the `host/` Windows VST3 host) is excluded from `make ci` (ADR-0022); this is its
+# Galad (the `galad/` Windows VST3 host) is excluded from `make ci` (ADR-0022); this is its
 # verify command — cross-compile the `galad` binary for the MSVC ABI from Linux via cargo-xwin.
 # Runtime verification (live audio, plugin hosting) happens on Windows in later milestones.
 host-windows-check: cache-dir

@@ -22,7 +22,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `plugins/lamath` | Breath-excited resonator VST3 instrument. |
 | `plugins/linnod` | Melodic sample-slicer VST3 instrument with source analysis, patch model, realtime slice playback, editor bridge, and bundle metadata. |
 | `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: shared capture composition, phrase analysis, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
-| `host/` (`galad`) | Standalone Windows realtime VST3 *host* application: WASAPI microphone → an ordered chain of arbitrary VST3 plugins → output device. Target-gated Windows-only and excluded from `make ci`. See [Windows VST3 Host](#windows-vst3-host-galad). |
+| `galad/` | Standalone Windows realtime VST3 *host* application: WASAPI microphone → an ordered chain of arbitrary VST3 plugins → output device. Target-gated Windows-only and excluded from `make ci`. See [Windows VST3 Host](#windows-vst3-host-galad). |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
 ## Shared Runtime Boundaries
@@ -138,7 +138,7 @@ Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plug
 
 ## Windows VST3 Host (Galad)
 
-Galad (`host/`, package `galad`) is the **host side** of VST3 — the inverse of the plugin crates,
+Galad (`galad/`, package `galad`) is the **host side** of VST3 — the inverse of the plugin crates,
 which are the guest side. It is a standalone Windows application that runs a live microphone through
 an ordered chain of arbitrary standard VST3 plugins to an output device, with full device management.
 It loads Lindelion VST3s and third-party VST3s through the same path; it is a single-channel signal
@@ -174,7 +174,7 @@ host, not a mixer or routing graph ([ADR-0022](adr/0022-windows-vst3-host.md)).
   through a wait-free seqlock snapshot ([ADR-0024](adr/0024-galad-ui-vizia.md), [ADR-0001](adr/0001-allocation-free-audio-thread.md)).
 
 The host's realtime callback obeys the same allocation-free, lock-free discipline as the plugins
-(below). Component reference: [`host/README.md`](../host/README.md).
+(below). Component reference: [`galad/README.md`](../galad/README.md).
 
 ## Real-Time Rule
 

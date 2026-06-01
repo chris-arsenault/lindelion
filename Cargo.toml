@@ -16,7 +16,7 @@ members = [
     "crates/lindelion-plugin-shell",
     "crates/lindelion-sample-library",
     "crates/lindelion-ui",
-    "host",
+    "galad",
     "plugins/cenedril",
     "plugins/glirdir",
     "plugins/lamath",

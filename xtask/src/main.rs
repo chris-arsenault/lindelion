@@ -46,7 +46,7 @@ fn print_help() {
     println!("                           Run Steinberg validator against a built .vst3");
 }
 
-// `galad` (the `host/` Windows VST3 host) is target-gated and excluded from the Linux/macOS
+// `galad` (the `galad/` Windows VST3 host) is target-gated and excluded from the Linux/macOS
 // `make ci` path (ADR-0022); it is verified by its own Windows build (`make host-windows-check`,
 // cargo-xwin). Keep it out of the `--workspace` clippy/test runs here.
 const CLIPPY_ARGS: &[&str] = &[
