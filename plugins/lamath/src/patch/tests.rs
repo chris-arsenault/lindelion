@@ -24,14 +24,19 @@ fn patch_with_physical_driver_roundtrips_through_toml() {
 }
 
 #[test]
-fn default_contact_and_balance_reproduce_pre_m9_behavior() {
-    // M9 identity defaults: transparent contact (spread/contact-time 0) and a 0
-    // balance depth, so a default patch renders exactly as before the milestone.
+fn default_contact_is_transparent_and_balance_is_alive() {
+    // M9 contact stays at its transparent identity (spread/contact-time 0). The
+    // source↔body balance, by contrast, defaults to 0.5 (M11 P10) so a default String
+    // is dynamically alive; the patch and registry both source it from `default_*`.
     let contact = ContactConfig::default();
     assert_eq!(contact.spread, 0.0);
     assert_eq!(contact.contact_time, 0.0);
     assert_eq!(ResonatorSynthPatch::default().contact, contact);
-    assert_eq!(WaveguideConfig::default().source_body_balance, 0.0);
+    assert_eq!(
+        WaveguideConfig::default().source_body_balance,
+        default_source_body_balance()
+    );
+    assert_eq!(default_source_body_balance(), 0.5);
 }
 
 #[test]

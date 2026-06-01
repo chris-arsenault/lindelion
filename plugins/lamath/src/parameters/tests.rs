@@ -366,7 +366,12 @@ fn enum_codecs_round_trip() {
         RoutingMode::BodyColor,
     ]);
     assert_codec_roundtrip(&[ResonatorModel::Modal, ResonatorModel::Waveguide]);
-    assert_codec_roundtrip(&[DriverType::Sample, DriverType::Pick, DriverType::Reed]);
+    assert_codec_roundtrip(&[
+        DriverType::Sample,
+        DriverType::Pick,
+        DriverType::Reed,
+        DriverType::Bow,
+    ]);
     assert_codec_roundtrip(&[
         ModalPreset::Kalimba,
         ModalPreset::Marimba,
@@ -405,19 +410,26 @@ fn enum_codecs_round_trip() {
 
 #[test]
 fn driver_type_selector_maps_to_patch_variant() {
-    // Driver-type selector: label mapping and default 0 => Sample.
+    // Driver-type selector: label mapping, default 0 => Sample, and each index round-
+    // trips to its `DriverConfig` variant. Bow (index 3) is the P10-exposed driver.
     let driver_type = parameter_binding(DRIVER_TYPE_PARAMETER_ID).expect("driver type binding");
     assert_eq!(driver_type.info().range.default, 0.0);
-    assert_eq!(driver_type.format_plain_value(0.0), "Sample");
-    assert_eq!(driver_type.format_plain_value(1.0), "Pick");
-    assert_eq!(driver_type.format_plain_value(2.0), "Reed");
+    for (index, label) in [(0.0, "Sample"), (1.0, "Pick"), (2.0, "Reed"), (3.0, "Bow")] {
+        assert_eq!(driver_type.format_plain_value(index), label);
+    }
 
-    // Selecting Pick switches the patch driver variant; the read maps back.
     let mut patch = ResonatorSynthPatch::default();
-    assert!(matches!(patch.driver, DriverConfig::Sample));
-    driver_type.apply_plain(&mut patch, 1.0);
-    assert!(matches!(patch.driver, DriverConfig::Pick(_)));
-    assert!((driver_type.plain_value(&patch) - 1.0).abs() < 0.001);
+    let variant_matches = |patch: &ResonatorSynthPatch, index: f32| match index as u8 {
+        0 => matches!(patch.driver, DriverConfig::Sample),
+        1 => matches!(patch.driver, DriverConfig::Pick(_)),
+        2 => matches!(patch.driver, DriverConfig::Reed(_)),
+        _ => matches!(patch.driver, DriverConfig::Bow(_)),
+    };
+    for index in [1.0, 2.0, 3.0, 0.0] {
+        driver_type.apply_plain(&mut patch, index);
+        assert!(variant_matches(&patch, index), "index {index} variant");
+        assert!((driver_type.plain_value(&patch) - index).abs() < 0.001);
+    }
 }
 
 #[test]
@@ -428,6 +440,9 @@ fn driver_continuous_parameters_expose_normalised_ranges() {
         DRIVER_REED_PRESSURE_DEPTH_PARAMETER_ID,
         DRIVER_REED_STIFFNESS_PARAMETER_ID,
         DRIVER_REED_EMBOUCHURE_PARAMETER_ID,
+        DRIVER_BOW_PRESSURE_DEPTH_PARAMETER_ID,
+        DRIVER_BOW_SPEED_PARAMETER_ID,
+        DRIVER_BOW_FRICTION_PARAMETER_ID,
     ] {
         let binding = parameter_binding(id).expect("driver parameter binding");
         let range = binding.info().range;
@@ -439,19 +454,24 @@ fn driver_continuous_parameters_expose_normalised_ranges() {
 
 #[test]
 fn contact_and_balance_parameters_expose_identity_default_ranges() {
-    // M9 contact + source-body-balance controls are `0..1` with an identity default
-    // of 0 (the pre-M9 transparent values), so the registry default reproduces the
-    // old behavior and the controls span the full normalised range.
-    for id in [
-        CONTACT_SPREAD_PARAMETER_ID,
-        CONTACT_TIME_PARAMETER_ID,
-        RESONATOR_A_SOURCE_BODY_BALANCE_PARAMETER_ID,
-        RESONATOR_B_SOURCE_BODY_BALANCE_PARAMETER_ID,
-    ] {
-        let binding = parameter_binding(id).expect("M9 contact/balance binding");
+    // M9 contact controls span `0..1` with an identity default of 0 (the pre-M9
+    // transparent values). The source↔body balance also spans `0..1`, but M11 P10
+    // defaults it to 0.5 so the factory String is dynamically alive; the registry
+    // default must equal the patch default (`default_source_body_balance`).
+    for id in [CONTACT_SPREAD_PARAMETER_ID, CONTACT_TIME_PARAMETER_ID] {
+        let binding = parameter_binding(id).expect("M9 contact binding");
         let range = binding.info().range;
         assert!(range.min == 0.0 && range.max == 1.0);
         assert_eq!(range.default, 0.0);
+    }
+    for id in [
+        RESONATOR_A_SOURCE_BODY_BALANCE_PARAMETER_ID,
+        RESONATOR_B_SOURCE_BODY_BALANCE_PARAMETER_ID,
+    ] {
+        let binding = parameter_binding(id).expect("source-body balance binding");
+        let range = binding.info().range;
+        assert!(range.min == 0.0 && range.max == 1.0);
+        assert_eq!(range.default, crate::patch::default_source_body_balance());
     }
 
     // Each routes to its patch field: contact spread/time -> patch.contact, and the
@@ -513,6 +533,7 @@ fn prepare_patch_for_binding(patch: &mut ResonatorSynthPatch, binding: Parameter
         match parameter {
             DriverParameter::Pick(_) => patch.driver = DriverConfig::Pick(PickConfig::default()),
             DriverParameter::Reed(_) => patch.driver = DriverConfig::Reed(ReedConfig::default()),
+            DriverParameter::Bow(_) => patch.driver = DriverConfig::Bow(BowConfig::default()),
             DriverParameter::Type => {}
         }
     }

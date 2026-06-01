@@ -27,3 +27,5 @@
 | [0023](0023-new-vsts-windows-only.md) | New VSTs target Windows: build path and egui editor | Accepted | 2026-05-31 |
 | [0024](0024-contact-stage-and-source-body-balance.md) | Coupling/contact stage and source↔body balance | Accepted | 2026-05-31 |
 | [0025](0025-surrounding-effects-and-sympathetic-chamber.md) | Surrounding effects and a cross-voice sympathetic chamber | Accepted | 2026-05-31 |
+| [0026](0026-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
+| [0027](0027-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |

@@ -226,11 +226,26 @@ the *real tails*; add a soft limiter + master makeup on top of `INTERNAL_HEADROO
 - Exit: `make test-integration` — families within loudness tolerance across vel 20/100/127; no gesture
   clips. `make ci` guards: limiter identity for unity sine; staged gain applied; no-alloc.
 
-### P10 — Control ranges/defaults from data + docs + exit gate  [depends on P2–P9]
+### P10 — Control ranges/defaults from data + docs + exit gate  [depends on P2–P9]  — ✅ DONE
 Set min/max/default/taper of every voicing + M4–M10 control from the measured data (registry + patch in
 sync); write the phase ADRs (reserve ADR-0026+) and `CHANGELOG.md`; delegate doc conventions to repo-docs.
 - Exit: `make ci` green (shown); `make test-integration` green on the full voicing battery; `make bench`
   within the 1–4 voice budget; ranges documented; no-alloc.
+
+**Outcome:**
+- **Exposed the bow as a host control (the gap):** the P9-tamed bow driver existed in the DSP/codec but had
+  no parameter surface — `Driver Type` capped at Reed and `DriverParameter` had no `Bow`. Added the 4th
+  driver type + three `0..1` Bow controls (pressure depth / bow speed / friction), IDs 153–155.
+- **Default-patch liveliness (your call):** the default `source_body_balance` now defaults to **0.5** (via a
+  shared `default_source_body_balance` fn keeping struct/serde/registry in sync) so the factory String is
+  dynamically alive; radiation/sympathetic stay opt-in. The balance is equal-power level-preserving, so the
+  voicing battery was unaffected.
+- **ADR-0026** (M11 gain staging: per-family makeup, per-driver trim, master soft-clip) and **ADR-0027**
+  (bow friction driver), indexed in the ADR README.
+- **CHANGELOG** `## Unreleased` → `## v0.4.0 - 2026-06-01` with the M11 voicing/calibration/staging/bow
+  entries; workspace version bumped **0.3.0 → 0.4.0**.
+- **Bench:** no regression — String 2× 1.32 µs, Mesh 2.15 µs, engine poly16 ~21.4 µs (≈ the RT-gate
+  baseline); within the 1–4 voice budget the RT gate accepted.
 
 ## Decisions needing your input (collated)
 

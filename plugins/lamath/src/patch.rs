@@ -224,10 +224,9 @@ pub struct WaveguideConfig {
     pub position_of_strike: f32,
     #[serde(default = "default_boundary_reflection")]
     pub boundary_reflection: f32,
-    /// Energy-dependent source↔body balance depth `0..1` for the String output (M9).
-    /// `0` reproduces the pre-M9 fixed pickup/body blend; higher leans the mix to the
-    /// warm body at low dynamics and the direct pickup at high. String only.
-    #[serde(default)]
+    /// Energy-dependent source↔body balance depth `0..1` for the String output (M9; soft→
+    /// warm, loud→bright per M11 P8). String only; defaults 0.5 (P10), alive out of the box.
+    #[serde(default = "default_source_body_balance")]
     pub source_body_balance: f32,
 }
 
@@ -244,7 +243,7 @@ impl Default for WaveguideConfig {
             dispersion: default_waveguide_dispersion(),
             position_of_strike: STRIKE_POSITION.default,
             boundary_reflection: default_boundary_reflection(),
-            source_body_balance: 0.0,
+            source_body_balance: default_source_body_balance(),
         }
     }
 }
@@ -284,6 +283,11 @@ pub(crate) const fn default_waveguide_dispersion() -> f32 {
 
 pub(crate) const fn default_boundary_reflection() -> f32 {
     TUBE_BOUNDARY.reflection.default
+}
+
+/// M11 P10 factory source↔body balance depth — non-zero so a default String is alive.
+pub(crate) const fn default_source_body_balance() -> f32 {
+    0.5
 }
 
 /// Selectable physical driver feeding the waveguide resonator (M8, ADR-0017). The

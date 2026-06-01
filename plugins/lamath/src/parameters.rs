@@ -79,6 +79,9 @@ pub(crate) const RESONATOR_B_SOURCE_BODY_BALANCE_PARAMETER_ID: u32 = 149;
 pub(crate) const SURROUNDING_MECHANICAL_NOISE_PARAMETER_ID: u32 = 150;
 pub(crate) const SURROUNDING_RADIATION_BRIGHTNESS_PARAMETER_ID: u32 = 151;
 pub(crate) const SURROUNDING_SYMPATHETIC_PARAMETER_ID: u32 = 152;
+pub(crate) const DRIVER_BOW_PRESSURE_DEPTH_PARAMETER_ID: u32 = 153;
+pub(crate) const DRIVER_BOW_SPEED_PARAMETER_ID: u32 = 154;
+pub(crate) const DRIVER_BOW_FRICTION_PARAMETER_ID: u32 = 155;
 
 pub(crate) type ParameterBinding = RegistryParameterBinding<
     ParameterPath,

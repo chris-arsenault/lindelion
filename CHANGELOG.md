@@ -2,7 +2,7 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
-## Unreleased
+## v0.4.0 - 2026-06-01
 
 ### Lamath
 
@@ -24,6 +24,14 @@ All notable user-visible changes to Lindelion are recorded here.
 - Added a coupling/contact stage and an energy-dependent source↔body balance to the waveguide instruments, so picked-vs-strummed and soft-vs-loud read as distinct timbres rather than levels. A new **contact** control spreads the strike across the String/Tube — a tight pick versus a wide strum, widened further by playing effort — and a **contact time** mellows the onset; the spread averages out the strike-position comb (a flatter, different harmonic balance) while the contact time low-passes the attack. On the String, a defeatable **source↔body balance** leans the output to the warm body at low dynamics and the direct pickup at high dynamics through an equal-power crossfade that holds output level, so soft and loud differ in character, not just gain. Both controls default to the pre-M9 behavior, so existing patches and the default patch are unchanged; Modal and Mesh are unaffected.
 
 - Added effort/energy-scaled surrounding effects, the "surrounding" link of the dynamic-response chain. A per-voice **mechanical noise** burst (a bright pick click plus a band-limited breath rush) fires at note-on and scales with playing effort; an energy-scaled **radiation brightening** high-shelf makes a more energetically-sounding note radiate brighter; and a **cross-voice sympathetic chamber** — a pool of lightly-damped strings tuned to the notes you actually play, excited by the mix with an energy-scaled send — lets every note ring the others' (and its own) sympathetic strings, ringing on after the note. The chamber is a send/return at the runtime, so the voice engine is unchanged. Each effect is a `0..1` depth defaulting to 0 (defeated), so existing patches and the default patch are unchanged.
+
+- Voiced the resonators into real instruments. The String and Mesh now ring to multi-second tails instead of dying in well under a second; the String carries audible inharmonicity (string stiffness) and a two-voicing body, and the four resonator families (Modal, String, Tube, Mesh) are now timbrally distinct rather than variations on one tone.
+
+- Calibrated the energy-driven dynamic response to real playing levels. The tension bloom, bore steepening, mesh shimmer, source↔body balance, radiation brightening, and sympathetic send were all referenced to energy levels far above what playing actually produces, so they barely engaged; they now act across the real dynamic range — soft, medium, and hard playing read as genuinely different. The source↔body balance also reads in the natural direction (harder playing blooms brighter), and the String midrange no longer over-damps on body resonances.
+
+- Staged the whole instrument for level and headroom. The resonator families, which emerged up to ~38 dB apart and ~30 dB too quiet, are now loudness-balanced and brought to a usable output level; a transparent master safety clipper holds dense chords below −1 dBFS without touching the level or tone of a single note. The bow driver's self-oscillation, which could run far past full scale, is tamed to a sane forte.
+
+- Added the **bow** friction driver: a continuous stick-slip excitation that sustains a bowed (Helmholtz) String tone for as long as a note is held, selectable as a fourth `Driver Type` with pressure, bow-speed, and friction controls. The default String now enables the source↔body balance (0.5), so the factory patch is dynamically alive out of the box; Modal, Tube, and Mesh defaults are unchanged.
 
 ### Glirdir
 

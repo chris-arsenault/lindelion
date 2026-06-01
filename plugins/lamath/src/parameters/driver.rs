@@ -7,6 +7,7 @@ pub(crate) enum DriverParameter {
     Type,
     Pick(PickParameter),
     Reed(ReedParameter),
+    Bow(BowParameter),
 }
 
 impl DriverParameter {
@@ -15,6 +16,7 @@ impl DriverParameter {
             Self::Type => DriverType::from_config(config).plain(),
             Self::Pick(parameter) => parameter.plain_value(pick_config_from(config)),
             Self::Reed(parameter) => parameter.plain_value(reed_config_from(config)),
+            Self::Bow(parameter) => parameter.plain_value(bow_config_from(config)),
         }
     }
 
@@ -23,6 +25,7 @@ impl DriverParameter {
             Self::Type => *config = DriverType::from_plain(value).config_from(*config),
             Self::Pick(parameter) => parameter.apply_if_selected(config, value),
             Self::Reed(parameter) => parameter.apply_if_selected(config, value),
+            Self::Bow(parameter) => parameter.apply_if_selected(config, value),
         }
     }
 }
@@ -84,6 +87,38 @@ impl ReedParameter {
             Self::PressureDepth => config.pressure_depth = value,
             Self::Stiffness => config.stiffness = value,
             Self::Embouchure => config.embouchure = value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BowParameter {
+    PressureDepth,
+    BowSpeed,
+    Friction,
+}
+
+impl BowParameter {
+    fn plain_value(self, config: BowConfig) -> f32 {
+        match self {
+            Self::PressureDepth => config.pressure_depth,
+            Self::BowSpeed => config.bow_speed,
+            Self::Friction => config.friction,
+        }
+    }
+
+    fn apply_if_selected(self, config: &mut DriverConfig, value: f32) {
+        if let DriverConfig::Bow(bow) = config {
+            self.apply_plain(bow, value);
+        }
+    }
+
+    fn apply_plain(self, config: &mut BowConfig, value: f32) {
+        let value = finite_value(value, 0.0, 1.0, 0.5);
+        match self {
+            Self::PressureDepth => config.pressure_depth = value,
+            Self::BowSpeed => config.bow_speed = value,
+            Self::Friction => config.friction = value,
         }
     }
 }
