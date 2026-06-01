@@ -19,7 +19,7 @@ make build PLUGIN=glirdir
 make build PLUGIN=linnod
 ```
 
-The Makefile creates `~/.lindelion-cache`, uses `~/.lindelion-cache/target` as the local target directory, enables incremental compilation for the build, stages each selected bundle under `~/.lindelion-cache/bundles`, and installs the final VST3s into the system VST3 folder:
+The Makefile uses the repo-local `./target-build` as the iteration target directory (kept separate from `./target` so it never invalidates the `make ci` cache), enables incremental compilation for the build, stages each selected bundle under `./target-build/bundles`, and installs the final VST3s into the system VST3 folder:
 
 ```text
 /Library/Audio/Plug-Ins/VST3/Ahara/Lamath.vst3

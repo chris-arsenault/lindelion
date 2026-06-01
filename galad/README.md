@@ -121,7 +121,7 @@ field activities, recorded in [`PLUGIN-MATRIX.md`](PLUGIN-MATRIX.md).
   in-repo target dir** (`./target-release`, gitignored; `$(LINDELION_RELEASE_TARGET_DIR)`) so the
   artifacts live in the repo where you can grab them — not a hidden home-dir cache — and release-
   profile cache invalidation never touches the day-to-day caches (`./target` for `make ci`/tests, and
-  the iteration cache `$(CACHE_DIR)/target`). `make release` dispatches by host OS: on Linux/Windows,
+  the iteration cache `./target-build`). `make release` dispatches by host OS: on Linux/Windows,
   `make release-windows` builds `galad.exe` **and** the Windows VST3 plugin bundles (into
   `./target-release/bundles/`); on macOS, `make release-macos` builds the instrument bundles.
   (`make host-windows-release` builds just `galad.exe`.) Output:

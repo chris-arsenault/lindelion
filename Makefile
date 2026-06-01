@@ -12,15 +12,20 @@ MACOS_TARGET ?= aarch64-apple-darwin
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
 WINDOWS_PLUGINS ?= cenedril
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
-CACHE_DIR ?= $(HOME)/.lindelion-cache
-LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
-# Release builds use their OWN IN-REPO target dir (gitignored) so optimized artifacts are
-# deliverables you can grab from the repo, not a hidden home-dir cache, and so release-profile cache
-# invalidation never touches ./target (make ci/tests) or $(CACHE_DIR)/target (iteration builds).
-LINDELION_RELEASE_TARGET_DIR ?= $(CURDIR)/target-release
+# Repo root = the directory containing this Makefile. Robust to the invocation cwd (unlike $(CURDIR))
+# and unique per git worktree, so all build output is repo-local and worktrees never share a cache.
+REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(firstword $(MAKEFILE_LIST)))))
+
+# All build output lives in the repo (gitignored), in dirs kept separate from ./target (the cargo
+# default used by `make ci`/tests) so release/iteration cache invalidation never crosses into it:
+#   ./target          dev / CI (cargo default)
+#   ./target-build    iteration builds (build / build-windows / host-windows-check) + staged dev bundles
+#   ./target-release  the release chain (make release)
+LINDELION_CARGO_TARGET_DIR ?= $(REPO_ROOT)/target-build
+LINDELION_RELEASE_TARGET_DIR ?= $(REPO_ROOT)/target-release
+VST3_STAGING_DIR ?= $(LINDELION_CARGO_TARGET_DIR)/bundles
 BUNDLE_NAME ?= $(shell CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$(PLUGIN)" --field bundle-file)
 VST3_VALIDATOR ?= validator
-VST3_STAGING_DIR ?= $(CACHE_DIR)/bundles
 VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
@@ -30,7 +35,7 @@ VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 ci: check host-macos-check
 
 cache-dir:
-	@mkdir -p "$(CACHE_DIR)" "$(LINDELION_CARGO_TARGET_DIR)" "$(VST3_STAGING_DIR)"
+	@mkdir -p "$(LINDELION_CARGO_TARGET_DIR)" "$(LINDELION_RELEASE_TARGET_DIR)" "$(VST3_STAGING_DIR)"
 
 check:
 	cargo run -p xtask -- check
