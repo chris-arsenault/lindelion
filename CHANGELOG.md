@@ -2,6 +2,16 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.5.0 - 2026-06-01
+
+### Calóma
+
+- Built Calóma, the Windows-only speech-clarity VST3: a serial chain of the 20 ported speech effects with a 3-valued signal-order parameter (Clarity / Broadcast / Light topologies), running on a mono downmix with compute-once shared analysis and a fixed-max latency reported to the host.
+- Made it a self-contained single-component VST3 (one COM object is processor and controller) with **no host parameters** — a Vizia editor (order, per-effect enable + dry/wet intensity, input/output level) on the shared `lindelion-ui` stack is the sole control surface, writing lock-free shared state the audio thread reads. All three orders' chains are pre-built so an order switch is an atomic index flip.
+- Refactored the SwiftF0-consuming speech effects to take an injected `SignalSnapshot`, so one shared analysis worker replaces the per-effect workers (retiring the test-only `sync-analysis` feature).
+- Chose each order's committed default tuning with an offline full-chain tuning harness (`make tune-defaults`): tonal/dynamics parameters optimized against objective metrics (matched-pair SNR, dereverb, clarity, coloration) on a spoken-word battery, committed at unity gain (loudness is the user's to set; the limiter provides peak safety).
+- Added a Windows VST3 build path (`make build-windows`, cargo-xwin) and per-order full-chain fidelity gates (`make test-models`): finite, non-clipping, noise not worsened, dereverb reduces the late tail, and reported latency matches the measured group delay.
+
 ## v0.4.0 - 2026-06-01
 
 ### Lamath

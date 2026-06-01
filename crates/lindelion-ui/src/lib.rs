@@ -1,5 +1,6 @@
 use std::path::Path;
 
+pub mod caloma_vizia;
 pub mod cenedril_vizia;
 pub mod editor_surface;
 pub mod glirdir_vizia;

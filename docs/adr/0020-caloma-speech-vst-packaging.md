@@ -35,11 +35,12 @@ Package the speech effects as a single VST3, **Calóma** (Quenya `cala` "bright/
 - NN effects (DFN3 denoiser, Silero voice gate) run **inline** ([ADR-0018](0018-nn-inference-allocation.md));
   they are chain slots, not analysis consumers.
 - **Default parameter sets are chosen by an offline end-to-end tuning harness** — the full chain
-  run on the spoken-word fixture battery, scored by objective metrics (loudness target,
-  matched-pair SNR, dereverb, clarity, low coloration) under hard no-artifact constraints — and
-  committed per order, with a regression guard.
-- VST3 via `lindelion-plugin-shell` + the `vst3` crate (no new framework — ADR-0002); macOS build
-  path ([ADR-0007](0007-macos-vst3-build-path.md)).
+  run on a spoken-word fixture battery, scored by objective metrics (matched-pair SNR, dereverb,
+  clarity, coloration) under hard no-artifact constraints — and committed per order. (As built, gain
+  staging is left at unity and loudness is the user's to set; see Outcome.)
+- VST3 via `lindelion-plugin-shell` + the `vst3` crate (no new framework — ADR-0002), as a
+  **single-component, Windows-only** plugin whose **Vizia editor is the sole control surface (no
+  host parameters)** ([ADR-0023](0023-new-vsts-windows-only.md)).
 
 This resolves the contingent shared-analysis milestone (M4 of the port plan). **ConvolutionReverb
 is dropped from the product** (it adds reverberation, against the clarity goal; Dereverberation is
@@ -65,10 +66,28 @@ separate projects (placeholder plans at the repo root; backlog).
 - One shared analysis worker replaces the per-effect workers; the signal-injection refactor
   changes the worker-consumer crates' shape and retires the test-only `sync-analysis` feature
   (tests inject known snapshots instead).
-- A large static parameter surface (the order parameter + ~16 effects' parameters). The order
-  parameter reloads defaults when changed — program-change-like behavior on a normal parameter.
+- **No host-automatable parameters:** the plugin is self-contained and its Vizia editor is the sole
+  control surface (order, per-slot enable/intensity, input/output level), writing lock-free shared
+  state the audio thread reads ([ADR-0023](0023-new-vsts-windows-only.md)). Selecting an order loads
+  that order's committed defaults (program-change-like).
 - ConvolutionReverb is not part of the product (revisit only for deliberate room simulation).
 - Latency is the sum of active slots (DFN3's 1920 + STFT frames dominate); a fixed-max strategy
   keeps host delay-compensation stable across order/bypass changes.
-- Default parameter sets are reproducible and committed; a regression guard fails if a future
-  effect change degrades a shipped default below its quality floor.
+- Default parameter sets are reproducible and committed (`make tune-defaults`); the per-order
+  full-chain fidelity gates (`make test-models`) fail if a future effect change degrades a shipped
+  default (noise worsened, dereverb lost, clipping, latency drift).
+
+## Outcome (as built, M0–M6)
+
+Implemented as a **single-component Windows VST3 with a Vizia control editor** ([ADR-0023](0023-new-vsts-windows-only.md));
+see the [spec](../plugins/caloma.md). The implementation refined two things from this decision:
+
+1. **The control surface is the editor, not host parameters.** Calóma surfaces no host automation
+   (`getParameterCount() == 0`); the editor writes lock-free `SharedControls` the DSP reads. (The
+   "large static parameter surface" this ADR first imagined did not ship.)
+2. **Defaults are tonal/dynamics-tuned at unity gain.** Loudness is *measured* by the harness but
+   **not** normalized to a fixed LUFS target — chasing one on raw, pause-y speech proved brittle
+   (only the most-processed order reached it; forcing the others there required extreme limiting that
+   degraded noise reduction and dereverb). A default is a robust starting point; the limiter caps
+   peaks and the user sets level. The aggregate-score regression was replaced by robust per-claim
+   fidelity gates.

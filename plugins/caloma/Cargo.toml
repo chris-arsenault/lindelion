@@ -1,0 +1,50 @@
+[package]
+name = "caloma"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-effect.workspace = true
+lindelion-plugin-metadata.workspace = true
+lindelion-plugin-shell.workspace = true
+lindelion-speech-signals.workspace = true
+lindelion-ui.workspace = true
+vst3.workspace = true
+# The 20 ported speech effects — the chain's slots (one per SlotId).
+lindelion-speech-air-exciter.workspace = true
+lindelion-speech-bass-enhancer.workspace = true
+lindelion-speech-compressor.workspace = true
+lindelion-speech-consonant-transient.workspace = true
+lindelion-speech-de-esser.workspace = true
+lindelion-speech-denoiser.workspace = true
+lindelion-speech-dereverberation.workspace = true
+lindelion-speech-dynamic-eq.workspace = true
+lindelion-speech-fft-noise-removal.workspace = true
+lindelion-speech-five-band-eq.workspace = true
+lindelion-speech-gain.workspace = true
+lindelion-speech-high-pass.workspace = true
+lindelion-speech-limiter.workspace = true
+lindelion-speech-noise-gate.workspace = true
+lindelion-speech-room-tone.workspace = true
+lindelion-speech-saturation.workspace = true
+lindelion-speech-spectral-contrast.workspace = true
+lindelion-speech-upward-expander.workspace = true
+lindelion-speech-vitalizer.workspace = true
+lindelion-speech-voice-gate.workspace = true
+serde.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }
+lindelion-test-allocator.workspace = true
+
+[features]
+# Heavy DSP/audio regression tests, excluded from the default `make ci` unit run
+# to keep it fast. Run them with `make test-integration`.
+integration-tests = []

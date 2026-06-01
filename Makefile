@@ -10,7 +10,7 @@ MACOS_TARGET ?= aarch64-apple-darwin
 # Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
 # Kept separate from the macOS PLUGINS list above.
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
-WINDOWS_PLUGINS ?= cenedril
+WINDOWS_PLUGINS ?= cenedril caloma
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 # Repo root = the directory containing this Makefile. Robust to the invocation cwd (unlike $(CURDIR))
 # and unique per git worktree, so all build output is repo-local and worktrees never share a cache.
@@ -30,7 +30,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build build-windows windows-sdk-prep host-windows-check host-windows-release release release-windows release-macos bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models tune-defaults test-integration check bench bench-smoke host-macos-check macos-check build build-windows windows-sdk-prep host-windows-check host-windows-release release release-windows release-macos bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check
 
@@ -56,8 +56,18 @@ test:
 # saturate the CPU; run them on their own, less frequently.
 test-models:
 	cargo test -p lindelion-speech-denoiser -p lindelion-speech-voice-gate --test integration -- --include-ignored
-	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration --features test-sync-analysis -- --include-ignored
+	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration -- --include-ignored
 	cargo test -p lindelion-speech-air-exciter -p lindelion-speech-dereverberation -p lindelion-speech-room-tone -p lindelion-speech-spectral-contrast --test integration -- --include-ignored
+	cargo test -p caloma --test chain --test chain_e2e --test full_chain_fidelity -- --include-ignored
+
+# Offline default-tuning (M5): run the seeded full-chain search per signal order and write the
+# winning patches into plugins/caloma/src/defaults/<order>.toml. Heavy (loads the NN models, runs the
+# chain many times); deterministic, so the written defaults are reviewable in the diff. Run when an
+# effect change or a retune is wanted; the result is committed. Built in **release** — the ~16-slot
+# chain's DSP is far too slow unoptimized for a many-candidate search (this is an offline generator,
+# not the debug-only `make ci` path).
+tune-defaults:
+	cargo test --release -p caloma --test tune_defaults -- --include-ignored --nocapture
 
 # Integration tests: heavy DSP regression (fidelity/stability/tuning sweeps) plus filesystem- and
 # thread-touching tests. Gated behind the per-crate `integration-tests` feature, excluded from the
@@ -164,6 +174,8 @@ build-windows: cache-dir
 	@# `Advapi32.lib` while the xwin SDK ships lowercase `advapi32.lib`. Symlink capitalized
 	@# variants once the SDK is extracted. (On a fresh cache the SDK is downloaded during the
 	@# first build, so that first run may fail at link; re-run `make build-windows` to succeed.)
+	@# The mixed-case `DirectML.lib`/`PathCch.lib` (Caloma's ONNX Runtime DirectML EP + skia) cannot
+	@# be derived by capitalizing the first letter, so they are symlinked explicitly.
 	@for d in um ucrt; do \
 		dir="$(XWIN_CACHE_DIR)/xwin/sdk/lib/$$d/x86_64"; \
 		[ -d "$$dir" ] || continue; \
@@ -171,6 +183,10 @@ build-windows: cache-dir
 			base="$$(basename "$$lib")"; \
 			cap="$$(printf '%s' "$$base" | sed -E 's/^(.)/\U\1/')"; \
 			if [ "$$cap" != "$$base" ] && [ ! -e "$$dir/$$cap" ]; then ln -s "$$base" "$$dir/$$cap"; fi; \
+		done; \
+		for mixed in DirectML:directml PathCch:pathcch; do \
+			want="$${mixed%%:*}.lib"; have="$${mixed##*:}.lib"; \
+			if [ -e "$$dir/$$have" ] && [ ! -e "$$dir/$$want" ]; then ln -s "$$have" "$$dir/$$want"; fi; \
 		done; \
 	done
 	@for plugin in $(WINDOWS_PLUGINS); do \

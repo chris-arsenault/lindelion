@@ -18,8 +18,8 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
@@ -1015,7 +1015,10 @@ pub fn run() {
         diagnostics::log(format!("ui: enumerate inputs done count={}", inputs.len()));
         diagnostics::log("ui: enumerate outputs begin");
         let outputs = enumerate(AudioDirection::Output).unwrap_or_default();
-        diagnostics::log(format!("ui: enumerate outputs done count={}", outputs.len()));
+        diagnostics::log(format!(
+            "ui: enumerate outputs done count={}",
+            outputs.len()
+        ));
         let mut state = HostUiState::default();
         state.set_devices(inputs, outputs);
         diagnostics::log(format!(
@@ -1080,8 +1083,8 @@ pub fn run() {
         }
     })
     .title("Galad")
-        .inner_size((1280u32, 780u32))
-        .min_inner_size(Some((1120u32, 700u32)));
+    .inner_size((1280u32, 780u32))
+    .min_inner_size(Some((1120u32, 700u32)));
 
     diagnostics::log("ui: Application::new done; run begin");
     diagnostics::log("ui: spawn window probe");

@@ -52,12 +52,26 @@ pub const CENEDRIL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata
     controller_name: "Cenedril Controller",
 };
 
+pub const CALOMA_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
+    package: "caloma",
+    bundle_name: "Caloma",
+    executable_name: "Caloma",
+    bundle_identifier: "com.ahara.caloma",
+    library_stem: "caloma",
+    vst3_sub_categories: "Fx",
+    module_sub_categories: &["Fx"],
+    processor_cid: [0xCA10A001, 0x5E1F4C32, 0x8B3D6E95, 0xA2470FB2],
+    controller_cid: [0xCA10A0C2, 0x6D9E4F33, 0xB1C05D29, 0x73E2952E],
+    controller_name: "Caloma Controller",
+};
+
 pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {
     match package {
         "lamath" => Some(LAMATH_VST3_BUNDLE_METADATA),
         "glirdir" => Some(GLIRDIR_VST3_BUNDLE_METADATA),
         "linnod" => Some(LINNOD_VST3_BUNDLE_METADATA),
         "cenedril" => Some(CENEDRIL_VST3_BUNDLE_METADATA),
+        "caloma" => Some(CALOMA_VST3_BUNDLE_METADATA),
         _ => None,
     }
 }
@@ -83,6 +97,10 @@ mod tests {
         assert_eq!(
             metadata_for_package("cenedril").unwrap(),
             CENEDRIL_VST3_BUNDLE_METADATA
+        );
+        assert_eq!(
+            metadata_for_package("caloma").unwrap(),
+            CALOMA_VST3_BUNDLE_METADATA
         );
         assert!(metadata_for_package("unknown").is_none());
     }

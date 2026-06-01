@@ -6,10 +6,6 @@
 //! audio-thread operations are allocation-free and non-blocking (ADR-0001); all heavy work and
 //! allocation happen on the worker thread.
 
-// In the `sync-analysis` (test-only) build the off-thread machinery (worker loop, ring, idle
-// sleep) is unused; suppress the resulting dead-code/unused-import warnings in that build only.
-#![cfg_attr(feature = "sync-analysis", allow(dead_code, unused_imports))]
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
@@ -20,6 +16,15 @@ use crate::analyzer::{SignalAnalyzer, SignalSnapshot};
 const RING_CAPACITY: usize = 1 << 16; // power of two; ~1.3 s at 48 kHz
 const DRAIN_MAX: usize = 4_096;
 const IDLE_SLEEP: Duration = Duration::from_millis(2);
+
+/// Count of [`AnalysisWorker`]s constructed in this process. Always-on instrumentation (one relaxed
+/// increment per construction) so tests can assert the chain builds exactly one analyzer.
+static ANALYSIS_WORKER_CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Number of [`AnalysisWorker`]s constructed so far in this process.
+pub fn analysis_worker_constructions() -> usize {
+    ANALYSIS_WORKER_CONSTRUCTIONS.load(Ordering::Relaxed)
+}
 
 // Single-producer/single-consumer ring of f32 bits. Safe via atomics (no `unsafe`). Lossy under
 // overflow, which is acceptable for control-rate analysis.
@@ -136,52 +141,28 @@ fn worker_loop(shared: Arc<Shared>, source_sample_rate: u32) {
 
 /// Runs the heavy signal analysis on a background thread; the audio thread pushes input and reads
 /// the latest snapshot, both allocation-free.
-///
-/// With the `sync-analysis` feature (test-only), the analysis runs synchronously on `push` instead
-/// of on a background thread, so `latest()` immediately reflects the pushed audio — see the
-/// feature note in `Cargo.toml`.
 pub struct AnalysisWorker {
     shared: Arc<Shared>,
     handle: Option<JoinHandle<()>>,
-    #[cfg(feature = "sync-analysis")]
-    analyzer: std::sync::Mutex<SignalAnalyzer>,
 }
 
 impl AnalysisWorker {
     /// Spawn the worker for audio at `source_sample_rate`.
     pub fn new(source_sample_rate: u32) -> Self {
+        ANALYSIS_WORKER_CONSTRUCTIONS.fetch_add(1, Ordering::Relaxed);
         let shared = Arc::new(Shared::new());
-        #[cfg(not(feature = "sync-analysis"))]
-        {
-            let worker_shared = Arc::clone(&shared);
-            let handle = thread::spawn(move || worker_loop(worker_shared, source_sample_rate));
-            Self {
-                shared,
-                handle: Some(handle),
-            }
-        }
-        #[cfg(feature = "sync-analysis")]
-        {
-            Self {
-                shared,
-                handle: None,
-                analyzer: std::sync::Mutex::new(SignalAnalyzer::new(source_sample_rate)),
-            }
+        let worker_shared = Arc::clone(&shared);
+        let handle = thread::spawn(move || worker_loop(worker_shared, source_sample_rate));
+        Self {
+            shared,
+            handle: Some(handle),
         }
     }
 
-    /// Hand a block of input audio to the worker. Allocation-free and non-blocking in the default
-    /// (off-thread) build. With `sync-analysis`, runs the analysis inline and publishes the
-    /// snapshot before returning.
+    /// Hand a block of input audio to the worker. Allocation-free and non-blocking.
     pub fn push(&self, block: &[f32]) {
-        #[cfg(not(feature = "sync-analysis"))]
         for &sample in block {
             self.shared.ring.push(sample);
-        }
-        #[cfg(feature = "sync-analysis")]
-        {
-            let snapshot = self.analyzer.lock().expect("analyzer mutex").process(block);
-            self.shared.publish(&snapshot);
         }
     }
 
@@ -221,6 +202,19 @@ mod tests {
             worker.push(&block);
             let _ = worker.latest();
         });
+    }
+
+    #[test]
+    fn constructing_a_worker_increments_the_counter() {
+        // The global counter only ever increments, so a single construction strictly raises it
+        // even when other tests build workers concurrently. (The exact "one analyzer per chain"
+        // assertion lives in caloma's chain test, which is the sole worker-builder in its binary.)
+        let before = analysis_worker_constructions();
+        let _worker = AnalysisWorker::new(48_000);
+        assert!(
+            analysis_worker_constructions() > before,
+            "AnalysisWorker::new must increment the construction counter"
+        );
     }
 
     #[test]

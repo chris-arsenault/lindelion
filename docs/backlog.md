@@ -30,9 +30,11 @@ Detailed milestones and the reuse/benchmark strategy live in
   licensing recorded.
 - Source additional public-domain / CC0 spoken-word fixtures and record provenance in
   `testdata/audio/FIXTURES.md`.
-- Build **Calóma**, the single VST3 packaging the speech-effect chain (signal-order parameter,
-  normal-VST patches, compute-once analysis, e2e-tuned defaults). Decided in
-  [ADR-0020](adr/0020-caloma-speech-vst-packaging.md); plan at `CALOMA-VST-PLAN.md`.
+- ~~Build **Calóma**, the single VST3 packaging the speech-effect chain.~~ **Built (M0–M6):**
+  single-component Windows VST3, 3 signal orders, self-contained Vizia editor (no host params),
+  per-order tuned defaults. Decided in [ADR-0020](adr/0020-caloma-speech-vst-packaging.md); see the
+  [spec](plugins/caloma.md) and [backlog](plugins/caloma-backlog.md). Remaining: on-target Windows
+  load-verify.
 - Field-validate Galad on Windows against a matrix of third-party VST3 plugins and a stability/leak
   soak run, recorded in [`galad/PLUGIN-MATRIX.md`](../galad/PLUGIN-MATRIX.md)
   ([ADR-0022](adr/0022-windows-vst3-host.md)).

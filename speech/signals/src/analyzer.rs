@@ -115,6 +115,18 @@ impl SignalAnalyzer {
         self.last
     }
 
+    /// Clear all streaming state (the loaded SwiftF0 model stays). Off-thread only — used by the
+    /// offline default-tuner to re-run a fixture from a clean state without reloading models.
+    pub fn reset(&mut self) {
+        self.pitch.reset();
+        self.flux.reset();
+        self.flux_high.reset();
+        self.high_pass.reset();
+        self.hp_scratch.clear();
+        self.hnr_buffer.clear();
+        self.last = SignalSnapshot::default();
+    }
+
     fn compute_hnr(&mut self) -> f32 {
         for (i, slot) in self.fft_input.iter_mut().enumerate() {
             *slot = self.hnr_buffer[i] * window::hann(i, FRAME);

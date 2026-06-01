@@ -26,9 +26,9 @@ Vizia/baseview/skia stack **cross-compiles for `x86_64-pc-windows-msvc`** (verif
 cargo-xwin); the Windows editor code is target-gated like the macOS editors, so it is exercised by
 the Windows build and host, not by Linux `make ci`.
 
-Earlier planning encoded a macOS-first assumption the product never had: `CALOMA-VST-PLAN.md` said
-"Windows is the separate host project" and deferred a custom editor. That deferral of the **Windows
-build** is the thing to withdraw. (A prior revision of this ADR over-corrected by also switching the
+Earlier planning encoded a macOS-first assumption the product never had — it treated Windows as "the
+separate host project" and deferred a custom editor. That deferral of the **Windows build** is the
+thing to withdraw. (A prior revision of this ADR over-corrected by also switching the
 editor stack to egui on the false premise that `lindelion-ui` is macOS-native; that premise is
 wrong — see above — and is withdrawn.)
 
@@ -66,12 +66,14 @@ stack.
   layer across two GUI frameworks (instruments on Vizia, new VSTs on egui) to match the *host*
   app — when the plugins are more naturally unified with each other on Vizia. egui remains the
   Galad *host* application's UI (ADR-0022); that is a separate target.
-- **macOS-first, Windows deferred** (what `CALOMA-VST-PLAN.md` assumed). Rejected: the new VSTs are
+- **macOS-first, Windows deferred** (the earlier planning assumption). Rejected: the new VSTs are
   used only on Windows; a macOS build is unrunnable there, and deferring the Windows build leaves
   the product non-functional in its only deployment.
-- **Generic host-parameter editor only** (no custom UI). Works for Calóma's parameters but not for
-  the visual plugins, whose value *is* custom rendering (Cenedril's spectrogram, the Coach's
-  readouts — both expressible in Vizia). Rejected as the general approach.
+- **Generic host-parameter editor only** (no custom UI). Could expose a parameter-style plugin's
+  controls, but not the visual plugins, whose value *is* custom rendering (Cenedril's spectrogram,
+  the Coach's readouts — both expressible in Vizia). Rejected as the general approach. (As built,
+  Calóma went further: it is self-contained with a custom Vizia editor and **no host parameters** —
+  [ADR-0020](0020-caloma-speech-vst-packaging.md).)
 
 ## Consequences
 
@@ -82,9 +84,9 @@ stack.
 - The new VSTs reuse `lindelion-ui` and its components; all Lindelion **plugins** stay on one editor
   stack (Vizia), and the new Windows attach is a step toward bringing the macOS instruments to
   Windows. The Galad host stays on egui as a separate application.
-- `CALOMA-VST-PLAN.md` is corrected: Calóma targets Windows with a Windows build and a Vizia
-  editor; its "Windows is the separate host project" framing and macOS-only editor deferral are
-  withdrawn.
+- Calóma targets Windows with a Windows build and a Vizia editor; the earlier "Windows is the
+  separate host project" framing and macOS-only editor deferral are withdrawn. (As built, Calóma is
+  a single-component VST3 with no host parameters — [ADR-0020](0020-caloma-speech-vst-packaging.md).)
 - The existing macOS instruments and ADR-0007 are unaffected; the repo now builds VST3s for two
   targets (macOS instruments, Windows new-VSTs) on the shared Vizia editor stack.
 - These plugins run in the Galad host and in Windows DAWs; they are not produced or validated by

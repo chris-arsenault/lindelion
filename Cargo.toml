@@ -17,6 +17,7 @@ members = [
     "crates/lindelion-sample-library",
     "crates/lindelion-ui",
     "galad",
+    "plugins/caloma",
     "plugins/cenedril",
     "plugins/glirdir",
     "plugins/lamath",
@@ -46,7 +47,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "UNLICENSED"
 authors = ["Ahara"]
@@ -57,6 +58,26 @@ lindelion-dsp-utils = { path = "crates/lindelion-dsp-utils" }
 lindelion-effect = { path = "crates/lindelion-effect" }
 lindelion-fidelity = { path = "crates/lindelion-fidelity" }
 lindelion-speech-signals = { path = "speech/signals" }
+lindelion-speech-air-exciter = { path = "speech/air-exciter" }
+lindelion-speech-bass-enhancer = { path = "speech/bass-enhancer" }
+lindelion-speech-compressor = { path = "speech/compressor" }
+lindelion-speech-consonant-transient = { path = "speech/consonant-transient" }
+lindelion-speech-de-esser = { path = "speech/de-esser" }
+lindelion-speech-denoiser = { path = "speech/speech-denoiser" }
+lindelion-speech-dereverberation = { path = "speech/dereverberation" }
+lindelion-speech-dynamic-eq = { path = "speech/dynamic-eq" }
+lindelion-speech-fft-noise-removal = { path = "speech/fft-noise-removal" }
+lindelion-speech-five-band-eq = { path = "speech/five-band-eq" }
+lindelion-speech-gain = { path = "speech/gain" }
+lindelion-speech-high-pass = { path = "speech/high-pass" }
+lindelion-speech-limiter = { path = "speech/limiter" }
+lindelion-speech-noise-gate = { path = "speech/noise-gate" }
+lindelion-speech-room-tone = { path = "speech/room-tone" }
+lindelion-speech-saturation = { path = "speech/saturation" }
+lindelion-speech-spectral-contrast = { path = "speech/spectral-contrast" }
+lindelion-speech-upward-expander = { path = "speech/upward-expander" }
+lindelion-speech-vitalizer = { path = "speech/vitalizer" }
+lindelion-speech-voice-gate = { path = "speech/voice-gate" }
 lindelion-test-allocator = { path = "crates/lindelion-test-allocator" }
 lindelion-capture = { path = "crates/lindelion-capture" }
 lindelion-audio-expression = { path = "crates/lindelion-audio-expression" }
