@@ -52,6 +52,12 @@ pub trait CalomaControlSurface: Send + Sync {
     fn output_level_db(&self) -> f32;
     fn set_output_level_db(&self, db: f32);
 
+    /// Live input peak (linear amplitude, post input-trim) for the input meter. Read-only: the
+    /// audio thread publishes it each block.
+    fn input_meter(&self) -> f32;
+    /// Live output peak (linear amplitude, post output-level) for the output meter.
+    fn output_meter(&self) -> f32;
+
     /// The per-effect rows for the current order (in chain order).
     fn active_slots(&self) -> Vec<CalomaSlotView>;
     /// Enable/bypass the slot at `index` (an index from [`CalomaSlotView::index`]).

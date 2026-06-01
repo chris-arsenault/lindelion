@@ -155,11 +155,17 @@ impl ChainRuntime {
     /// nothing). An enabled slot at full intensity processes normally (applying its own latency);
     /// a disabled slot is replaced by a delay equal to its latency (so the chain stays time-
     /// aligned), which is a no-op for a zero-latency slot.
-    pub fn process(&mut self, buffer: &mut [f32], patch: &CalomaPatch, snapshot: &SignalSnapshot) {
+    pub fn process(
+        &mut self,
+        buffer: &mut [f32],
+        patch: &CalomaPatch,
+        snapshot: &SignalSnapshot,
+    ) -> BlockMeters {
         let Self {
             slots, dry_scratch, ..
         } = self;
         apply_gain(buffer, db_to_gain(patch.input_level_db));
+        let input_peak = block_peak(buffer);
         for slot in slots.iter_mut() {
             slot.effect.set_snapshot(snapshot);
             if !patch.slot_enabled(slot.id) {
@@ -184,7 +190,20 @@ impl ChainRuntime {
             }
         }
         apply_gain(buffer, db_to_gain(patch.output_level_db));
+        BlockMeters {
+            input_peak,
+            output_peak: block_peak(buffer),
+        }
     }
+}
+
+/// Per-block peak levels tapped at the chain head (after input trim) and tail (after output level),
+/// in linear amplitude. The plugin publishes these to `SharedControls` so the editor's in/out meters
+/// can display the signal the user is actually staging (`set_input_meter`/`set_output_meter`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockMeters {
+    pub input_peak: f32,
+    pub output_peak: f32,
 }
 
 /// Scale `buffer` in place by `gain` (skipped at unity so 0 dB is bit-exact).
@@ -195,6 +214,12 @@ fn apply_gain(buffer: &mut [f32], gain: f32) {
     for sample in buffer.iter_mut() {
         *sample *= gain;
     }
+}
+
+/// The block's peak (max `|sample|`), in linear amplitude. Allocation-free (a plain reduction over
+/// the buffer the audio thread already owns), so it is safe to call inside `process` (ADR-0001).
+fn block_peak(buffer: &[f32]) -> f32 {
+    buffer.iter().fold(0.0_f32, |peak, &s| peak.max(s.abs()))
 }
 
 #[cfg(test)]
@@ -274,6 +299,33 @@ mod tests {
         let mut buffer = input.clone();
         runtime.process(&mut buffer, &patch, &SignalSnapshot::default());
         assert_eq!(buffer, input);
+    }
+
+    #[test]
+    fn process_reports_head_and_tail_peaks() {
+        // An identity chain (FiveBandEq disabled, zero latency): the input meter is tapped after the
+        // input trim and the output meter after the output level, so a gain change moves the tail
+        // peak but not the input peak relative to a unity reference.
+        let mut runtime = ChainRuntime::from_slots(&[SlotId::FiveBandEq], 48_000.0, 1_024);
+        let buffer: Vec<f32> = (0..1_024)
+            .map(|i| 0.5 * (std::f32::consts::TAU * 200.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let input_peak = block_peak(&buffer);
+
+        // Unity gain staging: both meters see the unaltered signal.
+        let mut patch = CalomaPatch::default();
+        let mut unity = buffer.clone();
+        let meters = runtime.process(&mut unity, &patch, &SignalSnapshot::default());
+        assert!((meters.input_peak - input_peak).abs() < 1e-6);
+        assert!((meters.output_peak - input_peak).abs() < 1e-6);
+
+        // A -6 dB output level halves the tail peak (~0.501x) but leaves the head peak unchanged.
+        patch.output_level_db = -6.0;
+        let mut attenuated = buffer.clone();
+        let meters = runtime.process(&mut attenuated, &patch, &SignalSnapshot::default());
+        assert!((meters.input_peak - input_peak).abs() < 1e-6);
+        assert!(meters.output_peak < input_peak * 0.6);
+        assert!(meters.output_peak > input_peak * 0.4);
     }
 
     #[test]

@@ -47,6 +47,7 @@ pub struct Vst3BundleMetadata {
     pub executable_name: &'static str,
     pub bundle_identifier: &'static str,
     pub library_stem: &'static str,
+    pub windows_runtime_dlls: &'static [&'static str],
     pub vst3_sub_categories: &'static str,
     pub module_sub_categories: &'static [&'static str],
     pub processor_cid: [u32; 4],

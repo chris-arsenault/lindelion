@@ -42,9 +42,38 @@ pub(crate) fn create_windows_vst3_bundle(
     }
 
     fs::copy(source_dll, &binary)?;
+    copy_runtime_dlls(
+        spec,
+        source_dll,
+        binary.parent().expect("binary has parent"),
+    )?;
     fs::write(module_info_path, module_info(spec))?;
 
     Ok(bundle)
+}
+
+fn copy_runtime_dlls(spec: &BundleSpec, source_dll: &Path, binary_dir: &Path) -> io::Result<()> {
+    let source_dir = source_dll.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("source DLL has no parent: {}", source_dll.display()),
+        )
+    })?;
+    for dll in spec.metadata.windows_runtime_dlls {
+        let source = source_dir.join(dll);
+        let target = binary_dir.join(dll);
+        fs::copy(&source, &target).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to copy Windows runtime DLL {} to {}: {error}",
+                    source.display(),
+                    target.display()
+                ),
+            )
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -73,5 +102,11 @@ mod tests {
         assert!(module_info.contains("CE9ED7131A5B4C208F3D6E94B2470FA1"));
         assert!(module_info.contains("CE9EDC726D8E4F31A1B05C2873E2941D"));
         assert!(module_info.contains(r#""Fx""#));
+    }
+
+    #[test]
+    fn caloma_windows_bundle_declares_directml_runtime_dll() {
+        let spec = BundleSpec::from_plugin("caloma").expect("caloma spec");
+        assert_eq!(spec.metadata.windows_runtime_dlls, &["DirectML.dll"]);
     }
 }

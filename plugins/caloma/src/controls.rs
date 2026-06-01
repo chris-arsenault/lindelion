@@ -30,6 +30,13 @@ pub struct SharedControls {
     intensity: [AtomicU32; SLOT_COUNT],
     input_level_db: AtomicU32,
     output_level_db: AtomicU32,
+    /// Transient in/out peak meters (linear amplitude). Unlike every other field, the **audio thread
+    /// writes** these (each block, from `process`) and the **editor reads** them — the reverse
+    /// direction. Still independent scalars with no cross-field invariant, so `Relaxed` holds. Not
+    /// part of the patch: they are live signal levels, not settings, so they are excluded from
+    /// `from_patch`/`load_from_patch`/`store_to_patch`.
+    input_meter: AtomicU32,
+    output_meter: AtomicU32,
 }
 
 impl Default for SharedControls {
@@ -47,6 +54,8 @@ impl SharedControls {
             intensity: std::array::from_fn(|_| AtomicU32::new(1.0_f32.to_bits())),
             input_level_db: AtomicU32::new(patch.input_level_db.to_bits()),
             output_level_db: AtomicU32::new(patch.output_level_db.to_bits()),
+            input_meter: AtomicU32::new(0.0_f32.to_bits()),
+            output_meter: AtomicU32::new(0.0_f32.to_bits()),
         };
         for id in SlotId::ALL {
             controls.set_slot_enabled(id, patch.slot_enabled(id));
@@ -133,6 +142,25 @@ impl SharedControls {
     pub fn set_output_level_db(&self, db: f32) {
         self.output_level_db.store(db.to_bits(), Ordering::Relaxed);
     }
+
+    /// The last block's input peak (linear amplitude), as seen at the chain head after input trim.
+    pub fn input_meter(&self) -> f32 {
+        f32::from_bits(self.input_meter.load(Ordering::Relaxed))
+    }
+
+    /// The last block's output peak (linear amplitude), as seen at the chain tail. Written by the
+    /// audio thread each block; read by the editor's meter.
+    pub fn output_meter(&self) -> f32 {
+        f32::from_bits(self.output_meter.load(Ordering::Relaxed))
+    }
+
+    /// Publish this block's in/out peaks from `process` (audio thread). Allocation- and lock-free.
+    pub fn set_meters(&self, meters: crate::runtime::BlockMeters) {
+        self.input_meter
+            .store(meters.input_peak.to_bits(), Ordering::Relaxed);
+        self.output_meter
+            .store(meters.output_peak.to_bits(), Ordering::Relaxed);
+    }
 }
 
 /// The order labels exposed to the editor, in `SignalOrder::to_index` order.
@@ -170,6 +198,14 @@ impl lindelion_ui::caloma_vizia::CalomaControlSurface for SharedControls {
 
     fn set_output_level_db(&self, db: f32) {
         SharedControls::set_output_level_db(self, db);
+    }
+
+    fn input_meter(&self) -> f32 {
+        SharedControls::input_meter(self)
+    }
+
+    fn output_meter(&self) -> f32 {
+        SharedControls::output_meter(self)
     }
 
     fn active_slots(&self) -> Vec<lindelion_ui::caloma_vizia::CalomaSlotView> {
@@ -221,6 +257,31 @@ mod tests {
         assert_eq!(controls.slot_intensity(SlotId::Compressor), 0.4);
         // A different slot is independent.
         assert!(!controls.slot_enabled(SlotId::Limiter));
+    }
+
+    #[test]
+    fn meters_publish_and_read_back_and_stay_out_of_the_patch() {
+        use crate::runtime::BlockMeters;
+
+        let controls = SharedControls::default();
+        // Meters start silent.
+        assert_eq!(controls.input_meter(), 0.0);
+        assert_eq!(controls.output_meter(), 0.0);
+
+        controls.set_meters(BlockMeters {
+            input_peak: 0.8,
+            output_peak: 0.3,
+        });
+        assert_eq!(controls.input_meter(), 0.8);
+        assert_eq!(controls.output_meter(), 0.3);
+
+        // Meters are live signal levels, not settings: storing controls to a patch must not carry
+        // them (the patch has no meter fields), and a round-trip leaves the meters untouched.
+        let mut patch = CalomaPatch::default();
+        controls.store_to_patch(&mut patch);
+        controls.load_from_patch(&patch);
+        assert_eq!(controls.input_meter(), 0.8);
+        assert_eq!(controls.output_meter(), 0.3);
     }
 
     #[test]

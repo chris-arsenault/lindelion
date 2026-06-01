@@ -6,6 +6,7 @@ pub const LAMATH_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     executable_name: "Lamath",
     bundle_identifier: "com.ahara.lamath",
     library_stem: "lamath",
+    windows_runtime_dlls: &[],
     vst3_sub_categories: "Instrument|Synth",
     module_sub_categories: &["Instrument", "Synth"],
     processor_cid: [0x4B410E03, 0x80AD49B6, 0x9B7D5479, 0xF4A9B0D1],
@@ -19,6 +20,7 @@ pub const GLIRDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata 
     executable_name: "Glirdir",
     bundle_identifier: "com.ahara.glirdir",
     library_stem: "glirdir",
+    windows_runtime_dlls: &[],
     vst3_sub_categories: "Fx",
     module_sub_categories: &["Fx"],
     processor_cid: [0x7C2E2B8A, 0xB1C44F0D, 0xA6F92427, 0x6C9E0D5B],
@@ -32,6 +34,7 @@ pub const LINNOD_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     executable_name: "Linnod",
     bundle_identifier: "com.ahara.linnod",
     library_stem: "linnod",
+    windows_runtime_dlls: &[],
     vst3_sub_categories: "Instrument|Sampler",
     module_sub_categories: &["Instrument", "Sampler"],
     processor_cid: [0x8EDB8B28, 0x7BC44EDC, 0xA13D9D83, 0x2A84A152],
@@ -45,6 +48,7 @@ pub const CENEDRIL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata
     executable_name: "Cenedril",
     bundle_identifier: "com.ahara.cenedril",
     library_stem: "cenedril",
+    windows_runtime_dlls: &[],
     vst3_sub_categories: "Fx",
     module_sub_categories: &["Fx"],
     processor_cid: [0xCE9ED713, 0x1A5B4C20, 0x8F3D6E94, 0xB2470FA1],
@@ -58,6 +62,7 @@ pub const CALOMA_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     executable_name: "Caloma",
     bundle_identifier: "com.ahara.caloma",
     library_stem: "caloma",
+    windows_runtime_dlls: &["DirectML.dll"],
     vst3_sub_categories: "Fx",
     module_sub_categories: &["Fx"],
     processor_cid: [0xCA10A001, 0x5E1F4C32, 0x8B3D6E95, 0xA2470FB2],
@@ -103,5 +108,13 @@ mod tests {
             CALOMA_VST3_BUNDLE_METADATA
         );
         assert!(metadata_for_package("unknown").is_none());
+    }
+
+    #[test]
+    fn caloma_declares_directml_runtime_dependency() {
+        assert_eq!(
+            CALOMA_VST3_BUNDLE_METADATA.windows_runtime_dlls,
+            &["DirectML.dll"]
+        );
     }
 }

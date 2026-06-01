@@ -61,6 +61,37 @@ const STYLE: &str = r#"
     }
     .caloma-slot-toggle-on { background-color: #2a7f6f; color: #ecfbf6; }
     .caloma-knob { width: 44px; height: 44px; }
+    /* A vizia Knob paints through three sub-elements; styling only the knob's own size (as before)
+       lays out the 44x44 box but leaves every part transparent — an invisible control. */
+    .caloma-knob .knob-track { color: #38c3a6; background-color: #2c3437; }
+    .caloma-knob .knob-head {
+        background-color: #1c2427;
+        border-width: 1px;
+        border-color: #5a676b;
+        color: #ecfbf6;
+    }
+    .caloma-knob:hover .knob-head { border-color: #d8e3dc; }
+    .caloma-knob .knob-tick {
+        background-color: #ecfbf6;
+        width: 2px;
+        height: 9px;
+        corner-radius: 1px;
+    }
+    .caloma-intensity-value { color: #7c8a90; width: 44px; font-size: 11px; }
+    .caloma-meter-track {
+        width: 130px;
+        height: 8px;
+        background-color: #0c0f12;
+        corner-radius: 4px;
+        border-width: 1px;
+        border-color: #2c3437;
+    }
+    .caloma-meter-fill {
+        height: 1s;
+        background-color: #38c3a6;
+        corner-radius: 4px;
+    }
+    .caloma-meter-fill-hot { background-color: #ef6f88; }
 "#;
 
 /// One editor row mirrored from the control surface.
@@ -79,6 +110,8 @@ struct CalomaSignals {
     order_index: Signal<usize>,
     input_db: Signal<f32>,
     output_db: Signal<f32>,
+    input_meter: Signal<f32>,
+    output_meter: Signal<f32>,
     slots: Signal<Vec<SlotRow>>,
 }
 
@@ -88,6 +121,8 @@ impl CalomaSignals {
             order_index: Signal::new(surface.order_index() as usize),
             input_db: Signal::new(surface.input_level_db()),
             output_db: Signal::new(surface.output_level_db()),
+            input_meter: Signal::new(surface.input_meter()),
+            output_meter: Signal::new(surface.output_meter()),
             slots: Signal::new(read_slots(surface)),
         }
     }
@@ -97,6 +132,8 @@ impl CalomaSignals {
         self.order_index.set(surface.order_index() as usize);
         self.input_db.set(surface.input_level_db());
         self.output_db.set(surface.output_level_db());
+        self.input_meter.set(surface.input_meter());
+        self.output_meter.set(surface.output_meter());
         self.slots.set(read_slots(surface));
     }
 }
@@ -169,6 +206,19 @@ fn db_to_knob(db: f32) -> f32 {
     ((db - CALOMA_LEVEL_DB_MIN) / (CALOMA_LEVEL_DB_MAX - CALOMA_LEVEL_DB_MIN)).clamp(0.0, 1.0)
 }
 
+/// Bottom of the meter scale, in dBFS: a linear peak at or below this reads as an empty bar.
+const CALOMA_METER_FLOOR_DB: f32 = -48.0;
+
+/// Map a linear peak (0..) to a 0..1 meter-bar fill on a dB scale from [`CALOMA_METER_FLOOR_DB`] up
+/// to 0 dBFS (full bar). Silence → 0; 0 dBFS → 1; above 0 dBFS clamps to a full (hot) bar.
+fn peak_to_fill(peak: f32) -> f32 {
+    if peak <= 0.0 {
+        return 0.0;
+    }
+    let db = 20.0 * peak.log10();
+    ((db - CALOMA_METER_FLOOR_DB) / -CALOMA_METER_FLOOR_DB).clamp(0.0, 1.0)
+}
+
 fn build_editor(cx: &mut Context, signals: CalomaSignals, order_labels: Vec<String>) {
     VStack::new(cx, move |cx| {
         Label::new(cx, "Calóma").class("caloma-title");
@@ -188,8 +238,20 @@ fn build_editor(cx: &mut Context, signals: CalomaSignals, order_labels: Vec<Stri
         .class("caloma-order-row");
 
         Label::new(cx, "Levels").class("caloma-section");
-        level_row(cx, "Input", signals.input_db, CalomaEvent::SetInput);
-        level_row(cx, "Output", signals.output_db, CalomaEvent::SetOutput);
+        level_row(
+            cx,
+            "Input",
+            signals.input_db,
+            signals.input_meter,
+            CalomaEvent::SetInput,
+        );
+        level_row(
+            cx,
+            "Output",
+            signals.output_db,
+            signals.output_meter,
+            CalomaEvent::SetOutput,
+        );
 
         Label::new(cx, "Effects").class("caloma-section");
         ScrollView::new(cx, move |cx| {
@@ -205,6 +267,7 @@ fn level_row(
     cx: &mut Context,
     label: &'static str,
     db_signal: Signal<f32>,
+    meter_signal: Signal<f32>,
     make_event: impl Fn(f32) -> CalomaEvent + 'static + Copy + Send,
 ) {
     HStack::new(cx, move |cx| {
@@ -222,8 +285,26 @@ fn level_row(
             Memo::new(move |_| format!("{:+.1} dB", db_signal.get())),
         )
         .class("caloma-level-value");
+        meter_bar(cx, meter_signal);
     })
     .class("caloma-level-row");
+}
+
+/// A horizontal peak-level bar: a fixed track with a fill whose width tracks the live peak, turning
+/// red as it approaches 0 dBFS so the user can stage gain by eye.
+fn meter_bar(cx: &mut Context, meter_signal: Signal<f32>) {
+    HStack::new(cx, move |cx| {
+        Element::new(cx)
+            .class("caloma-meter-fill")
+            .toggle_class(
+                "caloma-meter-fill-hot",
+                Memo::new(move |_| peak_to_fill(meter_signal.get()) >= 0.92),
+            )
+            .width(Memo::new(move |_| {
+                Percentage(peak_to_fill(meter_signal.get()) * 100.0)
+            }));
+    })
+    .class("caloma-meter-track");
 }
 
 fn slot_row(cx: &mut Context, signals: CalomaSignals, row: usize) {
@@ -284,6 +365,19 @@ fn slot_row(cx: &mut Context, signals: CalomaSignals, row: usize) {
         )
         .class("caloma-knob")
         .on_change(move |cx, value| cx.emit(CalomaEvent::SetRowIntensity(row, value)));
+        Label::new(
+            cx,
+            Memo::new(move |_| {
+                let intensity = signals
+                    .slots
+                    .get()
+                    .get(row)
+                    .map(|slot| slot.intensity)
+                    .unwrap_or(1.0);
+                format!("{:.0}%", intensity * 100.0)
+            }),
+        )
+        .class("caloma-intensity-value");
     })
     .class("caloma-slot-row")
     .display(Memo::new(move |_| signals.slots.get().len() > row));

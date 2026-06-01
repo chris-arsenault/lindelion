@@ -167,7 +167,8 @@ impl AudioPlugin for Caloma {
         let index = self.controls.order().to_index() as usize;
         self.controls.store_to_patch(&mut self.controls_patch);
         if let Some(chain) = self.chains[index].as_mut() {
-            chain.process(mono, &self.controls_patch, &snapshot);
+            let meters = chain.process(mono, &self.controls_patch, &snapshot);
+            self.controls.set_meters(meters);
         }
         write_mono_to_stereo(mono, buffer.left, buffer.right);
     }
