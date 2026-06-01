@@ -2,7 +2,7 @@ use super::*;
 use crate::assert_no_allocations;
 use crate::dsp::render_metrics::{RenderExcitation, render_response};
 use crate::dsp::waveguide::WaveguideParams;
-use crate::{ContactConfig, DriverConfig, PickConfig, ReedConfig, WaveguideStyle};
+use crate::{BowConfig, ContactConfig, DriverConfig, PickConfig, ReedConfig, WaveguideStyle};
 use lindelion_dsp_utils::analysis::{
     assert_all_finite, audio_window_metrics, gain_fitted_rms_difference, peak_abs, rms,
 };
@@ -88,26 +88,34 @@ fn oversampled_waveguide_matches_base_rate_within_filter_tolerance() {
 #[test]
 fn pass_through_driver_engine_render_matches_pre_driver_path() {
     // The default (Sample) driver is the transparent PassThrough, so the new effort
-    // input is inert: the waveguide receives exactly the excitation it did before
-    // the M8 driver seam. A render at zero effort and at full effort must therefore
-    // be bit-identical — the seam adds nothing to the pre-driver signal path.
+    // input and the M11 P3 note-state drive gate are both inert: the waveguide
+    // receives exactly the excitation it did before the M8 driver seam. A render at
+    // zero/full effort and at open/released drive gate must therefore be bit-
+    // identical — the seam adds nothing to the pre-driver sample/pluck signal path.
     for style in [WaveguideStyle::String, WaveguideStyle::Tube] {
         let config = ResonatorConfig::Waveguide(WaveguideConfig {
             style,
             ..WaveguideConfig::default()
         });
-        let render = |effort: f32| {
+        let render = |effort: f32, drive_gate: f32| {
             let mut engine = ResonatorEngine::new(48_000.0);
             engine.configure(&config, 220.0, true);
             (0..4_096)
-                .map(|index| engine.process_sample((index == 0) as u8 as f32, 0.0, effort))
+                .map(|index| {
+                    engine.process_sample((index == 0) as u8 as f32, 0.0, effort, drive_gate)
+                })
                 .collect::<Vec<_>>()
         };
-        let quiet = render(0.0);
-        let hard = render(1.0);
+        let quiet = render(0.0, 1.0);
+        let hard = render(1.0, 1.0);
+        let released_gate = render(1.0, 0.0);
         assert_all_finite(&quiet);
         assert!(rms(&quiet[..2_048]) > 0.0, "{style:?} produced silence");
         assert_eq!(quiet, hard, "{style:?} pass-through driver leaked effort");
+        assert_eq!(
+            quiet, released_gate,
+            "{style:?} pass-through driver leaked the drive gate into the sample path"
+        );
     }
 }
 
@@ -132,7 +140,7 @@ fn pick_driver_brightness_rises_with_strike_force() {
             220.0,
             4_096,
             RenderExcitation::Impulse,
-            |sample| engine.process_sample(sample, 0.0, effort),
+            |sample| engine.process_sample(sample, 0.0, effort, 1.0),
         )
     };
     let soft = render(0.1);
@@ -172,7 +180,7 @@ fn reed_driver_self_oscillates_above_a_pressure_threshold() {
             196.0,
             24_000,
             RenderExcitation::Impulse,
-            |sample| engine.process_sample(sample, 0.0, effort),
+            |sample| engine.process_sample(sample, 0.0, effort, 1.0),
         )
     };
     let quiet = render(0.05);
@@ -194,6 +202,136 @@ fn reed_driver_self_oscillates_above_a_pressure_threshold() {
     );
 }
 
+/// M11 P3 step 1: the bow driver continuously excites the String via friction, so
+/// a held note (constant effort) sustains a non-decaying limit cycle, where a pluck
+/// (Sample) rings down. The friction nonlinearity bounds the oscillation.
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn bow_driver_sustains_string_while_held() {
+    let sample_rate = 48_000.0;
+    let f0 = 196.0;
+    let render = |effort: f32, driver: DriverConfig| {
+        let mut engine = ResonatorEngine::new(sample_rate);
+        engine.configure(
+            &ResonatorConfig::Waveguide(WaveguideConfig {
+                style: WaveguideStyle::String,
+                ..WaveguideConfig::default()
+            }),
+            f0,
+            true,
+        );
+        engine.set_driver(driver);
+        render_response(
+            sample_rate,
+            f0,
+            144_000,
+            RenderExcitation::Impulse,
+            |sample| engine.process_sample(sample, 0.0, effort, 1.0),
+        )
+    };
+
+    let bowed = render(0.85, DriverConfig::Bow(BowConfig::default()));
+    let plucked = render(0.85, DriverConfig::Sample);
+    assert_all_finite(&bowed);
+
+    // The bow injects continuously: the tail sustains (non-decaying), audible, bounded.
+    let bow_mid = rms(&bowed[24_000..48_000]); // 0.5–1.0 s
+    let bow_late = rms(&bowed[120_000..144_000]); // 2.5–3.0 s
+    assert!(
+        bow_late > bow_mid * 0.7,
+        "bow should sustain (non-decaying): mid={bow_mid}, late={bow_late}"
+    );
+    assert!(bow_late > 0.01, "bow tail should be audible: {bow_late}");
+    assert!(
+        peak_abs(&bowed) < 8.0,
+        "bow oscillation must stay bounded: peak={}",
+        peak_abs(&bowed)
+    );
+    // The tail is a genuine oscillation, not a DC friction offset: its AC energy
+    // dominates its mean.
+    let tail = &bowed[120_000..144_000];
+    let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+    let ac_rms = (tail.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / tail.len() as f32).sqrt();
+    assert!(
+        ac_rms > mean.abs() * 2.0,
+        "bow tail should oscillate, not sit at a DC offset: ac_rms={ac_rms}, dc={mean}"
+    );
+
+    // ...where the free pluck has rung well down over the same span.
+    let pluck_mid = rms(&plucked[24_000..48_000]);
+    let pluck_late = rms(&plucked[120_000..144_000]);
+    assert!(
+        pluck_late < pluck_mid * 0.6,
+        "pluck should decay: mid={pluck_mid}, late={pluck_late}"
+    );
+}
+
+/// M11 P3 step 2: the note-state drive gate makes a self-sustaining driver let go
+/// on note-off so the resonator rings out, instead of being held by continued
+/// driving. A held drive (gate=1) sustains; a released drive (gate ramped 1→0 like
+/// the modulation drive-gate envelope) rings down. Covers both the reed (Tube) and
+/// the bow (String).
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn drive_gate_release_rings_out_reed_and_bow() {
+    let sample_rate = 48_000.0;
+    // Mirror the modulation drive-gate release rate (DRIVE_GATE_RELEASE_SECONDS).
+    let release_step = 1.0 / (0.03 * sample_rate);
+
+    let render =
+        |driver: DriverConfig, style: WaveguideStyle, f0: f32, release_at: Option<usize>| {
+            let mut engine = ResonatorEngine::new(sample_rate);
+            engine.configure(
+                &ResonatorConfig::Waveguide(WaveguideConfig {
+                    style,
+                    ..WaveguideConfig::default()
+                }),
+                f0,
+                true,
+            );
+            engine.set_driver(driver);
+            let mut gate = 1.0_f32;
+            (0..144_000)
+                .map(|index| {
+                    if release_at.is_some_and(|start| index >= start) {
+                        gate = (gate - release_step).max(0.0);
+                    }
+                    engine.process_sample((index == 0) as u8 as f32, 0.0, 0.9, gate)
+                })
+                .collect::<Vec<_>>()
+        };
+
+    // Release at 1.0 s; measure the tail at 2.5–3.0 s, long after the gate is closed.
+    for (driver, style, f0) in [
+        (
+            DriverConfig::Reed(ReedConfig::default()),
+            WaveguideStyle::Tube,
+            196.0,
+        ),
+        (
+            DriverConfig::Bow(BowConfig::default()),
+            WaveguideStyle::String,
+            196.0,
+        ),
+    ] {
+        let held = render(driver, style, f0, None);
+        let released = render(driver, style, f0, Some(48_000));
+        assert_all_finite(&released);
+        let held_tail = rms(&held[120_000..144_000]);
+        let released_tail = rms(&released[120_000..144_000]);
+        assert!(
+            released_tail < held_tail * 0.5,
+            "{style:?} should ring out after note-off: held={held_tail}, released={released_tail}"
+        );
+    }
+}
+
 #[test]
 fn oversampled_waveguide_engine_render_does_not_allocate() {
     let mut engine = ResonatorEngine::new(48_000.0);
@@ -205,7 +343,7 @@ fn oversampled_waveguide_engine_render_does_not_allocate() {
 
     assert_no_allocations("waveguide_engine_render", || {
         for index in 0..512 {
-            engine.process_sample((index == 0) as u8 as f32, 0.0, 0.0);
+            engine.process_sample((index == 0) as u8 as f32, 0.0, 0.0, 1.0);
         }
     });
 }
@@ -224,7 +362,7 @@ fn tension_modulated_engine_render_does_not_allocate() {
     assert_no_allocations("tension_engine_render", || {
         for index in 0..512 {
             let energy = 0.1 + 0.05 * (index as f32 * 0.05).sin();
-            engine.process_sample((index == 0) as u8 as f32, energy, 0.0);
+            engine.process_sample((index == 0) as u8 as f32, energy, 0.0, 1.0);
         }
     });
 }
@@ -246,7 +384,7 @@ fn steepening_modulated_tube_engine_render_does_not_allocate() {
     assert_no_allocations("steepening_engine_render", || {
         for index in 0..512 {
             let energy = 0.1 + 0.05 * (index as f32 * 0.05).sin();
-            engine.process_sample((index == 0) as u8 as f32, energy, 0.0);
+            engine.process_sample((index == 0) as u8 as f32, energy, 0.0, 1.0);
         }
     });
 }
@@ -263,7 +401,7 @@ fn geometric_modulated_mesh_engine_render_does_not_allocate() {
     assert_no_allocations("geometric_engine_render", || {
         for index in 0..512 {
             let energy = 0.1 + 0.05 * (index as f32 * 0.05).sin();
-            engine.process_sample((index == 0) as u8 as f32, energy, 0.0);
+            engine.process_sample((index == 0) as u8 as f32, energy, 0.0, 1.0);
         }
     });
 }
@@ -344,7 +482,7 @@ fn contact_time_mellows_the_onset_on_the_sample_driver() {
             220.0,
             4_096,
             RenderExcitation::Impulse,
-            |sample| engine.process_sample(sample, 0.0, 0.5),
+            |sample| engine.process_sample(sample, 0.0, 0.5, 1.0),
         )
     };
     let sharp = render(0.0);
@@ -384,7 +522,7 @@ fn contact_stage_render_does_not_allocate() {
     });
     assert_no_allocations("contact_stage_render", || {
         for index in 0..512 {
-            engine.process_sample((index == 0) as u8 as f32, 0.0, 0.8);
+            engine.process_sample((index == 0) as u8 as f32, 0.0, 0.8, 1.0);
         }
     });
 }
@@ -432,7 +570,7 @@ fn source_body_balance_string_render_does_not_allocate() {
     assert_no_allocations("source_body_balance_render", || {
         for index in 0..512 {
             let energy = 0.1 + 0.05 * (index as f32 * 0.05).sin();
-            engine.process_sample((index == 0) as u8 as f32, energy, 0.0);
+            engine.process_sample((index == 0) as u8 as f32, energy, 0.0, 1.0);
         }
     });
 }

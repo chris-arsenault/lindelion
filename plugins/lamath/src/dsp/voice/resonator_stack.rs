@@ -202,26 +202,41 @@ impl ResonatorStack {
         routing_sample.gain
     }
 
-    pub(super) fn process_sample(&mut self, excitation: f32, energy: f32, effort: f32) -> f32 {
+    pub(super) fn process_sample(
+        &mut self,
+        excitation: f32,
+        energy: f32,
+        effort: f32,
+        drive_gate: f32,
+    ) -> f32 {
         let excitation = snap_to_zero(excitation);
         let mix_a = self.parallel_mix_a.next_sample();
         let mix_b = self.parallel_mix_b.next_sample();
         snap_to_zero(match self.routing.current() {
             ResonatorRouting::Parallel { .. } => {
-                let a = self.resonator_a.process_sample(excitation, energy, effort);
-                let b = self.resonator_b.process_sample(excitation, energy, effort);
+                let a = self
+                    .resonator_a
+                    .process_sample(excitation, energy, effort, drive_gate);
+                let b = self
+                    .resonator_b
+                    .process_sample(excitation, energy, effort, drive_gate);
                 a * mix_a + b * mix_b
             }
             ResonatorRouting::Series { .. } => {
-                let a = self.resonator_a.process_sample(excitation, energy, effort);
+                let a = self
+                    .resonator_a
+                    .process_sample(excitation, energy, effort, drive_gate);
                 let conditioned = self.series_conditioner.process_sample(a);
-                self.resonator_b.process_sample(conditioned, energy, effort)
+                self.resonator_b
+                    .process_sample(conditioned, energy, effort, drive_gate)
             }
             ResonatorRouting::BodyColor { .. } => {
-                let a = self.resonator_a.process_sample(excitation, energy, effort);
+                let a = self
+                    .resonator_a
+                    .process_sample(excitation, energy, effort, drive_gate);
                 let colored_excitation = self.body_color_exciter.process_sample(excitation, a);
                 self.resonator_b
-                    .process_sample(colored_excitation, energy, effort)
+                    .process_sample(colored_excitation, energy, effort, drive_gate)
             }
         })
     }
@@ -423,7 +438,13 @@ impl ResonatorEngine {
         self.contact.reset();
     }
 
-    pub(super) fn process_sample(&mut self, input: f32, energy: f32, effort: f32) -> f32 {
+    pub(super) fn process_sample(
+        &mut self,
+        input: f32,
+        energy: f32,
+        effort: f32,
+        drive_gate: f32,
+    ) -> f32 {
         match self.kind {
             ResonatorKind::Silent => 0.0,
             // Modal is the untouched reference: host rate, no oversampling, no driver.
@@ -451,7 +472,7 @@ impl ResonatorEngine {
                     // run the driver, then the contact stage (contact-time onset
                     // shaping), then the waveguide with the spread set on the params.
                     let feedback = waveguide.driven_feedback(params);
-                    let driven = driver.process(sample, effort, feedback);
+                    let driven = driver.process(sample, effort, feedback, drive_gate);
                     let shaped = contact.shape(driven);
                     waveguide.process_sample(shaped, params)
                 })

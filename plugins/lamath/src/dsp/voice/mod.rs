@@ -316,9 +316,12 @@ impl<'a> Voice<'a> {
                 * self.excitation_gain
                 * (1.0 + excitation_mod).clamp(0.0, 2.0);
 
-        let resonator_output =
-            self.resonators
-                .process_sample(excitation, sources.energy, sources.effort);
+        let resonator_output = self.resonators.process_sample(
+            excitation,
+            sources.energy,
+            sources.effort,
+            sources.drive_gate,
+        );
         self.modulation.observe_energy(resonator_output);
 
         // Effort/energy-scaled surrounding effects (M10) sit between the resonator and

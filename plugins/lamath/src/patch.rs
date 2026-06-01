@@ -298,6 +298,7 @@ pub enum DriverConfig {
     Sample,
     Pick(PickConfig),
     Reed(ReedConfig),
+    Bow(BowConfig),
 }
 
 /// Pick/hammer contact driver: a force-shaped contact transient that brightens with
@@ -339,6 +340,34 @@ impl Default for ReedConfig {
             pressure_depth: 0.5,
             stiffness: 0.5,
             embouchure: 0.5,
+        }
+    }
+}
+
+/// Bow friction driver: a continuous stick-slip friction excitation coupled to the
+/// string's velocity at the contact, so a held note sustains a bowed (Helmholtz)
+/// tone. Mouth-pressure has no analogue here — the player effort sets the bow normal
+/// force; below enough force the string is barely driven, above it a stable limit
+/// cycle builds. (Ranges are calibrated in M11 P10.)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BowConfig {
+    /// How much playing effort drives the bow normal force `0..1` (heavier = louder,
+    /// brighter, more locked-in).
+    pub pressure_depth: f32,
+    /// Bow speed `0..1`: the bow's velocity magnitude, setting the limit-cycle
+    /// amplitude and brightness (faster = brighter/louder).
+    pub bow_speed: f32,
+    /// Friction sharpness `0..1`: the stick-slip transition width. Smoother is a
+    /// pure sustained tone; sharper is a scratchier, more articulate attack.
+    pub friction: f32,
+}
+
+impl Default for BowConfig {
+    fn default() -> Self {
+        Self {
+            pressure_depth: 0.5,
+            bow_speed: 0.5,
+            friction: 0.5,
         }
     }
 }
