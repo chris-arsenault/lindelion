@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 pub const SESSION_FORMAT_VERSION: u32 = 1;
 
 /// A persisted Galad session: selected devices, the ordered plugin chain, and app settings.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct HostSession {
     /// Selected input (capture) device, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -77,12 +77,27 @@ pub struct PluginStateBlob {
     pub payload: Vec<u8>,
 }
 
-/// Application-level settings (extended by later milestones).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// Application-level settings that should survive app relaunches even when no session file is used.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     /// Folders scanned for `.vst3` plugins (populated by the M6 scan UI).
     pub plugin_scan_dirs: Vec<PathBuf>,
+    /// Last scanned plugin catalog. Restored at launch so startup does not load/probe plugin DLLs.
+    pub plugin_catalog: Vec<CachedPluginEntry>,
+    /// Post-chain master gain in decibels.
+    pub master_gain_db: f32,
+    /// Post-chain master mute.
+    pub master_muted: bool,
+}
+
+/// One cached scanned-plugin row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedPluginEntry {
+    pub path: PathBuf,
+    pub compatible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Errors from session (de)serialization.
@@ -114,6 +129,44 @@ impl From<io::Error> for SessionIoError {
 impl From<SessionError> for SessionIoError {
     fn from(error: SessionError) -> Self {
         SessionIoError::Format(error)
+    }
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings {
+            plugin_scan_dirs: Vec::new(),
+            plugin_catalog: Vec::new(),
+            master_gain_db: 0.0,
+            master_muted: false,
+        }
+    }
+}
+
+impl AppSettings {
+    /// Read app settings from Galad's default per-user settings file.
+    pub fn load_default() -> Result<Self, SessionIoError> {
+        match fs::read_to_string(Self::default_path()) {
+            Ok(text) => toml::from_str(&text)
+                .map_err(SessionError::Decode)
+                .map_err(SessionIoError::Format),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(SessionIoError::Io(error)),
+        }
+    }
+
+    /// Save app settings to Galad's default per-user settings file.
+    pub fn save_default(&self) -> Result<(), SessionIoError> {
+        let toml = toml::to_string_pretty(self)
+            .map_err(SessionError::Encode)
+            .map_err(SessionIoError::Format)?;
+        write_atomic(&Self::default_path(), toml.as_bytes())?;
+        Ok(())
+    }
+
+    /// Galad's default per-user settings path.
+    pub fn default_path() -> PathBuf {
+        app_config_dir().join("settings.toml")
     }
 }
 
@@ -178,6 +231,24 @@ fn temp_path_for(path: &Path) -> PathBuf {
         .and_then(|name| name.to_str())
         .unwrap_or("session");
     path.with_file_name(format!(".{name}.{pid}.{count}.tmp"))
+}
+
+#[cfg(windows)]
+fn app_config_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Galad")
+}
+
+#[cfg(not(windows))]
+fn app_config_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("galad")
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +352,13 @@ mod tests {
             ],
             settings: AppSettings {
                 plugin_scan_dirs: vec![PathBuf::from("/plugins"), PathBuf::from("/more/plugins")],
+                plugin_catalog: vec![CachedPluginEntry {
+                    path: PathBuf::from("/plugins/Caloma.vst3"),
+                    compatible: true,
+                    reason: None,
+                }],
+                master_gain_db: -3.0,
+                master_muted: true,
             },
         };
 

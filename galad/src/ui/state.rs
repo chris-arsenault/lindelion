@@ -5,7 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::audio::{EngineStatus, MeterSnapshot};
-use crate::session::{AppSettings, ChainSlot, DeviceRef, HostSession};
+use crate::session::{AppSettings, CachedPluginEntry, ChainSlot, DeviceRef, HostSession};
+
+/// Minimum visible master gain in the UI.
+pub const MASTER_GAIN_MIN_DB: f32 = -60.0;
+/// Maximum visible master gain in the UI.
+pub const MASTER_GAIN_MAX_DB: f32 = 12.0;
 
 /// Direction for reordering a chain slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +89,41 @@ impl PluginCatalog {
     pub fn compatible(&self) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(|entry| entry.compatible)
     }
+
+    /// Restore a catalog from persisted scan cache without loading/probing plugin DLLs.
+    pub fn from_cached(entries: &[CachedPluginEntry]) -> Self {
+        PluginCatalog {
+            entries: entries
+                .iter()
+                .map(|entry| {
+                    let name = entry
+                        .path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("plugin")
+                        .to_string();
+                    CatalogEntry {
+                        path: entry.path.clone(),
+                        name,
+                        compatible: entry.compatible,
+                        reason: entry.reason.clone(),
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Convert the current catalog into persisted scan cache.
+    pub fn to_cached(&self) -> Vec<CachedPluginEntry> {
+        self.entries
+            .iter()
+            .map(|entry| CachedPluginEntry {
+                path: entry.path.clone(),
+                compatible: entry.compatible,
+                reason: entry.reason.clone(),
+            })
+            .collect()
+    }
 }
 
 /// The host's UI state: available + selected devices, the plugin chain, scan folders, the run state,
@@ -96,6 +136,8 @@ pub struct HostUiState {
     pub selected_output: Option<DeviceRef>,
     pub chain: Vec<UiSlot>,
     pub scan_dirs: Vec<PathBuf>,
+    pub master_gain_db: f32,
+    pub master_muted: bool,
     pub running: bool,
     pub meter: MeterSnapshot,
     /// The latest error/info to surface in the UI (transient — not persisted in a session).
@@ -192,18 +234,74 @@ impl HostUiState {
         }
     }
 
-    /// List the `*.vst3` entries under `dir`, sorted.
-    pub fn scan_dir(dir: &Path) -> Vec<PathBuf> {
+    /// Remove a custom scan folder by index (system VST3 folders are implicit and not stored here).
+    pub fn remove_scan_dir(&mut self, index: usize) {
+        if index < self.scan_dirs.len() {
+            self.scan_dirs.remove(index);
+        }
+    }
+
+    /// Set the post-chain master gain, clamped to the UI-supported range.
+    pub fn set_master_gain_db(&mut self, gain_db: f32) {
+        self.master_gain_db = gain_db.clamp(MASTER_GAIN_MIN_DB, MASTER_GAIN_MAX_DB);
+    }
+
+    /// Set the post-chain master mute.
+    pub fn set_master_muted(&mut self, muted: bool) {
+        self.master_muted = muted;
+    }
+
+    /// Gather app-level settings from the current UI state.
+    pub fn settings(&self) -> AppSettings {
+        AppSettings {
+            plugin_scan_dirs: self.scan_dirs.clone(),
+            plugin_catalog: self.catalog.to_cached(),
+            master_gain_db: self.master_gain_db,
+            master_muted: self.master_muted,
+        }
+    }
+
+    /// Apply app-level settings into the UI state.
+    pub fn apply_settings(&mut self, settings: &AppSettings) {
+        self.scan_dirs = settings.plugin_scan_dirs.clone();
+        self.catalog = PluginCatalog::from_cached(&settings.plugin_catalog);
+        self.set_master_gain_db(settings.master_gain_db);
+        self.master_muted = settings.master_muted;
+    }
+
+    /// The folders Galad scans for available VST3s: Windows system folders first, then user-added
+    /// custom folders from session settings.
+    pub fn plugin_scan_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Self::system_vst3_dirs();
+        for dir in &self.scan_dirs {
+            push_unique_path(&mut roots, dir.clone());
+        }
+        roots
+    }
+
+    /// Windows system VST3 folders. These are implicit app defaults, not session settings.
+    pub fn system_vst3_dirs() -> Vec<PathBuf> {
+        system_vst3_dirs()
+    }
+
+    /// List the `*.vst3` entries under every configured root, sorted and deduplicated.
+    pub fn scan_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
         let mut found = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|ext| ext.to_str()) == Some("vst3") {
-                    found.push(path);
-                }
-            }
+        for root in roots {
+            scan_dir_into(root, &mut found);
         }
         found.sort();
+        found.dedup();
+        found
+    }
+
+    /// List the `*.vst3` entries under `dir`, sorted. Searches nested vendor folders, but does not
+    /// descend into a `.vst3` bundle once it has been found.
+    pub fn scan_dir(dir: &Path) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        scan_dir_into(dir, &mut found);
+        found.sort();
+        found.dedup();
         found
     }
 
@@ -222,9 +320,7 @@ impl HostUiState {
                     state: None,
                 })
                 .collect(),
-            settings: AppSettings {
-                plugin_scan_dirs: self.scan_dirs.clone(),
-            },
+            settings: self.settings(),
         }
     }
 
@@ -237,8 +333,64 @@ impl HostUiState {
             .iter()
             .map(|slot| UiSlot::from_path(slot.plugin_path.clone(), slot.bypassed))
             .collect();
-        self.scan_dirs = session.settings.plugin_scan_dirs.clone();
+        self.apply_settings(&session.settings);
     }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.contains(&path) {
+        paths.push(path);
+    }
+}
+
+fn scan_dir_into(dir: &Path, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_vst3_path(&path) {
+            found.push(path);
+            continue;
+        }
+        if entry.file_type().map(|ty| ty.is_dir()).unwrap_or(false) {
+            scan_dir_into(&path, found);
+        }
+    }
+}
+
+fn is_vst3_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("vst3"))
+}
+
+#[cfg(windows)]
+fn system_vst3_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    push_common_files_vst3(&mut dirs, "COMMONPROGRAMFILES");
+    push_common_files_vst3(&mut dirs, "COMMONPROGRAMFILES(X86)");
+    push_unique_path(
+        &mut dirs,
+        PathBuf::from(r"C:\Program Files\Common Files\VST3"),
+    );
+    push_unique_path(
+        &mut dirs,
+        PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"),
+    );
+    dirs
+}
+
+#[cfg(windows)]
+fn push_common_files_vst3(dirs: &mut Vec<PathBuf>, env_var: &str) {
+    if let Some(path) = std::env::var_os(env_var) {
+        push_unique_path(dirs, PathBuf::from(path).join("VST3"));
+    }
+}
+
+#[cfg(not(windows))]
+fn system_vst3_dirs() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -281,6 +433,8 @@ mod tests {
         state.add_slot(PathBuf::from("/p/A.vst3"));
         state.add_slot(PathBuf::from("/p/B.vst3"));
         state.toggle_bypass(1);
+        state.set_master_gain_db(-6.0);
+        state.set_master_muted(true);
         state.select_input(DeviceRef {
             id: "in".to_string(),
             name: "Mic".to_string(),
@@ -300,6 +454,7 @@ mod tests {
         assert!(restored.chain[1].bypassed);
         assert_eq!(restored.selected_input, state.selected_input);
         assert_eq!(restored.selected_output, state.selected_output);
+        assert_eq!(restored.settings(), state.settings());
     }
 
     #[test]
@@ -377,7 +532,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create temp dir");
         std::fs::write(dir.join("a.vst3"), b"").expect("write a");
         std::fs::write(dir.join("b.txt"), b"").expect("write b");
-        std::fs::write(dir.join("c.vst3"), b"").expect("write c");
+        std::fs::create_dir_all(dir.join("vendor")).expect("create vendor");
+        std::fs::write(dir.join("vendor").join("c.vst3"), b"").expect("write c");
 
         let found = HostUiState::scan_dir(&dir);
         let names: Vec<&str> = found

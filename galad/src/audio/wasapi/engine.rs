@@ -7,7 +7,7 @@
 
 use std::slice;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
 
@@ -21,13 +21,69 @@ use super::devices::AudioError;
 use super::stream::WasapiStream;
 use crate::audio::EngineStatus;
 use crate::audio::format::{StreamFormat, bytes_to_f32, f32_to_bytes};
-use crate::audio::meter::{MeterPublisher, MeterReader, MeterSnapshot, levels, meter_channel};
+use crate::audio::meter::{
+    MeterPublisher, MeterReader, MeterSnapshot, meter_channel, stereo_levels,
+};
 use crate::audio::transport::Transport;
 use crate::session::DeviceRef;
 use crate::vst3_host::{ChainProcessor, Handoff};
 
 /// 100-ns units per millisecond.
 const HNS_PER_MS: f64 = 10_000.0;
+
+/// Post-chain master settings.
+#[derive(Debug, Clone, Copy)]
+pub struct MasterSettings {
+    pub gain_db: f32,
+    pub muted: bool,
+}
+
+impl Default for MasterSettings {
+    fn default() -> Self {
+        MasterSettings {
+            gain_db: 0.0,
+            muted: false,
+        }
+    }
+}
+
+struct MasterControl {
+    gain_bits: AtomicU32,
+    muted: AtomicBool,
+}
+
+impl MasterControl {
+    fn new(settings: MasterSettings) -> Self {
+        let control = MasterControl {
+            gain_bits: AtomicU32::new(1.0f32.to_bits()),
+            muted: AtomicBool::new(false),
+        };
+        control.set(settings);
+        control
+    }
+
+    fn set(&self, settings: MasterSettings) {
+        let linear = if settings.muted {
+            0.0
+        } else {
+            db_to_linear(settings.gain_db)
+        };
+        self.gain_bits.store(linear.to_bits(), Ordering::Release);
+        self.muted.store(settings.muted, Ordering::Release);
+    }
+
+    fn gain_linear(&self) -> f32 {
+        if self.muted.load(Ordering::Acquire) {
+            0.0
+        } else {
+            f32::from_bits(self.gain_bits.load(Ordering::Acquire))
+        }
+    }
+}
+
+fn db_to_linear(gain_db: f32) -> f32 {
+    10.0f32.powf(gain_db.clamp(-60.0, 12.0) / 20.0)
+}
 
 /// Measured round-trip latency components, in milliseconds.
 #[derive(Debug, Clone, Copy)]
@@ -51,13 +107,14 @@ pub struct AudioEngine {
     /// Run status published by the realtime thread (`EngineStatus` encoded); read off-thread so the
     /// control side can detect a runtime fault (e.g. device invalidation).
     status: Arc<AtomicU8>,
+    master: Arc<MasterControl>,
     latency: MeasuredLatency,
 }
 
 impl AudioEngine {
     /// Start live passthrough from `input` to `output` (no plugin chain).
     pub fn start(input: DeviceRef, output: DeviceRef) -> Result<Self, AudioError> {
-        Self::start_internal(input, output, None)
+        Self::start_internal(input, output, None, MasterSettings::default())
     }
 
     /// Start live processing through `initial` from `input` to `output`. Returns once the stream is
@@ -67,7 +124,17 @@ impl AudioEngine {
         output: DeviceRef,
         initial: Box<ChainProcessor>,
     ) -> Result<Self, AudioError> {
-        Self::start_internal(input, output, Some(initial))
+        Self::start_internal(input, output, Some(initial), MasterSettings::default())
+    }
+
+    /// Start live processing with post-chain master settings.
+    pub fn start_with_chain_and_master(
+        input: DeviceRef,
+        output: DeviceRef,
+        initial: Box<ChainProcessor>,
+        master: MasterSettings,
+    ) -> Result<Self, AudioError> {
+        Self::start_internal(input, output, Some(initial), master)
     }
 
     /// Publish a new chain to the running engine; the audio thread swaps it in without dropouts.
@@ -75,10 +142,16 @@ impl AudioEngine {
         self.handoff.publish(chain);
     }
 
+    /// Update post-chain master settings without restarting the engine.
+    pub fn set_master(&self, master: MasterSettings) {
+        self.master.set(master);
+    }
+
     fn start_internal(
         input: DeviceRef,
         output: DeviceRef,
         initial: Option<Box<ChainProcessor>>,
+        master_settings: MasterSettings,
     ) -> Result<Self, AudioError> {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
@@ -86,6 +159,8 @@ impl AudioEngine {
         let handoff_thread = handoff.clone();
         let status = Arc::new(AtomicU8::new(EngineStatus::Running.as_u8()));
         let status_thread = status.clone();
+        let master = Arc::new(MasterControl::new(master_settings));
+        let master_thread = master.clone();
         let (meter_publisher, meter_reader) = meter_channel();
         let (tx, rx) = channel();
         let thread = std::thread::spawn(move || {
@@ -97,6 +172,7 @@ impl AudioEngine {
                 meter_publisher,
                 stop_thread,
                 status_thread,
+                master_thread,
                 tx,
             )
         });
@@ -108,6 +184,7 @@ impl AudioEngine {
                 handoff,
                 meter: meter_reader,
                 status,
+                master,
                 latency,
             }),
             Ok(Err(error)) => {
@@ -168,13 +245,14 @@ fn run_audio_thread(
     meter_publisher: MeterPublisher,
     stop: Arc<AtomicBool>,
     status: Arc<AtomicU8>,
+    master: Arc<MasterControl>,
     setup: Sender<Result<MeasuredLatency, AudioError>>,
 ) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
 
-    match setup_streams(&input, &output, meter_publisher) {
+    match setup_streams(&input, &output, meter_publisher, master) {
         Ok(mut state) => {
             let chain_latency = initial
                 .as_ref()
@@ -201,6 +279,7 @@ struct RunningState {
     capture_scratch: Vec<f32>,
     render_scratch: Vec<f32>,
     meter_publisher: MeterPublisher,
+    master: Arc<MasterControl>,
     meter: MeterSnapshot,
     latency: MeasuredLatency,
 }
@@ -209,6 +288,7 @@ fn setup_streams(
     input: &DeviceRef,
     output: &DeviceRef,
     meter_publisher: MeterPublisher,
+    master: Arc<MasterControl>,
 ) -> Result<RunningState, AudioError> {
     let capture = WasapiStream::open_capture(input)?;
     let render = WasapiStream::open_render(output)?;
@@ -237,6 +317,7 @@ fn setup_streams(
         capture_scratch,
         render_scratch,
         meter_publisher,
+        master,
         meter: MeterSnapshot::default(),
         latency,
     })
@@ -274,6 +355,7 @@ fn run_loop(
                 &mut state.render_scratch,
                 current,
                 &mut state.meter,
+                &state.master,
             );
             // Publish the latest input+output levels for the UI (off-thread reader).
             state.meter_publisher.publish(state.meter);
@@ -331,10 +413,8 @@ fn pump_capture(
                 let byte_slice = slice::from_raw_parts(data, bytes);
                 bytes_to_f32(format.sample, byte_slice, &mut scratch[..samples])
             };
-            let (peak, rms) = levels(&scratch[..n]);
-            meter.input_peak = peak;
-            meter.input_rms = rms;
-            transport.capture(&scratch[..n]);
+            let levels = transport.capture(&scratch[..n]);
+            meter.set_input_stereo(levels);
             client.ReleaseBuffer(frames)?;
         }
     }
@@ -348,6 +428,7 @@ fn pump_render(
     scratch: &mut [f32],
     chain: *mut ChainProcessor,
     meter: &mut MeterSnapshot,
+    master: &MasterControl,
 ) -> Result<(), AudioError> {
     let format = stream.format();
     let render = stream.render_client().expect("render stream");
@@ -363,10 +444,9 @@ fn pump_render(
             if !chain.is_null() {
                 (*chain).process_in_place(stereo)
             }
+            apply_master(stereo, master.gain_linear());
+            meter.set_output_stereo(stereo_levels(stereo));
         });
-        let (peak, rms) = levels(&scratch[..samples]);
-        meter.output_peak = peak;
-        meter.output_rms = rms;
 
         let data = render.GetBuffer(available)?;
         let bytes = samples * format.sample.bytes_per_sample();
@@ -375,6 +455,12 @@ fn pump_render(
         render.ReleaseBuffer(available, 0)?;
     }
     Ok(())
+}
+
+fn apply_master(stereo: &mut [f32], gain: f32) {
+    for sample in stereo {
+        *sample *= gain;
+    }
 }
 
 fn measure_latency(capture: &WasapiStream, render: &WasapiStream) -> MeasuredLatency {

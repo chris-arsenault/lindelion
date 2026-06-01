@@ -23,4 +23,6 @@ pub use engine_status::EngineStatus;
 pub use meter::MeterSnapshot;
 
 #[cfg(windows)]
-pub use wasapi::{AudioDirection, AudioEngine, default_device, device_sample_rate, enumerate};
+pub use wasapi::{
+    AudioDirection, AudioEngine, MasterSettings, default_device, device_sample_rate, enumerate,
+};

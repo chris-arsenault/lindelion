@@ -7,7 +7,8 @@ use windows::Win32::Media::Audio::{
 };
 use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
 use windows::Win32::System::Com::{
-    CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, STGM_READ,
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+    STGM_READ,
 };
 use windows::core::PWSTR;
 
@@ -45,10 +46,12 @@ impl From<windows::core::Error> for AudioError {
     }
 }
 
-/// Ensure COM is initialized on this thread (multithreaded apartment); idempotent.
+/// Ensure COM is initialized on this thread. Device enumeration also runs on Galad's UI thread
+/// before winit creates the window, so use STA-compatible COM rather than poisoning the thread for
+/// winit's OLE drag/drop initialization. The audio thread initializes MTA before it opens streams.
 fn ensure_com() {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
 }
 

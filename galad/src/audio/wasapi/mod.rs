@@ -17,5 +17,5 @@ mod engine;
 mod stream;
 
 pub use devices::{AudioDirection, AudioError, default_device, enumerate};
-pub use engine::{AudioEngine, MeasuredLatency};
+pub use engine::{AudioEngine, MasterSettings, MeasuredLatency};
 pub use stream::{WasapiStream, device_sample_rate};

@@ -7,6 +7,7 @@
 //! operates on preallocated scratch, so nothing allocates per callback.
 
 use super::channels::adapt;
+use super::meter::{StereoLevels, stereo_levels};
 use super::ring::AudioRing;
 
 /// The VST3 chain runs stereo.
@@ -40,14 +41,17 @@ impl Transport {
         }
     }
 
-    /// Adapt `device_frames` (interleaved, `input_channels` wide) to stereo and push to the ring.
-    pub fn capture(&mut self, device_frames: &[f32]) {
+    /// Adapt `device_frames` (interleaved, `input_channels` wide) to stereo, push to the ring, and
+    /// return the chain-input stereo levels for metering.
+    pub fn capture(&mut self, device_frames: &[f32]) -> StereoLevels {
         let in_ch = self.input_channels.max(1) as usize;
         let frames = device_frames.len() / in_ch;
         let stereo_len = (frames * CHAIN_CHANNELS as usize).min(self.capture_scratch.len());
         let scratch = &mut self.capture_scratch[..stereo_len];
         adapt(self.input_channels, CHAIN_CHANNELS, device_frames, scratch);
+        let levels = stereo_levels(scratch);
         self.ring.push(scratch);
+        levels
     }
 
     /// Pop stereo from the ring, adapt to `output_channels`, and write `out`; under-run → silence.

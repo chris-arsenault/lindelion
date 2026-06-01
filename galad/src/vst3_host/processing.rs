@@ -6,11 +6,13 @@
 //! This is an **offline** spike driver: it allocates freely per block. The allocation-free realtime
 //! discipline (ADR-0001) applies to the M3 audio callback, not here.
 
-use std::ptr;
+use std::{mem, ptr};
 
 use vst3::{ComPtr, Steinberg::Vst::*, Steinberg::*};
 
 use super::instance::{HostError, PluginInstance};
+
+const MAIN_BUS_INDEX: i32 = 0;
 
 /// Drive one `process()` call over caller-owned stereo planar buffers. **Allocation-free**: the
 /// channel-pointer arrays and the `AudioBusBuffers`/`ProcessData` live on the stack, so the pointers
@@ -82,7 +84,7 @@ impl ProcessDriver {
         }
     }
 
-    /// Run the full prepare sequence (stereo bus arrangement, 32-bit setup, activate, start).
+    /// Run the full prepare sequence (stereo main bus arrangement, 32-bit setup, activate, start).
     ///
     /// Safe to re-run on an already-prepared instance (it quiesces first), so a pooled instance can
     /// be re-prepared at a new sample rate without being destroyed — its state survives, since
@@ -95,11 +97,7 @@ impl ProcessDriver {
             // component); harmless on a fresh, already-inactive instance.
             processor.setProcessing(0);
             component.setActive(0);
-            let mut stereo_in: SpeakerArrangement = SpeakerArr::kStereo;
-            let mut stereo_out: SpeakerArrangement = SpeakerArr::kStereo;
-            if processor.setBusArrangements(&mut stereo_in, 1, &mut stereo_out, 1) != kResultTrue {
-                return Err(HostError::SetupFailed("setBusArrangements"));
-            }
+            configure_stereo_main_buses(component, processor)?;
             if processor.canProcessSampleSize(SymbolicSampleSizes_::kSample32 as i32) != kResultOk {
                 return Err(HostError::SetupFailed("canProcessSampleSize"));
             }
@@ -113,8 +111,8 @@ impl ProcessDriver {
                 return Err(HostError::SetupFailed("setupProcessing"));
             }
             let audio = MediaTypes_::kAudio as MediaType;
-            component.activateBus(audio, BusDirections_::kInput as BusDirection, 0, 1);
-            component.activateBus(audio, BusDirections_::kOutput as BusDirection, 0, 1);
+            activate_main_bus_only(component, audio, BusDirections_::kInput as BusDirection)?;
+            activate_main_bus_only(component, audio, BusDirections_::kOutput as BusDirection)?;
             component.setActive(1);
             processor.setProcessing(1);
         }
@@ -145,20 +143,167 @@ impl ProcessDriver {
     }
 }
 
+unsafe fn configure_stereo_main_buses(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+) -> Result<(), HostError> {
+    let audio = MediaTypes_::kAudio as MediaType;
+    let input_count = audio_bus_count(component, audio, BusDirections_::kInput as BusDirection)?;
+    let output_count = audio_bus_count(component, audio, BusDirections_::kOutput as BusDirection)?;
+    let mut inputs = arrangements_for_buses(
+        component,
+        processor,
+        BusDirections_::kInput as BusDirection,
+        input_count,
+    );
+    let mut outputs = arrangements_for_buses(
+        component,
+        processor,
+        BusDirections_::kOutput as BusDirection,
+        output_count,
+    );
+
+    inputs[MAIN_BUS_INDEX as usize] = SpeakerArr::kStereo;
+    outputs[MAIN_BUS_INDEX as usize] = SpeakerArr::kStereo;
+
+    let result = processor.setBusArrangements(
+        inputs.as_mut_ptr(),
+        input_count as i32,
+        outputs.as_mut_ptr(),
+        output_count as i32,
+    );
+    if vst_ok(result) {
+        return Ok(());
+    }
+
+    // Some correct plugins reject the host's requested arrangement and expect the host to use the
+    // arrangement they report back. Accept that path when the reported main I/O is already stereo,
+    // because Galad's internal chain is currently stereo.
+    if reported_main_bus_is_stereo(component, processor, BusDirections_::kInput as BusDirection)
+        && reported_main_bus_is_stereo(
+            component,
+            processor,
+            BusDirections_::kOutput as BusDirection,
+        )
+    {
+        return Ok(());
+    }
+
+    Err(HostError::SetupFailed("setBusArrangements"))
+}
+
+unsafe fn audio_bus_count(
+    component: &ComPtr<IComponent>,
+    audio: MediaType,
+    direction: BusDirection,
+) -> Result<usize, HostError> {
+    let count = component.getBusCount(audio, direction);
+    if count <= 0 {
+        return Err(HostError::SetupFailed(
+            if direction == BusDirections_::kInput as BusDirection {
+                "main audio input bus"
+            } else {
+                "main audio output bus"
+            },
+        ));
+    }
+    Ok(count as usize)
+}
+
+unsafe fn arrangements_for_buses(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+    direction: BusDirection,
+    count: usize,
+) -> Vec<SpeakerArrangement> {
+    (0..count)
+        .map(|index| {
+            reported_bus_arrangement(component, processor, direction, index as i32)
+                .unwrap_or(SpeakerArr::kEmpty)
+        })
+        .collect()
+}
+
+unsafe fn reported_main_bus_is_stereo(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+    direction: BusDirection,
+) -> bool {
+    reported_bus_arrangement(component, processor, direction, MAIN_BUS_INDEX)
+        .is_some_and(|arrangement| arrangement == SpeakerArr::kStereo)
+}
+
+unsafe fn reported_bus_arrangement(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+    direction: BusDirection,
+    index: i32,
+) -> Option<SpeakerArrangement> {
+    let mut arrangement = SpeakerArr::kEmpty;
+    if processor.getBusArrangement(direction, index, &mut arrangement) == kResultOk
+        && arrangement != SpeakerArr::kEmpty
+    {
+        return Some(arrangement);
+    }
+
+    let audio = MediaTypes_::kAudio as MediaType;
+    let mut info: BusInfo = mem::zeroed();
+    if component.getBusInfo(audio, direction, index, &mut info) != kResultOk {
+        return None;
+    }
+    match info.channelCount {
+        1 => Some(SpeakerArr::kMono),
+        2 => Some(SpeakerArr::kStereo),
+        _ => None,
+    }
+}
+
+unsafe fn activate_main_bus_only(
+    component: &ComPtr<IComponent>,
+    audio: MediaType,
+    direction: BusDirection,
+) -> Result<(), HostError> {
+    let count = audio_bus_count(component, audio, direction)?;
+    for index in 0..count {
+        let active = if index as i32 == MAIN_BUS_INDEX { 1 } else { 0 };
+        let result = component.activateBus(audio, direction, index as i32, active);
+        if !vst_ok(result) {
+            return Err(HostError::SetupFailed(
+                if direction == BusDirections_::kInput as BusDirection {
+                    "activate input bus"
+                } else {
+                    "activate output bus"
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn vst_ok(result: tresult) -> bool {
+    result == kResultOk || result == kResultTrue
+}
+
 #[cfg(test)]
 mod tests {
     use std::f32::consts::PI;
 
     use super::*;
     use crate::vst3_host::HostContext;
-    use crate::vst3_host::fixture::fixture_factory;
+    use crate::vst3_host::fixture::{
+        fixed_stereo_rejects_arrangement_factory, fixture_factory, sidechain_fixture_factory,
+    };
 
     fn fixture_instance() -> PluginInstance {
         let factory = fixture_factory();
+        instance_from_factory(&factory)
+    }
+
+    fn instance_from_factory(factory: &ComPtr<IPluginFactory>) -> PluginInstance {
         let host = HostContext::new()
             .to_com_ptr::<IHostApplication>()
             .expect("IHostApplication");
-        PluginInstance::from_factory(&factory, &host).expect("instance")
+        PluginInstance::from_factory(factory, &host).expect("instance")
     }
 
     #[test]
@@ -171,6 +316,28 @@ mod tests {
         let output = driver.process_block(&instance, &input);
 
         assert!(output.iter().all(|ch| ch.iter().all(|&s| s == 0.0)));
+    }
+
+    #[test]
+    fn prepare_passes_all_audio_buses_for_sidechain_plugins() {
+        let factory = sidechain_fixture_factory();
+        let instance = instance_from_factory(&factory);
+        let driver = ProcessDriver::new(48_000.0, 512);
+
+        driver
+            .prepare(&instance)
+            .expect("prepare sidechain fixture");
+    }
+
+    #[test]
+    fn prepare_accepts_reported_fixed_stereo_when_set_arrangement_fails() {
+        let factory = fixed_stereo_rejects_arrangement_factory();
+        let instance = instance_from_factory(&factory);
+        let driver = ProcessDriver::new(48_000.0, 512);
+
+        driver
+            .prepare(&instance)
+            .expect("prepare fixed-stereo fixture");
     }
 
     #[test]

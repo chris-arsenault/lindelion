@@ -5,7 +5,10 @@
 //! plugins, which are the guest side). Windows-only and target-gated; excluded from the
 //! Linux/macOS `make ci` path (see [ADR-0022](../docs/adr/0022-windows-vst3-host.md)).
 
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod audio;
+mod diagnostics;
 mod session;
 mod ui;
 mod vst3_host;
@@ -14,16 +17,29 @@ mod vst3_host;
 lindelion_test_allocator::install_test_allocator!();
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("spike") => run_spike_command(args.next()),
-        Some("passthrough") => run_passthrough_command(args.next(), args.next()),
-        Some("chain") => run_chain_command(args.collect()),
-        Some("session") => run_session_command(args.next()),
-        Some("editor") => run_editor_command(args.collect()),
+    diagnostics::init();
+    let args: Vec<String> = std::env::args().collect();
+    diagnostics::log(format!(
+        "main: start args={args:?} exe={:?} cwd={:?}",
+        std::env::current_exe(),
+        std::env::current_dir()
+    ));
+
+    let mut rest = args.iter().skip(1).cloned();
+    match rest.next().as_deref() {
+        Some("spike") => run_spike_command(rest.next()),
+        Some("passthrough") => run_passthrough_command(rest.next(), rest.next()),
+        Some("chain") => run_chain_command(rest.collect()),
+        Some("session") => run_session_command(rest.next()),
+        Some("editor") => run_editor_command(rest.collect()),
+        Some("diagnostics") => print_diagnostics_path(),
         None | Some("ui") => run_ui_command(),
         _ => print_usage(),
     }
+}
+
+fn print_diagnostics_path() {
+    println!("{}", diagnostics::log_path().display());
 }
 
 /// Print the command-line usage.
@@ -36,12 +52,15 @@ fn print_usage() {
     println!("  galad chain <in-id> <out-id> <plugin.vst3>... [--save <file>]  # chain (M3/M4)");
     println!("  galad session <file>                        # restore a saved session (M4)");
     println!("  galad editor <plugin.vst3>...               # open plugin editor windows (M5)");
+    println!("  galad diagnostics                           # print startup diagnostic log path");
 }
 
 /// `galad` (no subcommand) / `galad ui` — launch the standalone Vizia host UI (M6). Windows-only.
 #[cfg(windows)]
 fn run_ui_command() {
+    diagnostics::log("main: run_ui_command enter");
     ui::run();
+    diagnostics::log("main: run_ui_command exit");
 }
 
 #[cfg(not(windows))]

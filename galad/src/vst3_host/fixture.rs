@@ -33,6 +33,18 @@ pub(super) enum FixtureBehavior {
     NaNOutput,
 }
 
+/// Bus-shape variations used to exercise host negotiation against common real-world VST3 patterns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FixtureBusShape {
+    /// One stereo input bus and one stereo output bus.
+    Stereo,
+    /// Main stereo input plus an additional inactive stereo input bus, like plugins with sidechain I/O.
+    StereoWithExtraInput,
+    /// Reports fixed stereo I/O but rejects `setBusArrangements`, which a host must tolerate by
+    /// falling back to the reported arrangement.
+    FixedStereoRejectsSet,
+}
+
 /// A stereo processor that scales by `gain` and reports `latency` (gain 1.0 / latency 0 = verbatim
 /// passthrough, as M1 used). `state` is an opaque blob echoed through get/setState, so the host's
 /// state capture/restore is observable. `behavior` lets a fixture misbehave (M7 containment tests).
@@ -40,15 +52,26 @@ pub(super) struct FixtureProcessor {
     gain: f32,
     latency: u32,
     behavior: FixtureBehavior,
+    bus_shape: FixtureBusShape,
     state: RefCell<Vec<u8>>,
 }
 
 impl FixtureProcessor {
     pub(super) fn with_behavior(gain: f32, latency: u32, behavior: FixtureBehavior) -> Self {
+        Self::with_shape(gain, latency, behavior, FixtureBusShape::Stereo)
+    }
+
+    pub(super) fn with_shape(
+        gain: f32,
+        latency: u32,
+        behavior: FixtureBehavior,
+        bus_shape: FixtureBusShape,
+    ) -> Self {
         FixtureProcessor {
             gain,
             latency,
             behavior,
+            bus_shape,
             state: RefCell::new(Vec::new()),
         }
     }
@@ -83,9 +106,19 @@ impl IComponentTrait for FixtureProcessor {
 
     unsafe fn getBusCount(&self, media_type: MediaType, dir: BusDirection) -> i32 {
         let is_audio = media_type == MediaTypes_::kAudio as MediaType;
-        let is_io = dir == BusDirections_::kInput as BusDirection
-            || dir == BusDirections_::kOutput as BusDirection;
-        if is_audio && is_io { 1 } else { 0 }
+        if !is_audio {
+            return 0;
+        }
+        if dir == BusDirections_::kInput as BusDirection {
+            match self.bus_shape {
+                FixtureBusShape::StereoWithExtraInput => 2,
+                _ => 1,
+            }
+        } else if dir == BusDirections_::kOutput as BusDirection {
+            1
+        } else {
+            0
+        }
     }
 
     unsafe fn getBusInfo(
@@ -95,21 +128,36 @@ impl IComponentTrait for FixtureProcessor {
         index: i32,
         bus: *mut BusInfo,
     ) -> tresult {
-        if bus.is_null() || index != 0 || media_type != MediaTypes_::kAudio as MediaType {
+        if bus.is_null() || media_type != MediaTypes_::kAudio as MediaType {
+            return kInvalidArgument;
+        }
+        let count = self.getBusCount(media_type, dir);
+        if index < 0 || index >= count {
             return kInvalidArgument;
         }
         let bus = &mut *bus;
         bus.mediaType = MediaTypes_::kAudio as MediaType;
         bus.direction = dir;
         bus.channelCount = 2;
-        let name = if dir == BusDirections_::kInput as BusDirection {
+        let is_main = index == 0;
+        let name = if dir == BusDirections_::kInput as BusDirection && is_main {
             "Input"
+        } else if dir == BusDirections_::kInput as BusDirection {
+            "Sidechain"
         } else {
             "Output"
         };
         fill_utf16(&mut bus.name, name);
-        bus.busType = BusTypes_::kMain as BusType;
-        bus.flags = BusInfo_::BusFlags_::kDefaultActive as u32;
+        bus.busType = if is_main {
+            BusTypes_::kMain as BusType
+        } else {
+            BusTypes_::kAux as BusType
+        };
+        bus.flags = if is_main {
+            BusInfo_::BusFlags_::kDefaultActive as u32
+        } else {
+            0
+        };
         kResultOk
     }
 
@@ -178,10 +226,22 @@ impl IAudioProcessorTrait for FixtureProcessor {
         outputs: *mut SpeakerArrangement,
         num_outs: i32,
     ) -> tresult {
-        if inputs.is_null() || outputs.is_null() || num_ins != 1 || num_outs != 1 {
+        if self.bus_shape == FixtureBusShape::FixedStereoRejectsSet {
             return kResultFalse;
         }
-        if *inputs == SpeakerArr::kStereo && *outputs == SpeakerArr::kStereo {
+        let expected_ins = match self.bus_shape {
+            FixtureBusShape::StereoWithExtraInput => 2,
+            _ => 1,
+        };
+        if inputs.is_null() || outputs.is_null() || num_ins != expected_ins || num_outs != 1 {
+            return kResultFalse;
+        }
+        let input_arrangements = slice::from_raw_parts(inputs, num_ins as usize);
+        if input_arrangements
+            .iter()
+            .all(|arr| *arr == SpeakerArr::kStereo)
+            && *outputs == SpeakerArr::kStereo
+        {
             kResultTrue
         } else {
             kResultFalse
@@ -194,7 +254,11 @@ impl IAudioProcessorTrait for FixtureProcessor {
         index: i32,
         arrangement: *mut SpeakerArrangement,
     ) -> tresult {
-        if arrangement.is_null() || index != 0 {
+        if arrangement.is_null() {
+            return kInvalidArgument;
+        }
+        let count = self.getBusCount(MediaTypes_::kAudio as MediaType, _dir);
+        if index < 0 || index >= count {
             return kInvalidArgument;
         }
         *arrangement = SpeakerArr::kStereo;
@@ -498,6 +562,7 @@ pub(super) struct FixtureFactory {
     gain: f32,
     latency: u32,
     behavior: FixtureBehavior,
+    bus_shape: FixtureBusShape,
 }
 
 impl Class for FixtureFactory {
@@ -556,10 +621,11 @@ impl IPluginFactoryTrait for FixtureFactory {
         *obj = ptr::null_mut();
         let requested = *(cid as *const TUID);
         let instance = if requested == FIXTURE_CID {
-            ComWrapper::new(FixtureProcessor::with_behavior(
+            ComWrapper::new(FixtureProcessor::with_shape(
                 self.gain,
                 self.latency,
                 self.behavior,
+                self.bus_shape,
             ))
             .to_com_ptr::<FUnknown>()
             .expect("fixture processor exposes FUnknown")
@@ -621,10 +687,20 @@ pub(super) fn behaving_fixture_factory(
     latency: u32,
     behavior: FixtureBehavior,
 ) -> ComPtr<IPluginFactory> {
+    shaped_fixture_factory(gain, latency, behavior, FixtureBusShape::Stereo)
+}
+
+pub(super) fn shaped_fixture_factory(
+    gain: f32,
+    latency: u32,
+    behavior: FixtureBehavior,
+    bus_shape: FixtureBusShape,
+) -> ComPtr<IPluginFactory> {
     ComWrapper::new(FixtureFactory {
         gain,
         latency,
         behavior,
+        bus_shape,
     })
     .to_com_ptr::<IPluginFactory>()
     .expect("fixture factory exposes IPluginFactory")
@@ -638,6 +714,24 @@ pub(super) fn process_error_factory() -> ComPtr<IPluginFactory> {
 /// A fixture whose `process` writes NaN — models a plugin emitting non-finite output.
 pub(super) fn nan_fixture_factory() -> ComPtr<IPluginFactory> {
     behaving_fixture_factory(1.0, 0, FixtureBehavior::NaNOutput)
+}
+
+pub(super) fn sidechain_fixture_factory() -> ComPtr<IPluginFactory> {
+    shaped_fixture_factory(
+        1.0,
+        0,
+        FixtureBehavior::Passthrough,
+        FixtureBusShape::StereoWithExtraInput,
+    )
+}
+
+pub(super) fn fixed_stereo_rejects_arrangement_factory() -> ComPtr<IPluginFactory> {
+    shaped_fixture_factory(
+        1.0,
+        0,
+        FixtureBehavior::Passthrough,
+        FixtureBusShape::FixedStereoRejectsSet,
+    )
 }
 
 /// A factory exposing only a controller class — no "Audio Module Class" — so the host's instantiate
