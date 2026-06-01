@@ -196,6 +196,52 @@ fn steady_state_tuning_within_three_cents_across_matrix() {
     }
 }
 
+/// M11 P4 step 1: the default String has a realistic light stiffness, so its upper
+/// partials stretch measurably sharp (inharmonicity ratios above 1) like a real
+/// wound string — where the old `WAVEGUIDE_DISPERSION` default of 0.0 was perfectly
+/// harmonic — while the fundamental still tracks the played note and the stretch
+/// stays musical (not an audible detune). Measured at 165 Hz (a body modal gap).
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn default_string_has_realistic_light_stiffness() {
+    use lindelion_dsp_utils::analysis::inharmonicity_ratios;
+
+    let sample_rate = 48_000.0;
+    let f0 = 165.0;
+    let params = WaveguideParams {
+        style: WaveguideStyle::String,
+        frequency_hz: f0,
+        ..WaveguideParams::default()
+    };
+    let output = render_waveguide_response(sample_rate, params, 144_000, RenderExcitation::Impulse);
+    assert_all_finite(&output);
+
+    let ratios = inharmonicity_ratios(&output, sample_rate, f0, 15, 0.06);
+    assert!(ratios.len() >= 14, "too few partials measured: {ratios:?}");
+    // Fundamental still tracks the played note (the loop-length compensation keeps
+    // the played pitch in tune; grid resolution allows a few cents of slack).
+    assert!(
+        (0.995..=1.005).contains(&ratios[0]),
+        "fundamental should track the note: {} (ratios={ratios:?})",
+        ratios[0]
+    );
+    // Stiffness signature: the stretch grows with partial number (n²), so a high
+    // partial is measurably sharper than a low one — and it stays light/musical.
+    let low = ratios[3]; // 4th partial
+    let high = ratios[13]; // 14th partial
+    assert!(
+        high > low + 0.0012,
+        "upper partials should stretch sharp with partial number: low(4th)={low}, high(14th)={high} (ratios={ratios:?})"
+    );
+    assert!(
+        (1.0018..=1.03).contains(&high),
+        "stretch should be measurable but light: high(14th)={high} (ratios={ratios:?})"
+    );
+}
+
 #[test]
 fn frequency_dependent_damping_decays_high_partials_faster_and_matches_target_t60() {
     use lindelion_dsp_utils::analysis::dft_magnitude_at;
