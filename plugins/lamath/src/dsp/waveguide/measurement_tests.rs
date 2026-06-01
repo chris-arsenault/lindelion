@@ -262,8 +262,12 @@ fn frequency_dependent_damping_decays_high_partials_faster_and_matches_target_t6
         * (magnitude(t60_early, t60_width, f0) / magnitude(t60_late, t60_width, f0).max(1.0e-12))
             .log10();
     let measured_t60 = elapsed * 60.0 / drop_db.max(1.0e-6);
+    // The M11 P2 cap raise lifted the bare-loop `target_t60` (the loop can now ring
+    // far longer), but this heavily loop-filtered (700 Hz), body-coupled config is
+    // dominated by the filter + body absorption, so the played pitch lands well
+    // below that raised target — a smaller fraction than under the old 2.5 s cap.
     assert!(
-        measured_t60 < target_t60 * 1.1 && measured_t60 > target_t60 * 0.2,
+        measured_t60 < target_t60 * 1.1 && measured_t60 > target_t60 * 0.1,
         "body-coupled fundamental T60 should sit below the bare-loop target but stay a meaningful fraction of it: measured={measured_t60}, target={target_t60}"
     );
 }
@@ -273,7 +277,11 @@ fn per_partial_decay_slope_holds_across_damping_settings() {
     use lindelion_dsp_utils::analysis::dft_magnitude_at;
 
     let sample_rate = 48_000.0;
-    let f0 = 220.0;
+    // 165 Hz (E3) sits in a guitar-body modal gap, so loop_gain — not the body
+    // modes — is the decay control. (At 220 Hz the fundamental lands on the 200/
+    // 230 Hz plate modes, which after the M11 P2 body re-tune dominate the decay
+    // and mask loop_gain; that body-shaped per-note variation is its own test.)
+    let f0 = 165.0;
     let high_partial = 5.0 * f0;
 
     // Short / medium / long damping (loop gain sets the decay time).
@@ -295,14 +303,19 @@ fn per_partial_decay_slope_holds_across_damping_settings() {
         let magnitude = |start: usize, freq: f32| {
             dft_magnitude_at(&output[start..start + 2_048], sample_rate, freq)
         };
-        // Early span (10 ms -> 30 ms) where every setting still rings.
+        // Early span (10 ms -> 30 ms) where every setting still rings: the loop
+        // filter rolls the high partial off faster than the fundamental.
         let fundamental_ratio = magnitude(1_440, f0) / magnitude(480, f0).max(1.0e-12);
         let high_ratio = magnitude(1_440, high_partial) / magnitude(480, high_partial).max(1.0e-12);
         assert!(
             high_ratio < fundamental_ratio * 0.6,
             "high partial should decay faster at loop_gain={loop_gain}: high={high_ratio}, fundamental={fundamental_ratio}"
         );
-        fundamental_retention.push(fundamental_ratio);
+        // Monotonicity needs a longer span (10 ms -> 200 ms): now that the M11 P2
+        // body re-tune lightened the broadband loss, loop_gain 0.8 and 0.95 both
+        // barely decay over 30 ms and only separate over a longer window.
+        let long_retention = magnitude(9_600, f0) / magnitude(480, f0).max(1.0e-12);
+        fundamental_retention.push(long_retention);
     }
 
     // The settings really are short < medium < long: the fundamental retains more

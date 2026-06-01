@@ -2,7 +2,9 @@ use lindelion_dsp_utils::math;
 
 use super::core;
 
+mod boundary;
 mod runtime;
+use boundary::{BoundaryLowpass, boundary_lowpass_step};
 pub use runtime::{MeshResonator, MeshVoiceParams};
 
 const MIN_MESH_SIZE: usize = 3;
@@ -355,6 +357,9 @@ struct RectangularMesh2d {
     next: DirectionalWaves,
     source_weights: SpatialWeights,
     pickup_weights: SpatialWeights,
+    // Per-edge boundary loss filter (M11 P2 step 3): frequency-shaped reflections
+    // so high plate modes die first.
+    boundary_lowpass: BoundaryLowpass,
     // Measured resonator energy (M2 bus) driving the geometric (von Kármán)
     // coupling; set per host sample, constant across the 2x sub-samples. 0.0 => inert.
     geometric_drive: f32,
@@ -380,6 +385,7 @@ impl RectangularMesh2d {
                 config.height,
                 config.pickup_width,
             ),
+            boundary_lowpass: BoundaryLowpass::new(config.width, config.height, config.sample_rate),
             geometric_drive: 0.0,
         }
     }
@@ -402,6 +408,7 @@ impl RectangularMesh2d {
         }
         .sanitized();
         self.config = config;
+        self.boundary_lowpass.set_sample_rate(config.sample_rate);
         self.source_weights.recompute(
             config.strike_position,
             config.width,
@@ -427,6 +434,7 @@ impl RectangularMesh2d {
     fn reset(&mut self) {
         self.current.clear();
         self.next.clear();
+        self.boundary_lowpass.clear();
         self.geometric_drive = 0.0;
     }
 
@@ -473,7 +481,9 @@ impl RectangularMesh2d {
     fn propagate_left(&mut self, x: usize, y: usize, sample: f32) {
         let index = self.index(x, y);
         if x == 0 {
-            self.next.from_left[index] += sample * self.config.boundary.left.reflection();
+            let coeff = self.boundary_lowpass.coeff;
+            let filtered = boundary_lowpass_step(&mut self.boundary_lowpass.left[y], coeff, sample);
+            self.next.from_left[index] += filtered * self.config.boundary.left.reflection();
         } else {
             let neighbor = self.index(x - 1, y);
             self.next.from_right[neighbor] += sample;
@@ -483,7 +493,10 @@ impl RectangularMesh2d {
     fn propagate_right(&mut self, x: usize, y: usize, sample: f32) {
         let index = self.index(x, y);
         if x + 1 == self.config.width {
-            self.next.from_right[index] += sample * self.config.boundary.right.reflection();
+            let coeff = self.boundary_lowpass.coeff;
+            let filtered =
+                boundary_lowpass_step(&mut self.boundary_lowpass.right[y], coeff, sample);
+            self.next.from_right[index] += filtered * self.config.boundary.right.reflection();
         } else {
             let neighbor = self.index(x + 1, y);
             self.next.from_left[neighbor] += sample;
@@ -493,7 +506,9 @@ impl RectangularMesh2d {
     fn propagate_top(&mut self, x: usize, y: usize, sample: f32) {
         let index = self.index(x, y);
         if y == 0 {
-            self.next.from_top[index] += sample * self.config.boundary.top.reflection();
+            let coeff = self.boundary_lowpass.coeff;
+            let filtered = boundary_lowpass_step(&mut self.boundary_lowpass.top[x], coeff, sample);
+            self.next.from_top[index] += filtered * self.config.boundary.top.reflection();
         } else {
             let neighbor = self.index(x, y - 1);
             self.next.from_bottom[neighbor] += sample;
@@ -503,7 +518,10 @@ impl RectangularMesh2d {
     fn propagate_bottom(&mut self, x: usize, y: usize, sample: f32) {
         let index = self.index(x, y);
         if y + 1 == self.config.height {
-            self.next.from_bottom[index] += sample * self.config.boundary.bottom.reflection();
+            let coeff = self.boundary_lowpass.coeff;
+            let filtered =
+                boundary_lowpass_step(&mut self.boundary_lowpass.bottom[x], coeff, sample);
+            self.next.from_bottom[index] += filtered * self.config.boundary.bottom.reflection();
         } else {
             let neighbor = self.index(x, y + 1);
             self.next.from_top[neighbor] += sample;

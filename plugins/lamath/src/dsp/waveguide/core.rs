@@ -7,7 +7,12 @@ use crate::dsp::constants::{
 };
 
 const WAVEGUIDE_DECAY_MIN_SECONDS: f32 = 0.02;
-const WAVEGUIDE_DECAY_MAX_SECONDS: f32 = 2.5;
+/// Upper bound of the `loop_gain → T60` map (M11 P2). Raised from 2.5 s so a
+/// held high-loop-gain string/bore can ring with a real, long tail; the loop
+/// stays bounded by the `stability_limit` clamp in `loop_damping` regardless of
+/// this cap. Indefinite-while-held sustain comes from the P3 bow/reed driver,
+/// not from this ceiling.
+const WAVEGUIDE_DECAY_MAX_SECONDS: f32 = 10.0;
 /// Smoothing time for the continuous physical inputs (loop gain/cutoff/etc.), so
 /// a control-rate parameter jump becomes a short per-sample ramp rather than a
 /// zipper step. Kept short enough to feel immediate while still gliding.
@@ -399,6 +404,22 @@ mod tests {
         assert_eq!(position_delay_samples(100.0, 0.25), 25.0);
         assert_eq!(complementary_position_delay_samples(100.0, 0.25), 75.0);
         assert_eq!(position_delay_samples(f32::NAN, 0.25), 0.0);
+    }
+
+    #[test]
+    fn raised_decay_cap_extends_max_t60_past_old_limit() {
+        // M11 P2 step 1: the loop_gain → T60 map now tops out well past the old
+        // 2.5 s ceiling, so a near-unity loop can ring for many seconds. The
+        // maximum loop gain maps exactly to the cap.
+        let max_t60 = decay_seconds_from_loop_gain(WAVEGUIDE_LOOP_GAIN.max);
+        assert!(
+            max_t60 > 2.5,
+            "raised cap should extend max T60 past the old limit: {max_t60}"
+        );
+        assert!(
+            (max_t60 - WAVEGUIDE_DECAY_MAX_SECONDS).abs() < 1.0e-3,
+            "max loop gain should map to the cap: {max_t60}"
+        );
     }
 
     #[test]

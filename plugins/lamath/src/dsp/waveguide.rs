@@ -121,6 +121,8 @@ impl WaveguideResonator {
 }
 
 #[cfg(test)]
+mod decay_tests;
+#[cfg(test)]
 mod measurement_tests;
 #[cfg(test)]
 mod position_tests;

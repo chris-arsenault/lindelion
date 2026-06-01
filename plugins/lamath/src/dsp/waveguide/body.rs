@@ -19,7 +19,14 @@ const STRING_BRIDGE_ADMITTANCE: f32 = 1.0;
 /// in a pickup tap that already carries the broadband pitch, so the body no longer
 /// needs a large background just to radiate the fundamental; this is only the body's
 /// faint inter-resonance motion.
-const BODY_BACKGROUND_ADMITTANCE: f32 = 0.015;
+///
+/// M11 P2 step 2: lowered from 0.015 so this flat loss no longer *overrides*
+/// `loop_gain` as the decay control — at the old value it capped the free-pluck
+/// tail near ~1 s regardless of the loop. The body's audible identity is its
+/// frequency-localized modal admittance (`BODY_GAIN_SCALE` × the mode bank),
+/// which is untouched; this is only the characterless broadband term, kept just
+/// large enough to remain present.
+const BODY_BACKGROUND_ADMITTANCE: f32 = 0.000_5;
 /// Global scale on the modal admittance gains: the body colors the timbre and
 /// loads the loop at its modes, but stays a light coupling so the string pitch
 /// dominates (the string is far higher impedance than the body) and the fundamental
