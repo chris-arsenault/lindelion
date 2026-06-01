@@ -32,3 +32,4 @@
 | [0028](0028-surrounding-effects-and-sympathetic-chamber.md) | Surrounding effects and a cross-voice sympathetic chamber | Accepted | 2026-06-01 |
 | [0029](0029-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
 | [0030](0030-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |
+| [0031](0031-shared-body-idiophone-mode.md) | Shared-body idiophone mode (re-strikable persistent resonator) | Accepted | 2026-06-01 |

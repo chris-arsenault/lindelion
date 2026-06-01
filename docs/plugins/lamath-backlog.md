@@ -49,13 +49,29 @@ root (`DYNAMIC-RESPONSE-PLAN.md`).
 
 ## Shared-Body Idiophone Mode (re-strikable persistent resonator)
 
+**Designed and planned** — [ADR-0031](../adr/0031-shared-body-idiophone-mode.md) records the decision;
+the milestone plan is the working doc `SHARED-BODY-IDIOPHONE-PLAN.md` at the repository root.
+
 Model idiophones (mesh cymbal/gong, bell) as a single **persistent, always-resonating body** that
 note-ons *re-strike* rather than as a per-note voice. A strike injects an excitation (force from
-velocity, position from pitch and/or a strike control) into the **live** body without choking the
-existing ring; note-off does nothing — only an explicit damp/choke gesture (hi-hat pedal, hand mute)
-stops the ring. Pitch becomes strike location/excitation, not a retuned per-voice resonator. No
-sample library does this (round-robin layers are the giveaway); it is feasible here because the 2D
-mesh is a real physical model, not samples.
+velocity, pitch, and a strike position) into the **live** body without choking the existing ring;
+note-off does nothing — only an explicit damp/choke gesture stops the ring. No sample library does
+this (round-robin layers are the giveaway); it is feasible here because the 2D mesh and the modal
+bank are real, linear-superposable physical models, not samples.
+
+Confirmed design ([ADR-0031](../adr/0031-shared-body-idiophone-mode.md)):
+
+- **Opt-in `shared_body` patch toggle**, default off and bit-identical to today's per-voice behavior;
+  on promotes the idiophone resonator to a runtime-owned persistent body. Both behaviors coexist.
+- **Mesh and modal idiophone families**, mirroring the patch resonator stack; waveguide (string/tube)
+  slots are unaffected and stay polyphonic-per-voice.
+- **Push strike events** (force/pitch/excitation/position) into the body via an allocation-free
+  injector pool; strikes do not consume voice slots.
+- **Pitch retunes the live body per strike, ring-preserving** (the existing state-preserving `retune`
+  path), so the body is melodically playable.
+- **Explicit damp via a configurable key-switch range**; note-off does nothing.
+- **The body's own decay is the envelope** (the per-note amp envelope steps aside); the body gets its
+  own energy follower and gain staging, summed at runtime scope like the M10 sympathetic chamber.
 
 - **Today** is voice-per-note: each `Voice` owns its own resonator, so N held notes = N separate
   bodies. `retrigger_resonators` (default off) already preserves a *reused* voice's ring on a
@@ -67,8 +83,10 @@ mesh is a real physical model, not samples.
   [ADR-0028](../adr/0028-surrounding-effects-and-sympathetic-chamber.md)) is the existing
   precedent — a persistent, steal-retuned shared resonant layer. The amp envelope must get out of
   the way for this mode (sustain = 1, no per-note release; the body's own decay is the envelope).
-- **Sequencing:** build after the M11 voicing program (P2 gave the mesh a real multi-second ring;
-  P4/P7 give it body coloration and register behavior), then run `feature-start` on it.
+- **Sequencing:** built after the M11 voicing program (P2 gave the mesh a real multi-second ring;
+  P4/P7 give it body coloration and register behavior). `feature-start` has been run; see
+  [ADR-0031](../adr/0031-shared-body-idiophone-mode.md) and the root milestone plan
+  `SHARED-BODY-IDIOPHONE-PLAN.md`.
 
 ### M11 compatibility (scanned P3–P10): no hard lock-outs
 

@@ -304,6 +304,14 @@ fn retrigger_label_from_plain(value: f32) -> &'static str {
     }
 }
 
+fn shared_body_label_from_plain(value: f32) -> &'static str {
+    if bool_from_plain(value) {
+        "Shared Body"
+    } else {
+        "Per-Voice"
+    }
+}
+
 fn tempo_sync_label_from_plain(value: f32) -> &'static str {
     if bool_from_plain(value) {
         "Sync"

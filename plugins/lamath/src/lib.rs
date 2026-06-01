@@ -34,7 +34,7 @@ pub use patch::{
     LiveExcitationConfig, LiveExcitationMode, MeshConfig, ModalConfig, ModalPreset,
     ModulationConfig, ModulationDestination, ModulationSlot, ModulationSource, OutputConfig,
     PickConfig, ReedConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch,
-    SurroundingConfig, WaveguideConfig,
+    SharedBodyConfig, SurroundingConfig, WaveguideConfig,
 };
 pub use plugin::{
     LoadedExcitationBuffer, ResonatorSidechainTelemetry, ResonatorSynth, ResonatorTelemetry,

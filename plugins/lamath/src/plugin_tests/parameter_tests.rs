@@ -509,6 +509,9 @@ fn roundtrip_patch_after_parameter_updates() -> ResonatorSynthPatch {
         (122, 180.0),
         (123, 30.0),
         (124, 10.0),
+        (156, 1.0),
+        (157, 24.0),
+        (158, 60.0),
     ] {
         set_parameter_plain(&mut synth, id, plain);
     }
@@ -594,4 +597,7 @@ fn assert_expanded_v2_parameters(patch: &ResonatorSynthPatch) {
     assert!((patch.live_excitation.latch_window_ms - 180.0).abs() < 0.001);
     assert!((patch.live_excitation.latch_pre_roll_ms - 30.0).abs() < 0.001);
     assert!((patch.live_excitation.latch_fade_ms - 10.0).abs() < 0.001);
+    assert!(patch.shared_body.enabled);
+    assert_eq!(patch.shared_body.damp_key_low, 24);
+    assert_eq!(patch.shared_body.damp_key_high, 60);
 }

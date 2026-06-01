@@ -26,6 +26,7 @@ pub(crate) enum ParameterPath {
     Driver(DriverParameter),
     Contact(ContactParameter),
     Surrounding(SurroundingParameter),
+    SharedBody(SharedBodyParameter),
     ModulationSlot {
         slot: usize,
         parameter: ModulationSlotParameter,
@@ -60,6 +61,7 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::Driver(parameter) => parameter.plain_value(patch.driver),
             Self::Contact(parameter) => parameter.plain_value(patch.contact),
             Self::Surrounding(parameter) => parameter.plain_value(patch.surrounding),
+            Self::SharedBody(parameter) => parameter.plain_value(patch.shared_body),
             Self::ModulationSlot { slot, parameter } => parameter
                 .plain_value(&patch.modulation, slot)
                 .unwrap_or_default(),
@@ -116,6 +118,9 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::Contact(parameter) => parameter.apply_plain(&mut patch.contact, value),
             Self::Surrounding(parameter) => {
                 parameter.apply_plain(&mut patch.surrounding, value)
+            }
+            Self::SharedBody(parameter) => {
+                parameter.apply_plain(&mut patch.shared_body, value)
             }
             Self::ModulationSlot { slot, parameter } => {
                 parameter.apply_plain(&mut patch.modulation, slot, value);

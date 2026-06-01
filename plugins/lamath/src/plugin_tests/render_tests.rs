@@ -47,6 +47,7 @@ fn default_patch_uses_marimba_modal_as_only_audible_resonator_path() {
             if (mix_a - 1.0).abs() < 0.001 && mix_b.abs() < 0.001
     ));
     assert!(!patch.retrigger_resonators);
+    assert!(!patch.shared_body.enabled);
     assert_eq!(patch.excitation_slots.len(), 1);
     assert!(patch.excitation_slots[0].sample.is_none());
 }

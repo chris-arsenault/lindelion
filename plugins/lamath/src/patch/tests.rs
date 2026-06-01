@@ -7,6 +7,20 @@ fn default_patch_uses_transparent_sample_driver() {
 }
 
 #[test]
+fn default_shared_body_is_off_with_bottom_octave_damp_range() {
+    // M0: shared-body mode ships defeated; the damp/choke key-switch range defaults
+    // to the bottom MIDI octave C-1..B-1 (0..=11), below an 88-key piano.
+    assert_eq!(
+        ResonatorSynthPatch::default().shared_body,
+        SharedBodyConfig {
+            enabled: false,
+            damp_key_low: 0,
+            damp_key_high: 11,
+        }
+    );
+}
+
+#[test]
 fn patch_with_physical_driver_roundtrips_through_toml() {
     for driver in [
         DriverConfig::Pick(PickConfig::default()),

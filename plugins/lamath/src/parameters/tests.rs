@@ -3,6 +3,59 @@ use crate::assert_no_allocations;
 use lindelion_plugin_shell::ParameterId;
 
 #[test]
+fn shared_body_parameters_roundtrip_through_config() {
+    let mut config = SharedBodyConfig::default();
+
+    SharedBodyParameter::Enabled.apply_plain(&mut config, 1.0);
+    assert!(config.enabled);
+    assert_eq!(SharedBodyParameter::Enabled.plain_value(config), 1.0);
+
+    SharedBodyParameter::DampKeyLow.apply_plain(&mut config, 36.0);
+    assert_eq!(config.damp_key_low, 36);
+    assert_eq!(SharedBodyParameter::DampKeyLow.plain_value(config), 36.0);
+
+    SharedBodyParameter::DampKeyHigh.apply_plain(&mut config, 48.0);
+    assert_eq!(config.damp_key_high, 48);
+    assert_eq!(SharedBodyParameter::DampKeyHigh.plain_value(config), 48.0);
+}
+
+#[test]
+fn shared_body_parameters_are_registered_as_stepped_controls() {
+    for id in [
+        SHARED_BODY_ENABLED_PARAMETER_ID,
+        SHARED_BODY_DAMP_KEY_LOW_PARAMETER_ID,
+        SHARED_BODY_DAMP_KEY_HIGH_PARAMETER_ID,
+    ] {
+        let parameter = PARAMETERS
+            .iter()
+            .find(|parameter| parameter.id.0 == id)
+            .unwrap_or_else(|| panic!("missing shared-body parameter id {id}"));
+        assert!(
+            parameter.step_count.is_some(),
+            "shared-body parameter id {id} should be stepped",
+        );
+    }
+
+    // The enabled toggle round-trips through the registry binding into the patch.
+    let mut patch = ResonatorSynthPatch::default();
+    let binding =
+        parameter_binding(SHARED_BODY_ENABLED_PARAMETER_ID).expect("missing enabled binding");
+    binding.apply_plain(&mut patch, 1.0);
+    assert!(patch.shared_body.enabled);
+}
+
+#[test]
+fn shared_body_parameter_path_reads_and_writes_patch() {
+    let mut patch = ResonatorSynthPatch::default();
+    ParameterPath::SharedBody(SharedBodyParameter::Enabled).apply_plain(&mut patch, 1.0);
+    assert!(patch.shared_body.enabled);
+    assert_eq!(
+        ParameterPath::SharedBody(SharedBodyParameter::Enabled).plain_value(&patch),
+        1.0
+    );
+}
+
+#[test]
 fn exposed_parameters_have_exactly_one_binding() {
     assert_eq!(PARAMETERS.len(), PARAMETER_BINDINGS.len());
 

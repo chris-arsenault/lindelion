@@ -27,7 +27,8 @@ use crate::{
     AudioInputMode, BowConfig, ContactConfig, DriverConfig, EnvelopeConfig, FilterMode, LfoShape,
     LiveExcitationMode, MeshConfig, ModalConfig, ModalPreset, ModulationConfig,
     ModulationDestination, ModulationSource, PickConfig, ReedConfig, ResonatorConfig,
-    ResonatorRouting, ResonatorSynthPatch, SurroundingConfig, WaveguideConfig, WaveguideStyle,
+    ResonatorRouting, ResonatorSynthPatch, SharedBodyConfig, SurroundingConfig, WaveguideConfig,
+    WaveguideStyle,
 };
 
 const LIVE: ParameterApplyKind = ParameterApplyKind::Live;
@@ -82,6 +83,9 @@ pub(crate) const SURROUNDING_SYMPATHETIC_PARAMETER_ID: u32 = 152;
 pub(crate) const DRIVER_BOW_PRESSURE_DEPTH_PARAMETER_ID: u32 = 153;
 pub(crate) const DRIVER_BOW_SPEED_PARAMETER_ID: u32 = 154;
 pub(crate) const DRIVER_BOW_FRICTION_PARAMETER_ID: u32 = 155;
+pub(crate) const SHARED_BODY_ENABLED_PARAMETER_ID: u32 = 156;
+pub(crate) const SHARED_BODY_DAMP_KEY_LOW_PARAMETER_ID: u32 = 157;
+pub(crate) const SHARED_BODY_DAMP_KEY_HIGH_PARAMETER_ID: u32 = 158;
 
 pub(crate) type ParameterBinding = RegistryParameterBinding<
     ParameterPath,
@@ -106,6 +110,7 @@ include!("parameters/paths.rs");
 include!("parameters/driver.rs");
 include!("parameters/contact.rs");
 include!("parameters/surrounding.rs");
+include!("parameters/shared_body.rs");
 include!("parameters/codecs.rs");
 include!("parameters/helpers.rs");
 

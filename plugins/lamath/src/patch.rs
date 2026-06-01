@@ -38,6 +38,8 @@ pub struct ResonatorSynthPatch {
     pub contact: ContactConfig,
     #[serde(default)]
     pub surrounding: SurroundingConfig,
+    #[serde(default)]
+    pub shared_body: SharedBodyConfig,
 }
 
 impl Default for ResonatorSynthPatch {
@@ -62,6 +64,7 @@ impl Default for ResonatorSynthPatch {
             driver: DriverConfig::default(),
             contact: ContactConfig::default(),
             surrounding: SurroundingConfig::default(),
+            shared_body: SharedBodyConfig::default(),
         }
     }
 }
@@ -417,6 +420,39 @@ pub struct SurroundingConfig {
     /// mix. `0` adds no sympathetic ringing.
     #[serde(default)]
     pub sympathetic: f32,
+}
+
+/// Shared-body idiophone mode: when enabled, note-ons re-strike a single
+/// runtime-owned persistent body instead of allocating per-note voices
+/// ([ADR-0031](../../docs/adr/0031-shared-body-idiophone-mode.md)). This struct is
+/// the control surface only; no runtime DSP reads it yet (M0).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SharedBodyConfig {
+    /// `false` (default) keeps today's per-voice idiophone behavior, bit-identical.
+    /// `true` promotes the idiophone resonator to the shared struck body.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Lowest MIDI note (inclusive) of the damp/choke key-switch range. Notes in
+    /// `[damp_key_low, damp_key_high]` damp the body instead of striking it.
+    #[serde(default)]
+    pub damp_key_low: u8,
+    /// Highest MIDI note (inclusive) of the damp/choke key-switch range.
+    #[serde(default = "default_damp_key_high")]
+    pub damp_key_high: u8,
+}
+
+fn default_damp_key_high() -> u8 {
+    11
+}
+
+impl Default for SharedBodyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            damp_key_low: 0,
+            damp_key_high: default_damp_key_high(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
