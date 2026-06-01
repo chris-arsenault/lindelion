@@ -117,14 +117,17 @@ field activities, recorded in [`PLUGIN-MATRIX.md`](PLUGIN-MATRIX.md).
   `windows.0.52.0.lib` umbrella import lib; the build passes `/FORCE:MULTIPLE` so skia's static
   high-level ICU wins and only skia's intended system `icu.dll` primitives are imported (see the
   Makefile note).
-- **Release build:** `make host-windows-release` builds the optimized `galad.exe` into a **separate
+- **Release build:** the release chain builds every distributable `--release` into a **separate
   target dir** (`$(LINDELION_RELEASE_TARGET_DIR)`, default `$(CACHE_DIR)/target-release`) so it never
-  invalidates or competes with the day-to-day debug/dev caches (`./target` for `make ci`/tests,
-  `$(CACHE_DIR)/target` for the debug Windows build and macOS bundles). Output:
-  `<target-release>/x86_64-pc-windows-msvc/release/galad.exe`. It links the MSVC CRT dynamically, so
-  the target needs the **VC++ 2015–2022 Redistributable (x64)** (present on most Windows installs);
-  every other import is a system DLL and skia/ICU are statically linked. For a fully standalone exe,
-  add `-C target-feature=+crt-static` if skia's prebuilt CRT linkage allows.
+  invalidates or competes with the day-to-day caches (`./target` for `make ci`/tests, and the
+  iteration cache `$(CACHE_DIR)/target`). `make release` dispatches by host OS: on Linux/Windows,
+  `make release-windows` builds `galad.exe` **and** the Windows VST3 plugin bundles; on macOS,
+  `make release-macos` builds the instrument bundles. (`make host-windows-release` builds just
+  `galad.exe`.) Output: `<target-release>/x86_64-pc-windows-msvc/release/galad.exe`. The exe links
+  the MSVC CRT dynamically, so the target needs the **VC++ 2015–2022 Redistributable (x64)** (present
+  on most Windows installs); every other import is a system DLL and skia/ICU are statically linked.
+  For a fully standalone exe, add `-C target-feature=+crt-static` if skia's prebuilt CRT linkage
+  allows.
 - **Portable logic:** `cargo test -p galad` runs the host's platform-neutral tests (session model,
   meter math, the lock-free meter snapshot, the chain/pool, validation, and the UI state/command
   model). Live behaviour (audio, plugin hosting, UI) is verified on Windows.

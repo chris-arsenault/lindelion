@@ -22,7 +22,16 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 
 Lamath, Glirdir, and Linnod are the current macOS VST3 bundle targets. Use [macos-vst3-build.md](macos-vst3-build.md) for macOS build, install, inspect, and validator steps.
 
-The Galad Windows host (`galad`) is target-gated and excluded from `make ci`; it is cross-compiled and checked with `make host-windows-check` (debug). `make host-windows-release` builds the optimized `galad.exe` into a separate target dir (`$(CACHE_DIR)/target-release`) so release artifacts never disturb the debug/dev caches. See [galad/README.md](../galad/README.md) and [architecture.md](architecture.md#windows-vst3-host-galad).
+The Galad Windows host (`galad`) is target-gated and excluded from `make ci`; it is cross-compiled and checked with `make host-windows-check` (debug). See [galad/README.md](../galad/README.md) and [architecture.md](architecture.md#windows-vst3-host-galad).
+
+## Release builds
+
+`make release` builds every distributable `--release` into a **separate target dir** (`$(LINDELION_RELEASE_TARGET_DIR)`, default `$(CACHE_DIR)/target-release`) so release-profile cache invalidation never touches the dev/CI cache (`./target`, used by `make ci`/tests) or the iteration cache (`$(CACHE_DIR)/target`, used by `build`/`build-windows`/`host-windows-check`). It dispatches by host OS:
+
+- `make release-windows` (Linux/Windows): `galad.exe` plus the Windows VST3 plugin bundles (`$(WINDOWS_PLUGINS)`), cross-compiled via cargo-xwin.
+- `make release-macos` (macOS): the instrument VST3 bundles (`$(PLUGINS)`), staged (not installed).
+
+The dev targets (`build`, `build-windows`, `host-windows-check`) are unchanged and keep using the iteration cache for fast install-to-DAW iteration.
 
 ## Commit Baseline
 
