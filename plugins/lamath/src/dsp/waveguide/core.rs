@@ -22,6 +22,10 @@ const FILTER_PEAK_SCAN_POINTS: usize = 96;
 const GROUP_DELAY_PROBE_RADIANS: f32 = 0.001;
 const MAX_FILTER_DELAY_COMPENSATION_SAMPLES: f32 = 8.0;
 const EXCITATION_WIDTH_FRACTION: f32 = 0.035;
+/// Excitation-window width fraction at full strike-position spread (M9 strum). A
+/// quarter of the string spreads the contact widely, combing out the high partials
+/// so a strum reads darker than a tight pick at the same level.
+const STRUM_WIDTH_FRACTION: f32 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct DelayTuning {
@@ -177,27 +181,45 @@ pub(super) fn delay_tuning(
 }
 
 pub(super) fn waveguide_geometry(strike_position: f32, pickup_position: f32) -> WaveguideGeometry {
-    let strike_position = STRIKE_POSITION.clamp(strike_position);
     let pickup_position = WAVEGUIDE_PICKUP_POSITION.clamp(pickup_position);
-    let half_width = EXCITATION_WIDTH_FRACTION * 0.5;
-
     WaveguideGeometry {
         pickup_position,
-        excitation_taps: [
-            PositionTap {
-                position: STRIKE_POSITION.clamp(strike_position - half_width),
-                gain: 0.25,
-            },
-            PositionTap {
-                position: strike_position,
-                gain: 0.5,
-            },
-            PositionTap {
-                position: STRIKE_POSITION.clamp(strike_position + half_width),
-                gain: 0.25,
-            },
-        ],
+        // The cached taps are the pre-M9 narrow contact (spread 0); the contact
+        // stage widens them at injection (M9) via `excitation_taps`.
+        excitation_taps: excitation_taps(strike_position, EXCITATION_WIDTH_FRACTION * 0.5),
     }
+}
+
+/// The three-tap excitation window centred on the strike position with a
+/// triangular `0.25 / 0.5 / 0.25` gain profile, spanning `±half_width` (clamped
+/// in-bounds). Pulled out of `waveguide_geometry` so the M9 contact stage can
+/// rebuild it at a spread-driven width at injection without re-running the cached
+/// prepared model.
+pub(super) fn excitation_taps(strike_position: f32, half_width: f32) -> [PositionTap; 3] {
+    let strike_position = STRIKE_POSITION.clamp(strike_position);
+    let half_width = math::finite_or(half_width, 0.0).max(0.0);
+    [
+        PositionTap {
+            position: STRIKE_POSITION.clamp(strike_position - half_width),
+            gain: 0.25,
+        },
+        PositionTap {
+            position: strike_position,
+            gain: 0.5,
+        },
+        PositionTap {
+            position: STRIKE_POSITION.clamp(strike_position + half_width),
+            gain: 0.25,
+        },
+    ]
+}
+
+/// Half-width of the excitation window for a normalised strike-position spread
+/// `0..1` (M9). Spread `0` returns the pre-M9 narrow pick half-width; spread `1`
+/// returns the wide-strum half-width, combing out the high partials.
+pub(super) fn excitation_half_width(spread: f32) -> f32 {
+    let spread = math::finite_clamp(spread, 0.0, 1.0, 0.0);
+    0.5 * (EXCITATION_WIDTH_FRACTION + spread * (STRUM_WIDTH_FRACTION - EXCITATION_WIDTH_FRACTION))
 }
 
 pub(super) fn position_delay_samples(loop_delay_samples: f32, position: f32) -> f32 {

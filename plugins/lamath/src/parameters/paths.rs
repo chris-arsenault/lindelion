@@ -24,6 +24,8 @@ pub(crate) enum ParameterPath {
     PitchBendRange,
     VelocityExcitationDepth,
     Driver(DriverParameter),
+    Contact(ContactParameter),
+    Surrounding(SurroundingParameter),
     ModulationSlot {
         slot: usize,
         parameter: ModulationSlotParameter,
@@ -56,6 +58,8 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::PitchBendRange => patch.modulation.pitch_bend_range_semitones,
             Self::VelocityExcitationDepth => patch.modulation.velocity_to_excitation_depth,
             Self::Driver(parameter) => parameter.plain_value(patch.driver),
+            Self::Contact(parameter) => parameter.plain_value(patch.contact),
+            Self::Surrounding(parameter) => parameter.plain_value(patch.surrounding),
             Self::ModulationSlot { slot, parameter } => parameter
                 .plain_value(&patch.modulation, slot)
                 .unwrap_or_default(),
@@ -109,6 +113,10 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
                 patch.modulation.velocity_to_excitation_depth = finite_value(value, 0.0, 1.0, 1.0);
             }
             Self::Driver(parameter) => parameter.apply_plain(&mut patch.driver, value),
+            Self::Contact(parameter) => parameter.apply_plain(&mut patch.contact, value),
+            Self::Surrounding(parameter) => {
+                parameter.apply_plain(&mut patch.surrounding, value)
+            }
             Self::ModulationSlot { slot, parameter } => {
                 parameter.apply_plain(&mut patch.modulation, slot, value);
             }
@@ -452,6 +460,7 @@ pub(crate) enum WaveguideParameter {
     Position,
     Style,
     BoundaryReflection,
+    SourceBodyBalance,
 }
 
 impl WaveguideParameter {
@@ -465,6 +474,7 @@ impl WaveguideParameter {
             Self::Position => config.position_of_strike,
             Self::Style => config.style.plain(),
             Self::BoundaryReflection => config.boundary_reflection,
+            Self::SourceBodyBalance => config.source_body_balance,
         }
     }
 
@@ -497,6 +507,9 @@ impl WaveguideParameter {
             Self::Style => config.style = WaveguideStyle::from_plain(value),
             Self::BoundaryReflection => {
                 config.boundary_reflection = TUBE_BOUNDARY.reflection(value);
+            }
+            Self::SourceBodyBalance => {
+                config.source_body_balance = finite_value(value, 0.0, 1.0, 0.0);
             }
         }
     }

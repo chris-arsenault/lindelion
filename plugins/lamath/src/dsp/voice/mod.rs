@@ -1,8 +1,8 @@
-mod energy_follower;
 mod modulation_state;
 mod output_stage;
 mod oversampler;
 mod resonator_stack;
+mod surrounding;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +17,7 @@ use self::{
     modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend},
     output_stage::OutputStage,
     resonator_stack::ResonatorStack,
+    surrounding::SurroundingStage,
 };
 use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
 use crate::{
@@ -149,6 +150,7 @@ pub struct Voice<'a> {
     midi_note: u8,
     resonators: ResonatorStack,
     modulation: ModulationState,
+    surrounding: SurroundingStage,
     output: OutputStage,
 }
 
@@ -169,6 +171,7 @@ impl<'a> Voice<'a> {
             midi_note: 60,
             resonators: ResonatorStack::new(sample_rate),
             modulation: ModulationState::new(sample_rate),
+            surrounding: SurroundingStage::new(sample_rate),
             output: OutputStage::new(sample_rate),
         }
     }
@@ -203,6 +206,9 @@ impl<'a> Voice<'a> {
         self.resonators
             .set_base_configs(trigger.patch.resonator_a, trigger.patch.resonator_b);
         self.resonators.set_driver(trigger.patch.driver);
+        self.resonators.set_contact(trigger.patch.contact);
+        self.surrounding.set_config(trigger.patch.surrounding);
+        self.surrounding.trigger();
 
         let static_sources = self.modulation.static_sources();
         self.resonators.configure_modulated(
@@ -276,6 +282,7 @@ impl<'a> Voice<'a> {
         self.excitation_gain = 0.0;
         self.resonators.clear(self.sample_rate);
         self.modulation.clear(self.resonators.current_loop_gain());
+        self.surrounding.reset();
         self.output.clear();
     }
 
@@ -303,11 +310,17 @@ impl<'a> Voice<'a> {
                 .process_sample(excitation, sources.energy, sources.effort);
         self.modulation.observe_energy(resonator_output);
 
+        // Effort/energy-scaled surrounding effects (M10) sit between the resonator and
+        // the output stage, reading the same M2 bus the resonator did this sample.
+        let surrounded = self
+            .surrounding
+            .process(resonator_output, sources.effort, sources.energy);
+
         let cutoff_mod = self
             .modulation
             .modulation_sum(ModulationDestination::FilterCutoff, sources);
         self.output.process_sample(
-            resonator_output,
+            surrounded,
             self.sample_rate,
             cutoff_mod,
             sources.amp_envelope,

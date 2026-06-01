@@ -104,6 +104,8 @@ fn measurement_harness_covers_excitation_styles() {
                     position_of_strike: 0.38,
                     pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
                     boundary_reflection: 0.65,
+                    excitation_spread: 0.0,
+                    source_body_balance: 0.0,
                 },
                 12_000,
                 excitation,

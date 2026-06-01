@@ -2,7 +2,7 @@ use super::*;
 use crate::assert_no_allocations;
 use crate::dsp::render_metrics::{RenderExcitation, render_response};
 use crate::dsp::waveguide::WaveguideParams;
-use crate::{DriverConfig, PickConfig, ReedConfig, WaveguideStyle};
+use crate::{ContactConfig, DriverConfig, PickConfig, ReedConfig, WaveguideStyle};
 use lindelion_dsp_utils::analysis::{
     assert_all_finite, audio_window_metrics, gain_fitted_rms_difference, peak_abs, rms,
 };
@@ -261,6 +261,175 @@ fn geometric_modulated_mesh_engine_render_does_not_allocate() {
     // A non-zero, varying measured energy exercises the mesh geometric (von Kármán)
     // coupling path (M6) under the no-allocation contract (ADR-0001).
     assert_no_allocations("geometric_engine_render", || {
+        for index in 0..512 {
+            let energy = 0.1 + 0.05 * (index as f32 * 0.05).sin();
+            engine.process_sample((index == 0) as u8 as f32, energy, 0.0);
+        }
+    });
+}
+
+fn render_string_with_spread(spread: f32, samples: usize) -> Vec<f32> {
+    // Mirror the production path: the String core at 2x, driven through the
+    // oversampler, with the M9 strike-position spread set on the params.
+    let params = WaveguideParams {
+        style: WaveguideStyle::String,
+        frequency_hz: 220.0,
+        loop_filter_cutoff: 11_000.0,
+        loop_filter_resonance: 0.0,
+        loop_gain: 0.99,
+        loop_nonlinearity: 0.0,
+        position_of_strike: 0.28,
+        excitation_spread: spread,
+        ..WaveguideParams::default()
+    };
+    let mut waveguide = WaveguideResonator::new(2.0 * 48_000.0, LOWEST_RESONATOR_FREQUENCY_HZ);
+    let mut oversampler = Oversampler2x::new();
+    render_response(
+        48_000.0,
+        220.0,
+        samples,
+        RenderExcitation::Impulse,
+        |sample| oversampler.process(sample, |inner| waveguide.process_sample(inner, params)),
+    )
+}
+
+#[test]
+fn strike_position_spread_changes_timbre_picked_vs_strummed() {
+    // A wide strum spreads the contact across the string, averaging out the
+    // strike-position comb and emphasising different partials than a tight pick. The
+    // two are a distinct, measurable timbre — the spectral centroid (a gain-invariant
+    // measure) shifts substantially, so the difference cannot be explained by level.
+    let picked = render_string_with_spread(0.0, 8_192);
+    let strummed = render_string_with_spread(0.85, 8_192);
+    assert_all_finite(&picked);
+    assert_all_finite(&strummed);
+    assert!(
+        rms(&picked[..4_096]) > 0.0 && rms(&strummed[..4_096]) > 0.0,
+        "produced silence"
+    );
+
+    let picked_centroid = audio_window_metrics(&picked[..4_096], 48_000.0)
+        .spectral_centroid_hz
+        .unwrap();
+    let strummed_centroid = audio_window_metrics(&strummed[..4_096], 48_000.0)
+        .spectral_centroid_hz
+        .unwrap();
+    let relative_shift = (strummed_centroid - picked_centroid).abs() / picked_centroid.max(1.0e-3);
+    assert!(
+        relative_shift > 0.15,
+        "spread should produce a distinct timbre (gain-invariant centroid shift): \
+         picked={picked_centroid} strummed={strummed_centroid} shift={relative_shift}"
+    );
+}
+
+#[test]
+fn contact_time_mellows_the_onset_on_the_sample_driver() {
+    // The contact stage applies even with the Sample (pass-through) driver, where the
+    // M8 PickConfig contact-time does nothing: a longer contact time spreads the
+    // momentum transfer in time, low-passing the onset so the attack is measurably
+    // darker. Gain-invariant centroid => timbral, not a level change.
+    let render = |contact_time: f32| {
+        let mut engine = ResonatorEngine::new(48_000.0);
+        engine.configure(
+            &ResonatorConfig::Waveguide(WaveguideConfig::default()),
+            220.0,
+            true,
+        );
+        engine.set_contact(ContactConfig {
+            spread: 0.0,
+            contact_time,
+        });
+        render_response(
+            48_000.0,
+            220.0,
+            4_096,
+            RenderExcitation::Impulse,
+            |sample| engine.process_sample(sample, 0.0, 0.5),
+        )
+    };
+    let sharp = render(0.0);
+    let mellow = render(0.9);
+    assert_all_finite(&sharp);
+    assert_all_finite(&mellow);
+    let sharp_centroid = audio_window_metrics(&sharp[..1_024], 48_000.0)
+        .spectral_centroid_hz
+        .unwrap();
+    let mellow_centroid = audio_window_metrics(&mellow[..1_024], 48_000.0)
+        .spectral_centroid_hz
+        .unwrap();
+    assert!(
+        mellow_centroid < sharp_centroid * 0.9,
+        "longer contact should mellow the onset: sharp={sharp_centroid} mellow={mellow_centroid}"
+    );
+    // The contact stage shapes the onset, it does not mute the string.
+    assert!(
+        rms(&mellow[..2_048]) > 0.0,
+        "contact stage produced silence"
+    );
+}
+
+#[test]
+fn contact_stage_render_does_not_allocate() {
+    let mut engine = ResonatorEngine::new(48_000.0);
+    engine.configure(
+        &ResonatorConfig::Waveguide(WaveguideConfig::default()),
+        220.0,
+        true,
+    );
+    // A non-default contact stage exercises both the contact-time low-pass and the
+    // effort-widened spread path under the no-allocation contract (ADR-0001).
+    engine.set_contact(ContactConfig {
+        spread: 0.6,
+        contact_time: 0.7,
+    });
+    assert_no_allocations("contact_stage_render", || {
+        for index in 0..512 {
+            engine.process_sample((index == 0) as u8 as f32, 0.0, 0.8);
+        }
+    });
+}
+
+#[test]
+fn strummed_string_render_does_not_allocate() {
+    let params = WaveguideParams {
+        style: WaveguideStyle::String,
+        frequency_hz: 220.0,
+        loop_gain: 0.99,
+        position_of_strike: 0.28,
+        excitation_spread: 0.7,
+        ..WaveguideParams::default()
+    };
+    let mut waveguide = WaveguideResonator::new(2.0 * 48_000.0, LOWEST_RESONATOR_FREQUENCY_HZ);
+    let mut oversampler = Oversampler2x::new();
+    // Prime the caches and the wave buffer outside the asserted region.
+    for index in 0..256 {
+        oversampler.process((index == 0) as u8 as f32, |inner| {
+            waveguide.process_sample(inner, params)
+        });
+    }
+    // The widened-tap branch rebuilds a fixed `[PositionTap; 3]` on the stack each
+    // sample; the prepared model is cached, so the spread path must not allocate.
+    assert_no_allocations("strummed_string_render", || {
+        for _ in 0..512 {
+            oversampler.process(0.0, |inner| waveguide.process_sample(inner, params));
+        }
+    });
+}
+
+#[test]
+fn source_body_balance_string_render_does_not_allocate() {
+    let mut engine = ResonatorEngine::new(48_000.0);
+    engine.configure(
+        &ResonatorConfig::Waveguide(WaveguideConfig {
+            source_body_balance: 0.7,
+            ..WaveguideConfig::default()
+        }),
+        220.0,
+        true,
+    );
+    // A non-zero, varying measured energy exercises the per-sample equal-power
+    // source-body crossfade (M9) under the no-allocation contract (ADR-0001).
+    assert_no_allocations("source_body_balance_render", || {
         for index in 0..512 {
             let energy = 0.1 + 0.05 * (index as f32 * 0.05).sin();
             engine.process_sample((index == 0) as u8 as f32, energy, 0.0);

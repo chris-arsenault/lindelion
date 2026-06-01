@@ -5,7 +5,7 @@ use lindelion_dsp_utils::{
 use lindelion_plugin_shell::SmoothedAtomicParam;
 
 use crate::{
-    DriverConfig, ModalConfig, ModulationConfig, ModulationDestination,
+    ContactConfig, DriverConfig, ModalConfig, ModulationConfig, ModulationDestination,
     PARALLEL_MIX_A_PARAMETER_ID, PARALLEL_MIX_B_PARAMETER_ID, ResonatorConfig, ResonatorRouting,
     WaveguideConfig, normalize_routing_for_resonator_models, smoothed_runtime_parameter,
 };
@@ -25,10 +25,12 @@ use crate::dsp::{
 };
 
 mod conditioners;
+mod contact;
 mod driver;
 mod mapping;
 use conditioners::BodyColorExciter;
 pub(super) use conditioners::SeriesConditioner;
+use contact::ContactStage;
 use driver::Driver;
 use mapping::{mesh_params_from_config, modal_params_from_config, waveguide_params_from_config};
 
@@ -46,6 +48,7 @@ pub(super) struct ResonatorStack {
     pub(super) series_conditioner: SeriesConditioner,
     body_color_exciter: BodyColorExciter,
     driver_config: DriverConfig,
+    contact_config: ContactConfig,
 }
 
 impl ResonatorStack {
@@ -73,6 +76,7 @@ impl ResonatorStack {
             series_conditioner: SeriesConditioner::new(sample_rate),
             body_color_exciter: BodyColorExciter::new(sample_rate),
             driver_config: DriverConfig::default(),
+            contact_config: ContactConfig::default(),
         }
     }
 
@@ -93,6 +97,18 @@ impl ResonatorStack {
             self.driver_config = config;
             self.resonator_a.set_driver(config);
             self.resonator_b.set_driver(config);
+        }
+    }
+
+    /// Select the coupling/contact stage (M9) for both waveguide engines. Only
+    /// rebuilds when the contact config changes, so steady playback never
+    /// re-allocates; the stage applies only on the waveguide path (Modal/Mesh
+    /// ignore it). At the default config the stage is a transparent pass-through.
+    pub(super) fn set_contact(&mut self, config: ContactConfig) {
+        if config != self.contact_config {
+            self.contact_config = config;
+            self.resonator_a.set_contact(config);
+            self.resonator_b.set_contact(config);
         }
     }
 
@@ -281,6 +297,11 @@ struct ResonatorEngine {
     // waveguide's input-end returning wave. Default pass-through, so a patch with no
     // physical driver is unaffected.
     driver: Driver,
+    // Coupling/contact stage (M9): runs inside the 2x loop between the driver and
+    // the waveguide injection. It writes the effort-widened strike-position spread
+    // onto the params and applies the contact-time onset shaping. Default config is
+    // a transparent pass-through.
+    contact: ContactStage,
     // The 2x oversample rate the driver's inner-loop DSP is built at (the driver
     // runs inside the oversampled loop, so it must use that rate, not the host rate).
     oversample_rate: f32,
@@ -299,6 +320,7 @@ impl ResonatorEngine {
             mesh: MeshResonator::new(oversample_rate),
             oversampler: Oversampler2x::new(),
             driver: Driver::default(),
+            contact: ContactStage::from_config(ContactConfig::default(), oversample_rate),
             oversample_rate,
         }
     }
@@ -308,6 +330,12 @@ impl ResonatorEngine {
     /// excitation untouched.
     pub(super) fn set_driver(&mut self, config: DriverConfig) {
         self.driver = Driver::from_config(config, self.oversample_rate);
+    }
+
+    /// Select the coupling/contact stage from the patch (M9). Rebuilt allocation-free
+    /// at the 2x oversample rate; the default config is a transparent pass-through.
+    pub(super) fn set_contact(&mut self, config: ContactConfig) {
+        self.contact = ContactStage::from_config(config, self.oversample_rate);
     }
 
     fn configure(&mut self, config: &ResonatorConfig, base_frequency: f32, reset_state: bool) {
@@ -328,6 +356,7 @@ impl ResonatorEngine {
                 self.waveguide.reset();
                 self.oversampler.reset();
                 self.driver.reset();
+                self.contact.reset();
             }
             ResonatorConfig::Mesh(config) => {
                 self.kind = ResonatorKind::Mesh;
@@ -391,6 +420,7 @@ impl ResonatorEngine {
         self.mesh.reset();
         self.oversampler.reset();
         self.driver.reset();
+        self.contact.reset();
     }
 
     pub(super) fn process_sample(&mut self, input: f32, energy: f32, effort: f32) -> f32 {
@@ -409,14 +439,21 @@ impl ResonatorEngine {
                 self.waveguide.set_energy_drive(energy);
                 let waveguide = &mut self.waveguide;
                 let driver = &mut self.driver;
-                let params = self.waveguide_params;
+                let contact = &mut self.contact;
+                let mut params = self.waveguide_params;
+                // The effort-widened strike-position spread (M9) is constant across
+                // the host sample's sub-samples (effort is per host sample), so write
+                // it onto the params once; the contact-time shaping runs per sub-sample.
+                params.excitation_spread = contact.effective_spread(effort);
                 self.oversampler.process(input, |sample| {
                     // Read the resonator's input-end returning wave (mouth/bridge)
                     // from the previous sub-sample as the driver's coupled feedback,
-                    // then process the driven excitation through the waveguide.
+                    // run the driver, then the contact stage (contact-time onset
+                    // shaping), then the waveguide with the spread set on the params.
                     let feedback = waveguide.driven_feedback(params);
                     let driven = driver.process(sample, effort, feedback);
-                    waveguide.process_sample(driven, params)
+                    let shaped = contact.shape(driven);
+                    waveguide.process_sample(shaped, params)
                 })
             }
             ResonatorKind::Mesh => {

@@ -24,10 +24,10 @@ use crate::dsp::constants::{
     TUBE_BOUNDARY, WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN,
 };
 use crate::{
-    AudioInputMode, DriverConfig, EnvelopeConfig, FilterMode, LfoShape, LiveExcitationMode,
-    MeshConfig, ModalConfig, ModalPreset, ModulationConfig, ModulationDestination,
-    ModulationSource, PickConfig, ReedConfig, ResonatorConfig, ResonatorRouting,
-    ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
+    AudioInputMode, ContactConfig, DriverConfig, EnvelopeConfig, FilterMode, LfoShape,
+    LiveExcitationMode, MeshConfig, ModalConfig, ModalPreset, ModulationConfig,
+    ModulationDestination, ModulationSource, PickConfig, ReedConfig, ResonatorConfig,
+    ResonatorRouting, ResonatorSynthPatch, SurroundingConfig, WaveguideConfig, WaveguideStyle,
 };
 
 const LIVE: ParameterApplyKind = ParameterApplyKind::Live;
@@ -72,6 +72,13 @@ pub(crate) const DRIVER_PICK_CONTACT_TIME_PARAMETER_ID: u32 = 142;
 pub(crate) const DRIVER_REED_PRESSURE_DEPTH_PARAMETER_ID: u32 = 143;
 pub(crate) const DRIVER_REED_STIFFNESS_PARAMETER_ID: u32 = 144;
 pub(crate) const DRIVER_REED_EMBOUCHURE_PARAMETER_ID: u32 = 145;
+pub(crate) const CONTACT_SPREAD_PARAMETER_ID: u32 = 146;
+pub(crate) const CONTACT_TIME_PARAMETER_ID: u32 = 147;
+pub(crate) const RESONATOR_A_SOURCE_BODY_BALANCE_PARAMETER_ID: u32 = 148;
+pub(crate) const RESONATOR_B_SOURCE_BODY_BALANCE_PARAMETER_ID: u32 = 149;
+pub(crate) const SURROUNDING_MECHANICAL_NOISE_PARAMETER_ID: u32 = 150;
+pub(crate) const SURROUNDING_RADIATION_BRIGHTNESS_PARAMETER_ID: u32 = 151;
+pub(crate) const SURROUNDING_SYMPATHETIC_PARAMETER_ID: u32 = 152;
 
 pub(crate) type ParameterBinding = RegistryParameterBinding<
     ParameterPath,
@@ -94,6 +101,8 @@ pub(crate) const PARAMETER_REGISTRY: ParameterRegistry<ParameterBinding> =
 include!("parameters/bindings.rs");
 include!("parameters/paths.rs");
 include!("parameters/driver.rs");
+include!("parameters/contact.rs");
+include!("parameters/surrounding.rs");
 include!("parameters/codecs.rs");
 include!("parameters/helpers.rs");
 

@@ -147,7 +147,17 @@ impl Tube1d {
             style: WaveguideStyle::Tube,
             ..params
         });
-        let prepared = self.prepared_model(params);
+        // `excitation_spread` (M9) only shapes injection, so strip it from the
+        // prepared-model cache key: a per-sample spread change must not bust the
+        // heavy bore derivations (Tube caches on the whole `WaveguideParams`).
+        let excitation_spread = math::finite_clamp(params.excitation_spread, 0.0, 1.0, 0.0);
+        // `source_body_balance` is String-only; strip it too so it never enters the
+        // Tube cache key.
+        let prepared = self.prepared_model(WaveguideParams {
+            excitation_spread: 0.0,
+            source_body_balance: 0.0,
+            ..params
+        });
         let profile = prepared.profile;
         let one_way_delay = prepared.one_way_delay;
 
@@ -163,9 +173,19 @@ impl Tube1d {
             self.reflected_sample(BoundarySide::Right, boundary.right, profile, params);
 
         self.waves.push(end_reflection, mouth_reflection);
+        // Strike-position spread (M9): widen the injection window for a strum, using
+        // the cached narrow taps when spread is 0 (the pre-M9 fast path).
+        let excitation_taps = if excitation_spread > 0.0 {
+            core::excitation_taps(
+                params.position_of_strike,
+                core::excitation_half_width(excitation_spread),
+            )
+        } else {
+            prepared.geometry.excitation_taps
+        };
         self.waves.add_symmetric_excitation(
             one_way_delay,
-            prepared.geometry.excitation_taps,
+            excitation_taps,
             math::snap_to_zero(excitation) * profile.excitation_coupling,
         );
 

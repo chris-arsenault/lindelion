@@ -92,7 +92,9 @@ Helmholtz coupling): Woodhouse / euphonics.org. See memory `project_lamath_desig
   milestone lands* (current-state assertions), with one curated `CHANGELOG.md` line per user-visible
   change. Trade-offs stay in the ADRs.
 - **Verification is `make ci`.** Per-milestone CPU is tracked by `make bench` at the 1–4 voice
-  target.
+  target. This program otherwise requires **no human verification** — automated assertions are the
+  gate. **M12 is the single sanctioned exception**: its purpose *is* a human audition of rendered
+  audio, so it adds a human sign-off on top of (not instead of) `make ci`.
 - **`ModalBank` is the untouched reference.** No milestone changes its behavior. It stays in the
   equivalence battery so any refactor (M1) or shared-code reuse (M7) that would regress it fails the
   gate.
@@ -100,8 +102,10 @@ Helmholtz coupling): Woodhouse / euphonics.org. See memory `project_lamath_desig
 ## Milestones
 
 Foundations M1–M3 unblock everything; M4–M6 are siblings; M7 precedes M9 because the dynamic balance
-needs a real body. M11 is the final empirical calibration pass and runs last, once every subsystem
-exists and can be measured together.
+needs a real body. M11 is the final empirical calibration pass, run once every subsystem exists and can
+be measured together. M12 is the offline render harness for human audition — it only needs the
+end-to-end signal path (M10), so it can be built alongside M11 and is the tool that makes M11's
+calibration auditable; it carries the program's one sanctioned human-verification step.
 
 ### M1 — Prepared-operator / control-rate refactor
 Hoist per-sample linear derivations into a `PreparedResonatorModel` recomputed only when inputs move.
@@ -210,6 +214,33 @@ strength) once all subsystems exist and can be measured together.
   tolerance for a given dynamic and that no gesture clips; every dynamic-response control's range and
   taper is set from data and documented; no-alloc.
 
+### M12 — Offline render harness for human audition [depends on M10; supports M11]
+The program's **one sanctioned human-verification milestone**. Everywhere else the gate is automated
+assertions and the user has asked for *no* human verification; here the point *is* to listen — so build
+the offline renderer that drives the real end-to-end signal path and writes WAVs the user can A/B, and
+make a human sign-off the exit. This is a tool the whole program lacks today: the DSP path renders to
+buffers (proven by the runtime tests), but nothing writes audio to a file, so the only way to hear the
+instrument is the macOS VST3 in a DAW. The harness also makes M11's calibration auditable.
+- Add a minimal WAV writer — the workspace has a `decode_wav_mono` reader (`lindelion-sample-library`)
+  but no writer — and an offline render harness that drives the full chain end-to-end
+  (`ResonatorProcessor` / the plugin: MIDI C4 note-on → excitation → resonator + all M1–M10 stages →
+  output → sympathetic chamber → WAV).
+- **Keep it out of the `make ci` unit suite.** It writes files and runs multi-second renders, so it is
+  `#[ignore]`d and run via a dedicated `make` target, exactly like the `make docs` data generators —
+  never in the fast, in-memory, allocation-checked path (AGENTS.md unit-suite rule).
+- Render a curated, directly-comparable sweep at a fixed pitch (default middle C / C4) into named WAVs:
+  each resonator family (Modal / String / Tube / Mesh), each driver (sample / pick / reed), the contact
+  stage (pick vs strum, contact time), the source↔body balance soft→loud, each surrounding effect
+  (mechanical noise, radiation brightening, sympathetic on/off), and a soft / medium / hard velocity
+  set — plus a couple of held chords so the cross-voice sympathetic chamber is audible.
+- **[DECISION]** WAV writer as a hand-rolled PCM writer (no new dependency, mirrors the existing reader)
+  vs the `hound` crate; harness home as an `xtask render` subcommand vs an `#[ignore]`d test behind a
+  `make` target; and the exact curated sweep (settings, durations, pitch(es), which chords).
+- Exit: `make ci` green (the harness is excluded from it); the render target writes the full WAV sweep
+  without error and every render is finite and non-clipping (an automated guard on the written audio);
+  **and the user auditions the sweep and signs off, or files what sounds wrong** — the sanctioned
+  human-verification step, layered on top of the automated checks.
+
 ### Decisions needing your input
 
 | Where | Decision you own |
@@ -224,6 +255,7 @@ strength) once all subsystems exist and can be measured together.
 | M9 | Default source↔body balance curve and contact-model voicing. |
 | M10 | Which surrounding effects ship; sympathetic-resonance routing. |
 | M11 | Loudness/headroom target; output normalization fixed or defeatable; final per-family default voicing and control ranges. |
+| M12 | WAV writer hand-rolled vs `hound`; harness as `xtask render` vs `#[ignore]`d test + `make` target; the curated render sweep (settings, durations, pitch(es), chords). |
 
 ---
 

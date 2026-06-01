@@ -437,6 +437,63 @@ fn driver_continuous_parameters_expose_normalised_ranges() {
     }
 }
 
+#[test]
+fn contact_and_balance_parameters_expose_identity_default_ranges() {
+    // M9 contact + source-body-balance controls are `0..1` with an identity default
+    // of 0 (the pre-M9 transparent values), so the registry default reproduces the
+    // old behavior and the controls span the full normalised range.
+    for id in [
+        CONTACT_SPREAD_PARAMETER_ID,
+        CONTACT_TIME_PARAMETER_ID,
+        RESONATOR_A_SOURCE_BODY_BALANCE_PARAMETER_ID,
+        RESONATOR_B_SOURCE_BODY_BALANCE_PARAMETER_ID,
+    ] {
+        let binding = parameter_binding(id).expect("M9 contact/balance binding");
+        let range = binding.info().range;
+        assert!(range.min == 0.0 && range.max == 1.0);
+        assert_eq!(range.default, 0.0);
+    }
+
+    // Each routes to its patch field: contact spread/time -> patch.contact, and the
+    // per-slot source-body balance -> the slot's WaveguideConfig.
+    let mut patch = ResonatorSynthPatch::default();
+    parameter_binding(CONTACT_SPREAD_PARAMETER_ID)
+        .unwrap()
+        .apply_plain(&mut patch, 0.8);
+    assert!((patch.contact.spread - 0.8).abs() < 0.001);
+
+    patch.resonator_b = ResonatorConfig::Waveguide(WaveguideConfig::default());
+    parameter_binding(RESONATOR_B_SOURCE_BODY_BALANCE_PARAMETER_ID)
+        .unwrap()
+        .apply_plain(&mut patch, 0.5);
+    let ResonatorConfig::Waveguide(config) = patch.resonator_b else {
+        panic!("resonator_b should be Waveguide");
+    };
+    assert!((config.source_body_balance - 0.5).abs() < 0.001);
+}
+
+#[test]
+fn surrounding_parameters_expose_defeated_default_ranges() {
+    // M10 surrounding-effect depths are `0..1` with a 0 (defeated) default, and each
+    // routes to its `patch.surrounding` field.
+    for id in [
+        SURROUNDING_MECHANICAL_NOISE_PARAMETER_ID,
+        SURROUNDING_RADIATION_BRIGHTNESS_PARAMETER_ID,
+        SURROUNDING_SYMPATHETIC_PARAMETER_ID,
+    ] {
+        let binding = parameter_binding(id).expect("M10 surrounding binding");
+        let range = binding.info().range;
+        assert!(range.min == 0.0 && range.max == 1.0);
+        assert_eq!(range.default, 0.0);
+    }
+
+    let mut patch = ResonatorSynthPatch::default();
+    parameter_binding(SURROUNDING_SYMPATHETIC_PARAMETER_ID)
+        .unwrap()
+        .apply_plain(&mut patch, 0.7);
+    assert!((patch.surrounding.sympathetic - 0.7).abs() < 0.001);
+}
+
 fn prepare_patch_for_binding(patch: &mut ResonatorSynthPatch, binding: ParameterBinding) {
     if let ParameterPath::Resonator { slot, parameter } = binding.path() {
         match parameter {

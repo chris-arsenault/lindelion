@@ -41,7 +41,7 @@ root (`DYNAMIC-RESPONSE-PLAN.md`).
 - Add a bidirectional or two-port waveguide for more accurate tube behavior, including closed-end reflection and clarinet-like response.
 - Add a plate or membrane resonator model as a third resonator slot type.
 - Add a banded waveguide model for bowed or glass-like timbres.
-- Add cross-coupling or sympathetic-resonance routing where one resonator output can partially feed another resonator input.
+- Add cross-resonator coupling where one resonator output can partially feed another resonator input (the inter-slot half of the cross-coupling/sympathetic item; cross-voice sympathetic resonance shipped in M10 as the note-tuned sympathetic chamber, [ADR-0025](../adr/0025-surrounding-effects-and-sympathetic-chamber.md)).
 - Add per-voice stereo placement for natural ensemble spread.
 - Add microtuning support with Scala or `.tun` import if a product use case needs it.
 

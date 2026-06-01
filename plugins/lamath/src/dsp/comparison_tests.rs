@@ -71,6 +71,8 @@ fn ab_render_cases() -> [AbRenderCase; 3] {
                 position_of_strike: 0.35,
                 pickup_position: 0.62,
                 boundary_reflection: 0.65,
+                excitation_spread: 0.0,
+                source_body_balance: 0.0,
             },
             modal: ModalBankParams {
                 fundamental_hz: 220.0,
@@ -98,6 +100,8 @@ fn ab_render_cases() -> [AbRenderCase; 3] {
                 position_of_strike: 0.18,
                 pickup_position: 0.72,
                 boundary_reflection: 0.82,
+                excitation_spread: 0.0,
+                source_body_balance: 0.0,
             },
             modal: ModalBankParams {
                 fundamental_hz: 196.0,
@@ -125,6 +129,8 @@ fn ab_render_cases() -> [AbRenderCase; 3] {
                 position_of_strike: 0.28,
                 pickup_position: 0.54,
                 boundary_reflection: 0.65,
+                excitation_spread: 0.0,
+                source_body_balance: 0.0,
             },
             modal: ModalBankParams {
                 fundamental_hz: 147.0,

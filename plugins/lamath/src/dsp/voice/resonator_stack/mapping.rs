@@ -1,7 +1,7 @@
 //! Pure mappings from per-slot patch configs to the resonators' DSP parameter
 //! structs, including the shared pitch (semitone/cent) tuning.
 
-use lindelion_dsp_utils::math::{finite_or, semitones_to_ratio, snap_to_zero};
+use lindelion_dsp_utils::math::{finite_clamp, finite_or, semitones_to_ratio, snap_to_zero};
 
 use crate::dsp::constants::{
     LOWEST_RESONATOR_FREQUENCY_HZ, WAVEGUIDE_DISPERSION, WAVEGUIDE_PICKUP_POSITION,
@@ -41,6 +41,11 @@ pub(super) fn waveguide_params_from_config(
         position_of_strike: config.position_of_strike,
         pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
         boundary_reflection: config.boundary_reflection,
+        // The contact stage (M9) overrides this per (oversampled) sample from the
+        // ContactConfig spread + playing effort; the config-time value is the
+        // pre-M9 narrow default.
+        excitation_spread: 0.0,
+        source_body_balance: finite_clamp(config.source_body_balance, 0.0, 1.0, 0.0),
     }
 }
 

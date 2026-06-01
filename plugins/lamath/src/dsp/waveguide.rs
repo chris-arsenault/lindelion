@@ -38,6 +38,17 @@ pub struct WaveguideParams {
     pub position_of_strike: f32,
     pub pickup_position: f32,
     pub boundary_reflection: f32,
+    /// Strike-position spread `0..1` (M9 contact stage): `0` is a tight pick (the
+    /// pre-M9 narrow excitation), `1` is a wide strum that spreads the contact over
+    /// the string and combs out the high partials. Set per (oversampled) sample by
+    /// the contact stage; used only at excitation injection, so it is **excluded
+    /// from the prepared-model cache key** and never busts the heavy derivations.
+    pub excitation_spread: f32,
+    /// Source↔body balance depth `0..1` (M9). `0` reproduces the pre-M9 fixed
+    /// pickup/body blend; higher makes the String output lean to the warm body at low
+    /// measured energy and the direct pickup at high energy. Used at the String output
+    /// only — String keeps it out of the cache key; Tube/Mesh/Modal ignore it.
+    pub source_body_balance: f32,
 }
 
 fn default_pickup_position() -> f32 {
@@ -57,6 +68,8 @@ impl Default for WaveguideParams {
             position_of_strike: STRIKE_POSITION.default,
             pickup_position: default_pickup_position(),
             boundary_reflection: crate::dsp::constants::TUBE_BOUNDARY.reflection.default,
+            excitation_spread: 0.0,
+            source_body_balance: 0.0,
         }
     }
 }
@@ -102,6 +115,7 @@ impl WaveguideResonator {
     /// (M5). Only the active style is processed, so setting both is harmless.
     pub fn set_energy_drive(&mut self, drive: f32) {
         self.string.set_tension_drive(drive);
+        self.string.set_balance_drive(drive);
         self.tube.set_steepening_drive(drive);
     }
 }
@@ -521,6 +535,8 @@ mod tests {
                 position_of_strike: 0.1 + 0.8 * t,
                 pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
                 boundary_reflection: -1.0 + t * 2.0,
+                excitation_spread: 0.0,
+                source_body_balance: 0.0,
             };
             output.push(waveguide.process_sample(if index == 0 { 1.0 } else { 0.0 }, params));
         }

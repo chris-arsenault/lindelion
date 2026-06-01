@@ -29,11 +29,11 @@ pub use lindelion_audio_expression::{
 pub use parameters::PARAMETERS;
 pub(crate) use patch::normalize_routing_for_resonator_models;
 pub use patch::{
-    AudioExpressionConfig, AudioInputConfig, AudioInputMode, DriverConfig, EnvelopeConfig,
-    ExcitationSlot, FilterMode, LfoConfig, LfoShape, LiveExcitationConfig, LiveExcitationMode,
-    MeshConfig, ModalConfig, ModalPreset, ModulationConfig, ModulationDestination, ModulationSlot,
-    ModulationSource, OutputConfig, PickConfig, ReedConfig, ResonatorConfig, ResonatorRouting,
-    ResonatorSynthPatch, WaveguideConfig,
+    AudioExpressionConfig, AudioInputConfig, AudioInputMode, ContactConfig, DriverConfig,
+    EnvelopeConfig, ExcitationSlot, FilterMode, LfoConfig, LfoShape, LiveExcitationConfig,
+    LiveExcitationMode, MeshConfig, ModalConfig, ModalPreset, ModulationConfig,
+    ModulationDestination, ModulationSlot, ModulationSource, OutputConfig, PickConfig, ReedConfig,
+    ResonatorConfig, ResonatorRouting, ResonatorSynthPatch, SurroundingConfig, WaveguideConfig,
 };
 pub use plugin::{
     LoadedExcitationBuffer, ResonatorSidechainTelemetry, ResonatorSynth, ResonatorTelemetry,

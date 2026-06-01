@@ -8,8 +8,8 @@ use crate::{
     ModulationConfig, ModulationDestination, ModulationSource, dsp::constants::WAVEGUIDE_LOOP_GAIN,
 };
 
-use super::energy_follower::EnergyFollower;
 use super::{PARAMETER_EPSILON, PARAMETER_SMOOTH_MS, VoiceExpression};
+use crate::dsp::energy_follower::EnergyFollower;
 
 const PITCH_BEND_SMOOTH_MS: f32 = 8.0;
 const PITCH_BEND_EPSILON: f32 = 0.000_1;
