@@ -135,8 +135,16 @@ fn tune_committed_defaults() {
             "{order:?}: tuned patch must pass the hard constraints and score > 0"
         );
 
+        // The committed default = the search's tonal/dynamics tuning at **unity gain staging**.
+        // Loudness is a user/editor concern, not a baked-in default: a default should be a robust
+        // starting point, not a mastering target. (Earlier experiments chasing −16 LUFS by driving
+        // the input were brittle — heavy drive wrecked noise/dereverb — so gain staging stays unity
+        // and the limiter provides peak safety.)
         let mut tuned = best;
+        tuned.input_level_db = 0.0;
+        tuned.output_level_db = 0.0;
         tuned.order = order;
+
         let toml = patch_io::to_toml_string(&tuned).expect("serialize tuned patch");
         fs::write(defaults_path(order), toml).expect("write committed default");
     }

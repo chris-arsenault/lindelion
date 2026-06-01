@@ -45,6 +45,13 @@ runs under a standalone app, a single VST, or a per-effect VST without change
 effect-processor contract) is distinct from `lindelion-plugin-shell`'s VST3-coupled
 `AudioPlugin`. Speech-specific tuning stays in `speech/`; the `crates/` foundations stay
 use-case-neutral.
+
+These effects are packaged as a single VST3, **Calóma** ([ADR-0020](adr/0020-caloma-speech-vst-packaging.md)),
+a Windows-only speech-clarity plugin: a serial chain with a 3-valued signal-order parameter,
+compute-once shared analysis (one worker; the four SwiftF0-consuming effects take an injected
+`SignalSnapshot`), and a self-contained Vizia editor as the sole control surface — it surfaces no
+host parameters ([ADR-0023](adr/0023-new-vsts-windows-only.md)). See [the spec](plugins/caloma.md).
+
 - Shared capture and scratchpad audio live in `lindelion-capture`; product plugins own parameter stepping, naming, MIDI context projection, and other product semantics layered on top.
 - `lindelion-ui` owns reusable editor commands, editor services, and product editor surfaces while the workspace remains small.
 

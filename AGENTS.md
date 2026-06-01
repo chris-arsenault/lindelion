@@ -43,7 +43,7 @@ Agent guide for sessions in the Lindelion repository.
 | Lindelion | Quenya `lindelë` + `-ion`, bearer of the art of music | Workspace/project |
 | Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs |
 | Linnod | Sindarin measured verse unit | Melodic slicer VST3 instrument |
-| Calóma | Quenya `cala` (bright/clear) + `óma` (voice), "clear voice" | Planned single VST3 packaging the speech-effect chain (see [ADR-0020](docs/adr/0020-caloma-speech-vst-packaging.md)) |
+| Calóma | Quenya `cala` (bright/clear) + `óma` (voice), "clear voice" | Windows-only speech-clarity VST3 (built M0–M6): 20-effect serial chain, 3 signal orders, self-contained single-component VST3, Vizia editor as the sole control surface (no host params), per-order tuned defaults. See [ADR-0020](docs/adr/0020-caloma-speech-vst-packaging.md), [spec](docs/plugins/caloma.md) |
 | Glirdir | Sindarin `glir-` + `-dir`, singer/song-bearer | VST3 sing-to-MIDI scratchpad |
 | Galad | Sindarin, "radiance/light" (working name) | Planned Windows realtime VST3 host application (mic → arbitrary VST3 chain → output); see [ADR-0022](docs/adr/0022-windows-vst3-host.md), plan at `GALAD-HOST-PLAN.md` |
 | Cenedril | Quenya/Sindarin "mirror, looking-glass" (working name) | Planned Windows-only passthrough Visualizer VST3 (spectrogram, level/LUFS meters, analysis readouts); see [ADR-0023](docs/adr/0023-new-vsts-windows-only.md), plan at `CENEDRIL-VST-PLAN.md` |
@@ -72,6 +72,7 @@ Agent guide for sessions in the Lindelion repository.
 | `plugins/lamath` | Lamath patch model, DSP runtime, VST3 adapter, tests. |
 | `plugins/linnod` | Linnod source analysis, patch model, runtime, VST3 adapter, editor bridge, and tests. |
 | `plugins/glirdir` | Glirdir capture, analysis, audition, VST3 adapter, editor, drag/export, sample-library save, bundle metadata. |
+| `plugins/caloma` | Calóma — Windows-only speech-clarity VST3. Patch model (order + per-slot enable/intensity + typed params + levels), 3 signal-order topologies, serial chain runtime (per-slot bypass, intensity blend, fixed-max latency), compute-once `SharedAnalysis`, lock-free `SharedControls`, single-component VST3 (`vst3_entry/`), and the offline default-tuning harness (`tuning/`, `make tune-defaults`). Vizia editor lives in `lindelion-ui::caloma_vizia`. See [ADR-0020](docs/adr/0020-caloma-speech-vst-packaging.md), [spec](docs/plugins/caloma.md). |
 | `host/` | (Reserved, not yet a workspace member) Galad — standalone Windows realtime VST3 host application: WASAPI audio I/O, host-side VST3 protocol, device management, egui UI. Target-gated; excluded from `make ci`. See [ADR-0022](docs/adr/0022-windows-vst3-host.md). |
 | `plugins/cenedril` | Cenedril — Windows-only passthrough Visualizer VST3 (spectrogram, meters, analysis readouts), Vizia editor (`lindelion-ui`). M0 scaffold: bit-exact 0-latency passthrough processor + Windows `.vst3` bundle path; views/editor are later milestones. See [ADR-0023](docs/adr/0023-new-vsts-windows-only.md). |
 | `plugins/coach` | (Reserved, not yet a workspace member) Lúmedir — Windows-only passthrough Speech-Coach VST3 (delivery metrics: rate/cadence, pitch dynamism, pauses, clarity), Vizia editor (`lindelion-ui`). See [ADR-0023](docs/adr/0023-new-vsts-windows-only.md). |

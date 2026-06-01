@@ -49,7 +49,7 @@ test-models:
 	cargo test -p lindelion-speech-denoiser -p lindelion-speech-voice-gate --test integration -- --include-ignored
 	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration -- --include-ignored
 	cargo test -p lindelion-speech-air-exciter -p lindelion-speech-dereverberation -p lindelion-speech-room-tone -p lindelion-speech-spectral-contrast --test integration -- --include-ignored
-	cargo test -p caloma --test chain --test chain_e2e --test tuned_defaults_regression -- --include-ignored
+	cargo test -p caloma --test chain --test chain_e2e --test full_chain_fidelity -- --include-ignored
 
 # Offline default-tuning (M5): run the seeded full-chain search per signal order and write the
 # winning patches into plugins/caloma/src/defaults/<order>.toml. Heavy (loads the NN models, runs the

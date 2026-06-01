@@ -2,7 +2,7 @@ format_version = 1
 
 [patch]
 order = "clarity"
-input_level_db = 6.0
+input_level_db = 0.0
 output_level_db = 0.0
 
 [patch.high_pass]

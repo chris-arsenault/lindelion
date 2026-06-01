@@ -79,9 +79,6 @@ pub struct TuningConfig {
     pub weights: Weights,
     pub scales: TermScales,
     pub bands: Bands,
-    /// The minimum battery score each committed default must keep (Step 7). Provisional until the
-    /// first `make tune-defaults` run pins it against the achieved scores.
-    pub regression_floor: f32,
 }
 
 /// The confirmed D6 configuration.
@@ -113,17 +110,13 @@ pub const fn default_config() -> TuningConfig {
             hf_lo: 4_000.0,
             hf_hi: 8_000.0,
         },
-        // Pinned below the achieved committed-default scores on the regression battery (M5 tune run:
-        // Clarity 0.710, Broadcast 0.586, Light 0.412). ~0.11 headroom under the minimum catches a
-        // real degradation (a broken effect drops scores far more) without tripping on benign drift
-        // or the small debug/release float differences.
-        regression_floor: 0.30,
     }
 }
 
 /// One search dimension: a named, typed handle on a single patch parameter plus its swept grid.
-/// `slot = None` is a patch-level parameter (the input/output levels); a `Some(slot)` dimension is
-/// only searched for an order whose default patch enables that slot. `get`/`set` are non-capturing
+/// `slot = Some(..)` dimensions are only searched for an order whose default patch enables that slot
+/// (`slot = None` would be a patch-level param, but gain staging is no longer searched). `get`/`set`
+/// are non-capturing
 /// fn-pointers into the typed `slot_params`/level fields — type-safe, no stringly indices.
 #[derive(Clone, Copy)]
 pub struct ParamDim {
@@ -136,22 +129,14 @@ pub struct ParamDim {
     pub step: f32,
 }
 
-/// All candidate search dimensions — the few high-impact, perceptually-relevant params per effect
-/// (plus the two gain-staging levels). `search_space` filters these to a given order's enabled slots.
+/// The candidate search dimensions — the few high-impact, perceptually-relevant **tonal/dynamics**
+/// params per effect. `search_space` filters these to a given order's enabled slots.
+///
+/// **Gain staging is not searched.** A default is a robust starting point, not a mastering target:
+/// the committed defaults ship at **unity** input/output level with the limiter for peak safety, and
+/// the user sets level via the editor. Tuning only the tonal/dynamics character keeps the defaults
+/// from depending on a fragile loudness optimization (which proved brittle on real material).
 const ALL_DIMS: &[ParamDim] = &[
-    // Gain staging: **input** trim only. The input level is applied at the chain head, so driving it
-    // harder raises loudness while the output limiter still caps the peak. The *output* level is
-    // applied *after* the limiter, so searching it would let the optimizer boost loudness by
-    // bypassing limiting → clipping on louder material; it is therefore left to the user, not tuned.
-    ParamDim {
-        label: "input_level_db",
-        slot: None,
-        get: |p| p.input_level_db,
-        set: |p, v| p.input_level_db = v,
-        min: -9.0,
-        max: 12.0,
-        step: 3.0,
-    },
     ParamDim {
         label: "high_pass.cutoff",
         slot: Some(SlotId::HighPass),
@@ -315,10 +300,12 @@ mod tests {
                     );
                 }
             }
-            // The input level (the safe loudness lever) is always present; the post-limiter output
-            // level is deliberately not searched.
-            assert!(dims.iter().any(|d| d.label == "input_level_db"));
+            // Gain staging is not searched — loudness is normalized deterministically post-search,
+            // so neither the input nor the output level appears as a search dimension.
+            assert!(!dims.iter().any(|d| d.label == "input_level_db"));
             assert!(!dims.iter().any(|d| d.label == "output_level_db"));
+            // The dims that remain are all tonal/dynamics (slot params).
+            assert!(dims.iter().all(|d| d.slot.is_some()));
         }
     }
 }

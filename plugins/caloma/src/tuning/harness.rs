@@ -183,6 +183,22 @@ impl OrderEvaluator {
         let candidate = self.evaluate(patch);
         super::score::score(&candidate, &self.cfg)
     }
+
+    /// The chain's **reported** latency in samples (fixed-max = Σ slot latencies, D5) — the value the
+    /// VST3 adapter hands the host for delay compensation.
+    pub fn reported_latency(&self) -> usize {
+        self.chain.latency_samples()
+    }
+
+    /// The chain's **measured** group delay for `patch`: run `probe` through the chain and return the
+    /// lag that best aligns the (colored) output with the input — the denoiser test's best-lag idiom
+    /// applied to the whole chain. Used by the M6 latency-accuracy gate to confirm the reported
+    /// latency matches the actual delay (a tolerance check — coloration blurs the alignment).
+    pub fn measure_latency(&mut self, patch: &CalomaPatch, probe: &[f32]) -> usize {
+        let max_lag = self.reported_latency() + 2_048;
+        let output = self.run(patch, probe);
+        metrics::best_lag_snr_db(&output, probe, max_lag).0
+    }
 }
 
 /// Synthesize a reverberant variant of `clean` with a decaying feedback comb (the dereverb test's
@@ -303,6 +319,33 @@ mod tests {
             "a clean passthrough must not violate a hard constraint"
         );
         assert!((0.0..=1.0).contains(&score.unwrap()));
+    }
+
+    #[test]
+    fn latency_accessors_report_and_recover_the_chain_delay() {
+        use crate::runtime::ChainRuntime;
+        let sr = 48_000.0;
+        // Dereverberation is a non-NN slot with real (STFT) latency; disabled (the default), the
+        // chain delay-compensates it into a pure delay, so the best-lag measurement recovers the
+        // reported latency exactly.
+        let slots = [SlotId::Dereverberation];
+        let mut evaluator =
+            OrderEvaluator::from_slots_no_analysis(&slots, synthetic_battery(sr), default_config());
+
+        let reported = evaluator.reported_latency();
+        assert_eq!(
+            reported,
+            ChainRuntime::from_slots(&slots, sr, BLOCK).latency_samples(),
+            "reported latency must equal the chain's Σ slot latencies"
+        );
+        assert!(reported > 0, "Dereverberation must contribute latency");
+
+        let probe = speech_like(16_384, sr);
+        let measured = evaluator.measure_latency(&CalomaPatch::default(), &probe);
+        assert_eq!(
+            measured, reported,
+            "best-lag must recover the delay-compensated bypass delay exactly"
+        );
     }
 
     #[test]
