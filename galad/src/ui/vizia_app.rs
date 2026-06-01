@@ -673,6 +673,8 @@ pub struct AppData {
     runtime: Runtime,
     catalog_scan: Option<Receiver<PluginCatalog>>,
     first_tick_logged: bool,
+    /// Meter ticks since launch; drives the low-frequency session autosave safety net.
+    tick_count: u64,
 }
 
 impl AppData {
@@ -689,6 +691,7 @@ impl AppData {
             runtime: Runtime::new(),
             catalog_scan: None,
             first_tick_logged: false,
+            tick_count: 0,
         };
         model.refresh_catalog();
         model.sync();
@@ -1015,12 +1018,9 @@ impl AppData {
         }
     }
 
-    fn save_session(&mut self) {
-        let Some(path) = save_session_path() else {
-            return;
-        };
-        // Capture each plugin's opaque state straight from the pool (a UI-thread `getState`, valid
-        // while audio runs) — gapless, whether running or stopped, no stop/restart needed.
+    /// Capture the current host state as a [`HostSession`], reading each plugin's opaque state straight
+    /// from the pool (a UI-thread `getState`, valid whether stopped or running — gapless, no restart).
+    fn capture_current_session(&self) -> HostSession {
         let slots: Vec<SessionSlot> = self
             .state
             .chain
@@ -1034,13 +1034,78 @@ impl AppData {
                 })
             })
             .collect();
-        let session = capture_session(
+        capture_session(
             &slots,
             self.state.selected_input.clone(),
             self.state.selected_output.clone(),
             self.state.settings(),
-        );
-        if let Err(error) = session.save(&path) {
+        )
+    }
+
+    /// Restore a session into the UI state and rebuild the pool with each plugin's state restored.
+    /// Shared by the manual `Load` and the launch-time auto-restore. Never starts audio. On a restore
+    /// failure (e.g. a plugin is no longer installed) the chain and pool are cleared together so they
+    /// stay index-aligned.
+    fn apply_session(&mut self, session: &HostSession) {
+        if let Some(mut engine) = self.runtime.engine.take() {
+            engine.stop();
+        }
+        self.state.load_session(session);
+        self.state.clear_notice();
+        self.persist_settings();
+        match restore_pool(session, &self.runtime.host) {
+            Ok(pool) => self.runtime.pool = pool,
+            Err(error) => {
+                self.fail(format!("failed to restore session: {error:?}"));
+                self.runtime.pool.clear();
+                self.state.chain.clear();
+            }
+        }
+        self.state.running = false;
+        self.state.set_meter(MeterSnapshot::default());
+    }
+
+    /// Auto-save the current session to Galad's default "last session" path (devices, chain, per-plugin
+    /// opaque state, master gain/mute). Best-effort and quiet — failures are logged, not surfaced.
+    fn autosave_session(&self) {
+        let session = self.capture_current_session();
+        match session.save(HostSession::default_path()) {
+            Ok(()) => diagnostics::log("ui: autosave session ok"),
+            Err(error) => diagnostics::log(format!("ui: autosave session failed: {error:?}")),
+        }
+    }
+
+    /// Restore the default "last session" over the launch defaults, if one exists. Falls back to the
+    /// pre-selected default devices when the session did not name one. Never starts audio.
+    fn restore_default_session(&mut self) {
+        match HostSession::load(HostSession::default_path()) {
+            Ok(session) => {
+                diagnostics::log(format!(
+                    "ui: restoring default session chain={} input={:?} output={:?}",
+                    session.chain.len(),
+                    session.input.as_ref().map(|d| &d.name),
+                    session.output.as_ref().map(|d| &d.name),
+                ));
+                let fallback_input = self.state.selected_input.clone();
+                let fallback_output = self.state.selected_output.clone();
+                self.apply_session(&session);
+                // Keep the system-default device pre-selection if the session didn't name one.
+                if self.state.selected_input.is_none() {
+                    self.state.selected_input = fallback_input;
+                }
+                if self.state.selected_output.is_none() {
+                    self.state.selected_output = fallback_output;
+                }
+            }
+            Err(error) => diagnostics::log(format!("ui: no default session restored: {error:?}")),
+        }
+    }
+
+    fn save_session(&mut self) {
+        let Some(path) = save_session_path() else {
+            return;
+        };
+        if let Err(error) = self.capture_current_session().save(&path) {
             self.fail(format!("failed to save session: {error:?}"));
         }
     }
@@ -1049,30 +1114,10 @@ impl AppData {
         let Some(path) = open_session_path() else {
             return;
         };
-        let session = match HostSession::load(&path) {
-            Ok(session) => session,
-            Err(error) => {
-                self.fail(format!("failed to load {}: {error:?}", path.display()));
-                return;
-            }
-        };
-        if let Some(mut engine) = self.runtime.engine.take() {
-            engine.stop();
+        match HostSession::load(&path) {
+            Ok(session) => self.apply_session(&session),
+            Err(error) => self.fail(format!("failed to load {}: {error:?}", path.display())),
         }
-        self.state.load_session(&session);
-        self.state.clear_notice();
-        self.persist_settings();
-        // Rebuild the pool with each plugin's state restored (unprepared — `Start` prepares it at the
-        // device rate; the restored parameters survive the prepare's setActive cycle).
-        match restore_pool(&session, &self.runtime.host) {
-            Ok(pool) => self.runtime.pool = pool,
-            Err(error) => {
-                self.fail(format!("failed to restore session: {error:?}"));
-                self.runtime.pool.clear();
-            }
-        }
-        self.state.running = false;
-        self.state.set_meter(MeterSnapshot::default());
     }
 
     fn set_master_gain(&mut self, gain_db: f32) {
@@ -1096,6 +1141,12 @@ impl AppData {
             self.first_tick_logged = true;
             diagnostics::log("ui: first timer tick");
         }
+        self.tick_count = self.tick_count.wrapping_add(1);
+        // Low-frequency safety-net autosave (~every 30 s) to capture plugin-editor-only changes that
+        // Galad cannot observe; structural edits and window close autosave immediately.
+        if self.tick_count % 900 == 0 && !self.runtime.pool.is_empty() {
+            self.autosave_session();
+        }
         self.poll_catalog_scan();
         let Some(engine) = &self.runtime.engine else {
             return;
@@ -1114,12 +1165,33 @@ impl AppData {
 
 impl Model for AppData {
     fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+        // Auto-save the session when the window is closing (captures plugin-editor changes Galad does
+        // not otherwise observe). Audio on/off is intentionally not persisted.
+        event.map(|window_event, _| {
+            if matches!(window_event, WindowEvent::WindowClose) {
+                diagnostics::log("ui: window close — autosaving session");
+                self.autosave_session();
+            }
+        });
         event.map(|app_event, _| {
             // Log every interactive event (not the meter tick) so the diagnostic log shows whether a
             // click actually reaches the controller.
             if !matches!(app_event, AppEvent::Tick) {
                 diagnostics::log(format!("ui: event {app_event:?}"));
             }
+            // Structural changes are auto-saved immediately (cheap, infrequent). Master gain is left to
+            // the AppSettings persistence + the close/periodic autosave to avoid per-drag churn.
+            let persist = matches!(
+                app_event,
+                AppEvent::SelectInput(_)
+                    | AppEvent::SelectOutput(_)
+                    | AppEvent::AddFromCatalog(_)
+                    | AppEvent::RemovePlugin(_)
+                    | AppEvent::MoveUp(_)
+                    | AppEvent::MoveDown(_)
+                    | AppEvent::ToggleBypass(_)
+                    | AppEvent::ToggleMasterMute
+            );
             match app_event {
                 AppEvent::SelectInput(index) => {
                     if let Some(device) = self.state.inputs.get(*index).cloned() {
@@ -1159,6 +1231,9 @@ impl Model for AppData {
                 AppEvent::Tick => self.tick(),
             }
             self.sync();
+            if persist {
+                self.autosave_session();
+            }
         });
     }
 }
@@ -1224,7 +1299,12 @@ pub fn run() {
 
         let signals = Signals::new();
         diagnostics::log("ui: AppData build begin");
-        AppData::new(state, signals).build(cx);
+        let mut model = AppData::new(state, signals);
+        // Restore the last auto-saved session (devices, chain + per-plugin state, master/mute) over the
+        // launch defaults. Audio stays stopped until the user presses Start.
+        model.restore_default_session();
+        model.sync();
+        model.build(cx);
         diagnostics::log("ui: AppData build done");
 
         // Drive the meters off the audio thread: tick ~30 Hz, pulling the latest seqlock snapshot.

@@ -171,6 +171,11 @@ impl AppSettings {
 }
 
 impl HostSession {
+    /// Galad's default per-user "last session" path, auto-saved on close and restored on launch.
+    pub fn default_path() -> PathBuf {
+        app_config_dir().join("session.toml")
+    }
+
     /// Serialize to a versioned TOML string (`format_version` + a `[session]` table).
     pub fn to_toml_string(&self) -> Result<String, SessionError> {
         toml::to_string_pretty(&SessionEnvelopeRef {

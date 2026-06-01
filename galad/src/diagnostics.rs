@@ -84,8 +84,8 @@ pub fn relaunch_without_explorer_startup(already_relaunched: bool) -> bool {
     let mut startup = STARTUPINFOW::default();
     unsafe { GetStartupInfoW(&mut startup) };
     let flags = startup.dwFlags.0;
-    let explorer_startup =
-        flags & (STARTF_USESHOWWINDOW.0 | STARTF_MONITOR) == STARTF_USESHOWWINDOW.0 | STARTF_MONITOR;
+    let explorer_startup = flags & (STARTF_USESHOWWINDOW.0 | STARTF_MONITOR)
+        == STARTF_USESHOWWINDOW.0 | STARTF_MONITOR;
     if !explorer_startup {
         log(format!(
             "launch: explorer startup relaunch skipped flags=0x{flags:x}"

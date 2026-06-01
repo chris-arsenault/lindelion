@@ -21,12 +21,12 @@ use super::instance::PluginInstance;
 use super::module::LoadedModule;
 use super::processing::drive_process;
 
-/// One live, prepared plugin the controller keeps alive for the life of its chain slot: the loaded
-/// module (owns the DLL) and the shared instance. The `ChainProcessor` references the instance; the
-/// pool owns the slot.
+/// One live, prepared plugin the controller keeps alive for the life of its chain slot: the shared
+/// instance and the loaded module that owns its DLL. Field order is teardown order: the instance must
+/// release/terminate before the module unloads.
 pub struct PoolSlot {
-    pub module: LoadedModule,
     pub instance: Arc<PluginInstance>,
+    pub module: LoadedModule,
 }
 
 /// One slot: a shared (pooled) plugin and its bypass flag.
