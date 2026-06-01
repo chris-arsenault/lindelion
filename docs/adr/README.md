@@ -25,3 +25,4 @@
 | [0021](0021-string-two-way-body-coupling-and-output-blend.md) | String two-way body coupling and output blend | Accepted | 2026-05-31 |
 | [0022](0022-windows-vst3-host.md) | Windows realtime VST3 host application | Accepted | 2026-05-31 |
 | [0023](0023-new-vsts-windows-only.md) | New VSTs target Windows: build path and Vizia editor | Accepted | 2026-05-31 |
+| [0024](0024-galad-ui-vizia.md) | Galad host UI uses Vizia (winit standalone), not egui | Accepted | 2026-06-01 |

@@ -41,8 +41,11 @@ Linux/macOS `make ci` path and never registered as a building member on those ho
   and opaque state) is written against the crate's COM bindings. No host framework is adopted.
 - **Native WASAPI audio I/O**, exclusive-mode as the primary low-latency path with shared-mode as
   a device-compatibility fallback, on a lock-free realtime callback. Not `cpal`.
-- **`egui` for the host UI** (device pickers, chain editor, meters, plugin editor-window hosting).
-  Not Vizia.
+- **Vizia (winit standalone) for the host UI** (device pickers, chain editor, meters; plugin editors
+  are hosted as separate native windows per [ADR-0024](0024-galad-ui-vizia.md)). The workspace already
+  standardises on Vizia for plugin editors (`lindelion-ui`, baseview backend); the host uses Vizia's
+  `winit` backend so the project runs **one UI framework**. Not `egui` — see
+  [ADR-0024](0024-galad-ui-vizia.md), which supersedes this bullet's original `egui` choice.
 - **Output routing into other applications** is achieved by selecting any output device, including
   a user-installed virtual cable (VB-CABLE / VoiceMeeter). Shipping a bespoke virtual audio driver
   is out of scope.
@@ -57,15 +60,17 @@ own build, and is not produced or validated by the macOS bundle path or by `make
   code — effects are directly instantiable per [ADR-0013](0013-host-agnostic-effect-core.md) — but
   it would not run third-party VST3s or our own VST3 plugins, defeating the purpose. Rejected: the
   product is a general host.
-- **A separate repository.** The host pulls Windows-only deps (WASAPI, `egui`) the rest of the
+- **A separate repository.** The host pulls Windows-only deps (WASAPI, Vizia/winit) the rest of the
   workspace does not need. But it reuses the workspace's `vst3` binding and DSP crates and shares
   the same `make ci` toolchain; target-gating keeps the Windows deps off the Linux/macOS build.
   Rejected in favour of an in-workspace `host/` crate.
 - **`cpal` for audio.** Cross-platform and least code, but on Windows it is WASAPI *shared*-mode
   only, capping latency, and adds an abstraction the host does not otherwise need. Rejected for a
   realtime mic tool; native WASAPI gives exclusive-mode latency and direct device control.
-- **Vizia for the UI.** Already in the workspace, but macOS/baseview-bound and coupled to the
-  plugin-editor model; not a fit for a Windows standalone app. Rejected for `egui`.
+- **`egui` for the UI.** The host UI's *original* choice in this ADR (turnkey standalone, immediate-mode
+  meters). Superseded by [ADR-0024](0024-galad-ui-vizia.md): Vizia's `winit` backend does standalone
+  Windows apps fine (the earlier "Vizia is plugin-bound" claim was inaccurate), and keeping `egui`
+  would run two UI frameworks on Windows. Rejected in favour of Vizia (winit).
 
 ## Consequences
 

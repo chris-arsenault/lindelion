@@ -21,7 +21,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build build-windows bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build build-windows host-windows-check bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check
 
@@ -61,6 +61,7 @@ test-integration:
 	cargo test -p lindelion-dsp-utils --features integration-tests
 	cargo test -p lindelion-plugin-shell --features integration-tests
 	cargo test -p lindelion-sample-library --features integration-tests
+	cargo test -p galad --features integration-tests
 
 bench:
 	cargo bench --workspace --no-fail-fast
@@ -111,7 +112,9 @@ macos-check:
 		exit 2; \
 	fi
 	@rustup target list --installed | grep -qx "$(MACOS_TARGET)" || rustup target add "$(MACOS_TARGET)"
-	RUSTFLAGS="$(RUSTFLAGS) -D warnings" cargo check --workspace --target "$(MACOS_TARGET)"
+	@# `galad` (the Windows-only host) is excluded: it is verified by `make host-windows-check`
+	@# (cargo-xwin), not the macOS workspace check (ADR-0022).
+	RUSTFLAGS="$(RUSTFLAGS) -D warnings" cargo check --workspace --exclude galad --target "$(MACOS_TARGET)"
 
 plugin-info:
 	CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -p xtask -- plugin-info "$(PLUGIN)"
@@ -173,6 +176,47 @@ build-windows: cache-dir
 		echo "Staged Windows VST3 bundle: $$staged_bundle"; \
 	done
 	@echo "Copy the staged .vst3 to a Windows host, or load it in the Galad host, to verify."
+
+# Galad (the `host/` Windows VST3 host) is excluded from `make ci` (ADR-0022); this is its
+# verify command — cross-compile the `galad` binary for the MSVC ABI from Linux via cargo-xwin.
+# Runtime verification (live audio, plugin hosting) happens on Windows in later milestones.
+host-windows-check: cache-dir
+	@if ! cargo xwin --version >/dev/null 2>&1; then \
+		echo "host-windows-check needs cargo-xwin. Install it with: cargo install cargo-xwin"; \
+		exit 2; \
+	fi
+	@rustup target list --installed | grep -qx "$(WINDOWS_TARGET)" || rustup target add "$(WINDOWS_TARGET)"
+	@# Case-fix: lld-link is case-sensitive on Linux but the xwin SDK ships lowercase import libs
+	@# (e.g. `kernel32.lib`) while some link directives use capitalized names. Symlink capitalized
+	@# variants once the SDK is extracted. (On a fresh cache the SDK is downloaded during the first
+	@# build, so that first run may fail at link; re-run `make host-windows-check` to succeed.)
+	@for d in um ucrt; do \
+		dir="$(XWIN_CACHE_DIR)/xwin/sdk/lib/$$d/x86_64"; \
+		[ -d "$$dir" ] || continue; \
+		for lib in "$$dir"/*.lib; do \
+			base="$$(basename "$$lib")"; \
+			cap="$$(printf '%s' "$$base" | sed -E 's/^(.)/\U\1/')"; \
+			if [ "$$cap" != "$$base" ] && [ ! -e "$$dir/$$cap" ]; then ln -s "$$base" "$$dir/$$cap"; fi; \
+		done; \
+	done
+	@# /FORCE:MULTIPLE resolves the skia<->windows ICU duplicate-symbol clash. Galad is the only target
+	@# that links BOTH skia (Vizia's renderer, which statically bundles ICU and exports ubrk_*/ures_*/...)
+	@# AND the `windows`/winit stack, whose monolithic `windows.0.52.0.lib` umbrella import lib drags in
+	@# icu.dll import stubs for the same symbols. The clean fix (granular raw-dylib imports) is unavailable
+	@# here: `--cfg windows_raw_dylib` flips windows-sys 0.52's fn ABI to `extern "C"` and breaks glutin's
+	@# DefWindowProcW; and the winit/glutin stack is pinned to windows-sys 0.52 (pre-granular) inside the
+	@# Vizia rev, so it cannot be bumped without forking Vizia. /FORCE:MULTIPLE keeps the first-seen
+	@# definition per symbol; nothing but skia actually CALLS these ICU functions at runtime. Whether
+	@# skia's own static ICU (correct) or the system icu.dll stub wins is link-order dependent and must be
+	@# confirmed on Windows hardware — consistent with galad's split where live behavior is always a
+	@# Windows field-check, never a make-ci gate. (Plugins never link the `windows` crate, so they never
+	@# hit this.)
+	CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
+	CARGO_INCREMENTAL=1 \
+	XWIN_ACCEPT_LICENSE=1 \
+	RUSTFLAGS="$(RUSTFLAGS) -C link-arg=/FORCE:MULTIPLE" \
+	cargo xwin build -p galad --target "$(WINDOWS_TARGET)"
+	@echo "Built galad for $(WINDOWS_TARGET). Run it on Windows to verify runtime behavior."
 
 bundle-macos: build
 

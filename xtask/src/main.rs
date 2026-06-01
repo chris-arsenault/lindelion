@@ -46,6 +46,28 @@ fn print_help() {
     println!("                           Run Steinberg validator against a built .vst3");
 }
 
+// `galad` (the `host/` Windows VST3 host) is target-gated and excluded from the Linux/macOS
+// `make ci` path (ADR-0022); it is verified by its own Windows build (`make host-windows-check`,
+// cargo-xwin). Keep it out of the `--workspace` clippy/test runs here.
+const CLIPPY_ARGS: &[&str] = &[
+    "clippy",
+    "--workspace",
+    "--exclude",
+    "galad",
+    "--lib",
+    "--bins",
+    "--tests",
+    "--",
+    "-D",
+    "warnings",
+    "-W",
+    "clippy::cognitive_complexity",
+    "-W",
+    "clippy::too_many_lines",
+];
+
+const TEST_ARGS: &[&str] = &["test", "--workspace", "--exclude", "galad"];
+
 fn run_ci() -> ExitCode {
     let commands = [
         CargoCommand {
@@ -57,20 +79,7 @@ fn run_ci() -> ExitCode {
             // Debug, never release: `make ci` must not optimize the 505-crate graph (the
             // tract/ort ONNX stack dominates release codegen). Lint lib/bins/tests only — no
             // benches — so nothing performance-related compiles or runs in the unit CI path.
-            args: &[
-                "clippy",
-                "--workspace",
-                "--lib",
-                "--bins",
-                "--tests",
-                "--",
-                "-D",
-                "warnings",
-                "-W",
-                "clippy::cognitive_complexity",
-                "-W",
-                "clippy::too_many_lines",
-            ],
+            args: CLIPPY_ARGS,
         },
     ];
 
@@ -102,7 +111,7 @@ fn run_ci() -> ExitCode {
 
     println!("Running test...");
     let status = Command::new("cargo")
-        .args(["test", "--workspace"])
+        .args(TEST_ARGS)
         .stdin(Stdio::null())
         .status();
     match status {

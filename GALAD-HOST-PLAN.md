@@ -21,7 +21,9 @@ delivers real, full capability.
 - **Audio:** native **WASAPI**, exclusive-mode primary (low latency) + shared-mode fallback, on a
   lock-free realtime callback. Not `cpal`.
 - **Host-side VST3** built on the raw `vst3` crate's COM bindings — no host framework (ADR-0002).
-- **UI:** `egui`. Not Vizia.
+- **UI:** **Vizia** (winit standalone backend). Not `egui` — one UI framework across the project
+  (plugins use Vizia/baseview); see [ADR-0024](docs/adr/0024-galad-ui-vizia.md), which supersedes
+  ADR-0022's original egui choice.
 - **Home:** a new in-workspace **`host/`** binary crate, **target-gated (Windows-only)** and
   excluded from the Linux/macOS `make ci` path.
 - **Routing into other apps:** select any output device, including a user-installed virtual cable.
@@ -42,7 +44,7 @@ delivers real, full capability.
   `IHostApplication`/`IComponentHandler`, `IPlugView` host-attach, parameter + opaque-state bridge.
 - WASAPI audio engine: device enumeration, format negotiation, exclusive/shared, lock-free RT
   duplex callback, ring buffers.
-- egui host UI; session persistence; the lock-free control↔audio hand-off for chain/param edits.
+- Vizia (winit) host UI; session persistence; the lock-free control↔audio hand-off for chain/param edits.
 
 *Source-of-truth files & ADRs:* [ADR-0022](docs/adr/0022-windows-vst3-host.md) (host platform,
 scope, rejected alternatives); [ADR-0002](docs/adr/0002-no-plugin-framework.md) (raw `vst3`, no
@@ -53,7 +55,7 @@ realtime discipline, applied to the host's audio callback). Reserved home: `host
 ## Cross-cutting constraints
 
 - **Target-gated, Windows-only.** `host/` never enters the Linux/macOS `make ci` build; its
-  Windows-only deps (WASAPI, `egui`) never leak into shared crates (ADR-0022).
+  Windows-only deps (WASAPI, Vizia/winit) never leak into shared crates (ADR-0022).
 - **Realtime callback is allocation-free and lock-free.** No allocation, locking, or blocking on
   the audio thread; chain edits and parameter changes cross from the control thread via a
   lock-free, prepared hand-off (the ADR-0001 deadline-safety discipline, applied host-side).
@@ -106,12 +108,15 @@ Join the host-side VST3 (M1) to the audio engine (M2) under the realtime discipl
 - Exit: live mic → a chain of ≥2 real VST3 plugins → output, glitch-free; per-slot bypass equals
   identity; chain edits apply without dropouts; the audio thread is proven allocation/lock-free.
 
-### M4 — Parameter + state bridging and session persistence [depends on M3]
+### M4 — State bridging and session persistence [depends on M3]
 Make plugin state and the whole session durable.
-- Mirror plugin parameters host-side (read/automate where applicable); capture/restore each
-  plugin's opaque state (`IComponent` get/setState); persist the session (devices + ordered plugin
-  list + per-plugin state + bypass) to disk and restore on launch.
+- Capture/restore each plugin's opaque state (`IComponent` get/setState); persist the session
+  (devices + ordered plugin list + per-plugin state + bypass) to disk and restore on launch.
 - Exit: a saved session round-trips exactly across a restart (same plugins, order, state, devices).
+- **Out of scope (decided 2026-06-01):** a host-side *parameter mirror* (reading/automating individual
+  plugin parameters). Galad is a lightweight device-and-routing host, not a DAW; parameters are edited
+  in each plugin's **own editor window** (M5), and opaque state already makes the session durable, so
+  the host keeps no parameter mirror anywhere in the product.
 
 ### M5 — Plugin editor window hosting (`IPlugView` / child HWND) [depends on M3]
 Host plugins' native editor windows.
@@ -120,7 +125,7 @@ Host plugins' native editor windows.
 - Exit: a hosted plugin's editor opens, edits parameters live (audible), resizes, and closes
   cleanly; opening/closing an editor does not glitch audio.
 
-### M6 — egui host UI [depends on M3, M5]
+### M6 — Vizia (winit) host UI [depends on M3, M5]
 The full host surface, with meters rendered off the audio thread.
 - Input/output device pickers; the plugin chain (scan folder, add/remove/reorder/bypass, open
   editor); input/output level + loudness meters from an audio-thread snapshot ring; start/stop;

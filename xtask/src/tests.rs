@@ -1,4 +1,26 @@
 use super::bundle::{BundleSpec, module_info};
+use super::{CLIPPY_ARGS, TEST_ARGS};
+
+/// Returns true if `args` contains `--exclude` immediately followed by `pkg`.
+fn excludes_package(args: &[&str], pkg: &str) -> bool {
+    args.windows(2).any(|pair| pair == ["--exclude", pkg])
+}
+
+#[test]
+fn ci_clippy_excludes_galad_host() {
+    assert!(
+        excludes_package(CLIPPY_ARGS, "galad"),
+        "make ci clippy must exclude the Windows-only `galad` host (ADR-0022)"
+    );
+}
+
+#[test]
+fn ci_test_excludes_galad_host() {
+    assert!(
+        excludes_package(TEST_ARGS, "galad"),
+        "make ci test must exclude the Windows-only `galad` host (ADR-0022)"
+    );
+}
 
 #[test]
 fn lamath_bundle_spec_uses_instrument_metadata() {

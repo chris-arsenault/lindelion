@@ -1,0 +1,52 @@
+[package]
+name = "galad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `base64` encodes the opaque per-plugin state blob as a compact string in the text (TOML) session
+# file. Host-only — not a shared workspace dependency.
+base64 = "0.22"
+# Shared DSP metering (peak/RMS) for the UI level meters; platform-neutral.
+lindelion-dsp-utils.workspace = true
+serde.workspace = true
+toml.workspace = true
+# Host-side VST3 COM bindings (same crate the plugins use guest-side). Platform-neutral COM model.
+vst3.workspace = true
+# Cross-platform dynamic-library loading for opening `.vst3` modules (LoadLibrary on Windows).
+libloading = "0.8"
+
+# Native WASAPI via the raw `windows` crate (ADR-0022) — Windows-only, never enters the Linux/macOS
+# build. Features are extended as the cross-compiler requires.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_Devices_FunctionDiscovery",
+] }
+# Vizia with the winit standalone backend for the host UI (ADR-0024) — same git rev as the workspace's
+# baseview-only plugin-editor dep, just a different (additive) backend feature. Windows-only.
+vizia = { git = "https://github.com/vizia/vizia.git", rev = "cb3346008ece56c09c39344ed1289357dba96ce1", default-features = false, features = ["winit"] }
+# Native file dialogs (add-plugin / session save+load). On Windows `rfd` uses the system IFileDialog
+# (COM) — no extra ICU, no GTK; Windows-only so it never enters the Linux/macOS build.
+rfd = "0.15"
+
+[features]
+# Filesystem-touching tests (e.g. folder scan), excluded from the default in-memory `make ci` unit
+# run; run them with `make test-integration`.
+integration-tests = []
+
+[dev-dependencies]
+# Counting allocator for the realtime-path no-allocation tests (ADR-0001).
+lindelion-test-allocator.workspace = true
