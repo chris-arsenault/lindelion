@@ -58,6 +58,25 @@ pub fn spawn_window_probe(label: &'static str) {
 #[cfg(not(windows))]
 pub fn spawn_window_probe(_label: &'static str) {}
 
+/// Pulse the real top-level window size during startup to force native resize/paint delivery.
+#[cfg(windows)]
+pub fn spawn_window_pulse(label: &'static str) {
+    std::thread::spawn(move || {
+        let mut previous_delay_ms = 0u64;
+        for delay_ms in [250u64, 500, 1000, 2000] {
+            std::thread::sleep(std::time::Duration::from_millis(
+                delay_ms.saturating_sub(previous_delay_ms),
+            ));
+            previous_delay_ms = delay_ms;
+            pulse_visible_windows(label, delay_ms);
+        }
+    });
+}
+
+/// Non-Windows builds have no HWNDs to pulse.
+#[cfg(not(windows))]
+pub fn spawn_window_pulse(_label: &'static str) {}
+
 /// Probe this process's top-level windows immediately on the current thread.
 #[cfg(windows)]
 pub fn log_window_probe(label: &str) {
@@ -68,11 +87,13 @@ pub fn log_window_probe(label: &str) {
 #[cfg(not(windows))]
 pub fn log_window_probe(_label: &str) {}
 
-/// Ask Windows to deliver a paint for visible top-level Galad windows while preserving Vizia's cloak.
 #[cfg(windows)]
-pub fn request_visible_window_paint(label: &str) {
+fn pulse_visible_windows(label: &str, delay_ms: u64) {
     use windows::Win32::Graphics::Gdi::{
         RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_NOERASE, RedrawWindow, UpdateWindow,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
     };
 
     let (_enum_result, windows) = collect_windows();
@@ -81,11 +102,15 @@ pub fn request_visible_window_paint(label: &str) {
         let Some((left, top, right, bottom)) = window.rect else {
             continue;
         };
-        let has_area = right > left && bottom > top;
-        if !window.visible || window.iconic || !has_area {
+        let width = right - left;
+        let height = bottom - top;
+        if !window.visible || window.iconic || width <= 64 || height <= 64 {
             continue;
         }
 
+        let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
+        let grow = unsafe { SetWindowPos(window.hwnd, None, 0, 0, width + 1, height, flags) };
+        let restore = unsafe { SetWindowPos(window.hwnd, None, 0, 0, width, height, flags) };
         let redraw = unsafe {
             RedrawWindow(
                 Some(window.hwnd),
@@ -97,19 +122,15 @@ pub fn request_visible_window_paint(label: &str) {
         };
         let update = unsafe { UpdateWindow(window.hwnd).as_bool() };
         log(format!(
-            "diagnostics: paint-nudge label={label} hwnd=0x{:x} cloaked={:?} rect={:?} redraw={} update={}",
+            "diagnostics: window-pulse label={label} delay_ms={delay_ms} hwnd=0x{:x} cloaked={:?} rect={:?} grow={grow:?} restore={restore:?} redraw={} update={}",
             window.hwnd.0 as isize, window.cloaked, window.rect, redraw, update
         ));
-        changed += usize::from(redraw || update);
+        changed += usize::from(grow.is_ok() || restore.is_ok() || redraw || update);
     }
     log(format!(
-        "diagnostics: paint-nudge done label={label} changed={changed}"
+        "diagnostics: window-pulse done label={label} delay_ms={delay_ms} changed={changed}"
     ));
 }
-
-/// Non-Windows builds have no HWNDs to paint.
-#[cfg(not(windows))]
-pub fn request_visible_window_paint(_label: &str) {}
 
 #[cfg(windows)]
 fn log_launch_context() {

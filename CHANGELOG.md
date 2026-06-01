@@ -18,6 +18,12 @@ All notable user-visible changes to Lindelion are recorded here.
 
 - Added the **bow** friction driver: a continuous stick-slip excitation that sustains a bowed (Helmholtz) String tone for as long as a note is held, selectable as a fourth `Driver Type` with pressure, bow-speed, and friction controls. The default String now enables the source↔body balance (0.5), so the factory patch is dynamically alive out of the box; Modal, Tube, and Mesh defaults are unchanged.
 
+### Galad
+
+- Rebuilt the host UI around the signal chain. The window is now a single channel: a compact top bar (brand, run state, In/Out device pickers, status, session load/save), a **full-width signal chain** as the primary surface (insert rows with bypass, editor, reorder, and remove, ending in an "Add plugin" slot), and a master/transport bar (start/stop, input and output meters, master fader and mute). Devices select from the top bar; the chain owns the window.
+- Moved the plugin browser into an **on-demand modal overlay** opened from the chain's "Add plugin" slot, instead of a permanent panel. The overlay holds the vendor-grouped catalog and the scan-folder management, dims the view behind it, and dismisses on add, on the close button, or on a click outside — so browsing and folder setup no longer consume the main view.
+- Restyled to the shared Vizia design language: real Tabler icons, a cyan/green/amber/pink accent palette on graphite with section-header accent bars, correct rounded corners (`corner-radius`), and consistent label clipping. Pulses the top-level window size during startup so the native surface reliably delivers its first paint.
+
 ## v0.5.0 - 2026-06-01
 
 ### Calóma

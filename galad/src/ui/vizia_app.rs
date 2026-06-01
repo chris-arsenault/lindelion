@@ -27,7 +27,7 @@ use std::time::Duration;
 use vizia::icons::{
     ICON_ADJUSTMENTS, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_DEVICE_FLOPPY, ICON_FOLDER,
     ICON_FOLDER_PLUS, ICON_PLAYER_PLAY, ICON_PLAYER_STOP, ICON_PLUS, ICON_POWER, ICON_REFRESH,
-    ICON_TRASH, ICON_VOLUME,
+    ICON_TRASH, ICON_VOLUME, ICON_X,
 };
 use vizia::prelude::*;
 use vst3::ComPtr;
@@ -142,6 +142,52 @@ const STYLE: &str = r#"
         background-color: #29302f;
         height: 1px;
     }
+
+    .v-divider {
+        background-color: #29302f;
+        width: 1px;
+    }
+
+    .slot-name {
+        color: #e9f0eb;
+        font-size: 13px;
+        text-overflow: ellipsis;
+    }
+
+    .add-slot {
+        background-color: #181f1c;
+        border-width: 1px;
+        border-color: #3a4a44;
+        corner-radius: 6px;
+    }
+
+    .add-slot:hover {
+        background-color: #1e2a26;
+        border-color: #7ed06d;
+    }
+
+    .add-slot .btn-icon {
+        color: #8fd3b3;
+        fill: #8fd3b3;
+    }
+
+    .add-slot-label { color: #aed9c4; font-size: 12px; }
+
+    .backdrop {
+        background-color: #06080a;
+        border-width: 0px;
+        corner-radius: 0px;
+        opacity: 0.62;
+    }
+
+    .modal {
+        background-color: #181e20;
+        border-width: 1px;
+        border-color: #36444a;
+        corner-radius: 9px;
+    }
+
+    .modal-title { color: #f1f6f2; font-size: 14px; }
 
     button {
         background-color: #1b2225;
@@ -508,6 +554,8 @@ pub struct Signals {
     pub master_gain_db: Signal<f32>,
     pub master_muted: Signal<bool>,
     pub status: Signal<String>,
+    /// Whether the add-plugin browser overlay is open (pure UI state, not part of `HostUiState`).
+    pub browser_open: Signal<bool>,
 }
 
 impl Signals {
@@ -529,6 +577,7 @@ impl Signals {
             master_gain_db: Signal::new(0.0),
             master_muted: Signal::new(false),
             status: Signal::new("stopped".to_string()),
+            browser_open: Signal::new(false),
         }
     }
 }
@@ -556,6 +605,10 @@ pub enum AppEvent {
     Stop,
     Save,
     Load,
+    /// Open the add-plugin browser overlay.
+    OpenBrowser,
+    /// Close the add-plugin browser overlay.
+    CloseBrowser,
     /// Meter timer tick — pull the latest snapshot off the audio thread.
     Tick,
 }
@@ -1056,13 +1109,23 @@ impl Model for AppData {
                 AppEvent::AddScanFolder => self.add_scan_folder(),
                 AppEvent::RemoveScanFolder(index) => self.remove_scan_folder(*index),
                 AppEvent::RescanPlugins => self.refresh_catalog(),
-                AppEvent::AddFromCatalog(index) => self.add_from_catalog(*index),
+                AppEvent::AddFromCatalog(index) => {
+                    self.add_from_catalog(*index);
+                    // Adding from the browser dismisses the overlay.
+                    self.signals.browser_open.set(false);
+                }
                 AppEvent::SetMasterGain(gain_db) => self.set_master_gain(*gain_db),
                 AppEvent::ToggleMasterMute => self.toggle_master_mute(),
                 AppEvent::Start => self.start_engine(),
                 AppEvent::Stop => self.stop_engine(),
                 AppEvent::Save => self.save_session(),
                 AppEvent::Load => self.load_session(),
+                AppEvent::OpenBrowser => {
+                    // Refresh the catalog when the browser opens so it reflects the current folders.
+                    self.refresh_catalog();
+                    self.signals.browser_open.set(true);
+                }
+                AppEvent::CloseBrowser => self.signals.browser_open.set(false),
                 AppEvent::Tick => self.tick(),
             }
             self.sync();
@@ -1154,8 +1217,6 @@ pub fn run() {
             diagnostics::log("ui: first on_idle");
             diagnostics::log_window_probe("first-on-idle-before-redraw");
             cx.needs_redraw(Entity::root());
-            diagnostics::request_visible_window_paint("first-on-idle");
-            diagnostics::log_window_probe("first-on-idle-after-paint-nudge");
             diagnostics::log("ui: first on_idle requested redraw");
         } else if idle_index == 1 {
             diagnostics::log("ui: second on_idle");
@@ -1163,25 +1224,12 @@ pub fn run() {
         }
     })
     .title("Galad")
-    .inner_size((1040u32, 680u32))
-    .min_inner_size(Some((940u32, 600u32)));
+    .inner_size((960u32, 640u32))
+    .min_inner_size(Some((860u32, 560u32)));
 
     diagnostics::log("ui: Application::new done; run begin");
-    let mut startup_wake_proxy = result.get_proxy();
-    diagnostics::log("ui: spawn startup wake pump");
-    thread::spawn(move || {
-        for index in 0..20 {
-            thread::sleep(Duration::from_millis(50));
-            let result = startup_wake_proxy.redraw();
-            diagnostics::log(format!(
-                "ui: startup wake pump redraw index={index} result={result:?}"
-            ));
-            if result.is_err() {
-                break;
-            }
-        }
-        diagnostics::log("ui: startup wake pump done");
-    });
+    diagnostics::log("ui: spawn window pulse");
+    diagnostics::spawn_window_pulse("ui-run");
     diagnostics::log("ui: spawn window probe");
     diagnostics::spawn_window_probe("ui-run");
     if let Err(error) = result.run() {
@@ -1191,22 +1239,32 @@ pub fn run() {
     diagnostics::log("ui: run exit");
 }
 
-/// Build the host UI view tree, binding to `signals`. Layout follows a DAW channel strip: a thin top
-/// strip (brand, run state, status, session), then a single vertical channel strip (INPUT meters →
-/// INSERTS slot list → MASTER fader + transport) beside a settings-style right column (audio-device
-/// card + a dense, vendor-grouped plugin browser with a scan-folders footer).
+/// Build the host UI view tree. The window is one channel: a top strip (brand, run state, devices,
+/// session) over a full-width SIGNAL CHAIN (the hero), over a master/transport bar. The plugin
+/// browser is an on-demand overlay opened from the chain's "Add plugin" slot — not a permanent panel
+/// (mirrors hot-mic, where the browser is its own window). The overlay is the top `ZStack` child,
+/// shown only while `browser_open` is set.
 pub fn build_ui(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        top_strip(cx, signals);
-        HStack::new(cx, move |cx| {
-            channel_strip(cx, signals);
-            right_column(cx, signals);
-        })
-        .width(Stretch(1.0))
-        .height(Stretch(1.0))
-        .horizontal_gap(Pixels(10.0));
+    ZStack::new(cx, move |cx| {
+        main_view(cx, signals);
+        Binding::new(cx, signals.browser_open, move |cx| {
+            if signals.browser_open.get() {
+                browser_overlay(cx, signals);
+            }
+        });
     })
     .class("root")
+    .width(Stretch(1.0))
+    .height(Stretch(1.0));
+}
+
+/// The main (non-overlay) channel view.
+fn main_view(cx: &mut Context, signals: Signals) {
+    VStack::new(cx, move |cx| {
+        top_strip(cx, signals);
+        chain_panel(cx, signals);
+        master_bar(cx, signals);
+    })
     .padding(Pixels(10.0))
     .width(Stretch(1.0))
     .height(Stretch(1.0))
@@ -1225,6 +1283,14 @@ fn divider(cx: &mut Context) {
         .class("divider")
         .width(Stretch(1.0))
         .height(Pixels(1.0));
+}
+
+/// A 1px vertical divider for the master bar.
+fn v_divider(cx: &mut Context) {
+    Element::new(cx)
+        .class("v-divider")
+        .width(Pixels(1.0))
+        .height(Pixels(56.0));
 }
 
 /// A section header: a colored accent bar, a title, a reactive sub-line, and optional trailing
@@ -1259,18 +1325,7 @@ fn section_header<D, F>(
     .horizontal_gap(Pixels(8.0));
 }
 
-/// Reactive readout of the currently selected device name (or a placeholder).
-fn selected_name_memo(names: Signal<Vec<String>>, selected: Signal<Option<usize>>) -> Memo<String> {
-    Memo::new(move |_| {
-        let list = names.get();
-        selected
-            .get()
-            .and_then(|index| list.get(index).cloned())
-            .unwrap_or_else(|| "— no device —".to_string())
-    })
-}
-
-/// Top strip: brand, live/idle chip, the status/notice line, and session load/save.
+/// Top strip: brand, live/idle chip, In/Out device pickers, the status line, and session load/save.
 fn top_strip(cx: &mut Context, signals: Signals) {
     HStack::new(cx, move |cx| {
         Element::new(cx).class("brand-mark");
@@ -1288,6 +1343,23 @@ fn top_strip(cx: &mut Context, signals: Signals) {
         .class("run-chip")
         .toggle_class("is-live", signals.running)
         .height(Pixels(22.0));
+
+        device_pick(
+            cx,
+            "In",
+            "Input",
+            signals.input_names,
+            signals.selected_input_index,
+            true,
+        );
+        device_pick(
+            cx,
+            "Out",
+            "Output",
+            signals.output_names,
+            signals.selected_output_index,
+            false,
+        );
 
         Spacer::new(cx);
 
@@ -1307,7 +1379,7 @@ fn top_strip(cx: &mut Context, signals: Signals) {
         })
         .on_press(|cx| cx.emit(AppEvent::Load))
         .class("tool-button")
-        .width(Pixels(82.0))
+        .width(Pixels(80.0))
         .height(Pixels(30.0));
         Button::new(cx, |cx| {
             HStack::new(cx, |cx| {
@@ -1320,7 +1392,7 @@ fn top_strip(cx: &mut Context, signals: Signals) {
         })
         .on_press(|cx| cx.emit(AppEvent::Save))
         .class("tool-button")
-        .width(Pixels(82.0))
+        .width(Pixels(80.0))
         .height(Pixels(30.0));
     })
     .class("top-strip")
@@ -1330,24 +1402,42 @@ fn top_strip(cx: &mut Context, signals: Signals) {
     .horizontal_gap(Pixels(10.0));
 }
 
-/// The single channel strip: INPUT (meters) → INSERTS (the plugin chain, stretchy) → MASTER OUT
-/// (meters, fader, transport), in DAW top-to-bottom signal order.
-fn channel_strip(cx: &mut Context, signals: Signals) {
+/// One compact device picker for the top strip: a short label and a dropdown.
+fn device_pick(
+    cx: &mut Context,
+    label: &'static str,
+    placeholder: &'static str,
+    names: Signal<Vec<String>>,
+    selected: Signal<Option<usize>>,
+    input: bool,
+) {
+    HStack::new(cx, move |cx| {
+        Label::new(cx, label).class("field-label");
+        Select::new(cx, names, selected, true)
+            .placeholder(placeholder)
+            .on_select(move |cx, index| {
+                if input {
+                    cx.emit(AppEvent::SelectInput(index));
+                } else {
+                    cx.emit(AppEvent::SelectOutput(index));
+                }
+            })
+            .class("device-select")
+            .width(Pixels(150.0));
+    })
+    .width(Auto)
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(6.0));
+}
+
+/// The hero: the full-width signal chain. A vertical list of insert slots in signal order, ending in
+/// an "Add plugin" slot that opens the browser overlay.
+fn chain_panel(cx: &mut Context, signals: Signals) {
     VStack::new(cx, move |cx| {
         section_header(
             cx,
-            "INPUT",
-            selected_name_memo(signals.input_names, signals.selected_input_index),
-            "accent-audio",
-            |_| {},
-        );
-        meter_pair(cx, signals.input_left_level, signals.input_right_level);
-        divider(cx);
-
-        section_header(
-            cx,
-            "INSERTS",
-            Memo::new(move |_| count_text(signals.chain.get().len(), "in chain")),
+            "SIGNAL CHAIN",
+            Memo::new(move |_| count_text(signals.chain.get().len(), "plugin")),
             "accent-tone",
             |_| {},
         );
@@ -1355,17 +1445,22 @@ fn channel_strip(cx: &mut Context, signals: Signals) {
             let chain = signals.chain;
             Binding::new(cx, chain, move |cx| {
                 let rows = chain.get();
-                if rows.is_empty() {
-                    insert_empty(cx);
-                    return;
-                }
                 VStack::new(cx, move |cx| {
-                    for (index, row) in rows.into_iter().enumerate() {
-                        insert_slot(cx, index, row);
+                    if rows.is_empty() {
+                        Label::new(
+                            cx,
+                            "Your signal chain is empty — add a plugin to start processing.",
+                        )
+                        .class("muted");
+                    } else {
+                        for (index, row) in rows.into_iter().enumerate() {
+                            insert_slot(cx, index, row);
+                        }
                     }
+                    add_slot(cx);
                 })
                 .width(Stretch(1.0))
-                .vertical_gap(Pixels(5.0));
+                .vertical_gap(Pixels(6.0));
             });
         })
         .class("v-scroll")
@@ -1373,27 +1468,15 @@ fn channel_strip(cx: &mut Context, signals: Signals) {
         .show_vertical_scrollbar(true)
         .width(Stretch(1.0))
         .height(Stretch(1.0));
-        divider(cx);
-
-        section_header(
-            cx,
-            "MASTER OUT",
-            selected_name_memo(signals.output_names, signals.selected_output_index),
-            "accent-transport",
-            |_| {},
-        );
-        meter_pair(cx, signals.output_left_level, signals.output_right_level);
-        master_fader(cx, signals);
-        transport_row(cx, signals);
     })
-    .class("strip")
-    .width(Pixels(300.0))
+    .class("panel")
+    .width(Stretch(1.0))
     .height(Stretch(1.0))
-    .padding(Pixels(12.0))
-    .vertical_gap(Pixels(9.0));
+    .padding(Pixels(14.0))
+    .vertical_gap(Pixels(10.0));
 }
 
-/// One insert slot: power/bypass toggle, index, plugin name, editor, reorder, remove.
+/// One insert slot, full width: power/bypass, index, plugin name, editor, reorder, remove.
 fn insert_slot(cx: &mut Context, index: usize, row: ChainRow) {
     let bypassed = row.bypassed;
     let name = row.name;
@@ -1401,64 +1484,176 @@ fn insert_slot(cx: &mut Context, index: usize, row: ChainRow) {
         icon_button(cx, ICON_POWER)
             .class("slot-power")
             .toggle_class("is-bypassed", bypassed)
-            .width(Pixels(24.0))
-            .height(Pixels(24.0))
+            .width(Pixels(28.0))
+            .height(Pixels(28.0))
             .on_press(move |cx| cx.emit(AppEvent::ToggleBypass(index)));
         Label::new(cx, format!("{}", index + 1))
             .class("slot-index")
-            .width(Pixels(14.0));
+            .width(Pixels(20.0));
         Label::new(cx, name.clone())
-            .class("row-name")
+            .class("slot-name")
             .width(Stretch(1.0))
             .min_width(Pixels(0.0));
         icon_button(cx, ICON_ADJUSTMENTS)
-            .width(Pixels(24.0))
-            .height(Pixels(24.0))
+            .width(Pixels(28.0))
+            .height(Pixels(28.0))
             .on_press(move |cx| cx.emit(AppEvent::OpenEditor(index)));
         icon_button(cx, ICON_CHEVRON_UP)
-            .width(Pixels(22.0))
-            .height(Pixels(24.0))
+            .width(Pixels(26.0))
+            .height(Pixels(28.0))
             .on_press(move |cx| cx.emit(AppEvent::MoveUp(index)));
         icon_button(cx, ICON_CHEVRON_DOWN)
-            .width(Pixels(22.0))
-            .height(Pixels(24.0))
+            .width(Pixels(26.0))
+            .height(Pixels(28.0))
             .on_press(move |cx| cx.emit(AppEvent::MoveDown(index)));
         icon_button(cx, ICON_TRASH)
             .class("danger")
-            .width(Pixels(24.0))
-            .height(Pixels(24.0))
+            .width(Pixels(28.0))
+            .height(Pixels(28.0))
             .on_press(move |cx| cx.emit(AppEvent::RemovePlugin(index)));
     })
     .class("slot")
     .toggle_class("is-bypassed", bypassed)
-    .height(Pixels(36.0))
+    .height(Pixels(44.0))
     .width(Stretch(1.0))
     .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(4.0));
+    .horizontal_gap(Pixels(6.0));
 }
 
-/// Empty-state for the inserts list.
-fn insert_empty(cx: &mut Context) {
-    VStack::new(cx, |cx| {
-        Label::new(cx, "No inserts").class("muted");
-        Label::new(cx, "Add plugins from the browser").class("section-sub");
+/// The trailing "Add plugin" slot — opens the browser overlay.
+fn add_slot(cx: &mut Context) {
+    Button::new(cx, |cx| {
+        HStack::new(cx, |cx| {
+            Svg::new(cx, ICON_PLUS).class("btn-icon");
+            Label::new(cx, "Add plugin").class("add-slot-label");
+        })
+        .width(Auto)
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(8.0))
     })
-    .class("slot-empty")
+    .on_press(|cx| cx.emit(AppEvent::OpenBrowser))
+    .class("add-slot")
     .width(Stretch(1.0))
-    .height(Pixels(68.0))
-    .alignment(Alignment::Center)
-    .vertical_gap(Pixels(3.0));
+    .height(Pixels(42.0));
 }
 
-/// A stacked L/R meter pair.
-fn meter_pair(cx: &mut Context, left: Signal<f32>, right: Signal<f32>) {
+/// Bottom master/transport bar: start/stop, IN + OUT meters, master fader + mute.
+fn master_bar(cx: &mut Context, signals: Signals) {
+    HStack::new(cx, move |cx| {
+        transport_button(cx, signals);
+        v_divider(cx);
+        meter_group(
+            cx,
+            "IN",
+            signals.input_left_level,
+            signals.input_right_level,
+        );
+        meter_group(
+            cx,
+            "OUT",
+            signals.output_left_level,
+            signals.output_right_level,
+        );
+        v_divider(cx);
+        VStack::new(cx, move |cx| {
+            HStack::new(cx, move |cx| {
+                Label::new(cx, "MASTER")
+                    .class("field-label")
+                    .width(Stretch(1.0))
+                    .min_width(Pixels(0.0));
+                Label::new(
+                    cx,
+                    Memo::new(move |_| gain_text(signals.master_gain_db.get())),
+                )
+                .class("value-strong");
+            })
+            .width(Stretch(1.0))
+            .alignment(Alignment::Center);
+            HStack::new(cx, move |cx| {
+                Svg::new(cx, ICON_VOLUME).class("inline-icon");
+                Slider::new(cx, signals.master_gain_db)
+                    .range(MASTER_GAIN_MIN_DB..MASTER_GAIN_MAX_DB)
+                    .step(0.5f32)
+                    .on_change(|cx, gain| cx.emit(AppEvent::SetMasterGain(gain)))
+                    .class("master-slider")
+                    .width(Stretch(1.0));
+                icon_button(cx, ICON_VOLUME)
+                    .class("mute-btn")
+                    .toggle_class("mute-on", signals.master_muted)
+                    .width(Pixels(36.0))
+                    .height(Pixels(30.0))
+                    .on_press(|cx| cx.emit(AppEvent::ToggleMasterMute));
+            })
+            .width(Stretch(1.0))
+            .alignment(Alignment::Center)
+            .horizontal_gap(Pixels(8.0));
+        })
+        .width(Stretch(1.0))
+        .height(Auto)
+        .vertical_gap(Pixels(6.0));
+    })
+    .class("panel")
+    .height(Pixels(88.0))
+    .width(Stretch(1.0))
+    .padding(Pixels(12.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(14.0));
+}
+
+/// The large start/stop transport button.
+fn transport_button(cx: &mut Context, signals: Signals) {
+    let running = signals.running;
+    Button::new(cx, move |cx| {
+        HStack::new(cx, move |cx| {
+            Binding::new(cx, running, move |cx| {
+                Svg::new(
+                    cx,
+                    if running.get() {
+                        ICON_PLAYER_STOP
+                    } else {
+                        ICON_PLAYER_PLAY
+                    },
+                )
+                .class("btn-icon");
+            });
+            Label::new(
+                cx,
+                Memo::new(move |_| {
+                    if running.get() {
+                        "Stop".to_string()
+                    } else {
+                        "Start".to_string()
+                    }
+                }),
+            );
+        })
+        .width(Auto)
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(8.0))
+    })
+    .on_press(move |cx| {
+        if running.get() {
+            cx.emit(AppEvent::Stop);
+        } else {
+            cx.emit(AppEvent::Start);
+        }
+    })
+    .class("transport-btn")
+    .toggle_class("is-stop", signals.running)
+    .width(Pixels(118.0))
+    .height(Pixels(60.0));
+}
+
+/// A labelled L/R meter pair (IN or OUT).
+fn meter_group(cx: &mut Context, title: &'static str, left: Signal<f32>, right: Signal<f32>) {
     VStack::new(cx, move |cx| {
+        Label::new(cx, title).class("field-label");
         meter(cx, "L", left);
         meter(cx, "R", right);
     })
-    .width(Stretch(1.0))
+    .width(Pixels(150.0))
     .height(Auto)
-    .vertical_gap(Pixels(4.0));
+    .vertical_gap(Pixels(3.0));
 }
 
 /// One meter channel: a label, a fill bar (hot near 0 dBFS), and a dB readout.
@@ -1494,184 +1689,62 @@ fn meter(cx: &mut Context, label: &'static str, level: Signal<f32>) {
     .horizontal_gap(Pixels(6.0));
 }
 
-/// Master gain: volume icon, fader, dB readout.
-fn master_fader(cx: &mut Context, signals: Signals) {
-    HStack::new(cx, move |cx| {
-        Svg::new(cx, ICON_VOLUME).class("inline-icon");
-        Slider::new(cx, signals.master_gain_db)
-            .range(MASTER_GAIN_MIN_DB..MASTER_GAIN_MAX_DB)
-            .step(0.5f32)
-            .on_change(|cx, gain| cx.emit(AppEvent::SetMasterGain(gain)))
-            .class("master-slider")
-            .width(Stretch(1.0));
-        Label::new(
-            cx,
-            Memo::new(move |_| gain_text(signals.master_gain_db.get())),
-        )
-        .class("value-strong")
-        .width(Pixels(56.0));
-    })
-    .width(Stretch(1.0))
-    .height(Pixels(28.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(8.0));
-}
-
-/// Transport: a large start/stop button plus a mute toggle.
-fn transport_row(cx: &mut Context, signals: Signals) {
-    HStack::new(cx, move |cx| {
-        let running = signals.running;
-        Button::new(cx, move |cx| {
-            HStack::new(cx, move |cx| {
-                Binding::new(cx, running, move |cx| {
-                    Svg::new(
-                        cx,
-                        if running.get() {
-                            ICON_PLAYER_STOP
-                        } else {
-                            ICON_PLAYER_PLAY
-                        },
-                    )
-                    .class("btn-icon");
-                });
-                Label::new(
-                    cx,
-                    Memo::new(move |_| {
-                        if running.get() {
-                            "Stop".to_string()
-                        } else {
-                            "Start".to_string()
-                        }
-                    }),
-                );
-            })
-            .width(Auto)
-            .alignment(Alignment::Center)
-            .horizontal_gap(Pixels(7.0))
-        })
-        .on_press(move |cx| {
-            if running.get() {
-                cx.emit(AppEvent::Stop);
-            } else {
-                cx.emit(AppEvent::Start);
-            }
-        })
-        .class("transport-btn")
-        .toggle_class("is-stop", signals.running)
-        .width(Stretch(1.0))
-        .height(Pixels(38.0));
-
-        icon_button(cx, ICON_VOLUME)
-            .class("mute-btn")
-            .toggle_class("mute-on", signals.master_muted)
-            .width(Pixels(40.0))
-            .height(Pixels(38.0))
-            .on_press(|cx| cx.emit(AppEvent::ToggleMasterMute));
-    })
-    .width(Stretch(1.0))
-    .height(Pixels(38.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(8.0));
-}
-
-/// The right column: settings-style audio-device card over the plugin browser card.
-fn right_column(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        device_card(cx, signals);
-        browser_card(cx, signals);
+/// The add-plugin browser overlay: a dimmed backdrop (click to dismiss) under a centered modal with
+/// the vendor-grouped catalog and a scan-folders footer.
+fn browser_overlay(cx: &mut Context, signals: Signals) {
+    ZStack::new(cx, move |cx| {
+        Button::new(cx, |cx| Element::new(cx))
+            .on_press(|cx| cx.emit(AppEvent::CloseBrowser))
+            .class("backdrop")
+            .width(Stretch(1.0))
+            .height(Stretch(1.0));
+        modal_panel(cx, signals);
     })
     .width(Stretch(1.0))
     .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
+    .alignment(Alignment::Center);
 }
 
-/// Audio-device settings card: labelled Input/Output rows like a DAW preferences pane.
-fn device_card(cx: &mut Context, signals: Signals) {
+/// The centered browser modal.
+fn modal_panel(cx: &mut Context, signals: Signals) {
     VStack::new(cx, move |cx| {
-        section_header(
-            cx,
-            "AUDIO DEVICE",
-            Memo::new(|_| "input / output routing".to_string()),
-            "accent-audio",
-            |_| {},
-        );
-        device_field(
-            cx,
-            "Input",
-            "Select input",
-            signals.input_names,
-            signals.selected_input_index,
-            true,
-        );
-        device_field(
-            cx,
-            "Output",
-            "Select output",
-            signals.output_names,
-            signals.selected_output_index,
-            false,
-        );
-    })
-    .class("panel")
-    .width(Stretch(1.0))
-    .height(Auto)
-    .padding(Pixels(12.0))
-    .vertical_gap(Pixels(8.0));
-}
+        HStack::new(cx, move |cx| {
+            Element::new(cx).class("accent-bar").class("accent-tone");
+            Label::new(cx, "Add Plugin")
+                .class("modal-title")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
+            Label::new(
+                cx,
+                Memo::new(move |_| count_text(signals.catalog.get().len(), "found")),
+            )
+            .class("section-sub");
+            icon_button(cx, ICON_REFRESH)
+                .width(Pixels(28.0))
+                .height(Pixels(26.0))
+                .on_press(|cx| cx.emit(AppEvent::RescanPlugins));
+            icon_button(cx, ICON_X)
+                .width(Pixels(28.0))
+                .height(Pixels(26.0))
+                .on_press(|cx| cx.emit(AppEvent::CloseBrowser));
+        })
+        .height(Pixels(30.0))
+        .width(Stretch(1.0))
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(8.0));
 
-/// One labelled device row: a fixed-width label and a dropdown.
-fn device_field(
-    cx: &mut Context,
-    label: &'static str,
-    placeholder: &'static str,
-    names: Signal<Vec<String>>,
-    selected: Signal<Option<usize>>,
-    input: bool,
-) {
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label)
-            .class("field-label")
-            .width(Pixels(60.0));
-        Select::new(cx, names, selected, true)
-            .placeholder(placeholder)
-            .on_select(move |cx, index| {
-                if input {
-                    cx.emit(AppEvent::SelectInput(index));
-                } else {
-                    cx.emit(AppEvent::SelectOutput(index));
-                }
-            })
-            .class("device-select")
-            .width(Stretch(1.0));
-    })
-    .width(Stretch(1.0))
-    .height(Pixels(34.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(8.0));
-}
-
-/// Plugin browser card: vendor-grouped catalog (stretchy) over a scan-folders footer.
-fn browser_card(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        section_header(
-            cx,
-            "PLUGINS",
-            Memo::new(move |_| count_text(signals.catalog.get().len(), "available")),
-            "accent-tone",
-            move |cx| {
-                icon_button(cx, ICON_REFRESH)
-                    .width(Pixels(28.0))
-                    .height(Pixels(26.0))
-                    .on_press(|cx| cx.emit(AppEvent::RescanPlugins));
-            },
-        );
+        divider(cx);
 
         ScrollView::new(cx, move |cx| {
             let catalog = signals.catalog;
             Binding::new(cx, catalog, move |cx| {
                 let rows = catalog.get();
                 if rows.is_empty() {
-                    Label::new(cx, "No plugins found. Add a folder, then Rescan.").class("muted");
+                    Label::new(
+                        cx,
+                        "No plugins found. Add a scan folder below, then Rescan.",
+                    )
+                    .class("muted");
                     return;
                 }
                 VStack::new(cx, move |cx| {
@@ -1697,18 +1770,26 @@ fn browser_card(cx: &mut Context, signals: Signals) {
 
         divider(cx);
 
-        section_header(
-            cx,
-            "FOLDERS",
-            Memo::new(move |_| count_text(signals.scan_folders.get().len(), "folder")),
-            "accent-warn",
-            move |cx| {
-                icon_button(cx, ICON_FOLDER_PLUS)
-                    .width(Pixels(28.0))
-                    .height(Pixels(26.0))
-                    .on_press(|cx| cx.emit(AppEvent::AddScanFolder));
-            },
-        );
+        HStack::new(cx, move |cx| {
+            Element::new(cx).class("accent-bar").class("accent-warn");
+            Label::new(cx, "SCAN FOLDERS")
+                .class("section-title")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
+            Label::new(
+                cx,
+                Memo::new(move |_| count_text(signals.scan_folders.get().len(), "folder")),
+            )
+            .class("section-sub");
+            icon_button(cx, ICON_FOLDER_PLUS)
+                .width(Pixels(28.0))
+                .height(Pixels(26.0))
+                .on_press(|cx| cx.emit(AppEvent::AddScanFolder));
+        })
+        .height(Pixels(28.0))
+        .width(Stretch(1.0))
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(8.0));
 
         ScrollView::new(cx, move |cx| {
             let folders = signals.scan_folders;
@@ -1731,13 +1812,13 @@ fn browser_card(cx: &mut Context, signals: Signals) {
         .show_horizontal_scrollbar(false)
         .show_vertical_scrollbar(true)
         .width(Stretch(1.0))
-        .height(Pixels(104.0));
+        .height(Pixels(110.0));
     })
-    .class("panel")
-    .width(Stretch(1.0))
-    .height(Stretch(1.0))
-    .padding(Pixels(12.0))
-    .vertical_gap(Pixels(8.0));
+    .class("modal")
+    .width(Pixels(560.0))
+    .height(Percentage(82.0))
+    .padding(Pixels(14.0))
+    .vertical_gap(Pixels(10.0));
 }
 
 /// One scanned plugin: status dot, name, and an Add button — or the failure reason if incompatible.
