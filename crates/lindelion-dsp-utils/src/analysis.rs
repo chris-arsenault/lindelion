@@ -10,8 +10,9 @@ pub use artifact::{
     windowed_dft_energy_at, zero_crossing_period_jitter,
 };
 pub use measurements::{
-    AudioWindowMetrics, HarmonicDecayMeasurement, audio_window_metrics, first_index_above_abs,
-    harmonic_decay_profile,
+    AudioWindowMetrics, HarmonicDecayMeasurement, attack_sustain_ratio, audio_window_metrics,
+    first_index_above_abs, harmonic_decay_profile, inharmonicity_ratios, partial_t60_seconds,
+    spectral_centroid_trajectory,
 };
 pub use pitch::{estimate_f0_autocorrelation_refined, estimate_f0_dft_peak};
 

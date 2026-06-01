@@ -152,6 +152,11 @@ pub struct Voice<'a> {
     modulation: ModulationState,
     surrounding: SurroundingStage,
     output: OutputStage,
+    /// Running peak `|x|` at each stage of the per-sample signal path
+    /// `[excitation, resonator output, surrounding output, final output]`,
+    /// for the M11 gain-staging measurement battery (P1/P9). Test-only.
+    #[cfg(test)]
+    stage_peaks: [f32; 4],
 }
 
 impl<'a> Voice<'a> {
@@ -173,6 +178,8 @@ impl<'a> Voice<'a> {
             modulation: ModulationState::new(sample_rate),
             surrounding: SurroundingStage::new(sample_rate),
             output: OutputStage::new(sample_rate),
+            #[cfg(test)]
+            stage_peaks: [0.0; 4],
         }
     }
 
@@ -284,6 +291,10 @@ impl<'a> Voice<'a> {
         self.modulation.clear(self.resonators.current_loop_gain());
         self.surrounding.reset();
         self.output.clear();
+        #[cfg(test)]
+        {
+            self.stage_peaks = [0.0; 4];
+        }
     }
 
     #[cfg(test)]
@@ -319,13 +330,30 @@ impl<'a> Voice<'a> {
         let cutoff_mod = self
             .modulation
             .modulation_sum(ModulationDestination::FilterCutoff, sources);
-        self.output.process_sample(
+        let output = self.output.process_sample(
             surrounded,
             self.sample_rate,
             cutoff_mod,
             sources.amp_envelope,
             structural_gain,
-        )
+        );
+
+        #[cfg(test)]
+        {
+            self.stage_peaks[0] = self.stage_peaks[0].max(excitation.abs());
+            self.stage_peaks[1] = self.stage_peaks[1].max(resonator_output.abs());
+            self.stage_peaks[2] = self.stage_peaks[2].max(surrounded.abs());
+            self.stage_peaks[3] = self.stage_peaks[3].max(output.abs());
+        }
+
+        output
+    }
+
+    /// M11 gain-staging taps: running peak `|x|` at each stage of the signal path
+    /// `[excitation, resonator output, surrounding output, final output]`.
+    #[cfg(test)]
+    pub(crate) fn stage_peaks(&self) -> [f32; 4] {
+        self.stage_peaks
     }
 
     fn apply_structural_transitions(&mut self) -> f32 {

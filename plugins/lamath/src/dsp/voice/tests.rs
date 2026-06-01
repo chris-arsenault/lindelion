@@ -491,6 +491,40 @@ fn render_silent_retrigger_after_impulse(sample_rate: f32, retrigger_resonators:
     rms(&output)
 }
 
+/// M11 P1: the per-stage gain-staging taps are wired and report finite,
+/// audible levels through a held-note render. The objective whole-path level
+/// targets are P9; this only guards that the measurement infrastructure exists
+/// and is sane. Heavy enough to gate behind `integration-tests`.
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn stage_peaks_report_finite_audible_levels() {
+    let sample_rate = 48_000.0;
+    let patch = test_patch(ResonatorRouting::Parallel {
+        mix_a: 1.0,
+        mix_b: 0.0,
+    });
+    let excitation = impulse(256);
+    let mut voice = Voice::new(sample_rate);
+    let mut left = vec![0.0; 24_000];
+    let mut right = vec![0.0; 24_000];
+
+    voice.trigger(VoiceTrigger::new(60, 1.0, &excitation, sample_rate, &patch));
+    voice.render_add(&mut left, &mut right);
+
+    let peaks = voice.stage_peaks();
+    assert!(
+        peaks.iter().all(|peak| peak.is_finite()),
+        "stage peaks must be finite: {peaks:?}"
+    );
+    assert!(
+        peaks[0] > 0.0 && peaks[1] > 0.0,
+        "excitation and resonator stages must be audible: {peaks:?}"
+    );
+}
+
 fn impulse(len: usize) -> Vec<f32> {
     let mut excitation = vec![0.0; len];
     excitation[0] = 1.0;

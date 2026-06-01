@@ -6,7 +6,10 @@
 // `plugin_tests` module, so the shared render helpers (`RenderedClip`, `rms`,
 // `peak_abs`, `set_patch_for_test`) resolve from module scope.
 
-use lindelion_dsp_utils::analysis::estimate_f0_autocorrelation;
+use lindelion_dsp_utils::analysis::{
+    attack_sustain_ratio, estimate_f0_autocorrelation, inharmonicity_ratios, partial_t60_seconds,
+    spectral_centroid_trajectory,
+};
 
 /// Pitch the families are auditioned at across the battery (middle C).
 const CALIBRATION_NOTE: u8 = 60;
@@ -72,7 +75,10 @@ fn family_patch(family: ResonatorFamily) -> ResonatorSynthPatch {
     patch
 }
 
-/// Render one family/velocity clip through the full synth.
+/// Render one held-note family/velocity clip through the full synth: a single
+/// note-on at the start and **no note-off**, so the note is held for the whole
+/// clip duration. This is the held-note render the voicing metrics measure
+/// against (sustain, decay, tail darkening).
 fn render_family_clip(
     family: ResonatorFamily,
     velocity: u8,
@@ -117,6 +123,10 @@ fn render_family_clip(
     }
 }
 
+/// Number of partials the inharmonicity ratio is reported for; unmeasured
+/// partials are `f32::NAN`.
+const INHARMONICITY_PARTIALS: usize = 4;
+
 #[derive(Debug, Clone, Copy)]
 struct FamilyMetrics {
     /// Loudness over the onset window, in dBFS (`20·log10(rms)`).
@@ -125,23 +135,125 @@ struct FamilyMetrics {
     peak: f32,
     /// Estimated fundamental, if the family is harmonic enough to track.
     fundamental_hz: Option<f32>,
+    /// T60 (s) of the fundamental partial, when the tail measurably decays.
+    t60_seconds: Option<f32>,
+    /// Measured / ideal frequency ratio per partial (`NAN` when unmeasurable).
+    inharmonicity_ratios: [f32; INHARMONICITY_PARTIALS],
+    /// Spectral centroid (Hz) at the first and last analysed window of the tail.
+    centroid_endpoints: Option<(f32, f32)>,
+    /// Onset-to-sustain energy ratio (`rms(attack)/rms(sustain)`).
+    attack_sustain_ratio: Option<f32>,
 }
 
-/// Measure the objective metrics over the loudness window of a rendered clip.
+/// Measure the objective voicing metrics of a held-note rendered clip: loudness
+/// and peak over the onset window, plus the M11 tail metrics (fundamental, T60,
+/// inharmonicity, centroid-over-time, attack/sustain) over the full clip.
 fn measure_family(clip: &RenderedClip, sample_rate: f32) -> FamilyMetrics {
     let window_len = ((sample_rate * CALIBRATION_WINDOW_SECONDS) as usize).min(clip.left.len());
     let window = &clip.left[..window_len];
     let loudness = rms(window).max(1.0e-9);
+    let nominal_hz = midi_note_to_hz(f32::from(CALIBRATION_NOTE));
+    let fundamental_hz =
+        estimate_f0_autocorrelation(window, sample_rate, nominal_hz * 0.5, nominal_hz * 2.0);
+    let analysis_hz = fundamental_hz.unwrap_or(nominal_hz);
+
+    // Non-overlapping windows keep the (O(n) per-window) T60 fit cheap over the
+    // multi-second clip.
+    let t60_seconds = partial_t60_seconds(&clip.left, sample_rate, analysis_hz, 4_096, 4_096);
+
+    let inharmonicity_window = &clip.left[..clip.left.len().min(16_384)];
+    let measured_ratios = inharmonicity_ratios(
+        inharmonicity_window,
+        sample_rate,
+        analysis_hz,
+        INHARMONICITY_PARTIALS,
+        0.05,
+    );
+    let mut inharmonicity_ratios = [f32::NAN; INHARMONICITY_PARTIALS];
+    for (slot, ratio) in inharmonicity_ratios.iter_mut().zip(measured_ratios) {
+        *slot = ratio;
+    }
+
+    // `spectral_centroid_hz` is O(window²); a small window and a coarse hop keep
+    // the trajectory cheap while still spanning onset→tail for the endpoints.
+    let trajectory = spectral_centroid_trajectory(&clip.left, sample_rate, 2_048, 16_384);
+    let centroid_endpoints = (trajectory.len() >= 2)
+        .then(|| (*trajectory.first().unwrap(), *trajectory.last().unwrap()));
+
+    let attack_sustain_ratio = attack_sustain_ratio(&clip.left, sample_rate, 0.03, 1.0, 0.2);
+
     FamilyMetrics {
         loudness_db: 20.0 * loudness.log10(),
         peak: clip.peak,
-        fundamental_hz: estimate_f0_autocorrelation(
-            window,
-            sample_rate,
-            midi_note_to_hz(f32::from(CALIBRATION_NOTE)) * 0.5,
-            midi_note_to_hz(f32::from(CALIBRATION_NOTE)) * 2.0,
-        ),
+        fundamental_hz,
+        t60_seconds,
+        inharmonicity_ratios,
+        centroid_endpoints,
+        attack_sustain_ratio,
     }
+}
+
+/// Assert every metric of one rendered clip is finite, bounded, and (where the
+/// metric is optional) sane when present. Targets per dimension belong to later
+/// M11 phases; P1 only guards that the fixtures are computable and well-formed.
+fn assert_family_metrics_sane(
+    clip: &RenderedClip,
+    metrics: &FamilyMetrics,
+    label: &str,
+    velocity: u8,
+) {
+    assert!(
+        metrics.loudness_db.is_finite() && clip.rms > 0.0,
+        "{label} @ vel {velocity} should render audible output (loudness_db={})",
+        metrics.loudness_db
+    );
+    assert!(
+        metrics.peak < 8.0,
+        "{label} @ vel {velocity} peak should be bounded: {}",
+        metrics.peak
+    );
+    assert!(
+        metrics
+            .fundamental_hz
+            .is_none_or(|f| f.is_finite() && f > 0.0),
+        "{label} @ vel {velocity} fundamental estimate should be sane: {:?}",
+        metrics.fundamental_hz
+    );
+    // T60 is either unmeasurable (None — e.g. a tail too short to fit) or a finite
+    // positive duration. Targets are P2; this only asserts sanity.
+    assert!(
+        metrics.t60_seconds.is_none_or(|t| t.is_finite() && t > 0.0),
+        "{label} @ vel {velocity} T60 should be a sane duration: {:?}",
+        metrics.t60_seconds
+    );
+    // Every measurable partial ratio is finite and within a sane band (target
+    // stretch curves are P4).
+    assert!(
+        metrics
+            .inharmonicity_ratios
+            .iter()
+            .filter(|ratio| ratio.is_finite())
+            .all(|ratio| (0.5..=2.0).contains(ratio)),
+        "{label} @ vel {velocity} partial ratios out of band: {:?}",
+        metrics.inharmonicity_ratios
+    );
+    assert!(
+        metrics
+            .centroid_endpoints
+            .is_none_or(|(first, last)| first.is_finite()
+                && last.is_finite()
+                && first > 0.0
+                && last > 0.0),
+        "{label} @ vel {velocity} centroid endpoints should be sane: {:?}",
+        metrics.centroid_endpoints
+    );
+    assert!(
+        metrics
+            .attack_sustain_ratio
+            .is_none_or(|r| r.is_finite() && r > 0.0),
+        "{label} @ vel {velocity} attack/sustain ratio should be sane: {:?}",
+        metrics.attack_sustain_ratio
+    );
 }
 
 #[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
@@ -153,29 +265,13 @@ fn calibration_battery_reports_sane_metrics_for_every_family_and_dynamic() {
     let sample_rate = 48_000.0;
     for family in ResonatorFamily::ALL {
         for velocity in CALIBRATION_VELOCITIES {
-            let clip = render_family_clip(family, velocity, sample_rate, 2.0);
+            // 3 s held note so the tail metrics (T60, centroid-over-time) have a
+            // decay to measure.
+            let clip = render_family_clip(family, velocity, sample_rate, 3.0);
             assert_all_finite(&clip.left);
             assert_all_finite(&clip.right);
             let metrics = measure_family(&clip, sample_rate);
-            assert!(
-                metrics.loudness_db.is_finite() && clip.rms > 0.0,
-                "{} @ vel {velocity} should render audible output (loudness_db={})",
-                family.name(),
-                metrics.loudness_db
-            );
-            assert!(
-                metrics.peak < 8.0,
-                "{} @ vel {velocity} peak should be bounded: {}",
-                family.name(),
-                metrics.peak
-            );
-            if let Some(fundamental) = metrics.fundamental_hz {
-                assert!(
-                    fundamental.is_finite() && fundamental > 0.0,
-                    "{} @ vel {velocity} fundamental estimate should be sane: {fundamental}",
-                    family.name()
-                );
-            }
+            assert_family_metrics_sane(&clip, &metrics, family.name(), velocity);
         }
     }
 }
