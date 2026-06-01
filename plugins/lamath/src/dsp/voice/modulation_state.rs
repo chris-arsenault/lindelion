@@ -8,8 +8,8 @@ use crate::{
     ModulationConfig, ModulationDestination, ModulationSource, dsp::constants::WAVEGUIDE_LOOP_GAIN,
 };
 
-use super::energy_follower::EnergyFollower;
 use super::{PARAMETER_EPSILON, PARAMETER_SMOOTH_MS, VoiceExpression};
+use crate::dsp::energy_follower::EnergyFollower;
 
 const PITCH_BEND_SMOOTH_MS: f32 = 8.0;
 const PITCH_BEND_EPSILON: f32 = 0.000_1;
@@ -29,6 +29,25 @@ pub(super) struct ModulationSources {
     /// the measured resonator-energy follower (drives M4–M6 nonlinearities).
     pub(super) effort: f32,
     pub(super) energy: f32,
+    /// Note-state drive gate (M11 P3): 1 while the note is held, releasing to 0 over
+    /// a short time after note-off. A self-sustaining driver (reed/bow) scales its
+    /// drive by this so note-off lets the resonator ring out at its natural decay
+    /// rather than being held by continued driving.
+    pub(super) drive_gate: f32,
+}
+
+/// Drive-gate release time after note-off (M11 P3). Short, so the bow/breath force
+/// lets go quickly and the *resonator's* own ring-out is the tail — not a slow
+/// fade of the driver.
+const DRIVE_GATE_RELEASE_SECONDS: f32 = 0.03;
+
+fn drive_gate_release_step(sample_rate: f32) -> f32 {
+    let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
+        sample_rate
+    } else {
+        48_000.0
+    };
+    1.0 / (DRIVE_GATE_RELEASE_SECONDS * sample_rate)
 }
 
 #[derive(Debug)]
@@ -54,6 +73,9 @@ pub(super) struct ModulationState {
     /// follower fed the resonator output, read into the next sample's sources.
     energy_follower: EnergyFollower,
     energy: f32,
+    /// Note-state drive gate envelope (1 held → 0 after note-off), read into
+    /// `ModulationSources::drive_gate`.
+    drive_gate: f32,
 }
 
 impl ModulationState {
@@ -82,6 +104,7 @@ impl ModulationState {
             applied_waveguide_loop_gain: WAVEGUIDE_LOOP_GAIN.default,
             energy_follower: EnergyFollower::new(sample_rate),
             energy: 0.0,
+            drive_gate: 1.0,
         }
     }
 
@@ -112,6 +135,7 @@ impl ModulationState {
         self.applied_pitch_bend_semitones = pitch_bend;
         self.energy_follower.reset();
         self.energy = 0.0;
+        self.drive_gate = 1.0;
     }
 
     pub(super) fn clear(&mut self, loop_gain: f32) {
@@ -128,6 +152,7 @@ impl ModulationState {
         self.reset_waveguide_loop_gain(loop_gain);
         self.energy_follower.reset();
         self.energy = 0.0;
+        self.drive_gate = 1.0;
     }
 
     /// Fold the resonator output into the measured-energy follower. Called by the
@@ -135,6 +160,13 @@ impl ModulationState {
     /// sample's `ModulationSources::energy`.
     pub(super) fn observe_energy(&mut self, sample: f32) {
         self.energy = self.energy_follower.observe(sample);
+    }
+
+    /// Current measured-energy bus value (the followed resonator-output RMS), for the
+    /// M11 energy-reference calibration battery (P8).
+    #[cfg(test)]
+    pub(super) fn measured_energy(&self) -> f32 {
+        self.energy
     }
 
     pub(super) fn static_sources(&self) -> ModulationSources {
@@ -148,6 +180,7 @@ impl ModulationState {
             brightness: self.brightness,
             effort: self.effort(),
             energy: self.energy,
+            drive_gate: 1.0,
         }
     }
 
@@ -212,6 +245,19 @@ impl ModulationState {
             .secondary_state
             .next_sample(self.secondary_envelope, sample_rate);
         let lfo = self.next_lfo_sample(sample_rate);
+        // Drive gate: instant on while the note is held (so a note-on drives
+        // immediately), a short linear release to 0 after note-off so the bow/reed
+        // lets go and the resonator rings out at its natural decay.
+        let gate_target = if self.expression.stream.gate {
+            1.0
+        } else {
+            0.0
+        };
+        self.drive_gate = if gate_target >= self.drive_gate {
+            gate_target
+        } else {
+            (self.drive_gate - drive_gate_release_step(sample_rate)).max(0.0)
+        };
 
         ModulationSources {
             amp_envelope,
@@ -223,6 +269,7 @@ impl ModulationState {
             brightness: self.brightness,
             effort: self.effort(),
             energy: self.energy,
+            drive_gate: self.drive_gate,
         }
     }
 
@@ -245,6 +292,7 @@ impl ModulationState {
                 brightness: self.brightness,
                 effort: self.effort(),
                 energy: self.energy,
+                drive_gate: self.drive_gate,
             },
         );
         let base_rate_hz = finite_clamp(self.config.lfo.rate_hz, 0.01, 100.0, 1.0);
@@ -403,6 +451,35 @@ mod tests {
         state.set_expression(VoiceExpression::with_controls(0.2, 0.0, 0.9, 0.0, 0.0));
         let effort = state.next_sources(48_000.0).effort;
         assert!((effort - 0.9).abs() < 1.0e-6, "effort={effort}");
+    }
+
+    #[test]
+    fn drive_gate_holds_then_releases_on_note_off() {
+        let sample_rate = 48_000.0;
+        let mut state = ModulationState::new(sample_rate);
+
+        // Held: the drive gate stays fully open.
+        let held = VoiceExpression::with_controls(0.8, 0.0, 0.0, 0.0, 0.0);
+        state.set_expression(held);
+        for _ in 0..8 {
+            assert_eq!(state.next_sources(sample_rate).drive_gate, 1.0);
+        }
+
+        // Note-off: the gate releases monotonically to 0 within the release time
+        // (DRIVE_GATE_RELEASE_SECONDS ≈ 1440 samples at 48 kHz).
+        let mut released = held;
+        released.stream.gate = false;
+        state.set_expression(released);
+        let mut last = 1.0;
+        for _ in 0..2_000 {
+            let gate = state.next_sources(sample_rate).drive_gate;
+            assert!(
+                gate <= last,
+                "drive gate should not rise on release: {gate} > {last}"
+            );
+            last = gate;
+        }
+        assert_eq!(last, 0.0, "drive gate should release fully to 0");
     }
 
     #[test]

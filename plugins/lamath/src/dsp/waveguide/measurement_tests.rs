@@ -104,6 +104,8 @@ fn measurement_harness_covers_excitation_styles() {
                     position_of_strike: 0.38,
                     pickup_position: WAVEGUIDE_PICKUP_POSITION.default,
                     boundary_reflection: 0.65,
+                    excitation_spread: 0.0,
+                    source_body_balance: 0.0,
                 },
                 12_000,
                 excitation,
@@ -194,6 +196,52 @@ fn steady_state_tuning_within_three_cents_across_matrix() {
     }
 }
 
+/// M11 P4 step 1: the default String has a realistic light stiffness, so its upper
+/// partials stretch measurably sharp (inharmonicity ratios above 1) like a real
+/// wound string — where the old `WAVEGUIDE_DISPERSION` default of 0.0 was perfectly
+/// harmonic — while the fundamental still tracks the played note and the stretch
+/// stays musical (not an audible detune). Measured at 165 Hz (a body modal gap).
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn default_string_has_realistic_light_stiffness() {
+    use lindelion_dsp_utils::analysis::inharmonicity_ratios;
+
+    let sample_rate = 48_000.0;
+    let f0 = 165.0;
+    let params = WaveguideParams {
+        style: WaveguideStyle::String,
+        frequency_hz: f0,
+        ..WaveguideParams::default()
+    };
+    let output = render_waveguide_response(sample_rate, params, 144_000, RenderExcitation::Impulse);
+    assert_all_finite(&output);
+
+    let ratios = inharmonicity_ratios(&output, sample_rate, f0, 15, 0.06);
+    assert!(ratios.len() >= 14, "too few partials measured: {ratios:?}");
+    // Fundamental still tracks the played note (the loop-length compensation keeps
+    // the played pitch in tune; grid resolution allows a few cents of slack).
+    assert!(
+        (0.995..=1.005).contains(&ratios[0]),
+        "fundamental should track the note: {} (ratios={ratios:?})",
+        ratios[0]
+    );
+    // Stiffness signature: the stretch grows with partial number (n²), so a high
+    // partial is measurably sharper than a low one — and it stays light/musical.
+    let low = ratios[3]; // 4th partial
+    let high = ratios[13]; // 14th partial
+    assert!(
+        high > low + 0.0012,
+        "upper partials should stretch sharp with partial number: low(4th)={low}, high(14th)={high} (ratios={ratios:?})"
+    );
+    assert!(
+        (1.0018..=1.03).contains(&high),
+        "stretch should be measurable but light: high(14th)={high} (ratios={ratios:?})"
+    );
+}
+
 #[test]
 fn frequency_dependent_damping_decays_high_partials_faster_and_matches_target_t60() {
     use lindelion_dsp_utils::analysis::dft_magnitude_at;
@@ -260,8 +308,12 @@ fn frequency_dependent_damping_decays_high_partials_faster_and_matches_target_t6
         * (magnitude(t60_early, t60_width, f0) / magnitude(t60_late, t60_width, f0).max(1.0e-12))
             .log10();
     let measured_t60 = elapsed * 60.0 / drop_db.max(1.0e-6);
+    // The M11 P2 cap raise lifted the bare-loop `target_t60` (the loop can now ring
+    // far longer), but this heavily loop-filtered (700 Hz), body-coupled config is
+    // dominated by the filter + body absorption, so the played pitch lands well
+    // below that raised target — a smaller fraction than under the old 2.5 s cap.
     assert!(
-        measured_t60 < target_t60 * 1.1 && measured_t60 > target_t60 * 0.2,
+        measured_t60 < target_t60 * 1.1 && measured_t60 > target_t60 * 0.1,
         "body-coupled fundamental T60 should sit below the bare-loop target but stay a meaningful fraction of it: measured={measured_t60}, target={target_t60}"
     );
 }
@@ -271,7 +323,11 @@ fn per_partial_decay_slope_holds_across_damping_settings() {
     use lindelion_dsp_utils::analysis::dft_magnitude_at;
 
     let sample_rate = 48_000.0;
-    let f0 = 220.0;
+    // 165 Hz (E3) sits in a guitar-body modal gap, so loop_gain — not the body
+    // modes — is the decay control. (At 220 Hz the fundamental lands on the 200/
+    // 230 Hz plate modes, which after the M11 P2 body re-tune dominate the decay
+    // and mask loop_gain; that body-shaped per-note variation is its own test.)
+    let f0 = 165.0;
     let high_partial = 5.0 * f0;
 
     // Short / medium / long damping (loop gain sets the decay time).
@@ -293,14 +349,19 @@ fn per_partial_decay_slope_holds_across_damping_settings() {
         let magnitude = |start: usize, freq: f32| {
             dft_magnitude_at(&output[start..start + 2_048], sample_rate, freq)
         };
-        // Early span (10 ms -> 30 ms) where every setting still rings.
+        // Early span (10 ms -> 30 ms) where every setting still rings: the loop
+        // filter rolls the high partial off faster than the fundamental.
         let fundamental_ratio = magnitude(1_440, f0) / magnitude(480, f0).max(1.0e-12);
         let high_ratio = magnitude(1_440, high_partial) / magnitude(480, high_partial).max(1.0e-12);
         assert!(
             high_ratio < fundamental_ratio * 0.6,
             "high partial should decay faster at loop_gain={loop_gain}: high={high_ratio}, fundamental={fundamental_ratio}"
         );
-        fundamental_retention.push(fundamental_ratio);
+        // Monotonicity needs a longer span (10 ms -> 200 ms): now that the M11 P2
+        // body re-tune lightened the broadband loss, loop_gain 0.8 and 0.95 both
+        // barely decay over 30 ms and only separate over a longer window.
+        let long_retention = magnitude(9_600, f0) / magnitude(480, f0).max(1.0e-12);
+        fundamental_retention.push(long_retention);
     }
 
     // The settings really are short < medium < long: the fundamental retains more

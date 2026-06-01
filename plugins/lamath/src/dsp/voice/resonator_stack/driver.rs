@@ -20,7 +20,7 @@
 
 use lindelion_dsp_utils::{filters::OnePoleLowpass, math};
 
-use crate::{DriverConfig, PickConfig, ReedConfig};
+use crate::{BowConfig, DriverConfig, PickConfig, ReedConfig};
 
 /// Pick contact low-pass bandwidth at the softest setting / lowest effort.
 const PICK_MIN_CUTOFF_HZ: f32 = 300.0;
@@ -50,6 +50,40 @@ const REED_OUTPUT_LIMIT: f32 = 4.0;
 /// higher injection gain raises the oscillation level, not a runaway.
 const REED_INJECTION_GAIN: f32 = 4.0;
 
+/// Bow friction characteristic (exponential stick-slip): the static (stick) and
+/// dynamic (slip) friction coefficients. The curve `μ_d + (μ_s−μ_d)·e^(−|Δv|/v0)`
+/// is high near zero relative velocity (the string sticks to the bow) and falls to
+/// the dynamic floor as the string slips — the negative-slope region whose
+/// negative resistance sustains the Helmholtz motion.
+const BOW_STATIC_FRICTION: f32 = 0.9;
+const BOW_DYNAMIC_FRICTION: f32 = 0.2;
+/// Bow normal force at full effort and full pressure depth (normalized wave units).
+const BOW_MAX_FORCE: f32 = 1.0;
+/// Bow velocity mapped from the `bow_speed` control. Kept near the slip-velocity
+/// scale so the small-signal operating point sits on the steep (high-gain) shoulder
+/// of the friction curve, where the negative resistance can build the oscillation.
+const BOW_MIN_SPEED: f32 = 0.02;
+const BOW_MAX_SPEED: f32 = 0.3;
+/// Slip velocity `v0` (friction-curve width) mapped from the `friction` control:
+/// a *higher* friction control narrows it (sharper stick-slip → scratchier).
+const BOW_SMOOTH_SLIP_VELOCITY: f32 = 0.3;
+const BOW_SHARP_SLIP_VELOCITY: f32 = 0.04;
+/// How strongly the incoming sample/sidechain excitation perturbs the bow (lets a
+/// note-on transient kick-start the motion; the sustained drive is the friction).
+const BOW_EXCITATION_COUPLING: f32 = 0.5;
+/// Injection gain of the friction force into the string. Above a lock threshold
+/// (~0.08 here) the negative-resistance friction region overcomes the loop loss and
+/// the string self-oscillates; the limit-cycle amplitude then scales with this gain.
+/// M11 P9: lowered from 4.0 — at 4.0 the locked cycle ran to energy-bus RMS ~8.7
+/// (far above full scale, clipping everything downstream). 0.12 keeps a robust lock
+/// margin above the threshold while settling at a sane forte level (~0.3 RMS), which
+/// the output makeup and master limiter can then stage.
+const BOW_INJECTION_GAIN: f32 = 0.12;
+/// Hard safety clamp on the bow output so the active element can never run away.
+/// M11 P9: lowered from 4.0 to bound the per-sub-sample drive near the (now much
+/// smaller) friction level while still admitting the note-on excitation kick.
+const BOW_OUTPUT_LIMIT: f32 = 0.5;
+
 #[derive(Debug, Default)]
 pub(super) enum Driver {
     /// Transparent: the excitation passes to the resonator unchanged.
@@ -57,6 +91,7 @@ pub(super) enum Driver {
     PassThrough,
     Pick(PickDriver),
     Reed(ReedDriver),
+    Bow(BowDriver),
 }
 
 impl Driver {
@@ -65,17 +100,28 @@ impl Driver {
             DriverConfig::Sample => Self::PassThrough,
             DriverConfig::Pick(pick) => Self::Pick(PickDriver::new(pick, sample_rate)),
             DriverConfig::Reed(reed) => Self::Reed(ReedDriver::new(reed)),
+            DriverConfig::Bow(bow) => Self::Bow(BowDriver::new(bow)),
         }
     }
 
     /// Transform one (oversampled) excitation sample. `effort` is the player force
     /// from the effort/energy bus; `feedback` is the resonator's coupled-back sample
-    /// from the previous sub-sample (the two-way driver<->resonator coupling).
-    pub(super) fn process(&mut self, excitation: f32, effort: f32, feedback: f32) -> f32 {
+    /// from the previous sub-sample (the two-way driver<->resonator coupling);
+    /// `drive_gate` is the note-state drive gate (1 while held, releasing to 0 after
+    /// note-off) that lets a self-sustaining driver (reed/bow) stop driving so the
+    /// resonator rings out. The feed-forward drivers (pass-through/pick) ignore it.
+    pub(super) fn process(
+        &mut self,
+        excitation: f32,
+        effort: f32,
+        feedback: f32,
+        drive_gate: f32,
+    ) -> f32 {
         match self {
             Self::PassThrough => excitation,
             Self::Pick(pick) => pick.process(excitation, effort),
-            Self::Reed(reed) => reed.process(excitation, effort, feedback),
+            Self::Reed(reed) => reed.process(excitation, effort, feedback, drive_gate),
+            Self::Bow(bow) => bow.process(excitation, effort, feedback, drive_gate),
         }
     }
 
@@ -84,6 +130,7 @@ impl Driver {
             Self::PassThrough => {}
             Self::Pick(pick) => pick.reset(),
             Self::Reed(reed) => reed.reset(),
+            Self::Bow(bow) => bow.reset(),
         }
     }
 }
@@ -154,11 +201,13 @@ impl ReedDriver {
         }
     }
 
-    fn process(&mut self, excitation: f32, effort: f32, feedback: f32) -> f32 {
+    fn process(&mut self, excitation: f32, effort: f32, feedback: f32, drive_gate: f32) -> f32 {
         let effort = math::finite_clamp(effort, 0.0, 1.0, 0.0);
+        let drive_gate = math::finite_clamp(drive_gate, 0.0, 1.0, 1.0);
         // Mouth pressure from the player effort (squared so soft playing stays well
-        // below the oscillation threshold and hard playing crosses it).
-        let mouth_pressure = self.pressure_depth * effort * effort * REED_MAX_PRESSURE;
+        // below the oscillation threshold and hard playing crosses it), gated by the
+        // note-state drive gate so note-off releases the breath and the bore rings out.
+        let mouth_pressure = self.pressure_depth * effort * effort * REED_MAX_PRESSURE * drive_gate;
         let breath = mouth_pressure + REED_EXCITATION_COUPLING * math::snap_to_zero(excitation);
         // Bore pressure: the resonator's returning wave, inverted at the open end.
         let bore = REED_FEEDBACK_GAIN * math::finite_or(feedback, 0.0);
@@ -176,6 +225,60 @@ impl ReedDriver {
     }
 }
 
+/// Continuous bow friction driver (exponential stick-slip; McIntyre-Schumacher-
+/// Woodhouse). The player effort sets the bow normal force; the friction force
+/// depends on the relative velocity `Δv = v_bow − v_string` (the string velocity
+/// read from the resonator `feedback`). The negative-slope region of the friction
+/// curve sustains the Helmholtz motion while the string is driven; the friction
+/// saturation and the output clamp bound the limit cycle. Like the reed, the drive
+/// is `effort`-based, so it sustains even when the sample excitation has decayed.
+#[derive(Debug)]
+pub(super) struct BowDriver {
+    pressure_depth: f32,
+    /// Bow velocity `v_bow` (from the bow_speed control).
+    bow_speed: f32,
+    /// Slip velocity `v0` (friction-curve width; from the friction control).
+    slip_velocity: f32,
+}
+
+impl BowDriver {
+    fn new(config: BowConfig) -> Self {
+        let pressure_depth = math::finite_clamp(config.pressure_depth, 0.0, 1.0, 0.5);
+        let bow_speed = math::finite_clamp(config.bow_speed, 0.0, 1.0, 0.5);
+        let friction = math::finite_clamp(config.friction, 0.0, 1.0, 0.5);
+        Self {
+            pressure_depth,
+            bow_speed: BOW_MIN_SPEED + (BOW_MAX_SPEED - BOW_MIN_SPEED) * bow_speed,
+            // A higher friction control narrows v0 (sharper stick-slip).
+            slip_velocity: BOW_SMOOTH_SLIP_VELOCITY
+                + (BOW_SHARP_SLIP_VELOCITY - BOW_SMOOTH_SLIP_VELOCITY) * friction,
+        }
+    }
+
+    fn process(&mut self, excitation: f32, effort: f32, feedback: f32, drive_gate: f32) -> f32 {
+        let effort = math::finite_clamp(effort, 0.0, 1.0, 0.0);
+        let drive_gate = math::finite_clamp(drive_gate, 0.0, 1.0, 1.0);
+        // String velocity at the bow contact (the resonator's returning wave).
+        let string_velocity = math::finite_or(feedback, 0.0);
+        let relative_velocity = self.bow_speed - string_velocity;
+        // Bow normal force, gated by the note-state drive gate so note-off lifts the
+        // bow and the string rings out at its natural decay.
+        let normal_force = self.pressure_depth * effort * BOW_MAX_FORCE * drive_gate;
+        // Exponential stick-slip coefficient: μ_d + (μ_s − μ_d)·e^(−|Δv|/v0).
+        let mu = BOW_DYNAMIC_FRICTION
+            + (BOW_STATIC_FRICTION - BOW_DYNAMIC_FRICTION)
+                * (-(relative_velocity.abs()) / self.slip_velocity).exp();
+        let friction = normal_force * mu * relative_velocity.signum();
+        let drive = BOW_INJECTION_GAIN * friction
+            + BOW_EXCITATION_COUPLING * math::snap_to_zero(excitation);
+        math::finite_clamp(drive, -BOW_OUTPUT_LIMIT, BOW_OUTPUT_LIMIT, 0.0)
+    }
+
+    fn reset(&mut self) {
+        // Stateless across the reset boundary (the string holds the oscillation).
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,8 +291,41 @@ mod tests {
         for &sample in &[-1.5_f32, -0.3, 0.0, 0.25, 0.9, 1.5] {
             for &effort in &[0.0_f32, 0.5, 1.0] {
                 for &feedback in &[-2.0_f32, 0.0, 0.7] {
-                    assert_eq!(driver.process(sample, effort, feedback), sample);
+                    assert_eq!(driver.process(sample, effort, feedback, 1.0), sample);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn bow_driver_process_does_not_allocate() {
+        // The bow runs per sub-sample inside the 2x realtime loop (ADR-0001), so its
+        // friction evaluation must not allocate.
+        use crate::assert_no_allocations;
+        let mut bow = BowDriver::new(BowConfig::default());
+        // Settle any lazy init outside the asserted region.
+        for index in 0..64 {
+            bow.process(0.0, 0.85, (index as f32 * 0.01).sin(), 1.0);
+        }
+        assert_no_allocations("bow_driver_process", || {
+            for index in 0..512 {
+                bow.process(0.0, 0.85, (index as f32 * 0.01).sin(), 1.0);
+            }
+        });
+    }
+
+    #[test]
+    fn bow_output_is_bounded_across_effort_and_feedback() {
+        let mut bow = BowDriver::new(BowConfig::default());
+        for effort_step in 0..=10 {
+            let effort = effort_step as f32 / 10.0;
+            for feedback_step in -20..=20 {
+                let feedback = feedback_step as f32 / 5.0;
+                let out = bow.process(0.0, effort, feedback, 1.0);
+                assert!(
+                    out.is_finite() && out.abs() <= BOW_OUTPUT_LIMIT,
+                    "out={out}"
+                );
             }
         }
     }
@@ -201,7 +337,7 @@ mod tests {
             let effort = effort_step as f32 / 10.0;
             for feedback_step in -20..=20 {
                 let feedback = feedback_step as f32 / 5.0;
-                let out = reed.process(0.0, effort, feedback);
+                let out = reed.process(0.0, effort, feedback, 1.0);
                 assert!(
                     out.is_finite() && out.abs() <= REED_OUTPUT_LIMIT,
                     "out={out}"

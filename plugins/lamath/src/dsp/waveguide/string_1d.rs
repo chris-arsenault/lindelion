@@ -22,10 +22,52 @@ const STRING_PICKUP_MIX: f32 = 1.0;
 const STRING_BODY_MIX: f32 = 3.0;
 const STRING_OUTPUT_TRIM: f32 = 0.85;
 
+/// Energy-dependent source↔body balance (M9). The fixed pickup/body weights above
+/// are replaced — when the balance depth is non-zero — by an **equal-power** crossfade
+/// between the direct pickup tap and a **level-matched** body radiation, steered by
+/// measured energy. In this voicing the loop-damped pickup tap is the *warm/rounded*
+/// sustain voice and the body radiation — carrying its presence formant — is the
+/// *bright/blooming* one, so the perceptually correct mapping (M11 P8) is **soft →
+/// pickup (warm), loud → body (bright)**: harder playing drives the body's radiating
+/// resonances and blooms brighter. The crossfade position `p ∈ [0,1]` (`p = 1` all
+/// pickup, `p = 0` all body) maps to gains `S·sin(pπ/2)` (pickup) and
+/// `S·cos(pπ/2)·LEVEL_MATCH` (body). Equal power (`sin² + cos² = 1`) on the
+/// *level-matched* signals holds output level, so the change is timbral, not gain.
+///
+/// The body radiation is ~15–20× quieter than the pickup tap (ADR-0021), so it is
+/// scaled up by `LEVEL_MATCH` before the crossfade — otherwise leaning to the body
+/// would just go quiet instead of warm. `BASE_POSITION = atan(LEVEL_MATCH·PICKUP/BODY)
+/// /(π/2)` and `WEIGHT_SCALE = 1/sin(BASE_POSITION·π/2)` are chosen so that at
+/// `p = BASE_POSITION` the gains are exactly the pre-M9 `(1.0, 3.0)` blend; depth `0`
+/// collapses to that fixed blend (identity guard).
+///
+/// `LEVEL_MATCH` is a first-principles value; the exact body/pickup level ratio (and
+/// thus the crossfade calibration) is an M11 calibration target (ADR-0021, deferred
+/// cross-resonator level / coupling-strength work).
+const STRING_BODY_LEVEL_MATCH: f32 = 15.0;
+const STRING_BALANCE_BASE_POSITION: f32 = 0.874_3; // atan(15·1/3)/(π/2)
+const STRING_BALANCE_WEIGHT_SCALE: f32 = 1.019_9; // 1/sin(BASE_POSITION·π/2)
+/// How far full energy swings the crossfade position around the base (at full depth):
+/// `p = BASE + (0.5 − e)·SPAN·depth`, clamped to `[0, 1]`. Sized so a soft note settles
+/// onto the warm pickup tap while a loud note blooms into the bright body radiation.
+const STRING_BALANCE_SPAN: f32 = 1.0;
+/// Measured-energy (RMS) that maps to the bright (body) end of the balance crossfade
+/// (`e = 1`); the linear, clamped `energy/REF` keeps soft/medium dynamics on the warm
+/// pickup tap and reserves the blooming body-radiation end for loud playing. M11 P8:
+/// calibrated to the measured per-voice energy bus (a full-velocity String pluck peaks
+/// near RMS 0.010), so soft→warm/loud→bright spans the real dynamic range; the old 0.3
+/// left the crossfade pinned at its base position for all real playing (inaudible).
+const STRING_BALANCE_ENERGY_REF: f32 = 0.012;
+
 /// Measured-energy (RMS) at which the tension bloom reaches its target depth; the
 /// squared, normalized drive `(energy/REF)^2` keeps low/medium dynamics in tune
-/// and concentrates the sharpening on hard hits.
-const STRING_TENSION_ENERGY_REF: f32 = 0.15;
+/// and concentrates the sharpening on hard hits. M11 P8: calibrated to the measured
+/// per-voice energy bus — a full-velocity String pluck peaks near RMS 0.010, so this
+/// REF puts a hard hit at ≈0.7 drive (≈28 cents, approaching the +40 the depth allows)
+/// and lets sustained bowing saturate; the old 0.15 left a hard pluck at 0.4% drive
+/// (inaudible). The effect was always designed to reach drive 1.0 — only the REF kept
+/// it from getting there.
+const STRING_TENSION_ENERGY_REF: f32 = 0.012;
 /// Fractional one-way-delay shortening at full drive. `2^(40/1200) - 1 ≈ 0.0234`
 /// gives ≈ +40 cents of transient pitch-sharpening at a hard pluck's peak energy.
 const STRING_TENSION_DEPTH: f32 = 0.0234;
@@ -109,6 +151,18 @@ pub(super) struct String1d {
     // Measured resonator energy (M2 bus) driving tension modulation; set per host
     // sample, constant across the 2x oversampled sub-samples. 0.0 => inert.
     tension_drive: f32,
+    // Strike-position spread (M9 contact stage), `0..1`; set each (oversampled)
+    // sample from `WaveguideParams::excitation_spread`. 0.0 => the narrow pre-M9
+    // contact (cached taps); positive widens the injection toward a strum.
+    excitation_spread: f32,
+    // Source↔body balance depth (M9), `0..1`; set from `source_body_balance`. 0.0 =>
+    // the pre-M9 fixed pickup/body blend. Kept out of `String1dParams` (the cache
+    // key) since it only weights the output.
+    balance_depth: f32,
+    // Normalised measured-energy target for the balance crossfade, set per host
+    // sample; smoothed per sample so the energy-dependent mix does not zipper.
+    balance_energy_target: f32,
+    balance_energy: core::ScalarSmoother,
     // The string's returning wave at the bridge (driven end), cached each sample so
     // a physical driver (M8) can read the input-end wave it couples to.
     bridge_incident: f32,
@@ -133,6 +187,10 @@ impl String1d {
             loop_filter_resonance: core::ScalarSmoother::new(sample_rate),
             dispersion: core::ScalarSmoother::new(sample_rate),
             tension_drive: 0.0,
+            excitation_spread: 0.0,
+            balance_depth: 0.0,
+            balance_energy_target: 0.0,
+            balance_energy: core::ScalarSmoother::new(sample_rate),
             bridge_incident: 0.0,
             #[cfg(test)]
             recompute_count: 0,
@@ -152,6 +210,16 @@ impl String1d {
         self.tension_drive = math::finite_or(drive, 0.0).max(0.0);
     }
 
+    /// Set the measured-energy drive for the source↔body balance (M9 energy bus),
+    /// normalised against the balance reference. Called once per host sample by the
+    /// resonator engine alongside `set_tension_drive`; defaults to 0.0 (full-body end
+    /// of the crossfade), which is inert when the balance depth is 0.
+    pub(super) fn set_balance_drive(&mut self, drive: f32) {
+        let energy = math::finite_or(drive, 0.0).max(0.0);
+        self.balance_energy_target =
+            math::finite_clamp(energy / STRING_BALANCE_ENERGY_REF, 0.0, 1.0, 0.0);
+    }
+
     pub(super) fn reset(&mut self) {
         self.waves.clear();
         self.terminations.reset();
@@ -164,12 +232,21 @@ impl String1d {
         self.loop_filter_resonance.reset();
         self.dispersion.reset();
         self.tension_drive = 0.0;
+        self.excitation_spread = 0.0;
+        self.balance_depth = 0.0;
+        self.balance_energy_target = 0.0;
+        self.balance_energy.reset();
         self.bridge_incident = 0.0;
     }
 
     /// Production entry point: drive the two-rail string from `WaveguideParams`,
     /// mirroring `Tube1d::process_sample`.
     pub(super) fn process(&mut self, excitation: f32, params: WaveguideParams) -> f32 {
+        // `excitation_spread` (M9 contact stage) is consumed only at injection, so it
+        // is stashed here rather than carried in `String1dParams` (the prepared-model
+        // cache key) — a per-sample spread change never busts the heavy derivations.
+        self.excitation_spread = math::finite_clamp(params.excitation_spread, 0.0, 1.0, 0.0);
+        self.balance_depth = math::finite_clamp(params.source_body_balance, 0.0, 1.0, 0.0);
         self.process_sample(excitation, String1dParams::from_waveguide(params))
     }
 
@@ -218,14 +295,44 @@ impl String1d {
         let pickup_tap = pickup.average();
 
         self.waves.push(right_reflection, coupled_left);
+        // Strike-position spread (M9): a wide strum injects over a broader region
+        // than a tight pick. Spread 0 uses the cached narrow taps (the pre-M9 fast
+        // path); a positive spread rebuilds the wider window from the (cheap)
+        // strike + half-width, leaving the prepared model untouched.
+        let excitation_taps = if self.excitation_spread > 0.0 {
+            core::excitation_taps(
+                params.strike_position,
+                core::excitation_half_width(self.excitation_spread),
+            )
+        } else {
+            prepared.geometry.excitation_taps
+        };
         self.waves.add_symmetric_excitation(
             one_way_delay,
-            prepared.geometry.excitation_taps,
+            excitation_taps,
             math::snap_to_zero(excitation),
         );
 
-        let output =
-            STRING_OUTPUT_TRIM * (STRING_PICKUP_MIX * pickup_tap + STRING_BODY_MIX * radiated);
+        // Energy-dependent source↔body balance (M9). At depth 0 the weights are the
+        // pre-M9 fixed (pickup, body) blend (bit-exact identity); otherwise an
+        // equal-power crossfade steered by the smoothed measured energy leans the
+        // output to the warm, loop-damped pickup tap at low dynamics and the bright,
+        // formant-bearing body radiation at high dynamics — so harder playing blooms
+        // brighter (M11 P8 polarity fix), holding level (the change is timbral, not gain).
+        let energy = self.balance_energy.next(self.balance_energy_target);
+        let (pickup_weight, body_weight) = if self.balance_depth > 0.0 {
+            let position = (STRING_BALANCE_BASE_POSITION
+                + self.balance_depth * (0.5 - energy) * STRING_BALANCE_SPAN)
+                .clamp(0.0, 1.0);
+            let angle = position * std::f32::consts::FRAC_PI_2;
+            (
+                STRING_BALANCE_WEIGHT_SCALE * angle.sin(),
+                STRING_BALANCE_WEIGHT_SCALE * angle.cos() * STRING_BODY_LEVEL_MATCH,
+            )
+        } else {
+            (STRING_PICKUP_MIX, STRING_BODY_MIX)
+        };
+        let output = STRING_OUTPUT_TRIM * (pickup_weight * pickup_tap + body_weight * radiated);
         math::snap_to_zero(output)
     }
 
@@ -335,5 +442,7 @@ fn waveguide_params_from_string(params: String1dParams) -> WaveguideParams {
     }
 }
 
+#[cfg(test)]
+mod balance_tests;
 #[cfg(test)]
 mod tests;

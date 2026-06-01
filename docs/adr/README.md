@@ -28,3 +28,7 @@
 | [0024](0024-galad-ui-vizia.md) | Galad host UI uses Vizia (winit standalone), not egui | Accepted | 2026-06-01 |
 | [0025](0025-galad-chain-edit-state-pool.md) | Galad preserves plugin state across chain edits via a persistent instance pool | Accepted | 2026-06-01 |
 | [0026](0026-galad-in-process-plugin-containment.md) | Galad contains misbehaving plugins in-process, not via a sandbox | Accepted | 2026-06-01 |
+| [0027](0027-contact-stage-and-source-body-balance.md) | Coupling/contact stage and source↔body balance | Accepted | 2026-06-01 |
+| [0028](0028-surrounding-effects-and-sympathetic-chamber.md) | Surrounding effects and a cross-voice sympathetic chamber | Accepted | 2026-06-01 |
+| [0029](0029-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
+| [0030](0030-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |

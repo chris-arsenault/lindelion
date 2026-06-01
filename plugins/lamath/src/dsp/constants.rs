@@ -138,8 +138,8 @@ pub(crate) const OUTPUT_FILTER_CUTOFF_HZ: FloatRange = FloatRange::new(20.0, 20_
 pub(crate) const WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ: FloatRange =
     FloatRange::new(20.0, 20_000.0, 8_000.0);
 pub(crate) const FILTER_RESONANCE: FloatRange = FloatRange::new(0.0, 0.999, 0.0);
-pub(crate) const WAVEGUIDE_LOOP_GAIN: FloatRange = FloatRange::new(0.0, 0.999, 0.92);
-pub(crate) const WAVEGUIDE_DISPERSION: FloatRange = FloatRange::new(0.0, 1.0, 0.0);
+pub(crate) const WAVEGUIDE_LOOP_GAIN: FloatRange = FloatRange::new(0.0, 0.999, 0.97);
+pub(crate) const WAVEGUIDE_DISPERSION: FloatRange = FloatRange::new(0.0, 1.0, 1.0);
 pub(crate) const STRIKE_POSITION: FloatRange = FloatRange::new(0.001, 0.999, 0.5);
 pub(crate) const WAVEGUIDE_PICKUP_POSITION: FloatRange = FloatRange::new(0.001, 0.999, 0.82);
 

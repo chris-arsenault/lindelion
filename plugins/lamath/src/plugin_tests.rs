@@ -33,3 +33,4 @@ include!("plugin_tests/performance_tests.rs");
 include!("plugin_tests/render_helpers.rs");
 include!("plugin_tests/expression_helpers.rs");
 include!("plugin_tests/sample_helpers.rs");
+include!("plugin_tests/calibration_tests.rs");

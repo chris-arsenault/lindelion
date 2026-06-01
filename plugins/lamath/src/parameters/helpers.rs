@@ -183,14 +183,21 @@ fn mesh_config_from(config: ResonatorConfig) -> MeshConfig {
 fn pick_config_from(config: DriverConfig) -> PickConfig {
     match config {
         DriverConfig::Pick(config) => config,
-        DriverConfig::Sample | DriverConfig::Reed(_) => PickConfig::default(),
+        DriverConfig::Sample | DriverConfig::Reed(_) | DriverConfig::Bow(_) => PickConfig::default(),
     }
 }
 
 fn reed_config_from(config: DriverConfig) -> ReedConfig {
     match config {
         DriverConfig::Reed(config) => config,
-        DriverConfig::Sample | DriverConfig::Pick(_) => ReedConfig::default(),
+        DriverConfig::Sample | DriverConfig::Pick(_) | DriverConfig::Bow(_) => ReedConfig::default(),
+    }
+}
+
+fn bow_config_from(config: DriverConfig) -> BowConfig {
+    match config {
+        DriverConfig::Bow(config) => config,
+        DriverConfig::Sample | DriverConfig::Pick(_) | DriverConfig::Reed(_) => BowConfig::default(),
     }
 }
 

@@ -1229,8 +1229,13 @@ fn divider(cx: &mut Context) {
 
 /// A section header: a colored accent bar, a title, a reactive sub-line, and optional trailing
 /// controls (built by `trailing`).
-fn section_header<D, F>(cx: &mut Context, title: &'static str, detail: D, accent: &'static str, trailing: F)
-where
+fn section_header<D, F>(
+    cx: &mut Context,
+    title: &'static str,
+    detail: D,
+    accent: &'static str,
+    trailing: F,
+) where
     D: Res<String> + Clone + 'static,
     F: FnOnce(&mut Context),
 {
@@ -1459,7 +1464,9 @@ fn meter_pair(cx: &mut Context, left: Signal<f32>, right: Signal<f32>) {
 /// One meter channel: a label, a fill bar (hot near 0 dBFS), and a dB readout.
 fn meter(cx: &mut Context, label: &'static str, level: Signal<f32>) {
     HStack::new(cx, move |cx| {
-        Label::new(cx, label).class("meter-label").width(Pixels(10.0));
+        Label::new(cx, label)
+            .class("meter-label")
+            .width(Pixels(10.0));
         HStack::new(cx, move |cx| {
             Binding::new(cx, level, move |cx| {
                 let value = level.get();
@@ -1497,9 +1504,12 @@ fn master_fader(cx: &mut Context, signals: Signals) {
             .on_change(|cx, gain| cx.emit(AppEvent::SetMasterGain(gain)))
             .class("master-slider")
             .width(Stretch(1.0));
-        Label::new(cx, Memo::new(move |_| gain_text(signals.master_gain_db.get())))
-            .class("value-strong")
-            .width(Pixels(56.0));
+        Label::new(
+            cx,
+            Memo::new(move |_| gain_text(signals.master_gain_db.get())),
+        )
+        .class("value-strong")
+        .width(Pixels(56.0));
     })
     .width(Stretch(1.0))
     .height(Pixels(28.0))
@@ -1619,7 +1629,9 @@ fn device_field(
     input: bool,
 ) {
     HStack::new(cx, move |cx| {
-        Label::new(cx, label).class("field-label").width(Pixels(60.0));
+        Label::new(cx, label)
+            .class("field-label")
+            .width(Pixels(60.0));
         Select::new(cx, names, selected, true)
             .placeholder(placeholder)
             .on_select(move |cx, index| {

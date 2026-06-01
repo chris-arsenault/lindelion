@@ -127,7 +127,8 @@ fn removed_global_loop_gain_parameter_is_ignored() {
 
     let mut synth = ResonatorSynth::default();
     synth.set_parameter_normalized(ParameterId(2), 0.0);
-    assert_resonator_b_loop_gain(synth.patch(), 0.92);
+    // Default waveguide loop gain after the M11 P2 step 2 String decay re-tune.
+    assert_resonator_b_loop_gain(synth.patch(), 0.97);
 }
 
 #[test]

@@ -1,8 +1,8 @@
-mod energy_follower;
 mod modulation_state;
 mod output_stage;
 mod oversampler;
 mod resonator_stack;
+mod surrounding;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +17,7 @@ use self::{
     modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend},
     output_stage::OutputStage,
     resonator_stack::ResonatorStack,
+    surrounding::SurroundingStage,
 };
 use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
 use crate::{
@@ -149,7 +150,13 @@ pub struct Voice<'a> {
     midi_note: u8,
     resonators: ResonatorStack,
     modulation: ModulationState,
+    surrounding: SurroundingStage,
     output: OutputStage,
+    /// Running peak `|x|` at each stage of the per-sample signal path
+    /// `[excitation, resonator output, surrounding output, final output]`,
+    /// for the M11 gain-staging measurement battery (P1/P9). Test-only.
+    #[cfg(test)]
+    stage_peaks: [f32; 4],
 }
 
 impl<'a> Voice<'a> {
@@ -169,7 +176,10 @@ impl<'a> Voice<'a> {
             midi_note: 60,
             resonators: ResonatorStack::new(sample_rate),
             modulation: ModulationState::new(sample_rate),
+            surrounding: SurroundingStage::new(sample_rate),
             output: OutputStage::new(sample_rate),
+            #[cfg(test)]
+            stage_peaks: [0.0; 4],
         }
     }
 
@@ -203,6 +213,9 @@ impl<'a> Voice<'a> {
         self.resonators
             .set_base_configs(trigger.patch.resonator_a, trigger.patch.resonator_b);
         self.resonators.set_driver(trigger.patch.driver);
+        self.resonators.set_contact(trigger.patch.contact);
+        self.surrounding.set_config(trigger.patch.surrounding);
+        self.surrounding.trigger();
 
         let static_sources = self.modulation.static_sources();
         self.resonators.configure_modulated(
@@ -276,7 +289,12 @@ impl<'a> Voice<'a> {
         self.excitation_gain = 0.0;
         self.resonators.clear(self.sample_rate);
         self.modulation.clear(self.resonators.current_loop_gain());
+        self.surrounding.reset();
         self.output.clear();
+        #[cfg(test)]
+        {
+            self.stage_peaks = [0.0; 4];
+        }
     }
 
     #[cfg(test)]
@@ -298,21 +316,59 @@ impl<'a> Voice<'a> {
                 * self.excitation_gain
                 * (1.0 + excitation_mod).clamp(0.0, 2.0);
 
-        let resonator_output =
-            self.resonators
-                .process_sample(excitation, sources.energy, sources.effort);
+        let resonator_output = self.resonators.process_sample(
+            excitation,
+            sources.energy,
+            sources.effort,
+            sources.drive_gate,
+        );
         self.modulation.observe_energy(resonator_output);
+
+        // M11 P9: the audio path uses the per-resonator-made-up mix (level-matched across
+        // families, lifted to a healthy level), while the energy bus above stays the raw
+        // physical-vibration level the dynamic effects key off.
+        let staged_output = self.resonators.staged_output();
+
+        // Effort/energy-scaled surrounding effects (M10) sit between the resonator and
+        // the output stage, reading the same M2 bus the resonator did this sample.
+        let surrounded = self
+            .surrounding
+            .process(staged_output, sources.effort, sources.energy);
 
         let cutoff_mod = self
             .modulation
             .modulation_sum(ModulationDestination::FilterCutoff, sources);
-        self.output.process_sample(
-            resonator_output,
+        let output = self.output.process_sample(
+            surrounded,
             self.sample_rate,
             cutoff_mod,
             sources.amp_envelope,
             structural_gain,
-        )
+        );
+
+        #[cfg(test)]
+        {
+            self.stage_peaks[0] = self.stage_peaks[0].max(excitation.abs());
+            self.stage_peaks[1] = self.stage_peaks[1].max(resonator_output.abs());
+            self.stage_peaks[2] = self.stage_peaks[2].max(surrounded.abs());
+            self.stage_peaks[3] = self.stage_peaks[3].max(output.abs());
+        }
+
+        output
+    }
+
+    /// Current measured-energy bus value (followed resonator-output RMS), for the
+    /// M11 P8 energy-reference calibration battery.
+    #[cfg(test)]
+    pub(crate) fn measured_energy(&self) -> f32 {
+        self.modulation.measured_energy()
+    }
+
+    /// M11 gain-staging taps: running peak `|x|` at each stage of the signal path
+    /// `[excitation, resonator output, surrounding output, final output]`.
+    #[cfg(test)]
+    pub(crate) fn stage_peaks(&self) -> [f32; 4] {
+        self.stage_peaks
     }
 
     fn apply_structural_transitions(&mut self) -> f32 {

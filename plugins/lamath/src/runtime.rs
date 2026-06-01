@@ -24,8 +24,8 @@ use crate::{
     ResonatorSynthPatch,
     dsp::{
         ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
-        MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations, SynthEngine,
-        VoiceExpression, VoiceTrigger,
+        MAX_EXCITATION_LAYERS, MasterStage, RuntimeExcitationSlot, SelectedExcitations,
+        SympatheticChamber, SynthEngine, VoiceExpression, VoiceTrigger,
     },
     realtime_audio_analysis_expression_source, realtime_audio_analysis_note_detector,
 };
@@ -109,6 +109,14 @@ impl<'a> RuntimePatch<'a> {
 pub(crate) struct ResonatorProcessor<'a> {
     runtime_patch: RuntimePatch<'a>,
     engine: SynthEngine<'a>,
+    // Cross-voice sympathetic resonance (M10, ADR-0028): a send/return chamber around
+    // the voice mix, owned here at the orchestration layer — the engine knows nothing
+    // about it. Tuned each block to the sounding voices' pitches.
+    sympathetic: SympatheticChamber,
+    // M11 P9: master output safety soft clipper on the final mix (after the sympathetic
+    // chamber) — bounds dense-polyphony peaks below −1 dBFS without touching the level
+    // of a single note (identity below the −6 dBFS knee).
+    master: MasterStage,
     selector: ExcitationSelector,
     expression_source: MidiExpressionSource<MIDI_EXPRESSION_VOICES>,
     audio_expression_source: RealtimeStreamingAudioAnalysisExpressionSource<MIDI_EXPRESSION_VOICES>,
@@ -175,6 +183,8 @@ impl<'a> ResonatorProcessor<'a> {
                 polyphony,
                 live_latch_state.capacity_samples(),
             ),
+            sympathetic: SympatheticChamber::new(sample_rate),
+            master: MasterStage::new(),
             selector: ExcitationSelector::default(),
             expression_source: MidiExpressionSource::default(),
             audio_expression_source,
@@ -222,6 +232,8 @@ impl<'a> ResonatorProcessor<'a> {
         self.sync_runtime_expression_source();
         self.engine
             .render_add_with_live_excitation(left, right, live_excitation);
+        self.run_sympathetic_chamber(left, right);
+        self.master.process_block(left, right);
         self.live_latch_state.push_sidechain_block(input.sidechain);
     }
 
@@ -246,6 +258,23 @@ impl<'a> ResonatorProcessor<'a> {
 
         self.engine.sync_expression_source(source);
         self.engine.render_add(left, right);
+        self.run_sympathetic_chamber(left, right);
+        self.master.process_block(left, right);
+    }
+
+    /// Cross-voice sympathetic resonance (M10, ADR-0028). Tune the shared chamber to
+    /// the currently-sounding voices' pitches (idempotent — held notes keep their
+    /// string, freed notes ring out and decay), then run it as a send/return over the
+    /// rendered mix. Defeated (no-op) when the patch's sympathetic depth is 0.
+    fn run_sympathetic_chamber(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.sympathetic
+            .set_depth(self.runtime_patch.patch.surrounding.sympathetic);
+        for index in 0..self.engine.polyphony() {
+            if let Some(note) = self.engine.slot_note(index) {
+                self.sympathetic.note_on(note);
+            }
+        }
+        self.sympathetic.process_block(left, right);
     }
 
     pub(crate) fn active_voice_count(&self) -> usize {
@@ -259,6 +288,8 @@ impl<'a> ResonatorProcessor<'a> {
     pub(crate) fn replace_patch_config(&mut self, mut patch: ResonatorSynthPatch) {
         patch.normalize_routing_for_resonator_models();
         self.release_active_audio_note();
+        // Clear any sympathetic tail on a patch change (the resonant set may differ).
+        self.sympathetic.silence();
         let live_latch_state =
             LiveExcitationLatchRuntimeState::new(self.sample_rate, patch.live_excitation);
         let rebuild_engine = live_latch_state.capacity_samples()

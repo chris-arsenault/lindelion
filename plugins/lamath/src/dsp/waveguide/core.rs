@@ -7,7 +7,12 @@ use crate::dsp::constants::{
 };
 
 const WAVEGUIDE_DECAY_MIN_SECONDS: f32 = 0.02;
-const WAVEGUIDE_DECAY_MAX_SECONDS: f32 = 2.5;
+/// Upper bound of the `loop_gain → T60` map (M11 P2). Raised from 2.5 s so a
+/// held high-loop-gain string/bore can ring with a real, long tail; the loop
+/// stays bounded by the `stability_limit` clamp in `loop_damping` regardless of
+/// this cap. Indefinite-while-held sustain comes from the P3 bow/reed driver,
+/// not from this ceiling.
+const WAVEGUIDE_DECAY_MAX_SECONDS: f32 = 10.0;
 /// Smoothing time for the continuous physical inputs (loop gain/cutoff/etc.), so
 /// a control-rate parameter jump becomes a short per-sample ramp rather than a
 /// zipper step. Kept short enough to feel immediate while still gliding.
@@ -22,6 +27,10 @@ const FILTER_PEAK_SCAN_POINTS: usize = 96;
 const GROUP_DELAY_PROBE_RADIANS: f32 = 0.001;
 const MAX_FILTER_DELAY_COMPENSATION_SAMPLES: f32 = 8.0;
 const EXCITATION_WIDTH_FRACTION: f32 = 0.035;
+/// Excitation-window width fraction at full strike-position spread (M9 strum). A
+/// quarter of the string spreads the contact widely, combing out the high partials
+/// so a strum reads darker than a tight pick at the same level.
+const STRUM_WIDTH_FRACTION: f32 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct DelayTuning {
@@ -177,27 +186,45 @@ pub(super) fn delay_tuning(
 }
 
 pub(super) fn waveguide_geometry(strike_position: f32, pickup_position: f32) -> WaveguideGeometry {
-    let strike_position = STRIKE_POSITION.clamp(strike_position);
     let pickup_position = WAVEGUIDE_PICKUP_POSITION.clamp(pickup_position);
-    let half_width = EXCITATION_WIDTH_FRACTION * 0.5;
-
     WaveguideGeometry {
         pickup_position,
-        excitation_taps: [
-            PositionTap {
-                position: STRIKE_POSITION.clamp(strike_position - half_width),
-                gain: 0.25,
-            },
-            PositionTap {
-                position: strike_position,
-                gain: 0.5,
-            },
-            PositionTap {
-                position: STRIKE_POSITION.clamp(strike_position + half_width),
-                gain: 0.25,
-            },
-        ],
+        // The cached taps are the pre-M9 narrow contact (spread 0); the contact
+        // stage widens them at injection (M9) via `excitation_taps`.
+        excitation_taps: excitation_taps(strike_position, EXCITATION_WIDTH_FRACTION * 0.5),
     }
+}
+
+/// The three-tap excitation window centred on the strike position with a
+/// triangular `0.25 / 0.5 / 0.25` gain profile, spanning `±half_width` (clamped
+/// in-bounds). Pulled out of `waveguide_geometry` so the M9 contact stage can
+/// rebuild it at a spread-driven width at injection without re-running the cached
+/// prepared model.
+pub(super) fn excitation_taps(strike_position: f32, half_width: f32) -> [PositionTap; 3] {
+    let strike_position = STRIKE_POSITION.clamp(strike_position);
+    let half_width = math::finite_or(half_width, 0.0).max(0.0);
+    [
+        PositionTap {
+            position: STRIKE_POSITION.clamp(strike_position - half_width),
+            gain: 0.25,
+        },
+        PositionTap {
+            position: strike_position,
+            gain: 0.5,
+        },
+        PositionTap {
+            position: STRIKE_POSITION.clamp(strike_position + half_width),
+            gain: 0.25,
+        },
+    ]
+}
+
+/// Half-width of the excitation window for a normalised strike-position spread
+/// `0..1` (M9). Spread `0` returns the pre-M9 narrow pick half-width; spread `1`
+/// returns the wide-strum half-width, combing out the high partials.
+pub(super) fn excitation_half_width(spread: f32) -> f32 {
+    let spread = math::finite_clamp(spread, 0.0, 1.0, 0.0);
+    0.5 * (EXCITATION_WIDTH_FRACTION + spread * (STRUM_WIDTH_FRACTION - EXCITATION_WIDTH_FRACTION))
 }
 
 pub(super) fn position_delay_samples(loop_delay_samples: f32, position: f32) -> f32 {
@@ -377,6 +404,22 @@ mod tests {
         assert_eq!(position_delay_samples(100.0, 0.25), 25.0);
         assert_eq!(complementary_position_delay_samples(100.0, 0.25), 75.0);
         assert_eq!(position_delay_samples(f32::NAN, 0.25), 0.0);
+    }
+
+    #[test]
+    fn raised_decay_cap_extends_max_t60_past_old_limit() {
+        // M11 P2 step 1: the loop_gain → T60 map now tops out well past the old
+        // 2.5 s ceiling, so a near-unity loop can ring for many seconds. The
+        // maximum loop gain maps exactly to the cap.
+        let max_t60 = decay_seconds_from_loop_gain(WAVEGUIDE_LOOP_GAIN.max);
+        assert!(
+            max_t60 > 2.5,
+            "raised cap should extend max T60 past the old limit: {max_t60}"
+        );
+        assert!(
+            (max_t60 - WAVEGUIDE_DECAY_MAX_SECONDS).abs() < 1.0e-3,
+            "max loop gain should map to the cap: {max_t60}"
+        );
     }
 
     #[test]

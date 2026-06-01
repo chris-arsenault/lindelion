@@ -228,7 +228,10 @@ fn log_console_state() {
         ("stderr", STD_ERROR_HANDLE),
     ] {
         match unsafe { GetStdHandle(handle_id) } {
-            Ok(handle) => log(format!("launch: std_handle {name}=0x{:x}", handle.0 as isize)),
+            Ok(handle) => log(format!(
+                "launch: std_handle {name}=0x{:x}",
+                handle.0 as isize
+            )),
             Err(error) => log(format!("launch: std_handle {name}=error {error:?}")),
         }
     }
@@ -236,7 +239,10 @@ fn log_console_state() {
 
 #[cfg(windows)]
 fn utf16_array_to_string(buffer: &[u16]) -> String {
-    let len = buffer.iter().position(|ch| *ch == 0).unwrap_or(buffer.len());
+    let len = buffer
+        .iter()
+        .position(|ch| *ch == 0)
+        .unwrap_or(buffer.len());
     String::from_utf16_lossy(&buffer[..len])
 }
 
@@ -279,8 +285,8 @@ fn collect_windows() -> (windows::core::Result<()>, Vec<WindowProbe>) {
     }
 
     unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
         use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
         use windows::Win32::UI::WindowsAndMessaging::{
             GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
         };

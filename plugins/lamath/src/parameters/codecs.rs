@@ -34,6 +34,7 @@ enum DriverType {
     Sample,
     Pick,
     Reed,
+    Bow,
 }
 
 impl DriverType {
@@ -42,6 +43,7 @@ impl DriverType {
             DriverConfig::Sample => Self::Sample,
             DriverConfig::Pick(_) => Self::Pick,
             DriverConfig::Reed(_) => Self::Reed,
+            DriverConfig::Bow(_) => Self::Bow,
         }
     }
 
@@ -50,17 +52,19 @@ impl DriverType {
             Self::Sample => DriverConfig::Sample,
             Self::Pick => DriverConfig::Pick(pick_config_from(current)),
             Self::Reed => DriverConfig::Reed(reed_config_from(current)),
+            Self::Bow => DriverConfig::Bow(bow_config_from(current)),
         }
     }
 }
 
 lindelion_plugin_shell::define_parameter_codec! {
     impl ParameterCodec for DriverType {
-        max: 2;
+        max: 3;
         fallback: Self::Sample;
         0 => Self::Sample, "Sample";
         1 => Self::Pick, "Pick";
         2 => Self::Reed, "Reed";
+        3 => Self::Bow, "Bow";
     }
 }
 

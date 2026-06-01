@@ -9,18 +9,18 @@ const ENERGY_FOLLOWER_SECONDS: f32 = 0.010;
 /// Allocation-free per-sample energy/RMS follower: a one-pole smoother on the
 /// instantaneous power (`sample^2`), reported as RMS (`sqrt(mean_square)`).
 ///
-/// `lindelion-dsp-utils` only has a static `rms` over a slice
-/// ([ADR-0014](../../../../../docs/adr/0014-dynamic-response-effort-energy-bus.md)); this is the
-/// streaming form the effort/energy bus needs. Candidate extraction (ADR-0003): single consumer
-/// today, kept local in Lamath until a second product needs it.
+/// `lindelion-dsp-utils` only has a static `rms` over a slice (ADR-0014); this is the
+/// streaming form the effort/energy bus needs. Shared across the dynamic-response
+/// stages: the per-voice measured-energy bus (`modulation_state`) and the global
+/// sympathetic chamber's energy-scaled send (ADR-0028).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct EnergyFollower {
+pub(crate) struct EnergyFollower {
     mean_square: f32,
     coefficient: f32,
 }
 
 impl EnergyFollower {
-    pub(super) fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: f32) -> Self {
         let sample_rate = finite_or(sample_rate, DSP_FALLBACK_SAMPLE_RATE).max(1.0);
         let coefficient =
             finite_clamp(1.0 / (ENERGY_FOLLOWER_SECONDS * sample_rate), 0.0, 1.0, 1.0);
@@ -30,12 +30,12 @@ impl EnergyFollower {
         }
     }
 
-    pub(super) fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.mean_square = 0.0;
     }
 
     /// Fold one sample into the follower and return the current RMS estimate.
-    pub(super) fn observe(&mut self, sample: f32) -> f32 {
+    pub(crate) fn observe(&mut self, sample: f32) -> f32 {
         let sample = finite_or(sample, 0.0);
         let power = sample * sample;
         let mean_square = finite_or(self.mean_square, 0.0)

@@ -16,6 +16,7 @@ use crate::{
     ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,
 };
 
+mod energy_calibration;
 mod sanity;
 
 #[test]
@@ -365,6 +366,7 @@ fn resonator_stack_updates_routing_and_base_waveguide_state() {
             brightness: 0.0,
             effort: 1.0,
             energy: 0.0,
+            drive_gate: 1.0,
         },
         midi_note_to_hz(60.0),
         true,
@@ -385,7 +387,7 @@ fn resonator_stack_updates_routing_and_base_waveguide_state() {
         _ => panic!("expected resonator B to remain a waveguide"),
     }
 
-    let output = stack.process_sample(1.0, 0.0, 0.0);
+    let output = stack.process_sample(1.0, 0.0, 0.0, 1.0);
     assert!(output.is_finite());
 
     drain_resonator_stack_transitions(&mut stack, sample_rate);

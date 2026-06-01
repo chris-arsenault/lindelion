@@ -34,6 +34,10 @@ pub struct ResonatorSynthPatch {
     pub live_excitation: LiveExcitationConfig,
     #[serde(default)]
     pub driver: DriverConfig,
+    #[serde(default)]
+    pub contact: ContactConfig,
+    #[serde(default)]
+    pub surrounding: SurroundingConfig,
 }
 
 impl Default for ResonatorSynthPatch {
@@ -56,6 +60,8 @@ impl Default for ResonatorSynthPatch {
             note_detection: AudioNoteDetectionConfig::default(),
             live_excitation: LiveExcitationConfig::default(),
             driver: DriverConfig::default(),
+            contact: ContactConfig::default(),
+            surrounding: SurroundingConfig::default(),
         }
     }
 }
@@ -218,6 +224,10 @@ pub struct WaveguideConfig {
     pub position_of_strike: f32,
     #[serde(default = "default_boundary_reflection")]
     pub boundary_reflection: f32,
+    /// Energy-dependent source↔body balance depth `0..1` for the String output (M9; soft→
+    /// warm, loud→bright per M11 P8). String only; defaults 0.5 (P10), alive out of the box.
+    #[serde(default = "default_source_body_balance")]
+    pub source_body_balance: f32,
 }
 
 impl Default for WaveguideConfig {
@@ -233,6 +243,7 @@ impl Default for WaveguideConfig {
             dispersion: default_waveguide_dispersion(),
             position_of_strike: STRIKE_POSITION.default,
             boundary_reflection: default_boundary_reflection(),
+            source_body_balance: default_source_body_balance(),
         }
     }
 }
@@ -274,6 +285,11 @@ pub(crate) const fn default_boundary_reflection() -> f32 {
     TUBE_BOUNDARY.reflection.default
 }
 
+/// M11 P10 factory source↔body balance depth — non-zero so a default String is alive.
+pub(crate) const fn default_source_body_balance() -> f32 {
+    0.5
+}
+
 /// Selectable physical driver feeding the waveguide resonator (M8, ADR-0017). The
 /// default `Sample` driver is a transparent pass-through of the existing sample /
 /// sidechain excitation, so a patch without a driver behaves exactly as before.
@@ -286,6 +302,7 @@ pub enum DriverConfig {
     Sample,
     Pick(PickConfig),
     Reed(ReedConfig),
+    Bow(BowConfig),
 }
 
 /// Pick/hammer contact driver: a force-shaped contact transient that brightens with
@@ -329,6 +346,77 @@ impl Default for ReedConfig {
             embouchure: 0.5,
         }
     }
+}
+
+/// Bow friction driver: a continuous stick-slip friction excitation coupled to the
+/// string's velocity at the contact, so a held note sustains a bowed (Helmholtz)
+/// tone. Mouth-pressure has no analogue here — the player effort sets the bow normal
+/// force; below enough force the string is barely driven, above it a stable limit
+/// cycle builds. (Ranges are calibrated in M11 P10.)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BowConfig {
+    /// How much playing effort drives the bow normal force `0..1` (heavier = louder,
+    /// brighter, more locked-in).
+    pub pressure_depth: f32,
+    /// Bow speed `0..1`: the bow's velocity magnitude, setting the limit-cycle
+    /// amplitude and brightness (faster = brighter/louder).
+    pub bow_speed: f32,
+    /// Friction sharpness `0..1`: the stick-slip transition width. Smoother is a
+    /// pure sustained tone; sharper is a scratchier, more articulate attack.
+    pub friction: f32,
+}
+
+impl Default for BowConfig {
+    fn default() -> Self {
+        Self {
+            pressure_depth: 0.5,
+            bow_speed: 0.5,
+            friction: 0.5,
+        }
+    }
+}
+
+/// Coupling/contact stage between the driver and the resonator (M9), shaping a strike
+/// into a pick (tight) or a strum (spread). Both controls default to the transparent
+/// pre-M9 values, so a default patch is unchanged; waveguide String/Tube path only.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ContactConfig {
+    /// Excitation spread `0..1`: `0` is a tight pick (the narrow pre-M9 contact), `1`
+    /// is a wide strum. Playing effort widens it further (the gesture half of M9).
+    pub spread: f32,
+    /// Contact time `0..1`: `0` is an instant contact (sharp onset, transparent),
+    /// higher spreads the contact in time for a mellower, darker attack.
+    pub contact_time: f32,
+}
+
+impl Default for ContactConfig {
+    fn default() -> Self {
+        Self {
+            spread: 0.0,
+            contact_time: 0.0,
+        }
+    }
+}
+
+/// Effort/energy-scaled surrounding effects (M10) — the last "surrounding" link of
+/// the dynamic-response chain (ADR-0014). Each depth is `0..1` and defaults to `0`
+/// (defeated), so a default patch is unchanged. `mechanical_noise` and
+/// `radiation_brightness` are per-voice; `sympathetic` drives a shared, global
+/// sympathetic-resonance bank excited by the whole mix.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct SurroundingConfig {
+    /// Pick/breath mechanical-noise depth `0..1`: a force-shaped attack noise burst,
+    /// scaled by playing effort. `0` is silent.
+    #[serde(default)]
+    pub mechanical_noise: f32,
+    /// Radiation-brightening depth `0..1`: an energy-scaled high-shelf, so a more
+    /// energetically-sounding note radiates brighter. `0` is a flat (0 dB) shelf.
+    #[serde(default)]
+    pub radiation_brightness: f32,
+    /// Sympathetic-resonance depth `0..1` for the shared global bank excited by the
+    /// mix. `0` adds no sympathetic ringing.
+    #[serde(default)]
+    pub sympathetic: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -508,29 +596,5 @@ pub enum ModulationDestination {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_patch_uses_transparent_sample_driver() {
-        assert_eq!(DriverConfig::default(), DriverConfig::Sample);
-        assert_eq!(ResonatorSynthPatch::default().driver, DriverConfig::Sample);
-    }
-
-    #[test]
-    fn patch_with_physical_driver_roundtrips_through_toml() {
-        for driver in [
-            DriverConfig::Pick(PickConfig::default()),
-            DriverConfig::Reed(ReedConfig::default()),
-        ] {
-            let patch = ResonatorSynthPatch {
-                driver,
-                ..ResonatorSynthPatch::default()
-            };
-            let encoded = crate::patch_io::to_toml_string(&patch).expect("encode patch");
-            let decoded = crate::patch_io::from_toml_str(&encoded).expect("decode patch");
-            assert_eq!(decoded.driver, driver);
-            assert_eq!(decoded, patch);
-        }
-    }
-}
+#[path = "patch/tests.rs"]
+mod tests;
