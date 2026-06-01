@@ -2,14 +2,14 @@
 //!
 //! Ports hot-mic's `DynamicEqPlugin` (Low Boost, High Boost, Scale, Smoothing). Low-shelf boost
 //! tracks VoicingScore (more low warmth on voiced speech); high-shelf boost backs off with
-//! FricativeActivity (tame harsh fricatives). VoicingScore comes from the off-thread analysis
-//! worker; FricativeActivity is derived inline. Shelf gains are smoothed and updated per block.
+//! FricativeActivity (tame harsh fricatives). VoicingScore comes from the injected analysis
+//! snapshot; FricativeActivity is derived inline. Shelf gains are smoothed and updated per block.
 
 #![forbid(unsafe_code)]
 
 use lindelion_dsp_utils::filters::{Biquad, BiquadCoefficients};
 use lindelion_effect::{Effect, EffectParam};
-use lindelion_speech_signals::{AnalysisWorker, FricativeActivity};
+use lindelion_speech_signals::{FricativeActivity, SignalSnapshot};
 
 pub const PARAM_LOW_BOOST_DB: u32 = 0;
 pub const PARAM_HIGH_BOOST_DB: u32 = 1;
@@ -72,7 +72,7 @@ pub struct DynamicEq {
     smoothing_ms: f32,
     bypassed: bool,
     sample_rate: f32,
-    worker: Option<AnalysisWorker>,
+    snapshot: SignalSnapshot,
     fricative: FricativeActivity,
     last_fricative: f32,
     low_shelf: Biquad,
@@ -90,7 +90,7 @@ impl DynamicEq {
             smoothing_ms: 80.0,
             bypassed: false,
             sample_rate: 48_000.0,
-            worker: None,
+            snapshot: SignalSnapshot::default(),
             fricative: FricativeActivity::new(),
             last_fricative: 0.0,
             low_shelf: Biquad::new(BiquadCoefficients::identity()),
@@ -98,6 +98,12 @@ impl DynamicEq {
             low_gain_db: 0.0,
             high_gain_db: 0.0,
         }
+    }
+
+    /// Inject the latest analysis snapshot. The chain computes it once per block and injects it
+    /// before `process` (replacing the per-effect analysis worker).
+    pub fn set_snapshot(&mut self, snapshot: &SignalSnapshot) {
+        self.snapshot = *snapshot;
     }
 
     fn block_smooth(&self, block_len: usize) -> f32 {
@@ -138,7 +144,6 @@ impl Effect for DynamicEq {
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
         self.sample_rate = sample_rate;
         self.fricative.prepare(sample_rate);
-        self.worker = Some(AnalysisWorker::new(sample_rate as u32));
         self.low_shelf.reset();
         self.high_shelf.reset();
     }
@@ -147,13 +152,7 @@ impl Effect for DynamicEq {
         if self.bypassed || buffer.is_empty() {
             return;
         }
-        if let Some(worker) = &self.worker {
-            worker.push(buffer);
-        }
-        let voicing = self
-            .worker
-            .as_ref()
-            .map_or(0.0, |w| w.latest().voicing_score);
+        let voicing = self.snapshot.voicing_score;
 
         let target_low = low_target_db(self.low_boost_db, self.scale, voicing);
         let target_high = high_target_db(self.high_boost_db, self.scale, self.last_fricative);
@@ -201,6 +200,7 @@ impl Effect for DynamicEq {
         self.high_shelf.reset();
         self.low_gain_db = 0.0;
         self.high_gain_db = 0.0;
+        self.snapshot = SignalSnapshot::default();
     }
 
     fn save_state(&self) -> Vec<u8> {
@@ -241,11 +241,60 @@ impl Effect for DynamicEq {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lindelion_dsp_utils::analysis::windowed_dft_magnitude_at;
 
     #[test]
     fn voiced_boosts_lows_more_than_unvoiced() {
         // Low-shelf gain rises with voicing; high-shelf gain falls with fricative.
         assert!(low_target_db(2.0, 1.0, 1.0) > low_target_db(2.0, 1.0, 0.0));
         assert!(high_target_db(2.0, 1.0, 0.0) > high_target_db(2.0, 1.0, 1.0));
+    }
+
+    fn tone_150hz() -> Vec<f32> {
+        (0..16_384)
+            .map(|i| 0.3 * (std::f32::consts::TAU * 150.0 * i as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    fn process_with(snapshot: SignalSnapshot) -> Vec<f32> {
+        let mut effect = DynamicEq::new();
+        effect.prepare(48_000.0, 16_384);
+        effect.set_snapshot(&snapshot);
+        let mut buffer = tone_150hz();
+        effect.process(&mut buffer);
+        buffer
+    }
+
+    #[test]
+    fn injected_voicing_drives_low_shelf_and_only_voicing_score_is_read() {
+        // The inline fricative path is identical for the same input, so only the injected
+        // voicing_score can move the low shelf at 150 Hz.
+        let voiced = process_with(SignalSnapshot {
+            voicing_score: 1.0,
+            ..SignalSnapshot::default()
+        });
+        let unvoiced = process_with(SignalSnapshot {
+            voicing_score: 0.0,
+            ..SignalSnapshot::default()
+        });
+        let mag = |b: &[f32]| windowed_dft_magnitude_at(b, 48_000.0, 150.0);
+        assert!(
+            mag(&voiced) > mag(&unvoiced),
+            "injected voicing_score must raise the low shelf: {} vs {}",
+            mag(&unvoiced),
+            mag(&voiced)
+        );
+
+        // The low shelf reads voicing_score only: other fields set high must not change the output.
+        let other_fields_set = process_with(SignalSnapshot {
+            voicing_score: 0.0,
+            voicing_state: 2.0,
+            onset_flux_high: 1.0,
+            ..SignalSnapshot::default()
+        });
+        assert_eq!(
+            other_fields_set, unvoiced,
+            "dynamic EQ low shelf must read voicing_score only"
+        );
     }
 }

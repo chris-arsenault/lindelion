@@ -1,0 +1,189 @@
+format_version = 1
+
+[patch]
+order = "clarity"
+input_level_db = 6.0
+output_level_db = 0.0
+
+[patch.high_pass]
+enabled = true
+intensity = 1.0
+
+[patch.high_pass.params]
+cutoff = 100.0
+slope = 24.0
+
+[patch.noise_gate]
+enabled = true
+intensity = 1.0
+
+[patch.noise_gate.params]
+threshold = -40.0
+hysteresis = 4.0
+attack = 1.0
+hold = 50.0
+release = 100.0
+
+[patch.speech_denoiser]
+enabled = true
+intensity = 1.0
+
+[patch.speech_denoiser.params]
+mix = 100.0
+atten_limit = 100.0
+
+[patch.dereverberation]
+enabled = true
+intensity = 1.0
+
+[patch.dereverberation.params]
+amount = 60.0
+
+[patch.fft_noise_removal]
+enabled = false
+intensity = 1.0
+
+[patch.fft_noise_removal.params]
+amount = 60.0
+
+[patch.de_esser]
+enabled = true
+intensity = 1.0
+
+[patch.de_esser.params]
+center_freq = 6000.0
+bandwidth = 2000.0
+threshold = -30.0
+reduction = 6.0
+max_range = 10.0
+
+[patch.five_band_eq]
+enabled = true
+intensity = 1.0
+
+[patch.five_band_eq.params]
+hpf_freq = 80.0
+low_shelf_gain = 3.0
+low_shelf_freq = 120.0
+low_mid_gain = -3.0
+low_mid_freq = 300.0
+low_mid_q = 1.0
+high_mid_gain = 3.0
+high_mid_freq = 3000.0
+high_mid_q = 1.0
+high_shelf_gain = 2.0
+high_shelf_freq = 10000.0
+
+[patch.dynamic_eq]
+enabled = true
+intensity = 1.0
+
+[patch.dynamic_eq.params]
+low_boost = 2.0
+high_boost = 2.0
+scale = 1.0
+smoothing = 80.0
+
+[patch.compressor]
+enabled = true
+intensity = 1.0
+
+[patch.compressor.params]
+threshold = -20.0
+ratio = 4.0
+attack = 10.0
+release = 100.0
+knee = 6.0
+makeup = 0.0
+
+[patch.upward_expander]
+enabled = true
+intensity = 1.0
+
+[patch.upward_expander.params]
+amount = 20.0
+threshold = -35.0
+low_split = 200.0
+high_split = 3500.0
+attack = 8.0
+release = 120.0
+gate_strength = 0.8
+
+[patch.bass_enhancer]
+enabled = true
+intensity = 1.0
+
+[patch.bass_enhancer.params]
+amount = 50.0
+
+[patch.air_exciter]
+enabled = true
+intensity = 1.0
+
+[patch.air_exciter.params]
+amount = 40.0
+
+[patch.spectral_contrast]
+enabled = true
+intensity = 1.0
+
+[patch.spectral_contrast.params]
+amount = 50.0
+
+[patch.consonant_transient]
+enabled = true
+intensity = 1.0
+
+[patch.consonant_transient.params]
+amount = 40.0
+
+[patch.vitalizer]
+enabled = true
+intensity = 1.0
+
+[patch.vitalizer.params]
+bass = 4.0
+treble = 3.0
+drive = 30.0
+
+[patch.limiter]
+enabled = true
+intensity = 1.0
+
+[patch.limiter.params]
+ceiling = -1.0
+release = 50.0
+
+[patch.voice_gate]
+enabled = false
+intensity = 1.0
+
+[patch.voice_gate.params]
+threshold = 0.5
+attack = 5.0
+hold = 200.0
+release = 150.0
+reduction = 30.0
+
+[patch.saturation]
+enabled = false
+intensity = 1.0
+
+[patch.saturation.params]
+warmth = 50.0
+blend = 100.0
+
+[patch.room_tone]
+enabled = false
+intensity = 1.0
+
+[patch.room_tone.params]
+level = -40.0
+
+[patch.gain]
+enabled = true
+intensity = 1.0
+
+[patch.gain.params]
+gain = 0.0
+phase = 0.0

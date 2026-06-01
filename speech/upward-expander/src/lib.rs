@@ -3,8 +3,8 @@
 //! Ports hot-mic's `UpwardExpanderPlugin` (Amount, Scale, Threshold, Low/High Split, Attack,
 //! Release, Gate Strength). The signal is split into low / mid / high bands; per-band energy
 //! below threshold is boosted (upward expansion) by up to Amount, gated by SpeechPresence
-//! (inline) and VoicingState (from the worker, so silence is never expanded). Bands recombine to
-//! unity when no boost is applied.
+//! (inline) and VoicingState (from the injected analysis snapshot, so silence is never expanded).
+//! Bands recombine to unity when no boost is applied.
 
 #![forbid(unsafe_code)]
 
@@ -12,7 +12,7 @@ use lindelion_dsp_utils::envelope_follower::{DetectorMode, EnvelopeFollower};
 use lindelion_dsp_utils::filters::{Biquad, BiquadCoefficients};
 use lindelion_dsp_utils::{db_to_gain, gain_to_db};
 use lindelion_effect::{Effect, EffectParam};
-use lindelion_speech_signals::{AnalysisWorker, SpeechPresence};
+use lindelion_speech_signals::{SignalSnapshot, SpeechPresence};
 
 pub const PARAM_AMOUNT_PCT: u32 = 0;
 pub const PARAM_THRESHOLD_DB: u32 = 1;
@@ -101,7 +101,7 @@ pub struct UpwardExpander {
     gate_strength: f32,
     bypassed: bool,
     sample_rate: f32,
-    worker: Option<AnalysisWorker>,
+    snapshot: SignalSnapshot,
     presence: SpeechPresence,
     low_lpf: Biquad,
     high_hpf: Biquad,
@@ -122,7 +122,7 @@ impl UpwardExpander {
             gate_strength: 0.8,
             bypassed: false,
             sample_rate: 48_000.0,
-            worker: None,
+            snapshot: SignalSnapshot::default(),
             presence: SpeechPresence::new(),
             low_lpf: Biquad::new(BiquadCoefficients::identity()),
             high_hpf: Biquad::new(BiquadCoefficients::identity()),
@@ -130,6 +130,12 @@ impl UpwardExpander {
             mid_env: EnvelopeFollower::new(DetectorMode::Rms),
             high_env: EnvelopeFollower::new(DetectorMode::Rms),
         }
+    }
+
+    /// Inject the latest analysis snapshot. The chain computes it once per block and injects it
+    /// before `process` (replacing the per-effect analysis worker).
+    pub fn set_snapshot(&mut self, snapshot: &SignalSnapshot) {
+        self.snapshot = *snapshot;
     }
 
     fn reconfigure(&mut self) {
@@ -181,7 +187,6 @@ impl Effect for UpwardExpander {
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
         self.sample_rate = sample_rate;
         self.presence.prepare(sample_rate);
-        self.worker = Some(AnalysisWorker::new(sample_rate as u32));
         self.reconfigure();
     }
 
@@ -189,13 +194,7 @@ impl Effect for UpwardExpander {
         if self.bypassed || buffer.is_empty() {
             return;
         }
-        if let Some(worker) = &self.worker {
-            worker.push(buffer);
-        }
-        let voicing_state = self
-            .worker
-            .as_ref()
-            .map_or(0.0, |w| w.latest().voicing_state);
+        let voicing_state = self.snapshot.voicing_state;
         let speech_gate = voicing_state >= 0.5; // not silence
         let amount_db = self.amount_db();
 
@@ -254,6 +253,7 @@ impl Effect for UpwardExpander {
         self.low_env.reset();
         self.mid_env.reset();
         self.high_env.reset();
+        self.snapshot = SignalSnapshot::default();
     }
 
     fn save_state(&self) -> Vec<u8> {
@@ -300,6 +300,7 @@ impl Effect for UpwardExpander {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lindelion_dsp_utils::analysis::rms;
 
     #[test]
     fn boosts_quiet_when_present_not_in_silence() {
@@ -310,5 +311,54 @@ mod tests {
         assert_eq!(upward_gain_db(amount, -35.0, -45.0, 0.0), 0.0);
         // Above threshold -> no boost even when gated open.
         assert_eq!(upward_gain_db(amount, -35.0, -20.0, 1.0), 0.0);
+    }
+
+    /// A quiet (below-threshold) tone where `SpeechPresence` is > 0.
+    fn quiet_tone() -> Vec<f32> {
+        (0..16_384)
+            .map(|i| 0.005 * (std::f32::consts::TAU * 1_000.0 * i as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    fn process_with(snapshot: SignalSnapshot) -> Vec<f32> {
+        let mut effect = UpwardExpander::new();
+        effect.set_parameter(PARAM_AMOUNT_PCT, 100.0);
+        effect.prepare(48_000.0, 16_384);
+        effect.set_snapshot(&snapshot);
+        let mut buffer = quiet_tone();
+        effect.process(&mut buffer);
+        buffer
+    }
+
+    #[test]
+    fn injected_voicing_state_gates_boost_and_is_read_not_voicing_score() {
+        // Voiced (state >= 0.5): quiet detail is expanded. Silence (state 0): gated, unity.
+        let voiced = process_with(SignalSnapshot {
+            voicing_state: 2.0,
+            ..SignalSnapshot::default()
+        });
+        let silence = process_with(SignalSnapshot {
+            voicing_state: 0.0,
+            ..SignalSnapshot::default()
+        });
+        // Measure the settled second half.
+        assert!(
+            rms(&voiced[8_192..]) > rms(&silence[8_192..]),
+            "voiced state must open the expansion gate: {} vs {}",
+            rms(&silence[8_192..]),
+            rms(&voiced[8_192..])
+        );
+
+        // The gate reads voicing_state, not voicing_score: a high voicing_score with silent state
+        // stays gated (equal to the silence baseline).
+        let score_high_state_silent = process_with(SignalSnapshot {
+            voicing_state: 0.0,
+            voicing_score: 2.0,
+            ..SignalSnapshot::default()
+        });
+        assert_eq!(
+            score_high_state_silent, silence,
+            "upward expander gate must read voicing_state only"
+        );
     }
 }

@@ -425,6 +425,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "caloma"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-effect",
+ "lindelion-plugin-metadata",
+ "lindelion-plugin-shell",
+ "lindelion-sample-library",
+ "lindelion-speech-air-exciter",
+ "lindelion-speech-bass-enhancer",
+ "lindelion-speech-compressor",
+ "lindelion-speech-consonant-transient",
+ "lindelion-speech-de-esser",
+ "lindelion-speech-denoiser",
+ "lindelion-speech-dereverberation",
+ "lindelion-speech-dynamic-eq",
+ "lindelion-speech-fft-noise-removal",
+ "lindelion-speech-five-band-eq",
+ "lindelion-speech-gain",
+ "lindelion-speech-high-pass",
+ "lindelion-speech-limiter",
+ "lindelion-speech-noise-gate",
+ "lindelion-speech-room-tone",
+ "lindelion-speech-saturation",
+ "lindelion-speech-signals",
+ "lindelion-speech-spectral-contrast",
+ "lindelion-speech-upward-expander",
+ "lindelion-speech-vitalizer",
+ "lindelion-speech-voice-gate",
+ "lindelion-test-allocator",
+ "lindelion-ui",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+ "vst3",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

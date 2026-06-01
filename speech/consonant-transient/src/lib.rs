@@ -2,13 +2,14 @@
 //!
 //! Ports hot-mic's `Enhance-Consonant-Transient.md`. A fast vs. slow envelope detector measures
 //! transient strength (the attack overshoot); the signal is boosted during attacks, scaled by
-//! OnsetFluxHigh from the worker (baseline-floored). Reuses the shared envelope follower + worker.
+//! OnsetFluxHigh from the injected analysis snapshot (baseline-floored). Reuses the shared
+//! envelope follower.
 
 #![forbid(unsafe_code)]
 
 use lindelion_dsp_utils::envelope_follower::{DetectorMode, EnvelopeFollower};
 use lindelion_effect::{Effect, EffectParam};
-use lindelion_speech_signals::AnalysisWorker;
+use lindelion_speech_signals::SignalSnapshot;
 
 pub const PARAM_AMOUNT_PCT: u32 = 0;
 
@@ -34,8 +35,7 @@ pub fn transient_key(flux: f32) -> f32 {
 pub struct ConsonantTransient {
     amount_pct: f32,
     bypassed: bool,
-    sample_rate: f32,
-    worker: Option<AnalysisWorker>,
+    snapshot: SignalSnapshot,
     fast_env: EnvelopeFollower,
     slow_env: EnvelopeFollower,
 }
@@ -45,11 +45,16 @@ impl ConsonantTransient {
         Self {
             amount_pct: 40.0,
             bypassed: false,
-            sample_rate: 48_000.0,
-            worker: None,
+            snapshot: SignalSnapshot::default(),
             fast_env: EnvelopeFollower::new(DetectorMode::Rms),
             slow_env: EnvelopeFollower::new(DetectorMode::Rms),
         }
+    }
+
+    /// Inject the latest analysis snapshot. The chain computes it once per block and injects it
+    /// before `process` (replacing the per-effect analysis worker).
+    pub fn set_snapshot(&mut self, snapshot: &SignalSnapshot) {
+        self.snapshot = *snapshot;
     }
 
     fn amount(&self) -> f32 {
@@ -79,23 +84,15 @@ impl Effect for ConsonantTransient {
     }
 
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
-        self.sample_rate = sample_rate;
         self.fast_env.set_times(0.003, 0.020, sample_rate);
         self.slow_env.set_times(0.030, 0.120, sample_rate);
-        self.worker = Some(AnalysisWorker::new(sample_rate as u32));
     }
 
     fn process(&mut self, buffer: &mut [f32]) {
         if self.bypassed {
             return;
         }
-        if let Some(worker) = &self.worker {
-            worker.push(buffer);
-        }
-        let flux = self
-            .worker
-            .as_ref()
-            .map_or(0.0, |w| w.latest().onset_flux_high);
+        let flux = self.snapshot.onset_flux_high;
         let key = transient_key(flux);
         let amount = self.amount();
         for sample in buffer.iter_mut() {
@@ -122,6 +119,7 @@ impl Effect for ConsonantTransient {
     fn reset(&mut self) {
         self.fast_env.reset();
         self.slow_env.reset();
+        self.snapshot = SignalSnapshot::default();
     }
 
     fn save_state(&self) -> Vec<u8> {
@@ -146,6 +144,62 @@ mod tests {
     #[test]
     fn key_rises_with_onset_flux() {
         assert!(transient_key(1.0) > transient_key(0.0));
+    }
+
+    fn silence_then_tone() -> Vec<f32> {
+        let n = 12_000;
+        let onset = 4_000;
+        (0..n)
+            .map(|i| {
+                if i < onset {
+                    0.0
+                } else {
+                    0.5 * (std::f32::consts::TAU * 1_000.0 * i as f32 / 48_000.0).sin()
+                }
+            })
+            .collect()
+    }
+
+    fn process_with(snapshot: SignalSnapshot) -> Vec<f32> {
+        let mut effect = ConsonantTransient::new();
+        effect.set_parameter(PARAM_AMOUNT_PCT, 100.0);
+        effect.prepare(48_000.0, 1_024);
+        effect.set_snapshot(&snapshot);
+        let mut buffer = silence_then_tone();
+        effect.process(&mut buffer);
+        buffer
+    }
+
+    #[test]
+    fn injected_onset_flux_drives_emphasis_and_only_onset_flux_high_is_read() {
+        let high = process_with(SignalSnapshot {
+            onset_flux_high: 1.0,
+            ..SignalSnapshot::default()
+        });
+        let low = process_with(SignalSnapshot {
+            onset_flux_high: 0.0,
+            ..SignalSnapshot::default()
+        });
+        // The onset overshoot (just after sample 4_000) is emphasized more at higher onset flux.
+        let onset_peak = |b: &[f32]| peak_abs(&b[4_000..4_800]);
+        assert!(
+            onset_peak(&high) > onset_peak(&low),
+            "injected onset_flux_high must raise transient emphasis: {} vs {}",
+            onset_peak(&low),
+            onset_peak(&high)
+        );
+
+        // The effect reads onset_flux_high only: other fields set high must not change the output.
+        let other_fields_set = process_with(SignalSnapshot {
+            onset_flux_high: 0.0,
+            voicing_score: 1.0,
+            voicing_state: 2.0,
+            ..SignalSnapshot::default()
+        });
+        assert_eq!(
+            other_fields_set, low,
+            "consonant transient must read onset_flux_high only"
+        );
     }
 
     #[test]

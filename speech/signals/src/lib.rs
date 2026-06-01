@@ -13,7 +13,7 @@ pub mod worker;
 
 pub use analyzer::{SignalAnalyzer, SignalSnapshot};
 pub use inline::{FricativeActivity, SibilanceEnergy, SpeechPresence};
-pub use worker::AnalysisWorker;
+pub use worker::{AnalysisWorker, analysis_worker_constructions};
 
 #[cfg(test)]
 lindelion_test_allocator::install_test_allocator!();

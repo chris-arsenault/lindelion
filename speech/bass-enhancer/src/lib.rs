@@ -2,16 +2,16 @@
 //!
 //! Ports hot-mic's `Enhance-Bass-Enhancer.md`. The low band is isolated and soft-clipped to
 //! generate harmonics; the ear perceives bass from the harmonic series even without low-end
-//! power ("missing fundamental"). The blend is keyed by VoicingScore (from the worker) with a
-//! baseline so bass is emphasized on voiced speech but not fully gated off. Reuses dsp-utils
-//! filters + saturation + the worker.
+//! power ("missing fundamental"). The blend is keyed by VoicingScore (from the injected analysis
+//! snapshot) with a baseline so bass is emphasized on voiced speech but not fully gated off.
+//! Reuses dsp-utils filters + saturation.
 
 #![forbid(unsafe_code)]
 
 use lindelion_dsp_utils::filters::{Biquad, BiquadCoefficients};
 use lindelion_dsp_utils::saturation::soft_clip;
 use lindelion_effect::{Effect, EffectParam};
-use lindelion_speech_signals::AnalysisWorker;
+use lindelion_speech_signals::SignalSnapshot;
 
 pub const PARAM_AMOUNT_PCT: u32 = 0;
 
@@ -38,8 +38,7 @@ pub fn bass_gain(amount: f32, voicing: f32) -> f32 {
 pub struct BassEnhancer {
     amount_pct: f32,
     bypassed: bool,
-    sample_rate: f32,
-    worker: Option<AnalysisWorker>,
+    snapshot: SignalSnapshot,
     lpf: Biquad,
 }
 
@@ -48,10 +47,15 @@ impl BassEnhancer {
         Self {
             amount_pct: 50.0,
             bypassed: false,
-            sample_rate: 48_000.0,
-            worker: None,
+            snapshot: SignalSnapshot::default(),
             lpf: Biquad::new(BiquadCoefficients::identity()),
         }
+    }
+
+    /// Inject the latest analysis snapshot. The chain computes it once per block and injects it
+    /// before `process` (replacing the per-effect analysis worker).
+    pub fn set_snapshot(&mut self, snapshot: &SignalSnapshot) {
+        self.snapshot = *snapshot;
     }
 }
 
@@ -77,23 +81,15 @@ impl Effect for BassEnhancer {
     }
 
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
-        self.sample_rate = sample_rate;
         self.lpf
             .set_coefficients(BiquadCoefficients::lowpass(sample_rate, LOW_LPF_HZ, 0.707));
-        self.worker = Some(AnalysisWorker::new(sample_rate as u32));
     }
 
     fn process(&mut self, buffer: &mut [f32]) {
         if self.bypassed {
             return;
         }
-        if let Some(worker) = &self.worker {
-            worker.push(buffer);
-        }
-        let voicing = self
-            .worker
-            .as_ref()
-            .map_or(0.0, |w| w.latest().voicing_score);
+        let voicing = self.snapshot.voicing_score;
         let gain = bass_gain(self.amount_pct / 100.0, voicing);
         for sample in buffer.iter_mut() {
             let dry = *sample;
@@ -116,6 +112,7 @@ impl Effect for BassEnhancer {
 
     fn reset(&mut self) {
         self.lpf.reset();
+        self.snapshot = SignalSnapshot::default();
     }
 
     fn save_state(&self) -> Vec<u8> {
@@ -140,6 +137,53 @@ mod tests {
     #[test]
     fn voicing_raises_gain() {
         assert!(bass_gain(1.0, 1.0) > bass_gain(1.0, 0.0));
+    }
+
+    fn tone_100hz(n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| 0.4 * (std::f32::consts::TAU * 100.0 * i as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    fn process_with(snapshot: SignalSnapshot) -> Vec<f32> {
+        let mut effect = BassEnhancer::new();
+        effect.set_parameter(PARAM_AMOUNT_PCT, 100.0);
+        effect.prepare(48_000.0, 1_024);
+        effect.set_snapshot(&snapshot);
+        let mut buffer = tone_100hz(16_384);
+        effect.process(&mut buffer);
+        buffer
+    }
+
+    #[test]
+    fn injected_voicing_drives_bass_gain_and_only_voicing_score_is_read() {
+        let voiced = process_with(SignalSnapshot {
+            voicing_score: 1.0,
+            ..SignalSnapshot::default()
+        });
+        let unvoiced = process_with(SignalSnapshot {
+            voicing_score: 0.0,
+            ..SignalSnapshot::default()
+        });
+        let h2 = |b: &[f32]| windowed_dft_magnitude_at(b, 48_000.0, 200.0);
+        assert!(
+            h2(&voiced) > h2(&unvoiced),
+            "injected voicing_score must raise bass gain: {} vs {}",
+            h2(&unvoiced),
+            h2(&voiced)
+        );
+
+        // The effect reads voicing_score only: other fields set high must not change the output.
+        let other_fields_set = process_with(SignalSnapshot {
+            voicing_score: 0.0,
+            voicing_state: 2.0,
+            onset_flux_high: 1.0,
+            ..SignalSnapshot::default()
+        });
+        assert_eq!(
+            other_fields_set, unvoiced,
+            "bass enhancer must read voicing_score only"
+        );
     }
 
     #[test]
