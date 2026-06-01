@@ -22,7 +22,7 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 
 Lamath, Glirdir, and Linnod are the current macOS VST3 bundle targets. Use [macos-vst3-build.md](macos-vst3-build.md) for macOS build, install, inspect, and validator steps.
 
-The Galad Windows host (`galad`) is target-gated and excluded from `make ci`; it is cross-compiled and checked with `make host-windows-check`. See [galad/README.md](../galad/README.md) and [architecture.md](architecture.md#windows-vst3-host-galad).
+The Galad Windows host (`galad`) is target-gated and excluded from `make ci`; it is cross-compiled and checked with `make host-windows-check` (debug). `make host-windows-release` builds the optimized `galad.exe` into a separate target dir (`$(CACHE_DIR)/target-release`) so release artifacts never disturb the debug/dev caches. See [galad/README.md](../galad/README.md) and [architecture.md](architecture.md#windows-vst3-host-galad).
 
 ## Commit Baseline
 

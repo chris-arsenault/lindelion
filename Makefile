@@ -14,6 +14,10 @@ WINDOWS_PLUGINS ?= cenedril
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
+# Release Windows builds use their OWN target dir so optimized artifacts never invalidate or
+# compete with the day-to-day debug/dev caches (./target for make ci/test, and the dir above for
+# the debug Windows build / macOS bundles).
+LINDELION_RELEASE_TARGET_DIR ?= $(CACHE_DIR)/target-release
 BUNDLE_NAME ?= $(shell CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$(PLUGIN)" --field bundle-file)
 VST3_VALIDATOR ?= validator
 VST3_STAGING_DIR ?= $(CACHE_DIR)/bundles
@@ -21,7 +25,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build build-windows host-windows-check bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models test-integration check bench bench-smoke host-macos-check macos-check build build-windows windows-sdk-prep host-windows-check host-windows-release bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check
 
@@ -180,16 +184,17 @@ build-windows: cache-dir
 # Galad (the `galad/` Windows VST3 host) is excluded from `make ci` (ADR-0022); this is its
 # verify command — cross-compile the `galad` binary for the MSVC ABI from Linux via cargo-xwin.
 # Runtime verification (live audio, plugin hosting) happens on Windows in later milestones.
-host-windows-check: cache-dir
+# Shared cargo-xwin + Windows SDK prep for the galad host builds. Idempotent; operates on the shared
+# xwin SDK cache (not a target dir). The case-fix symlinks work around lld-link's case-sensitivity on
+# Linux: the xwin SDK ships lowercase import libs (e.g. `kernel32.lib`) while some link directives use
+# capitalized names. On a fresh cache the SDK downloads during the first build, so that first run may
+# fail at link — just re-run.
+windows-sdk-prep:
 	@if ! cargo xwin --version >/dev/null 2>&1; then \
-		echo "host-windows-check needs cargo-xwin. Install it with: cargo install cargo-xwin"; \
+		echo "Windows builds need cargo-xwin. Install it with: cargo install cargo-xwin"; \
 		exit 2; \
 	fi
 	@rustup target list --installed | grep -qx "$(WINDOWS_TARGET)" || rustup target add "$(WINDOWS_TARGET)"
-	@# Case-fix: lld-link is case-sensitive on Linux but the xwin SDK ships lowercase import libs
-	@# (e.g. `kernel32.lib`) while some link directives use capitalized names. Symlink capitalized
-	@# variants once the SDK is extracted. (On a fresh cache the SDK is downloaded during the first
-	@# build, so that first run may fail at link; re-run `make host-windows-check` to succeed.)
 	@for d in um ucrt; do \
 		dir="$(XWIN_CACHE_DIR)/xwin/sdk/lib/$$d/x86_64"; \
 		[ -d "$$dir" ] || continue; \
@@ -199,23 +204,35 @@ host-windows-check: cache-dir
 			if [ "$$cap" != "$$base" ] && [ ! -e "$$dir/$$cap" ]; then ln -s "$$base" "$$dir/$$cap"; fi; \
 		done; \
 	done
-	@# /FORCE:MULTIPLE resolves the skia<->windows ICU duplicate-symbol clash. Galad is the only target
-	@# that links BOTH skia (Vizia's renderer, which statically bundles ICU and exports ubrk_*/ures_*/...)
-	@# AND the `windows`/winit stack, whose monolithic `windows.0.52.0.lib` umbrella import lib drags in
-	@# icu.dll import stubs for the same symbols. The clean fix (granular raw-dylib imports) is unavailable
-	@# here: `--cfg windows_raw_dylib` flips windows-sys 0.52's fn ABI to `extern "C"` and breaks glutin's
-	@# DefWindowProcW; and the winit/glutin stack is pinned to windows-sys 0.52 (pre-granular) inside the
-	@# Vizia rev, so it cannot be bumped without forking Vizia. /FORCE:MULTIPLE keeps the first-seen
-	@# definition per symbol; nothing but skia actually CALLS these ICU functions at runtime. Whether
-	@# skia's own static ICU (correct) or the system icu.dll stub wins is link-order dependent and must be
-	@# confirmed on Windows hardware — consistent with galad's split where live behavior is always a
-	@# Windows field-check, never a make-ci gate. (Plugins never link the `windows` crate, so they never
-	@# hit this.)
+
+# /FORCE:MULTIPLE resolves the skia<->windows ICU duplicate-symbol clash. Galad is the only target that
+# links BOTH skia (Vizia's renderer, which statically bundles ICU and exports ubrk_*/ures_*/...) AND the
+# `windows`/winit stack, whose monolithic `windows.0.52.0.lib` umbrella import lib drags in icu.dll import
+# stubs for the same symbols. The clean fix (granular raw-dylib imports) is unavailable: `--cfg
+# windows_raw_dylib` flips windows-sys 0.52's fn ABI to `extern "C"` and breaks glutin's DefWindowProcW,
+# and the winit/glutin stack is pinned to windows-sys 0.52 inside the Vizia rev. /FORCE:MULTIPLE keeps the
+# first-seen definition; only skia CALLS these ICU functions, and which static-vs-stub wins is confirmed
+# on Windows hardware (galad's live behavior is always a Windows field-check, never a make-ci gate).
+host-windows-check: cache-dir windows-sdk-prep
 	CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
 	CARGO_INCREMENTAL=1 \
 	XWIN_ACCEPT_LICENSE=1 \
 	RUSTFLAGS="$(RUSTFLAGS) -C link-arg=/FORCE:MULTIPLE" \
 	cargo xwin build -p galad --target "$(WINDOWS_TARGET)"
+
+# Release build of the galad host. Uses a SEPARATE target dir ($(LINDELION_RELEASE_TARGET_DIR)) so the
+# optimized build never invalidates or competes with the debug/dev caches. Same skia/ICU /FORCE:MULTIPLE
+# workaround. The release exe still links the MSVC CRT dynamically (needs the VC++ 2015-2022
+# redistributable on the target); add `-C target-feature=+crt-static` to make it standalone if skia's
+# prebuilt CRT linkage allows.
+host-windows-release: cache-dir windows-sdk-prep
+	@mkdir -p "$(LINDELION_RELEASE_TARGET_DIR)"
+	CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
+	CARGO_INCREMENTAL=0 \
+	XWIN_ACCEPT_LICENSE=1 \
+	RUSTFLAGS="$(RUSTFLAGS) -C link-arg=/FORCE:MULTIPLE" \
+	cargo xwin build -p galad --release --target "$(WINDOWS_TARGET)"
+	@echo "Release galad.exe -> $(LINDELION_RELEASE_TARGET_DIR)/$(WINDOWS_TARGET)/release/galad.exe"
 	@echo "Built galad for $(WINDOWS_TARGET). Run it on Windows to verify runtime behavior."
 
 bundle-macos: build
