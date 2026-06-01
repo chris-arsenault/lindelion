@@ -22,6 +22,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `plugins/lamath` | Breath-excited resonator VST3 instrument. |
 | `plugins/linnod` | Melodic sample-slicer VST3 instrument with source analysis, patch model, realtime slice playback, editor bridge, and bundle metadata. |
 | `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: shared capture composition, phrase analysis, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
+| `host/` (`galad`) | Standalone Windows realtime VST3 *host* application: WASAPI microphone → an ordered chain of arbitrary VST3 plugins → output device. Target-gated Windows-only and excluded from `make ci`. See [Windows VST3 Host](#windows-vst3-host-galad). |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
 ## Shared Runtime Boundaries
@@ -134,6 +135,46 @@ Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plug
 | Glirdir `midi_export.rs` / `sample_library.rs` | SMF drag/export payloads and shared sample-library scratchpad ingest. |
 | Linnod `analysis.rs` / `analysis_job.rs` / `worker.rs` | Product orchestration around source-sample loading, SwiftF0 pitch detection, onset markers, and pitch-shift cache preparation. |
 | Linnod `runtime.rs` | Source-backed slice playback, prepared Resample Stretch buffer ownership, voice ownership, envelopes, filtering, panning, and output limiting. |
+
+## Windows VST3 Host (Galad)
+
+Galad (`host/`, package `galad`) is the **host side** of VST3 — the inverse of the plugin crates,
+which are the guest side. It is a standalone Windows application that runs a live microphone through
+an ordered chain of arbitrary standard VST3 plugins to an output device, with full device management.
+It loads Lindelion VST3s and third-party VST3s through the same path; it is a single-channel signal
+host, not a mixer or routing graph ([ADR-0022](adr/0022-windows-vst3-host.md)).
+
+- **Host-side VST3 on the raw `vst3` crate.** The host protocol — module scan/load, `GetPluginFactory`,
+  instantiate `IComponent`/`IAudioProcessor`/`IEditController`, drive `process`, implement
+  `IHostApplication`/`IComponentHandler`, attach `IPlugView` in a child `HWND` — is written against the
+  same COM bindings the plugins use guest-side, with no host framework ([ADR-0002](adr/0002-no-plugin-framework.md)).
+- **Neutral core, Windows shell.** The platform-neutral COM and host logic (instantiate/process driver,
+  chain, lock-free hand-off, session model, UI state/command model, meter math) is exercised in-process
+  on Linux against a test fixture plugin; the Windows COM/GUI shell (WASAPI, the `IPlugView`→`HWND`
+  attach, the Vizia views) is cross-compile-verified (cargo-xwin) and runtime-verified on Windows.
+  Galad is excluded from `make ci`.
+- **Native WASAPI audio.** A lock-free realtime duplex callback (capture → ring → render),
+  exclusive-mode primary with shared-mode fallback. The host runs the chain at the **device's** sample
+  rate and declares that rate to each plugin via `setupProcessing`; it performs no sample-rate
+  conversion (a plugin oversamples internally if it needs to), and input and output devices share a
+  rate. The default system input/output are pre-selected on launch.
+- **Lock-free control→audio hand-off with a persistent instance pool.** The audio thread owns one
+  immutable chain; chain edits publish a replacement and the old graph is reclaimed on the control
+  thread, never the audio thread. The controller keeps a persistent pool of plugin instances and the
+  chain is an *ordering* over them (shared via `Arc`), so reorder/bypass/add/remove preserve each
+  plugin's state ([ADR-0025](adr/0025-galad-chain-edit-state-pool.md)).
+- **Opaque per-plugin state, no parameter mirror.** Parameters are edited in each plugin's own native
+  editor window (hosted `IPlugView`); the host stores only each plugin's opaque `IComponent` state and
+  models no parameters of its own. A session is selected devices + the ordered chain (path + bypass +
+  opaque state) + scanned folders, persisted as versioned TOML.
+- **In-process plugin containment.** Plugins are validated at load and the chain output is finite-guarded;
+  full crash isolation (an out-of-process sandbox) is out of scope ([ADR-0026](adr/0026-galad-in-process-plugin-containment.md)).
+- **One UI framework.** The host control surface (device pickers, chain editor, meters, start/stop,
+  session save/load) is a standalone Vizia (winit) application; meters are read off the audio thread
+  through a wait-free seqlock snapshot ([ADR-0024](adr/0024-galad-ui-vizia.md), [ADR-0001](adr/0001-allocation-free-audio-thread.md)).
+
+The host's realtime callback obeys the same allocation-free, lock-free discipline as the plugins
+(below). Component reference: [`host/README.md`](../host/README.md).
 
 ## Real-Time Rule
 

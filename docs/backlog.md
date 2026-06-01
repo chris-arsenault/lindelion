@@ -33,8 +33,9 @@ Detailed milestones and the reuse/benchmark strategy live in
 - Build **Calóma**, the single VST3 packaging the speech-effect chain (signal-order parameter,
   normal-VST patches, compute-once analysis, e2e-tuned defaults). Decided in
   [ADR-0020](adr/0020-caloma-speech-vst-packaging.md); plan at `CALOMA-VST-PLAN.md`.
-- Build Galad, a Windows realtime VST3 host that runs Calóma (and any other VST3) on live mic
-  input ([ADR-0022](adr/0022-windows-vst3-host.md); plan at `GALAD-HOST-PLAN.md`).
+- Field-validate Galad on Windows against a matrix of third-party VST3 plugins and a stability/leak
+  soak run, recorded in [`host/PLUGIN-MATRIX.md`](../host/PLUGIN-MATRIX.md)
+  ([ADR-0022](adr/0022-windows-vst3-host.md)).
 - Build Cenedril, a Windows-only Visualizer VST3 (spectrogram, meters, analysis-signal display;
   [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `CENEDRIL-VST-PLAN.md`).
 - Build Lúmedir, a Windows-only Speech-Coach VST3 (cadence/rate, pitch dynamism, pauses, clarity vs

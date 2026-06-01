@@ -26,3 +26,5 @@
 | [0022](0022-windows-vst3-host.md) | Windows realtime VST3 host application | Accepted | 2026-05-31 |
 | [0023](0023-new-vsts-windows-only.md) | New VSTs target Windows: build path and Vizia editor | Accepted | 2026-05-31 |
 | [0024](0024-galad-ui-vizia.md) | Galad host UI uses Vizia (winit standalone), not egui | Accepted | 2026-06-01 |
+| [0025](0025-galad-chain-edit-state-pool.md) | Galad preserves plugin state across chain edits via a persistent instance pool | Accepted | 2026-06-01 |
+| [0026](0026-galad-in-process-plugin-containment.md) | Galad contains misbehaving plugins in-process, not via a sandbox | Accepted | 2026-06-01 |
