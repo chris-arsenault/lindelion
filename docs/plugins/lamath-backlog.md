@@ -47,6 +47,49 @@ root (`DYNAMIC-RESPONSE-PLAN.md`).
 
 ---
 
+## Shared-Body Idiophone Mode (re-strikable persistent resonator)
+
+Model idiophones (mesh cymbal/gong, bell) as a single **persistent, always-resonating body** that
+note-ons *re-strike* rather than as a per-note voice. A strike injects an excitation (force from
+velocity, position from pitch and/or a strike control) into the **live** body without choking the
+existing ring; note-off does nothing — only an explicit damp/choke gesture (hi-hat pedal, hand mute)
+stops the ring. Pitch becomes strike location/excitation, not a retuned per-voice resonator. No
+sample library does this (round-robin layers are the giveaway); it is feasible here because the 2D
+mesh is a real physical model, not samples.
+
+- **Today** is voice-per-note: each `Voice` owns its own resonator, so N held notes = N separate
+  bodies. `retrigger_resonators` (default off) already preserves a *reused* voice's ring on a
+  same-note re-hit-after-release — the seed of this — but it is not a shared body: held re-hits and
+  different pitches spawn separate resonators, and the per-note amp envelope re-shapes the output.
+- **Mechanism:** promote the idiophone resonator to a runtime-owned shared singleton fed by strike
+  events from the note stream; strings/tubes stay polyphonic-per-voice. The M10 sympathetic chamber
+  (`plugins/lamath/src/dsp/sympathetic_chamber.rs`,
+  [ADR-0025](../adr/0025-surrounding-effects-and-sympathetic-chamber.md)) is the existing
+  precedent — a persistent, steal-retuned shared resonant layer. The amp envelope must get out of
+  the way for this mode (sustain = 1, no per-note release; the body's own decay is the envelope).
+- **Sequencing:** build after the M11 voicing program (P2 gave the mesh a real multi-second ring;
+  P4/P7 give it body coloration and register behavior), then run `feature-start` on it.
+
+### M11 compatibility (scanned P3–P10): no hard lock-outs
+
+The M11 voicing program does not cement the voice/resonator architecture further — it tunes DSP that
+moves with the resonator whether it is per-voice or shared. Things to keep in mind when M11 runs:
+
+- **P7 (register-aware voicing) — watch this one.** The shared-body model makes the mesh a
+  *fixed-tuning struck body* (strike position = timbre), not a per-note-retuned pitched resonator, so
+  per-note Mesh decay/brightness/inharmonicity scaling would be partly *replaced* (not blocked).
+  Keep register-voicing a per-family function applied at trigger-config; do not over-invest in
+  per-note Mesh tuning. Strings/tubes register-voicing is unaffected and correct.
+- **P3 (drive-gate / note-off):** keep the resonator decoupled from a hard per-note amp choke (a
+  dedicated drive release with the natural ring as the tail) — already the recommended direction,
+  and it aligns with the no-choke body.
+- **P6 (micro-imperfection):** for the mesh, make aliveness body-intrinsic, not per-note-pitch.
+- **P9 (gain staging):** the per-voice `Voice::stage_peaks` taps would not cover a runtime-owned
+  shared body; it would need its own staging (as the M10 chamber already does). Additive, not
+  blocking.
+
+---
+
 ## Product And Storage Decisions
 
 - Add recommended default mode counts per modal template while preserving user override.
