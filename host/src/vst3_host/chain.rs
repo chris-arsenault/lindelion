@@ -4,16 +4,34 @@
 //! Input/output are **interleaved** stereo (matching the ring/Transport); internally the chain
 //! deinterleaves to planar L/R, ping-pongs between two preallocated buffer pairs across stages, and
 //! interleaves the result back. Bypass skips a stage (the signal stays in the "current" buffer).
+//!
+//! The chain does **not** own its plugins — it holds `Arc<PluginInstance>` shared with the
+//! controller's persistent instance pool ([`PoolSlot`]). Reordering/bypassing/adding/removing
+//! rebuilds only this ordering over the *same* live instances, so plugin state (parameters and
+//! transient DSP state) is preserved across edits; an instance is torn down (its `Drop` runs
+//! `setActive`/`terminate`) only when the last `Arc` — the pool slot and every chain that referenced
+//! it — is gone, which always happens on the control thread (the hand-off reclaims off the audio
+//! thread), never while the audio thread is processing it.
 
-use vst3::ComPtr;
-use vst3::Steinberg::Vst::{IAudioProcessorTrait, IComponent};
+use std::sync::Arc;
 
-use super::instance::{HostError, PluginInstance};
-use super::processing::{ProcessDriver, drive_process};
+use vst3::Steinberg::Vst::IAudioProcessorTrait;
 
-/// One slot: a prepared plugin and its bypass flag.
+use super::instance::PluginInstance;
+use super::module::LoadedModule;
+use super::processing::drive_process;
+
+/// One live, prepared plugin the controller keeps alive for the life of its chain slot: the loaded
+/// module (owns the DLL) and the shared instance. The `ChainProcessor` references the instance; the
+/// pool owns the slot.
+pub struct PoolSlot {
+    pub module: LoadedModule,
+    pub instance: Arc<PluginInstance>,
+}
+
+/// One slot: a shared (pooled) plugin and its bypass flag.
 pub struct ChainSlot {
-    instance: PluginInstance,
+    instance: Arc<PluginInstance>,
     bypassed: bool,
 }
 
@@ -26,35 +44,32 @@ pub struct ChainProcessor {
     b_right: Vec<f32>,
 }
 
-// Safe: a `ChainProcessor` is built on the control thread and handed to the audio thread (M3 Step 4);
-// it is processed only on the audio thread, never shared, so the COM `ComPtr`s stay single-threaded.
+// Safe: a `ChainProcessor` is built on the control thread and handed to the audio thread; it is
+// processed only on the audio thread (single consumer) and never dropped there (the hand-off retires
+// it for the control thread to reclaim). The shared `Arc<PluginInstance>`s are only *dereferenced*
+// (to call `process`) on the audio thread — never cloned or dropped there — so no refcount races.
 unsafe impl Send for ChainProcessor {}
 
 impl ChainProcessor {
-    /// Build and prepare a chain from `instances` (aligned with `bypass`), sized for `max_frames`.
-    pub fn new(
-        instances: Vec<PluginInstance>,
-        bypass: Vec<bool>,
-        sample_rate: f64,
-        max_frames: usize,
-    ) -> Result<Self, HostError> {
-        let driver = ProcessDriver::new(sample_rate, max_frames);
-        let mut slots = Vec::with_capacity(instances.len());
+    /// Build a chain over already-prepared `instances` (aligned with `bypass`), sized for
+    /// `max_frames`. The instances must already be set up + active (done once by the pool); building
+    /// or rebuilding a chain never (re)prepares them, so their state survives reordering.
+    pub fn new(instances: Vec<Arc<PluginInstance>>, bypass: Vec<bool>, max_frames: usize) -> Self {
         let mut bypass = bypass.into_iter();
-        for instance in instances {
-            driver.prepare(&instance)?;
-            slots.push(ChainSlot {
+        let slots = instances
+            .into_iter()
+            .map(|instance| ChainSlot {
                 instance,
                 bypassed: bypass.next().unwrap_or(false),
-            });
-        }
-        Ok(Self {
+            })
+            .collect();
+        Self {
             slots,
             a_left: vec![0.0; max_frames],
             a_right: vec![0.0; max_frames],
             b_left: vec![0.0; max_frames],
             b_right: vec![0.0; max_frames],
-        })
+        }
     }
 
     /// Process an interleaved stereo block in place through the (non-bypassed) chain.
@@ -89,26 +104,6 @@ impl ChainProcessor {
         }
     }
 
-    /// Number of slots in the chain.
-    pub fn len(&self) -> usize {
-        self.slots.len()
-    }
-
-    /// Whether the chain has no slots.
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
-    }
-
-    /// The `IComponent` of slot `idx`, for state capture.
-    pub fn component(&self, idx: usize) -> Option<&ComPtr<IComponent>> {
-        self.slots.get(idx).map(|slot| slot.instance.component())
-    }
-
-    /// Whether slot `idx` is bypassed.
-    pub fn is_bypassed(&self, idx: usize) -> bool {
-        self.slots.get(idx).is_some_and(|slot| slot.bypassed)
-    }
-
     /// Sum of `getLatencySamples` over the non-bypassed slots.
     pub fn aggregate_latency(&self) -> u32 {
         self.slots
@@ -128,8 +123,9 @@ fn finite_or_zero(sample: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vst3_host::HostContext;
     use crate::vst3_host::fixture::{gain_fixture_factory, nan_fixture_factory};
+    use crate::vst3_host::{HostContext, ProcessDriver};
+    use vst3::ComPtr;
     use vst3::Steinberg::Vst::IHostApplication;
 
     fn host() -> ComPtr<IHostApplication> {
@@ -138,24 +134,32 @@ mod tests {
             .expect("IHostApplication")
     }
 
-    fn instance(gain: f32, latency: u32) -> PluginInstance {
-        PluginInstance::from_factory(&gain_fixture_factory(gain, latency), &host())
-            .expect("instance")
+    /// A prepared (set up + active) instance, shared like the controller's pool does.
+    fn prepared(gain: f32, latency: u32) -> Arc<PluginInstance> {
+        let instance = PluginInstance::from_factory(&gain_fixture_factory(gain, latency), &host())
+            .expect("instance");
+        ProcessDriver::new(48_000.0, 512)
+            .prepare(&instance)
+            .expect("prepare");
+        Arc::new(instance)
     }
 
-    fn nan_instance() -> PluginInstance {
-        PluginInstance::from_factory(&nan_fixture_factory(), &host()).expect("instance")
+    fn nan_instance() -> Arc<PluginInstance> {
+        let instance =
+            PluginInstance::from_factory(&nan_fixture_factory(), &host()).expect("instance");
+        ProcessDriver::new(48_000.0, 512)
+            .prepare(&instance)
+            .expect("prepare");
+        Arc::new(instance)
     }
 
     #[test]
     fn two_gain_slots_scale_by_product() {
         let mut chain = ChainProcessor::new(
-            vec![instance(0.5, 0), instance(0.5, 0)],
+            vec![prepared(0.5, 0), prepared(0.5, 0)],
             vec![false, false],
-            48_000.0,
             512,
-        )
-        .expect("chain");
+        );
         let mut stereo = vec![1.0f32, 1.0, 2.0, 2.0]; // 2 frames
         chain.process_in_place(&mut stereo);
         assert_eq!(stereo, vec![0.25, 0.25, 0.5, 0.5]);
@@ -164,12 +168,10 @@ mod tests {
     #[test]
     fn bypassed_slot_is_skipped() {
         let mut chain = ChainProcessor::new(
-            vec![instance(0.5, 0), instance(0.5, 0)],
+            vec![prepared(0.5, 0), prepared(0.5, 0)],
             vec![false, true],
-            48_000.0,
             512,
-        )
-        .expect("chain");
+        );
         let mut stereo = vec![1.0f32, 1.0];
         chain.process_in_place(&mut stereo);
         assert_eq!(stereo, vec![0.5, 0.5]);
@@ -178,47 +180,63 @@ mod tests {
     #[test]
     fn both_bypassed_is_identity() {
         let mut chain = ChainProcessor::new(
-            vec![instance(0.5, 0), instance(0.5, 0)],
+            vec![prepared(0.5, 0), prepared(0.5, 0)],
             vec![true, true],
-            48_000.0,
             512,
-        )
-        .expect("chain");
+        );
         let mut stereo = vec![0.3f32, 0.7];
         chain.process_in_place(&mut stereo);
         assert_eq!(stereo, vec![0.3, 0.7]);
     }
 
     #[test]
+    fn reordering_reuses_instances_and_preserves_them() {
+        // The pool owns the instances; chains hold shared clones. Rebuilding in a new order must not
+        // recreate or drop them — the pool's `Arc`s keep them alive across the rebuild.
+        let pool = [prepared(0.5, 0), prepared(0.25, 0)];
+        let forward = ChainProcessor::new(
+            vec![pool[0].clone(), pool[1].clone()],
+            vec![false, false],
+            512,
+        );
+        // Rebuild reversed from the same pooled instances; the forward chain is dropped here.
+        drop(forward);
+        let mut reversed = ChainProcessor::new(
+            vec![pool[1].clone(), pool[0].clone()],
+            vec![false, false],
+            512,
+        );
+        // Each instance is still alive (pool + chain) and processes (0.25 * 0.5 = 0.125 either order).
+        assert_eq!(Arc::strong_count(&pool[0]), 2);
+        let mut stereo = vec![1.0f32, 1.0];
+        reversed.process_in_place(&mut stereo);
+        assert_eq!(stereo, vec![0.125, 0.125]);
+    }
+
+    #[test]
     fn aggregate_latency_sums_active_slots() {
         let active = ChainProcessor::new(
-            vec![instance(1.0, 3), instance(1.0, 4)],
+            vec![prepared(1.0, 3), prepared(1.0, 4)],
             vec![false, false],
-            48_000.0,
             512,
-        )
-        .expect("chain");
+        );
         assert_eq!(active.aggregate_latency(), 7);
 
         let bypassed = ChainProcessor::new(
-            vec![instance(1.0, 3), instance(1.0, 4)],
+            vec![prepared(1.0, 3), prepared(1.0, 4)],
             vec![true, true],
-            48_000.0,
             512,
-        )
-        .expect("chain");
+        );
         assert_eq!(bypassed.aggregate_latency(), 0);
     }
 
     #[test]
     fn process_in_place_is_allocation_free() {
         let mut chain = ChainProcessor::new(
-            vec![instance(0.5, 0), instance(0.5, 0)],
+            vec![prepared(0.5, 0), prepared(0.5, 0)],
             vec![false, false],
-            48_000.0,
             512,
-        )
-        .expect("chain");
+        );
         let mut stereo = vec![0.5f32; 256];
         lindelion_test_allocator::assert_no_allocations("chain process", || {
             chain.process_in_place(&mut stereo);
@@ -227,8 +245,7 @@ mod tests {
 
     #[test]
     fn nan_plugin_output_is_sanitized_to_finite() {
-        let mut chain =
-            ChainProcessor::new(vec![nan_instance()], vec![false], 48_000.0, 512).expect("chain");
+        let mut chain = ChainProcessor::new(vec![nan_instance()], vec![false], 512);
         let mut stereo = vec![0.5f32; 256];
         // The guard runs on the audio path, so it must also be allocation-free (ADR-0001).
         lindelion_test_allocator::assert_no_allocations("chain nan guard", || {

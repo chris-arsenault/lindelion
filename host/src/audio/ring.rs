@@ -42,18 +42,6 @@ impl AudioRing {
         self.mask + 1
     }
 
-    /// Number of samples currently buffered.
-    pub fn available(&self) -> usize {
-        let write = self.write.load(Ordering::Acquire);
-        let read = self.read.load(Ordering::Acquire);
-        write.wrapping_sub(read)
-    }
-
-    /// Number of free sample slots.
-    pub fn free(&self) -> usize {
-        self.capacity() - self.available()
-    }
-
     /// Push as many of `src`'s samples as fit; returns the count written. Producer side only.
     pub fn push(&self, src: &[f32]) -> usize {
         let write = self.write.load(Ordering::Relaxed);

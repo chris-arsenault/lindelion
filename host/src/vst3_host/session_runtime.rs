@@ -1,15 +1,16 @@
 //! Session capture/restore orchestration — bridge a live chain (paths + components + bypass) and a
 //! serializable [`HostSession`]. `capture_session` reads each plugin's opaque state out;
-//! `restore_chain` loads the modules back, instantiates, restores state, and rebuilds the chain.
+//! `restore_pool` loads the modules back, instantiates, and restores state into a shared pool.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use vst3::ComPtr;
 use vst3::Steinberg::Vst::{IComponent, IHostApplication};
 
-use super::chain::ChainProcessor;
+use super::chain::PoolSlot;
 use super::instance::{HostError, PluginInstance};
-use super::module::{LoadedModule, load_module};
+use super::module::load_module;
 use super::state::{capture_state, restore_state};
 use crate::session::{
     AppSettings, ChainSlot, DeviceRef, HostSession, PluginStateBlob, SESSION_FORMAT_VERSION,
@@ -49,32 +50,27 @@ pub fn capture_session(
     }
 }
 
-/// Rebuild a chain from a [`HostSession`]: load each module, instantiate, restore its state, and
-/// build the [`ChainProcessor`]. Returns the loaded modules (which must outlive the chain — they own
-/// the DLLs) together with the chain.
-pub fn restore_chain(
+/// Restore the plugin **pool** from a [`HostSession`]: load each module, instantiate, and restore its
+/// opaque state. Returns the pool (modules + shared instances), in session order; the caller prepares
+/// the instances at the device rate and builds a [`ChainProcessor`] over them. The instances are not
+/// prepared here (no rate is known yet), and bypass lives in the session/UI, not the pool.
+pub fn restore_pool(
     session: &HostSession,
     host: &ComPtr<IHostApplication>,
-    sample_rate: f64,
-    max_frames: usize,
-) -> Result<(Vec<LoadedModule>, ChainProcessor), HostError> {
-    let mut modules = Vec::with_capacity(session.chain.len());
-    let mut instances = Vec::with_capacity(session.chain.len());
-    let mut bypass = Vec::with_capacity(session.chain.len());
-
+) -> Result<Vec<PoolSlot>, HostError> {
+    let mut pool = Vec::with_capacity(session.chain.len());
     for slot in &session.chain {
         let module = load_module(&slot.plugin_path)?;
         let instance = PluginInstance::from_factory(module.factory(), host)?;
         if let Some(blob) = &slot.state {
             restore_state(instance.component(), &blob.payload);
         }
-        instances.push(instance);
-        bypass.push(slot.bypassed);
-        modules.push(module);
+        pool.push(PoolSlot {
+            module,
+            instance: Arc::new(instance),
+        });
     }
-
-    let chain = ChainProcessor::new(instances, bypass, sample_rate, max_frames)?;
-    Ok((modules, chain))
+    Ok(pool)
 }
 
 #[cfg(test)]

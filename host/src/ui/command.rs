@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use super::state::{Dir, HostUiState};
 use crate::session::DeviceRef;
 
-/// A command emitted by the UI.
+/// A command emitted by the UI that has a **framework-neutral state effect**. Purely effectful
+/// actions (open editor, save/load session) are not modelled here — the controller performs those
+/// directly, since they need the engine/disk and have no neutral state to apply.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiCommand {
     SelectInput(DeviceRef),
@@ -18,14 +20,9 @@ pub enum UiCommand {
     ToggleBypass(usize),
     Start,
     Stop,
-    OpenEditor(usize),
-    SaveSession(PathBuf),
-    LoadSession(PathBuf),
 }
 
-/// Apply the **state** part of `cmd` to `state`. Device selection, chain edits, and the `running`
-/// flag are handled here; `OpenEditor`/`SaveSession`/`LoadSession` are controller-only (their state,
-/// if any, is driven by the controller since it needs the engine/disk).
+/// Apply the state part of `cmd` to `state`.
 pub fn apply(state: &mut HostUiState, cmd: &UiCommand) {
     match cmd {
         UiCommand::SelectInput(device) => state.select_input(device.clone()),
@@ -36,7 +33,6 @@ pub fn apply(state: &mut HostUiState, cmd: &UiCommand) {
         UiCommand::ToggleBypass(index) => state.toggle_bypass(*index),
         UiCommand::Start => state.running = true,
         UiCommand::Stop => state.running = false,
-        UiCommand::OpenEditor(_) | UiCommand::SaveSession(_) | UiCommand::LoadSession(_) => {}
     }
 }
 

@@ -160,14 +160,15 @@ fn run_passthrough_command(_input: Option<String>, _output: Option<String>) {
 #[cfg(windows)]
 fn run_chain_command(args: Vec<String>) {
     use std::path::Path;
+    use std::sync::Arc;
 
     use vst3::Steinberg::Vst::IHostApplication;
 
     use crate::audio::AudioEngine;
     use crate::session::{AppSettings, DeviceRef};
     use crate::vst3_host::{
-        ChainProcessor, HostContext, LoadedModule, PluginInstance, SessionSlot, capture_session,
-        load_module,
+        ChainProcessor, HostContext, LoadedModule, PluginInstance, ProcessDriver, SessionSlot,
+        capture_session, load_module,
     };
 
     // Parse an optional `--save <file>` from anywhere in the args; the rest are positional.
@@ -199,10 +200,18 @@ fn run_chain_command(args: Vec<String>) {
         .to_com_ptr::<IHostApplication>()
         .expect("host exposes IHostApplication");
 
-    // The loaded modules must outlive the engine/chain (they own the DLLs the plugins live in), so
-    // keep them in this outer scope — it drops *after* the engine below.
+    // Prepare the plugins at the input device's actual sample rate (the rate the engine runs at) so
+    // plugins are told the true rate — the host declares it, it does not resample. 4096-frame blocks.
+    let sample_rate = crate::audio::device_sample_rate(&input)
+        .map(|rate| rate as f64)
+        .unwrap_or(48_000.0);
+    let driver = ProcessDriver::new(sample_rate, 4096);
+
+    // The modules + instances must outlive the engine/chain (the modules own the DLLs; the instances
+    // are shared with the chain via `Arc`), so keep them in this outer scope — they drop *after* the
+    // engine below.
     let mut modules: Vec<LoadedModule> = Vec::new();
-    let mut instances = Vec::new();
+    let mut instances: Vec<Arc<PluginInstance>> = Vec::new();
     for path in &plugin_paths {
         let module = match load_module(Path::new(path)) {
             Ok(module) => module,
@@ -213,6 +222,11 @@ fn run_chain_command(args: Vec<String>) {
         };
         match PluginInstance::from_factory(module.factory(), &host) {
             Ok(instance) => {
+                let instance = Arc::new(instance);
+                if let Err(error) = driver.prepare(&instance) {
+                    eprintln!("failed to prepare {path}: {error:?}");
+                    std::process::exit(1);
+                }
                 instances.push(instance);
                 modules.push(module);
             }
@@ -224,15 +238,11 @@ fn run_chain_command(args: Vec<String>) {
     }
 
     let bypass = vec![false; instances.len()];
-    // Prepared at 48 kHz / 4096-frame blocks (the field-check default); the M6 UI negotiates the
-    // device rate properly.
-    let chain = match ChainProcessor::new(instances, bypass, 48_000.0, 4096) {
-        Ok(chain) => Box::new(chain),
-        Err(error) => {
-            eprintln!("failed to prepare chain: {error:?}");
-            std::process::exit(1);
-        }
-    };
+    let chain = Box::new(ChainProcessor::new(
+        instances.iter().cloned().collect(),
+        bypass.clone(),
+        4096,
+    ));
 
     match AudioEngine::start_with_chain(input.clone(), output.clone(), chain) {
         Ok(mut engine) => {
@@ -245,34 +255,26 @@ fn run_chain_command(args: Vec<String>) {
             let mut line = String::new();
             let _ = std::io::stdin().read_line(&mut line);
 
-            match save {
-                Some(file) => {
-                    // Recover the final chain (still initialized) and capture each plugin's state.
-                    if let Some(chain) = engine.stop_and_take() {
-                        let slots: Vec<SessionSlot> = plugin_paths
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, path)| {
-                                chain.component(i).map(|component| SessionSlot {
-                                    plugin_path: std::path::PathBuf::from(path),
-                                    component,
-                                    bypassed: chain.is_bypassed(i),
-                                })
-                            })
-                            .collect();
-                        let session = capture_session(
-                            &slots,
-                            Some(input),
-                            Some(output),
-                            AppSettings::default(),
-                        );
-                        match session.save(&file) {
-                            Ok(()) => println!("saved session to {file}"),
-                            Err(error) => eprintln!("failed to save session: {error:?}"),
-                        }
-                    }
+            engine.stop();
+            if let Some(file) = save {
+                // Capture each plugin's state from the still-alive instances (the pool outlives the
+                // engine).
+                let slots: Vec<SessionSlot> = plugin_paths
+                    .iter()
+                    .zip(&instances)
+                    .enumerate()
+                    .map(|(i, (path, instance))| SessionSlot {
+                        plugin_path: std::path::PathBuf::from(path),
+                        component: instance.component(),
+                        bypassed: bypass[i],
+                    })
+                    .collect();
+                let session =
+                    capture_session(&slots, Some(input), Some(output), AppSettings::default());
+                match session.save(&file) {
+                    Ok(()) => println!("saved session to {file}"),
+                    Err(error) => eprintln!("failed to save session: {error:?}"),
                 }
-                None => engine.stop(),
             }
         }
         Err(error) => {
@@ -297,7 +299,7 @@ fn run_session_command(file: Option<String>) {
 
     use crate::audio::AudioEngine;
     use crate::session::HostSession;
-    use crate::vst3_host::{HostContext, restore_chain};
+    use crate::vst3_host::{ChainProcessor, HostContext, ProcessDriver, restore_pool};
 
     let Some(file) = file else {
         eprintln!("usage: galad session <session.toml>");
@@ -319,14 +321,31 @@ fn run_session_command(file: Option<String>) {
         .to_com_ptr::<IHostApplication>()
         .expect("host exposes IHostApplication");
 
-    // Modules must outlive the engine/chain; bind first so they drop *after* the engine.
-    let (_modules, chain) = match restore_chain(&session, &host, 48_000.0, 4096) {
-        Ok(restored) => restored,
+    // The pool (modules + instances) must outlive the engine/chain; bind first so it drops *after* the
+    // engine. Prepare at the input device's actual rate (the rate the engine runs at), not a default.
+    let sample_rate = crate::audio::device_sample_rate(&input)
+        .map(|rate| rate as f64)
+        .unwrap_or(48_000.0);
+    let pool = match restore_pool(&session, &host) {
+        Ok(pool) => pool,
         Err(error) => {
-            eprintln!("failed to restore chain: {error:?}");
+            eprintln!("failed to restore session: {error:?}");
             std::process::exit(1);
         }
     };
+    let driver = ProcessDriver::new(sample_rate, 4096);
+    for slot in &pool {
+        if let Err(error) = driver.prepare(&slot.instance) {
+            eprintln!("failed to prepare plugin: {error:?}");
+            std::process::exit(1);
+        }
+    }
+    let bypass: Vec<bool> = session.chain.iter().map(|slot| slot.bypassed).collect();
+    let chain = ChainProcessor::new(
+        pool.iter().map(|slot| slot.instance.clone()).collect(),
+        bypass,
+        4096,
+    );
 
     match AudioEngine::start_with_chain(input, output, Box::new(chain)) {
         Ok(mut engine) => {

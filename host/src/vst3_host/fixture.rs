@@ -44,10 +44,6 @@ pub(super) struct FixtureProcessor {
 }
 
 impl FixtureProcessor {
-    pub(super) fn new(gain: f32, latency: u32) -> Self {
-        Self::with_behavior(gain, latency, FixtureBehavior::Passthrough)
-    }
-
     pub(super) fn with_behavior(gain: f32, latency: u32, behavior: FixtureBehavior) -> Self {
         FixtureProcessor {
             gain,

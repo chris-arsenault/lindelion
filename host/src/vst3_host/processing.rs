@@ -83,10 +83,18 @@ impl ProcessDriver {
     }
 
     /// Run the full prepare sequence (stereo bus arrangement, 32-bit setup, activate, start).
+    ///
+    /// Safe to re-run on an already-prepared instance (it quiesces first), so a pooled instance can
+    /// be re-prepared at a new sample rate without being destroyed — its state survives, since
+    /// `setActive`/`setupProcessing` do not clear the component's parameters.
     pub fn prepare(&self, instance: &PluginInstance) -> Result<(), HostError> {
         let processor = instance.processor();
         let component = instance.component();
         unsafe {
+            // Quiesce first so re-preparation is legal (`setupProcessing` requires an inactive
+            // component); harmless on a fresh, already-inactive instance.
+            processor.setProcessing(0);
+            component.setActive(0);
             let mut stereo_in: SpeakerArrangement = SpeakerArr::kStereo;
             let mut stereo_out: SpeakerArrangement = SpeakerArr::kStereo;
             if processor.setBusArrangements(&mut stereo_in, 1, &mut stereo_out, 1) != kResultTrue {

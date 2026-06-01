@@ -14,8 +14,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
 #![allow(unsafe_op_in_unsafe_fn)]
-// Pieces are wired into `main` incrementally across M1 (the spike entry point lands in Step 6);
-// allow dead code and not-yet-consumed re-exports until then.
+// This host-side VST3 layer is a neutral COM core consumed by the Windows-only engine/UI and by
+// tests; its re-exports and helpers — plus error-variant payloads kept for `{:?}` and `PoolSlot`'s
+// DLL-lifetime guard field — read as unused on the neutral, non-test build.
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
@@ -40,7 +41,7 @@ mod spike;
 mod state;
 mod validate;
 
-pub use chain::ChainProcessor;
+pub use chain::{ChainProcessor, PoolSlot};
 #[cfg(windows)]
 pub use editor::EditorHost;
 pub use editor_controller::EditorController;
@@ -50,7 +51,7 @@ pub use host_context::HostContext;
 pub use instance::{HostError, PluginInstance};
 pub use module::{LoadedModule, load_module};
 pub use processing::ProcessDriver;
-pub use session_runtime::{SessionSlot, capture_session, restore_chain};
+pub use session_runtime::{SessionSlot, capture_session, restore_pool};
 pub use spike::{SpikeReport, run_spike};
 pub use state::{capture_state, restore_state};
 pub use validate::validate_plugin;

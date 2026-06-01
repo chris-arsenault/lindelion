@@ -90,11 +90,6 @@ impl EditorWindow {
         }
     }
 
-    /// The host window handle.
-    pub fn hwnd(&self) -> HWND {
-        self.hwnd
-    }
-
     /// Apply any pending plugin-requested resize (`IPlugFrame::resizeView`) to the window.
     pub fn apply_pending_resize(&self) {
         if let Some((w, h)) = self.frame.take_requested_size() {

@@ -7,9 +7,8 @@
 //! plugin-shell crate. M0 round-trips in memory (serialize → deserialize); disk persistence and
 //! restore-on-launch are M4.
 //!
-//! The model is the M0 deliverable and is exercised by its own round-trip tests, but it is not yet
-//! consumed by `main` — the audio engine (M2) and persistence (M4) wire it in. Allow dead code
-//! until then rather than prematurely exposing a partial app entry point.
+//! `dead_code`: the error-variant payloads are carried for `{:?}` diagnostics, and `to_session` is
+//! the round-trip-tested inverse of `load_session` — both read as unused on the non-test build.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};

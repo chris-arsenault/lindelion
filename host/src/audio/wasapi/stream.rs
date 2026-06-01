@@ -146,6 +146,24 @@ impl WasapiStream {
     }
 }
 
+/// Read a device's mix-format sample rate without opening/starting a stream. `open` initializes both
+/// exclusive and shared modes with this same mix format (it only negotiates share-mode + buffer
+/// size, never the rate), so this is exactly the rate the engine will run at — the chain can be
+/// prepared at it before starting. The host declares the true device rate to plugins; it never
+/// resamples.
+pub fn device_sample_rate(device: &DeviceRef) -> Result<u32, AudioError> {
+    unsafe {
+        let enumerator = device_enumerator()?;
+        let wide: Vec<u16> = device.id.encode_utf16().chain(std::iter::once(0)).collect();
+        let imm = enumerator.GetDevice(PCWSTR(wide.as_ptr()))?;
+        let client: IAudioClient = imm.Activate(CLSCTX_ALL, None)?;
+        let mix = client.GetMixFormat()?;
+        let rate = (*mix).nSamplesPerSec;
+        CoTaskMemFree(Some(mix as *const core::ffi::c_void));
+        Ok(rate)
+    }
+}
+
 /// `Initialize` the client event-driven, retrying once with the device-aligned size on
 /// `AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED` (the documented exclusive-mode retry).
 unsafe fn initialize_event_driven(

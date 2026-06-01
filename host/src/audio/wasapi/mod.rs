@@ -7,6 +7,8 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(unsafe_op_in_unsafe_fn)]
+// COM FFI with camelCase/unsafe signatures. The re-export surface, some helpers, and the
+// `MeasuredLatency` per-stage breakdown are consumed across the engine; a few read as unused here.
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
@@ -16,4 +18,4 @@ mod stream;
 
 pub use devices::{AudioDirection, AudioError, default_device, enumerate};
 pub use engine::{AudioEngine, MeasuredLatency};
-pub use stream::WasapiStream;
+pub use stream::{WasapiStream, device_sample_rate};

@@ -5,7 +5,8 @@
 //! cross-compile-verified. The realtime callback is allocation-free and lock-free (ADR-0001); native
 //! WASAPI with exclusive-mode primary + shared fallback per ADR-0022.
 //!
-//! Pieces are wired into the engine/`main` incrementally across M2; allow dead code until then.
+//! `dead_code`: neutral helpers (e.g. `format::bytes_per_sample`) are consumed by the Windows-only
+//! engine, and the passthrough `Transport::render` only by tests, so they read as unused here.
 #![allow(dead_code)]
 
 mod channels;
@@ -22,4 +23,4 @@ pub use engine_status::EngineStatus;
 pub use meter::MeterSnapshot;
 
 #[cfg(windows)]
-pub use wasapi::{AudioDirection, AudioEngine, enumerate};
+pub use wasapi::{AudioDirection, AudioEngine, default_device, device_sample_rate, enumerate};

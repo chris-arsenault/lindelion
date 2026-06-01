@@ -6,27 +6,33 @@
 //! effectful commands: start/stop, live chain edits republished through the M3 `Handoff`, plugin
 //! editors, and session save/load (M4). A Vizia timer ticks the meters off the audio thread.
 //!
-//! Known limitation (M7 robustness): a live chain edit (add/remove/reorder/bypass while running)
-//! rebuilds the chain from the loaded modules and republishes it gaplessly — fresh plugin instances,
-//! so per-plugin parameter edits made via a plugin's own editor are not preserved across a live edit.
-//! Session save/load *do* preserve per-plugin state (M4 capture/restore). Live state hand-off across
-//! edits, and negotiating the chain's sample rate to the device rate (fixed 48 kHz here, matching the
-//! existing `main` field-check default), are deferred to M7.
+//! The chain is prepared at the **input device's actual sample rate** (`device_sample_rate`) — the
+//! host declares the true rate to plugins via `setupProcessing` and never resamples; input and output
+//! devices are required to share a rate (a single-channel router does not reconcile two clocks).
+//!
+//! Plugin state is preserved across live chain edits: the controller keeps a **persistent pool** of
+//! plugin instances (`Runtime::pool`), and an edit (add/remove/reorder/bypass while running) rebuilds
+//! only the *ordering* over the same live instances (`ChainProcessor` holds shared `Arc`s),
+//! republished gaplessly through the M3 `Handoff`. Instances are never recreated on an edit, so
+//! parameters and transient DSP state survive; session save/load round-trip the opaque state (M4).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use vizia::prelude::*;
 use vst3::ComPtr;
 use vst3::Steinberg::Vst::IHostApplication;
 
-use crate::audio::{AudioDirection, AudioEngine, MeterSnapshot, enumerate};
+use crate::audio::{
+    AudioDirection, AudioEngine, MeterSnapshot, default_device, device_sample_rate, enumerate,
+};
 use crate::session::{AppSettings, HostSession};
 use crate::ui::command::{UiCommand, apply};
 use crate::ui::state::{Dir, HostUiState, PluginCatalog};
 use crate::vst3_host::{
-    ChainProcessor, EditorHost, HostContext, HostError, LoadedModule, PluginInstance, SessionSlot,
-    capture_session, load_module, restore_chain, validate_plugin,
+    ChainProcessor, EditorHost, HostContext, HostError, PluginInstance, PoolSlot, ProcessDriver,
+    SessionSlot, capture_session, load_module, restore_pool, validate_plugin,
 };
 
 const STYLE: &str = r#"
@@ -37,10 +43,23 @@ const STYLE: &str = r#"
     .row { col-between: 6px; height: 30px; }
 "#;
 
-/// Sample rate / block size the chain is prepared at. Fixed for now (the device-rate negotiation is
-/// an M7 refinement); matches the existing `main` field-check default.
-const CHAIN_SAMPLE_RATE: f64 = 48_000.0;
+/// Fallback chain sample rate, used only if the selected input device cannot be probed (in which
+/// case starting the engine will fail anyway). Normally the chain is prepared at the device's actual
+/// rate via [`chain_sample_rate`].
+const CHAIN_SAMPLE_RATE_FALLBACK: f64 = 48_000.0;
 const CHAIN_MAX_FRAMES: usize = 4096;
+
+/// The sample rate to prepare the chain at — the selected input device's actual rate, which is the
+/// rate the engine runs the stream at. Declared to plugins via `setupProcessing`; the host never
+/// resamples.
+fn chain_sample_rate(state: &HostUiState) -> f64 {
+    state
+        .selected_input
+        .as_ref()
+        .and_then(|device| device_sample_rate(device).ok())
+        .map(|rate| rate as f64)
+        .unwrap_or(CHAIN_SAMPLE_RATE_FALLBACK)
+}
 
 /// One chain row, bound into the list view.
 #[derive(Clone, PartialEq)]
@@ -109,18 +128,15 @@ pub enum AppEvent {
     Tick,
 }
 
-/// The controller: the live host runtime the Model drives. Owns the engine, the editor host, the
-/// loaded modules (kept alive and parallel to `HostUiState.chain`), and a pending restored chain.
+/// The controller: the live host runtime the Model drives. Owns the engine, the editor host, and a
+/// **persistent pool of prepared plugin instances** (index-aligned with `HostUiState.chain`). The
+/// instances live for the life of their slot; chain edits rebuild only the *ordering* over them
+/// ([`ChainProcessor`] holds shared `Arc`s), so plugin state is preserved across reorder/bypass.
 struct Runtime {
     host: ComPtr<IHostApplication>,
     engine: Option<AudioEngine>,
     editor: EditorHost,
-    /// Loaded `.vst3` modules, index-aligned with `HostUiState.chain`. Kept alive because they own
-    /// the DLLs the plugin instances live in.
-    modules: Vec<LoadedModule>,
-    /// A chain built with restored per-plugin state (from `LoadSession`), consumed by the next
-    /// `Start` so the restored state survives until the engine runs. Invalidated by any chain edit.
-    pending_chain: Option<Box<ChainProcessor>>,
+    pool: Vec<PoolSlot>,
 }
 
 impl Runtime {
@@ -131,8 +147,7 @@ impl Runtime {
                 .expect("host exposes IHostApplication"),
             engine: None,
             editor: EditorHost::new(),
-            modules: Vec::new(),
-            pending_chain: None,
+            pool: Vec::new(),
         }
     }
 
@@ -140,19 +155,24 @@ impl Runtime {
         self.engine.is_some()
     }
 
-    /// Instantiate the loaded modules into a fresh prepared chain (fresh plugin instances).
-    fn build_chain(&self, state: &HostUiState) -> Result<Box<ChainProcessor>, HostError> {
-        let mut instances = Vec::with_capacity(self.modules.len());
-        for module in &self.modules {
-            instances.push(PluginInstance::from_factory(module.factory(), &self.host)?);
-        }
+    /// Build a chain referencing the pool's (already-prepared) instances in the current order, with
+    /// bypass from the UI state. No instantiation, no preparation — the instances are shared, so this
+    /// never disturbs their state.
+    fn build_chain(&self, state: &HostUiState) -> Box<ChainProcessor> {
+        let instances = self.pool.iter().map(|slot| slot.instance.clone()).collect();
         let bypass: Vec<bool> = state.chain.iter().map(|slot| slot.bypassed).collect();
-        Ok(Box::new(ChainProcessor::new(
-            instances,
-            bypass,
-            CHAIN_SAMPLE_RATE,
-            CHAIN_MAX_FRAMES,
-        )?))
+        Box::new(ChainProcessor::new(instances, bypass, CHAIN_MAX_FRAMES))
+    }
+
+    /// Prepare (set up + activate) every pooled instance at `sample_rate`. Safe to re-run (it
+    /// quiesces first), and parameters survive, so this is also how a rate change re-prepares the
+    /// pool. Used at Start.
+    fn prepare_pool(&self, sample_rate: f64) -> Result<(), HostError> {
+        let driver = ProcessDriver::new(sample_rate, CHAIN_MAX_FRAMES);
+        for slot in &self.pool {
+            driver.prepare(&slot.instance)?;
+        }
+        Ok(())
     }
 }
 
@@ -228,18 +248,15 @@ impl AppData {
         self.state.set_notice(message);
     }
 
-    /// If running, rebuild the chain from the loaded modules and hand it to the audio thread.
+    /// If running, rebuild the ordering over the pooled instances and hand it to the audio thread.
+    /// Gapless, and never disturbs plugin state (the instances are shared, not recreated).
     fn republish(&mut self) {
         if !self.runtime.is_running() {
             return;
         }
-        match self.runtime.build_chain(&self.state) {
-            Ok(chain) => {
-                if let Some(engine) = &self.runtime.engine {
-                    engine.publish_chain(chain);
-                }
-            }
-            Err(error) => self.fail(format!("failed to rebuild chain: {error:?}")),
+        let chain = self.runtime.build_chain(&self.state);
+        if let Some(engine) = &self.runtime.engine {
+            engine.publish_chain(chain);
         }
     }
 
@@ -254,16 +271,12 @@ impl AppData {
             self.fail("select an input and output device before starting".to_string());
             return;
         };
-        let chain = match self.runtime.pending_chain.take() {
-            Some(chain) => chain,
-            None => match self.runtime.build_chain(&self.state) {
-                Ok(chain) => chain,
-                Err(error) => {
-                    self.fail(format!("failed to build chain: {error:?}"));
-                    return;
-                }
-            },
-        };
+        // Prepare every pooled instance at the device's actual rate, then build the chain over them.
+        if let Err(error) = self.runtime.prepare_pool(chain_sample_rate(&self.state)) {
+            self.fail(format!("failed to prepare plugins: {error:?}"));
+            return;
+        }
+        let chain = self.runtime.build_chain(&self.state);
         match AudioEngine::start_with_chain(input, output, chain) {
             Ok(engine) => {
                 self.runtime.engine = Some(engine);
@@ -272,6 +285,22 @@ impl AppData {
             }
             Err(error) => self.fail(format!("failed to start engine: {error:?}")),
         }
+    }
+
+    /// Load a plugin into the pool: instantiate it and, if the engine is running, prepare it at the
+    /// running rate so it can be republished live. (Stopped: `Start` prepares the whole pool.)
+    fn load_into_pool(&mut self, path: &Path) -> Result<(), HostError> {
+        let module = load_module(path)?;
+        let instance = Arc::new(PluginInstance::from_factory(
+            module.factory(),
+            &self.runtime.host,
+        )?);
+        if self.runtime.is_running() {
+            ProcessDriver::new(chain_sample_rate(&self.state), CHAIN_MAX_FRAMES)
+                .prepare(&instance)?;
+        }
+        self.runtime.pool.push(PoolSlot { module, instance });
+        Ok(())
     }
 
     fn stop_engine(&mut self) {
@@ -293,10 +322,8 @@ impl AppData {
             self.fail(format!("rejecting {}: {error:?}", path.display()));
             return;
         }
-        match load_module(&path) {
-            Ok(module) => {
-                self.runtime.modules.push(module);
-                self.runtime.pending_chain = None;
+        match self.load_into_pool(&path) {
+            Ok(()) => {
                 apply(&mut self.state, &UiCommand::AddPlugin(path));
                 self.state.clear_notice();
                 self.republish();
@@ -336,10 +363,8 @@ impl AppData {
             return;
         }
         let path = entry.path.clone();
-        match load_module(&path) {
-            Ok(module) => {
-                self.runtime.modules.push(module);
-                self.runtime.pending_chain = None;
+        match self.load_into_pool(&path) {
+            Ok(()) => {
                 apply(&mut self.state, &UiCommand::AddPlugin(path));
                 self.state.clear_notice();
                 self.republish();
@@ -349,32 +374,32 @@ impl AppData {
     }
 
     fn remove_plugin(&mut self, index: usize) {
-        if index < self.runtime.modules.len() {
-            self.runtime.modules.remove(index);
+        // Drop the pool slot (one `Arc`); any live/retired chain still referencing the instance keeps
+        // it alive until reclaimed, so its teardown stays off the audio thread.
+        if index < self.runtime.pool.len() {
+            self.runtime.pool.remove(index);
         }
-        self.runtime.pending_chain = None;
         apply(&mut self.state, &UiCommand::RemovePlugin(index));
         self.republish();
     }
 
     fn reorder(&mut self, index: usize, dir: Dir) {
-        // Mirror `HostUiState::move_slot`'s bounds so `modules` stays index-aligned with `chain`.
-        let len = self.runtime.modules.len();
+        // Mirror `HostUiState::move_slot`'s bounds so `pool` stays index-aligned with `chain`. The
+        // instances are not recreated — only their order changes — so plugin state is preserved.
+        let len = self.runtime.pool.len();
         let target = match dir {
             Dir::Up if index > 0 => Some(index - 1),
             Dir::Down if index + 1 < len => Some(index + 1),
             _ => None,
         };
         if let Some(target) = target {
-            self.runtime.modules.swap(index, target);
+            self.runtime.pool.swap(index, target);
         }
-        self.runtime.pending_chain = None;
         apply(&mut self.state, &UiCommand::MoveSlot(index, dir));
         self.republish();
     }
 
     fn toggle_bypass(&mut self, index: usize) {
-        self.runtime.pending_chain = None;
         apply(&mut self.state, &UiCommand::ToggleBypass(index));
         self.republish();
     }
@@ -396,27 +421,17 @@ impl AppData {
         let Some(path) = save_session_path() else {
             return;
         };
-        // Running: capture each plugin's live state, then resume from the captured session so the
-        // live edits persist across the brief save gap. Stopped: structure-only (paths/order/bypass).
-        let Some(mut engine) = self.runtime.engine.take() else {
-            if let Err(error) = self.state.to_session().save(&path) {
-                self.fail(format!("failed to save session: {error:?}"));
-            }
-            return;
-        };
-        let Some(chain) = engine.stop_and_take() else {
-            apply(&mut self.state, &UiCommand::Stop);
-            return;
-        };
+        // Capture each plugin's opaque state straight from the pool (a UI-thread `getState`, valid
+        // while audio runs) — gapless, whether running or stopped, no stop/restart needed.
         let slots: Vec<SessionSlot> = self
             .state
             .chain
             .iter()
             .enumerate()
             .filter_map(|(index, slot)| {
-                chain.component(index).map(|component| SessionSlot {
+                self.runtime.pool.get(index).map(|pooled| SessionSlot {
                     plugin_path: slot.path.clone(),
-                    component,
+                    component: pooled.instance.component(),
                     bypassed: slot.bypassed,
                 })
             })
@@ -425,39 +440,12 @@ impl AppData {
             &slots,
             self.state.selected_input.clone(),
             self.state.selected_output.clone(),
-            AppSettings::default(),
+            AppSettings {
+                plugin_scan_dirs: self.state.scan_dirs.clone(),
+            },
         );
         if let Err(error) = session.save(&path) {
             self.fail(format!("failed to save session: {error:?}"));
-        }
-        // Resume from the captured session (state-preserving), keeping the run going.
-        match restore_chain(
-            &session,
-            &self.runtime.host,
-            CHAIN_SAMPLE_RATE,
-            CHAIN_MAX_FRAMES,
-        ) {
-            Ok((modules, new_chain)) => {
-                self.runtime.modules = modules;
-                let (Some(input), Some(output)) = (
-                    self.state.selected_input.clone(),
-                    self.state.selected_output.clone(),
-                ) else {
-                    apply(&mut self.state, &UiCommand::Stop);
-                    return;
-                };
-                match AudioEngine::start_with_chain(input, output, Box::new(new_chain)) {
-                    Ok(engine) => self.runtime.engine = Some(engine),
-                    Err(error) => {
-                        self.fail(format!("failed to resume after save: {error:?}"));
-                        apply(&mut self.state, &UiCommand::Stop);
-                    }
-                }
-            }
-            Err(error) => {
-                self.fail(format!("failed to rebuild after save: {error:?}"));
-                apply(&mut self.state, &UiCommand::Stop);
-            }
         }
     }
 
@@ -477,21 +465,13 @@ impl AppData {
         }
         self.state.load_session(&session);
         self.state.clear_notice();
-        // Rebuild the modules + a state-restored chain; hold it for the next Start (press Start to run).
-        match restore_chain(
-            &session,
-            &self.runtime.host,
-            CHAIN_SAMPLE_RATE,
-            CHAIN_MAX_FRAMES,
-        ) {
-            Ok((modules, chain)) => {
-                self.runtime.modules = modules;
-                self.runtime.pending_chain = Some(Box::new(chain));
-            }
+        // Rebuild the pool with each plugin's state restored (unprepared — `Start` prepares it at the
+        // device rate; the restored parameters survive the prepare's setActive cycle).
+        match restore_pool(&session, &self.runtime.host) {
+            Ok(pool) => self.runtime.pool = pool,
             Err(error) => {
-                self.fail(format!("failed to restore chain: {error:?}"));
-                self.runtime.modules.clear();
-                self.runtime.pending_chain = None;
+                self.fail(format!("failed to restore session: {error:?}"));
+                self.runtime.pool.clear();
             }
         }
         self.state.running = false;
@@ -510,7 +490,6 @@ impl AppData {
         // already-exited engine. The realtime thread has ended, so do not call `stop` again.
         if self.state.react_to_engine_status(status) {
             self.runtime.engine = None;
-            self.runtime.pending_chain = None;
         }
     }
 }
@@ -557,6 +536,14 @@ pub fn run() {
         let outputs = enumerate(AudioDirection::Output).unwrap_or_default();
         let mut state = HostUiState::default();
         state.set_devices(inputs, outputs);
+        // Pre-select the system default input/output so the host is usable immediately; the user can
+        // change either from the pickers.
+        if let Ok(device) = default_device(AudioDirection::Input) {
+            state.select_input(device);
+        }
+        if let Ok(device) = default_device(AudioDirection::Output) {
+            state.select_output(device);
+        }
 
         let signals = Signals::new();
         AppData::new(state, signals).build(cx);
