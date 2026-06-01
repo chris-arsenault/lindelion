@@ -24,12 +24,15 @@ const STRING_OUTPUT_TRIM: f32 = 0.85;
 
 /// Energy-dependent source↔body balance (M9). The fixed pickup/body weights above
 /// are replaced — when the balance depth is non-zero — by an **equal-power** crossfade
-/// between the direct pickup tap (the "source") and a **level-matched** body radiation
-/// (the "warm" voice), steered by measured energy: soft playing leans to the body,
-/// loud playing to the pickup. The crossfade position `p ∈ [0,1]` (`p = 1` all pickup,
-/// `p = 0` all body) maps to gains `S·sin(pπ/2)` (pickup) and `S·cos(pπ/2)·LEVEL_MATCH`
-/// (body). Equal power (`sin² + cos² = 1`) on the *level-matched* signals holds output
-/// level, so the change is timbral, not gain.
+/// between the direct pickup tap and a **level-matched** body radiation, steered by
+/// measured energy. In this voicing the loop-damped pickup tap is the *warm/rounded*
+/// sustain voice and the body radiation — carrying its presence formant — is the
+/// *bright/blooming* one, so the perceptually correct mapping (M11 P8) is **soft →
+/// pickup (warm), loud → body (bright)**: harder playing drives the body's radiating
+/// resonances and blooms brighter. The crossfade position `p ∈ [0,1]` (`p = 1` all
+/// pickup, `p = 0` all body) maps to gains `S·sin(pπ/2)` (pickup) and
+/// `S·cos(pπ/2)·LEVEL_MATCH` (body). Equal power (`sin² + cos² = 1`) on the
+/// *level-matched* signals holds output level, so the change is timbral, not gain.
 ///
 /// The body radiation is ~15–20× quieter than the pickup tap (ADR-0021), so it is
 /// scaled up by `LEVEL_MATCH` before the crossfade — otherwise leaning to the body
@@ -45,18 +48,26 @@ const STRING_BODY_LEVEL_MATCH: f32 = 15.0;
 const STRING_BALANCE_BASE_POSITION: f32 = 0.874_3; // atan(15·1/3)/(π/2)
 const STRING_BALANCE_WEIGHT_SCALE: f32 = 1.019_9; // 1/sin(BASE_POSITION·π/2)
 /// How far full energy swings the crossfade position around the base (at full depth):
-/// `p = BASE + (e − 0.5)·SPAN·depth`, clamped to `[0, 1]`. Sized so a soft note leans
-/// well into the warm body while a loud note reaches the direct-pickup end.
+/// `p = BASE + (0.5 − e)·SPAN·depth`, clamped to `[0, 1]`. Sized so a soft note settles
+/// onto the warm pickup tap while a loud note blooms into the bright body radiation.
 const STRING_BALANCE_SPAN: f32 = 1.0;
-/// Measured-energy (RMS) that maps to the top of the balance crossfade (`e = 1`); the
-/// linear, clamped `energy/REF` keeps soft/medium dynamics body-leaning and reserves
-/// the direct-pickup end for loud playing.
-const STRING_BALANCE_ENERGY_REF: f32 = 0.3;
+/// Measured-energy (RMS) that maps to the bright (body) end of the balance crossfade
+/// (`e = 1`); the linear, clamped `energy/REF` keeps soft/medium dynamics on the warm
+/// pickup tap and reserves the blooming body-radiation end for loud playing. M11 P8:
+/// calibrated to the measured per-voice energy bus (a full-velocity String pluck peaks
+/// near RMS 0.010), so soft→warm/loud→bright spans the real dynamic range; the old 0.3
+/// left the crossfade pinned at its base position for all real playing (inaudible).
+const STRING_BALANCE_ENERGY_REF: f32 = 0.012;
 
 /// Measured-energy (RMS) at which the tension bloom reaches its target depth; the
 /// squared, normalized drive `(energy/REF)^2` keeps low/medium dynamics in tune
-/// and concentrates the sharpening on hard hits.
-const STRING_TENSION_ENERGY_REF: f32 = 0.15;
+/// and concentrates the sharpening on hard hits. M11 P8: calibrated to the measured
+/// per-voice energy bus — a full-velocity String pluck peaks near RMS 0.010, so this
+/// REF puts a hard hit at ≈0.7 drive (≈28 cents, approaching the +40 the depth allows)
+/// and lets sustained bowing saturate; the old 0.15 left a hard pluck at 0.4% drive
+/// (inaudible). The effect was always designed to reach drive 1.0 — only the REF kept
+/// it from getting there.
+const STRING_TENSION_ENERGY_REF: f32 = 0.012;
 /// Fractional one-way-delay shortening at full drive. `2^(40/1200) - 1 ≈ 0.0234`
 /// gives ≈ +40 cents of transient pitch-sharpening at a hard pluck's peak energy.
 const STRING_TENSION_DEPTH: f32 = 0.0234;
@@ -305,12 +316,13 @@ impl String1d {
         // Energy-dependent source↔body balance (M9). At depth 0 the weights are the
         // pre-M9 fixed (pickup, body) blend (bit-exact identity); otherwise an
         // equal-power crossfade steered by the smoothed measured energy leans the
-        // output to the warm body at low dynamics and the direct pickup at high
-        // dynamics, holding level (the change is timbral, not gain).
+        // output to the warm, loop-damped pickup tap at low dynamics and the bright,
+        // formant-bearing body radiation at high dynamics — so harder playing blooms
+        // brighter (M11 P8 polarity fix), holding level (the change is timbral, not gain).
         let energy = self.balance_energy.next(self.balance_energy_target);
         let (pickup_weight, body_weight) = if self.balance_depth > 0.0 {
             let position = (STRING_BALANCE_BASE_POSITION
-                + self.balance_depth * (energy - 0.5) * STRING_BALANCE_SPAN)
+                + self.balance_depth * (0.5 - energy) * STRING_BALANCE_SPAN)
                 .clamp(0.0, 1.0);
             let angle = position * std::f32::consts::FRAC_PI_2;
             (

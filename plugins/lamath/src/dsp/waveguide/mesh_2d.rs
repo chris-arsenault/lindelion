@@ -12,8 +12,11 @@ const MAX_MESH_SIZE: usize = 48;
 
 /// Measured-energy (RMS) at which the geometric (von Kármán) coupling reaches its
 /// target depth; the squared, normalized drive `(energy/REF)^2` keeps soft strikes
-/// linear and concentrates the bloom on hard ones.
-const GEOMETRIC_ENERGY_REF: f32 = 0.15;
+/// linear and concentrates the bloom on hard ones. M11 P8: calibrated to the measured
+/// per-voice energy bus — a full-velocity Mesh strike peaks near RMS 0.011, so this REF
+/// puts a hard strike at ≈0.7 drive (the upward modal bloom a hard gong/cymbal makes);
+/// the old 0.15 left a hard strike at ≈0.5% drive (a purely linear, lifeless mesh).
+const GEOMETRIC_ENERGY_REF: f32 = 0.013;
 /// Clamp on the normalized squared energy term (the coupling depth at peak energy).
 const GEOMETRIC_MAX_DRIVE: f32 = 1.0;
 /// Maximum rotation `sin` factor at full coupling: the fraction of the low mode's

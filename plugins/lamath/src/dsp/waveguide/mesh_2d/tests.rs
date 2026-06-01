@@ -28,9 +28,12 @@ fn geometric_coupling_spreads_energy_upward_with_drive() {
     // Upward energy spread rises monotonically with drive across the bloom's
     // onset (the geometric coupling steers more energy into higher modes as
     // playing energy rises — the gong bloom), then plateaus at full coupling.
+    // Energies straddle the recalibrated `GEOMETRIC_ENERGY_REF` (~0.013, the real
+    // per-voice bus level): `mid` partway up the squared curve, `loud` near a hard
+    // strike's full coupling.
     let quiet = centroid(0.0);
-    let mid = centroid(0.11);
-    let loud = centroid(0.16);
+    let mid = centroid(0.007);
+    let loud = centroid(0.013);
     assert!(
         quiet < mid && mid < loud,
         "centroid not monotone: quiet={quiet} mid={mid} loud={loud}"
@@ -41,7 +44,7 @@ fn geometric_coupling_spreads_energy_upward_with_drive() {
     );
     // Much more high-frequency (higher-mode) energy at high drive.
     assert!(
-        high_frequency_ratio(0.16) > high_frequency_ratio(0.0) + 0.2,
+        high_frequency_ratio(0.013) > high_frequency_ratio(0.0) + 0.2,
         "high-frequency ratio did not rise with drive"
     );
 }

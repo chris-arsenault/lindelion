@@ -85,8 +85,11 @@ Objective calibration goals (meter/spectrum; auditioned in M12).
 ## Phases
 
 Ordered by perceptual impact + dependency: **the tail must exist before its character can be voiced;
-level is last.** P1 unblocks all (measurement). P2 (decay) precedes P3–P8 (everything voices the tail).
-P9 (dynamics) and P10 (level) come once the voice is whole.
+level is last.** P1 unblocks all (measurement). P2 (decay) precedes everything that voices the tail.
+**P1–P4 are done; P5–P7 are deferred to the backlog (realism polish, not correct-function — see below).**
+The remaining critical path is the *tuning trio*, gated on real-time cost: **RT (CPU budget) → P8 (re-tune
+the dynamic effects against the living tail) → P9 (gain staging / family balance / no-clip) → P10 (control
+ranges/defaults + docs).** That trio is the original "tune the stages" intent.
 
 ### P1 — Voicing measurement battery
 Extend the gated battery with the missing objective metrics: per-partial **T60**, **inharmonicity ratio**,
@@ -118,41 +121,69 @@ add **body/radiation coloration** to Mesh (and bore body to Tube); verify String
 - Exit: `make test-integration` — per-family inharmonicity ratio, harmonic profile, and body formants
   within target bands and pairwise distinct; Modal sound unchanged.
 
-### P5 — Dual-polarization string: beating + two-rate decay  [depends on P2, P4]
-Replace the single traveling-wave pair with two slightly-detuned **coupled** polarizations → natural
-beating and the two-rate decay of real strings.
-- **[DECISION]** Detune amount, inter-polarization coupling strength, decay split (fast/slow).
-- Exit: `make test-integration` — measurable beat rate + a two-slope decay envelope; bounded/stable;
-  tuning preserved; no-alloc. (ADR — waveguide polarization model.)
+### P5–P7 — DEFERRED to the backlog (realism polish, not correct-function)
+**Dual-polarization beating/two-rate decay (P5), micro-imperfection/aliveness (P6), and register-aware
+voicing (P7) are moved to the Lamath backlog** ([docs/plugins/lamath-backlog.md](docs/plugins/lamath-backlog.md)).
+After P1–P4 the resonators *function correctly* — every family rings, sustains, holds tune, and the four
+are timbrally distinct — so these three add aliveness, not correct function. They are also a real-time
+cost the instrument may not be able to spare (P5 roughly doubles the String waveguide). Revisit as opt-in
+polish after the instrument is level-staged, control-calibrated, and **confirmed real-time**; gate any
+reinstatement on the CPU budget.
 
-### P6 — Micro-imperfection / aliveness  [depends on P2]
-Add **pitch micro-instability** (a slow drift/vibrato route, currently absent) and a **sustained noise
-bed** (extend the M10 attack-only noise to a continuous bow/breath/air component); sympathetic exists,
-beating from P5.
-- **[DECISION]** Pitch-drift depth/rate and whether it's a fixed voice character or a control; sustained-
-  noise spectrum/level per family.
-- Exit: `make test-integration` — measurable pitch variance and a sustained noise floor during the held
-  tail (vs the dead-stable / silent-tail baseline); defeatable; no-alloc.
+### RT — Real-time / CPU budget gate  [depends on P4]  — ✅ PASSED
+Benched per-resonator and per-voice cost vs the 20.8 µs/sample (48 kHz) budget. **Real-time at sensible
+polyphony** (1 voice ≈ 6.8 % of budget; ≤ 8 voices comfortable; ~14–15 dual-resonator voices at the limit;
+16-voice dual-resonator chords ~7 % over). **The dispersion cascade was exonerated** — ~5–7 % of a String
+voice, not the suspected hot spot. The real costs are the **Mesh grid** (2.16 µs/sample, the heaviest) and
+the **2× oversampling**; high-polyphony headroom (if ever wanted) lives there, not in M11 tuning. Numbers
+were taken on a slow server CPU, **not** the Apple-Silicon target — the real workstation will be faster, so
+this is a conservative pass. (A pinned macOS run is the eventual real contract per `docs/performance.md`.)
+- Result: passed; no trimming warranted. Per-resonator (oversampled): Tube 0.78 µs · String 1.13 µs ·
+  Mesh 2.16 µs/sample.
 
-### P7 — Register-aware voicing  [depends on P2, P4]
-Scale decay/brightness/inharmonicity per played note across the keyboard (bass longer/darker/more
-inharmonic; treble shorter/purer/brighter).
-- **[DECISION]** The per-register scaling curves and their span.
-- Exit: `make test-integration` — the voicing metrics vary monotonically with pitch to the target curves;
-  extremes stable.
-
-### P8 — Dynamic response (M4–M10) re-tuned in the living tail  [depends on P2–P7]
+### P8 — Dynamic response (M4–M10) re-tuned in the living tail  [depends on P2–P4, RT]  — ✅ DONE
 Re-confirm tension, steepening, mesh geometric, body coupling, contact, balance, surrounding, and
 sympathetic — now that a real sustaining tail exists and levels have moved — so each effect is audible
 and correctly sized in the tail and stable. The energy references (tuned to the old anemic levels) move.
 - Exit: `make test-integration` — combined-stages effect-size + stability battery green; isolated M4–M10
   tests still pass.
 
-### P9 — Whole-path gain staging + family level balance + no-clip  [depends on P2–P8]
+**Outcome (what was actually wrong + done):**
+- **Energy references were ~15–60× too high (the core bug).** The per-voice energy bus actually peaks near
+  RMS **0.010** (String/Mesh) / **0.004** (Tube) at full velocity — measured via a new `Voice::measured_energy()`
+  test accessor — but every reference assumed ~0.15–0.3. So *every* dynamic effect ran at <1–7 % of its
+  range — effectively inaudible on real notes. The effects were always *designed* to reach drive 1.0 (the
+  "+40 cents", "cuivré bloom", etc.); only the references kept them from getting there. Recalibrated all six:
+  tension 0.15→**0.012**, balance 0.3→**0.012**, steepen 0.15→**0.005**, geometric 0.15→**0.013**, radiation
+  0.2→**0.012**, sympathetic 0.15→**0.004**. New gated calibration battery
+  (`dynamic_effect_energy_references_track_real_playing`) pins the real bus level to the references' drive band.
+- **Balance polarity was inverted + measured in the wrong window.** The body radiation (presence formant) is
+  actually the *brighter* sustain voice and the loop-damped pickup the *warm* one — so the energy→position
+  sign was flipped (now **soft→pickup/warm, loud→body/bright**: harder = brighter), and the test now measures
+  the sustain window (the attack is a shared bright onset). The balance now has real audible authority
+  (loud ≈30 % brighter centroid).
+- **Midrange evenness via a body loading/radiation decouple.** Added `BODY_LOADING_SCALE` (0.22): the modal
+  body now *loads* the loop with only a fraction of its admittance (midrange notes sustain seconds instead of
+  being choked on plate modes) while still *radiating* its colour at full gain. Lengthened the in-gap default
+  String pluck to ~5.8 s as a side effect (longer = better).
+- **Tube steepening has positive energy feedback** (it adds harmonics → pumps the loop): at the new ref a
+  full-velocity Tube *blooms* from RMS 0.004 → 0.019 (the brass cuivré dynamic), saturating the drive — the
+  intended maximum. The battery asserts on computed *drive*, not raw energy, to allow this.
+
+### P9 — Whole-path gain staging + family level balance + no-clip  [depends on RT, P8]
+**Decided (P8 coupling):** gain staging is applied **output-side — after the M2 energy tap**
+(`observe_energy(resonator_output)`), so it never moves the resonator's physical vibration level that
+the dynamic effects key off. The energy bus stays the physical-amplitude tracker; the input/excitation
+drive is set physically (velocity/effort), not re-staged here. This decouples P8 from P9 by construction.
 Stage every stage (excitation → driver → contact → resonator → body → surrounding → output → sympathetic)
 to a healthy level (high SNR, target peak ≈ −18…−6 dBFS); balance family loudness at matched dynamics on
 the *real tails*; add a soft limiter (ceiling −0.3 dBFS, identity below threshold) + small final
 normalization on top of `INTERNAL_HEADROOM_DB`.
+- **From P8 — two things to fix here:** (1) the **bow driver self-oscillates absurdly hot** — a sustained
+  limit cycle reaches energy-bus RMS **2.6–8.7** (vs ~0.01 for a pluck), far above full-scale; the driver/
+  output gain needs taming so a held bow sits at a sane level. (2) the **sympathetic send reference (0.004)
+  observes the post-output mix**, the one energy reference *downstream* of this gain staging — re-confirm it
+  once the final output level is set here.
 - **[DECISION]** Per-stage healthy target, family loudness tolerance, limiter/normalization design.
 - Exit: `make test-integration` — families within loudness tolerance across vel 20/100/127; no gesture
   clips. `make ci` guards: limiter identity for unity sine; staged gain applied; no-alloc.

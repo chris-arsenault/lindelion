@@ -17,8 +17,11 @@ const MIN_END_REFLECTION_MAGNITUDE: f32 = 0.08;
 
 /// Measured-energy (RMS) at which bore steepening reaches its target depth; the
 /// squared, normalized term `(energy/REF)^2` keeps soft/medium bores mellow and
-/// concentrates the brassy brightening on loud playing.
-const STEEPEN_ENERGY_REF: f32 = 0.15;
+/// concentrates the brassy brightening on loud playing. M11 P8: calibrated to the
+/// measured per-voice energy bus — a full-velocity Tube note peaks near RMS 0.004, so
+/// this REF puts loud playing at ≈0.6 drive (and sustained reed/breath driving into the
+/// cuivré bloom); the old 0.15 left a loud note at ≈0.07% drive (no brass at all).
+const STEEPEN_ENERGY_REF: f32 = 0.005;
 /// Clamp on the normalized squared energy term (the steepening depth at peak
 /// energy). 1.0 is the strong cuivré bloom chosen for M5.
 const STEEPEN_MAX_ENERGY: f32 = 1.0;

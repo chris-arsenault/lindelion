@@ -77,12 +77,15 @@ fn string_default_pluck_rings_to_target_with_darkening() {
     assert_all_finite(&output);
     assert!(peak_abs(&output) < 4.0, "peak_abs={}", peak_abs(&output));
 
-    // (a) Sustain long enough to matter: the default free pluck rings ~4–5 s.
+    // (a) Sustain long enough to matter: the default free pluck rings ~5–6 s. P8's
+    // body-loading decouple (the loop is loaded by only a fraction of the modal
+    // admittance) cut the residual body loss on in-gap notes too, lengthening this
+    // free-pluck capacity from the P2-era ~4–5 s.
     let t60 = partial_t60_seconds(&output, sample_rate, f0, 4_096, 4_096)
         .expect("default String fundamental should measurably decay");
     assert!(
-        (4.0..=5.5).contains(&t60),
-        "default String T60 should ring ~4–5 s: {t60}"
+        (4.5..=6.5).contains(&t60),
+        "default String T60 should ring ~5–6 s: {t60}"
     );
 
     // (b) Frequency-dependent darkening: the spectral centroid falls over the tail
@@ -100,11 +103,12 @@ fn string_default_pluck_rings_to_target_with_darkening() {
     );
 }
 
-/// M11 P2 step 2: the body audibly shapes per-note decay — a note sitting on the
-/// dense low body-mode field (220 Hz, near the 200/230 Hz plate modes) rings down
-/// markedly faster than an in-gap note (165 Hz) at the same default voice. This is
-/// the body's frequency-localized modal admittance loading the loop; its midrange
-/// *evenness* is a P8 body-coupling re-tune, but the coloration itself is present.
+/// M11 P2/P8: the body audibly shapes per-note decay — a note sitting on the dense
+/// low body-mode field (220 Hz, near the 200/230 Hz plate modes) rings down faster
+/// than an in-gap note (165 Hz) at the same default voice — but, after the P8
+/// loading decouple, it is no longer *choked*: both still sustain seconds. The
+/// frequency-localized coloration is present (near-mode meaningfully shorter); the
+/// over-damping P8 removed (near-mode no longer ~1 s) is gone.
 #[cfg_attr(
     not(feature = "integration-tests"),
     ignore = "see make test-integration"
@@ -130,8 +134,12 @@ fn body_audibly_shapes_per_note_string_decay() {
     let near_mode = partial_t60_seconds(&render(220.0), sample_rate, 220.0, 4_096, 4_096)
         .expect("near-mode note should ring");
     assert!(
-        near_mode < in_gap * 0.6,
+        near_mode < in_gap * 0.8,
         "body modes should audibly shorten the near-mode note: near_mode={near_mode}, in_gap={in_gap}"
+    );
+    assert!(
+        near_mode > 2.5,
+        "P8: the near-mode note should still sustain seconds, not be choked: near_mode={near_mode}"
     );
 }
 
@@ -175,4 +183,34 @@ fn loop_gain_audibly_controls_string_decay() {
         short < long * 0.5,
         "loop_gain should audibly control decay: short={short}, long={long}"
     );
+}
+
+/// M11 P8: the String midrange sustains, not over-damped. After the P2 broadband
+/// body cut, the *modal* body coupling dominated midrange decay — notes whose
+/// fundamental lands on the dense plate-mode field (e.g. 392 Hz) died in ~1–2 s
+/// while low/in-gap notes rang ~5 s. P8 reduces the modal coupling so the midrange
+/// rings several seconds, keeping the body coloration present.
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn string_midrange_sustains_not_over_damped() {
+    let sample_rate = 48_000.0;
+    for f0 in [392.0_f32, 220.0] {
+        let params = WaveguideParams {
+            style: WaveguideStyle::String,
+            frequency_hz: f0,
+            ..WaveguideParams::default()
+        };
+        let output =
+            render_waveguide_response(sample_rate, params, 288_000, RenderExcitation::Impulse);
+        assert_all_finite(&output);
+        let t60 = partial_t60_seconds(&output, sample_rate, f0, 4_096, 4_096)
+            .expect("midrange note should measurably decay");
+        assert!(
+            t60 > 3.0,
+            "midrange ({f0} Hz) should sustain several seconds, not over-damp: T60={t60}"
+        );
+    }
 }

@@ -352,6 +352,13 @@ impl<'a> Voice<'a> {
         output
     }
 
+    /// Current measured-energy bus value (followed resonator-output RMS), for the
+    /// M11 P8 energy-reference calibration battery.
+    #[cfg(test)]
+    pub(crate) fn measured_energy(&self) -> f32 {
+        self.modulation.measured_energy()
+    }
+
     /// M11 gain-staging taps: running peak `|x|` at each stage of the signal path
     /// `[excitation, resonator output, surrounding output, final output]`.
     #[cfg(test)]

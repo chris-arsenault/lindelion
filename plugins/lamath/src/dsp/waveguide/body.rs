@@ -27,11 +27,17 @@ const STRING_BRIDGE_ADMITTANCE: f32 = 1.0;
 /// which is untouched; this is only the characterless broadband term, kept just
 /// large enough to remain present.
 const BODY_BACKGROUND_ADMITTANCE: f32 = 0.000_5;
-/// Global scale on the modal admittance gains: the body colors the timbre and
-/// loads the loop at its modes, but stays a light coupling so the string pitch
-/// dominates (the string is far higher impedance than the body) and the fundamental
-/// is only gently pulled near body resonances.
+/// Global scale on the modal admittance gains: the body colors the timbre (its
+/// *radiated* output) at full strength so the body stays audible, while a separate
+/// `BODY_LOADING_SCALE` governs how much it *loads* the loop.
 const BODY_GAIN_SCALE: f32 = 0.08;
+/// M11 P8: fraction of the modal admittance that loads the string loop, decoupled
+/// from the radiated coloration. At the old value (loading == radiation == full
+/// `BODY_GAIN_SCALE`) the high-Q plate modes over-damped any midrange note whose
+/// fundamental landed on them (~1 s vs ~5 s for in-gap notes). Loading the loop
+/// less lets the midrange sustain while the body still radiates its colour. The
+/// reflectance stays passive (|R| ≤ 1), so this never adds loop energy.
+const BODY_LOADING_SCALE: f32 = 0.22;
 
 /// Tube body voicing (M11 P4): fixed bore-body resonance and a broad bell-flare
 /// formant the played note sweeps across (a real instrument body, not a
@@ -317,9 +323,13 @@ impl ReducedBody {
         // the body loads and radiates the string broadband (not only at its modes).
         let mut y_inf = BODY_BACKGROUND_ADMITTANCE;
         let mut v_state = 0.0;
+        // The modal admittance loads the loop at `BODY_LOADING_SCALE` of its radiated
+        // strength (M11 P8): the body still colours the *output* at full gain, but it
+        // damps the string loop only lightly, so a midrange fundamental landing on a
+        // high-Q plate mode rings on instead of being choked.
         for mode in &self.modes {
-            y_inf += mode.instantaneous();
-            v_state += mode.state_contribution();
+            y_inf += BODY_LOADING_SCALE * mode.instantaneous();
+            v_state += BODY_LOADING_SCALE * mode.state_contribution();
         }
         // Explicit junction solve (the delay-free loop resolved):
         // G(a - b) = Y_inf*(a + b) + v_state  =>  b = [a(G - Y_inf) - v_state]/(G + Y_inf).

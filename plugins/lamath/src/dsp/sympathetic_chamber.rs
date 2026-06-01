@@ -40,7 +40,13 @@ const SYMPATHETIC_DAMP_CUTOFF_HZ: f32 = 3_500.0;
 /// Measured-energy (RMS of the mix) at which the energy-scaled send reaches full
 /// strength; `(energy/REF)^2` keeps soft playing subtle and concentrates the bloom on
 /// hard playing, matching the squared energy curve of the per-voice nonlinearities.
-const SYMPATHETIC_SEND_ENERGY_REF: f32 = 0.15;
+/// M11 P8: calibrated to the measured *output mix* level — a single full-velocity note
+/// mixes near RMS 0.0025 (the output stage attenuates the ~0.010 resonator energy), so
+/// this REF lets a loud note/chord drive the chamber audibly; the old 0.15 left it at
+/// ≈0.03% drive (a silent chamber). NOTE: this REF observes the post-output mix, so it
+/// is the one energy reference downstream of P9 gain staging — re-confirm it once P9
+/// sets the final output level.
+const SYMPATHETIC_SEND_ENERGY_REF: f32 = 0.004;
 /// Base excitation scale into the strings. Small, because a high-Q loop builds the
 /// matching frequencies up by ~`1/(1 - loop_gain)`; this keeps a fully-resonant string
 /// near the mix level rather than dominating it.

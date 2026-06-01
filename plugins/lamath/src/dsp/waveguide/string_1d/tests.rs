@@ -484,15 +484,18 @@ fn tension_drive_sharpens_pitch_and_settles() {
     );
 
     // (a) Sharpening increases with drive (higher measured energy => higher pitch).
-    let low = render_string_with_drive(sample_rate, params, 24_000, |_| 0.05);
-    let high = render_string_with_drive(sample_rate, params, 24_000, |_| 0.15);
+    // Energies straddle the recalibrated `STRING_TENSION_ENERGY_REF` (~0.012, the real
+    // per-voice bus level): `low` sits low on the squared curve, `high` near a hard
+    // pluck's peak drive.
+    let low = render_string_with_drive(sample_rate, params, 24_000, |_| 0.005);
+    let high = render_string_with_drive(sample_rate, params, 24_000, |_| 0.012);
     let low_f0 = estimate(&low[2_000..10_000]);
     let high_f0 = estimate(&high[2_000..10_000]);
     assert!(high_f0 > low_f0 + 1.0, "low_f0={low_f0} high_f0={high_f0}");
 
     // (b) Decaying drive: the attack blooms sharp and settles back to nominal.
     let bloom = render_string_with_drive(sample_rate, params, 24_000, |index| {
-        (0.15 * (1.0 - index as f32 / 6_000.0)).max(0.0)
+        (0.012 * (1.0 - index as f32 / 6_000.0)).max(0.0)
     });
     // The two-way body adds loss, so the string decays faster; measure the settled
     // pitch where signal remains (after the drive envelope has returned to zero).

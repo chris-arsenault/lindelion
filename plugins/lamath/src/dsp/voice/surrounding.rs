@@ -31,7 +31,10 @@ const RADIATION_SHELF_CUTOFF_HZ: f32 = 3_000.0;
 const RADIATION_MAX_BOOST_DB: f32 = 12.0;
 /// Measured-energy (follower) value that maps to the top of the brightening curve;
 /// `energy/REF` clamped to `[0, 1]` so soft notes stay flat and loud notes brighten.
-const RADIATION_ENERGY_REF: f32 = 0.2;
+/// M11 P8: calibrated to the measured per-voice energy bus (a full-velocity note peaks
+/// near RMS 0.010) so loud playing reaches most of the +12 dB radiation lift; the old
+/// 0.2 left a loud note at ≈5% of the curve (no audible radiation brightening).
+const RADIATION_ENERGY_REF: f32 = 0.012;
 
 /// Filter Q for the mechanical-noise shaping filters.
 const NOISE_FILTER_Q: f32 = 0.7;

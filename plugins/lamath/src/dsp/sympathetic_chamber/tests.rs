@@ -105,16 +105,19 @@ fn chamber_couples_across_pitches_via_harmonics() {
 #[test]
 fn chamber_send_scales_super_linearly_with_energy() {
     // The squared energy-scaled send means hard playing blooms far more than soft —
-    // a louder excitation rings the string more than proportionally.
+    // a louder excitation rings the string more than proportionally. The burst
+    // amplitudes (mix RMS = amplitude/√2) straddle the recalibrated
+    // `SYMPATHETIC_SEND_ENERGY_REF` (~0.004, the real output-mix level): soft sits
+    // partway up the curve, loud near full send.
     let mut soft = SympatheticChamber::new(SR);
     soft.set_depth(1.0);
     soft.note_on(60);
-    let soft_out = render_ring(&mut soft, midi_note_to_hz(60.0), 0.1, 24_000, 8_000);
+    let soft_out = render_ring(&mut soft, midi_note_to_hz(60.0), 0.003, 24_000, 8_000);
 
     let mut loud = SympatheticChamber::new(SR);
     loud.set_depth(1.0);
     loud.note_on(60);
-    let loud_out = render_ring(&mut loud, midi_note_to_hz(60.0), 0.5, 24_000, 8_000);
+    let loud_out = render_ring(&mut loud, midi_note_to_hz(60.0), 0.015, 24_000, 8_000);
 
     let soft_tail = rms(&soft_out[12_000..]);
     let loud_tail = rms(&loud_out[12_000..]);

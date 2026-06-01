@@ -162,6 +162,13 @@ impl ModulationState {
         self.energy = self.energy_follower.observe(sample);
     }
 
+    /// Current measured-energy bus value (the followed resonator-output RMS), for the
+    /// M11 energy-reference calibration battery (P8).
+    #[cfg(test)]
+    pub(super) fn measured_energy(&self) -> f32 {
+        self.energy
+    }
+
     pub(super) fn static_sources(&self) -> ModulationSources {
         ModulationSources {
             amp_envelope: 1.0,
