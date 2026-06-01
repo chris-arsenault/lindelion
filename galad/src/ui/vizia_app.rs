@@ -19,11 +19,16 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
 
+use vizia::icons::{
+    ICON_ADJUSTMENTS, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_DEVICE_FLOPPY, ICON_FOLDER,
+    ICON_FOLDER_PLUS, ICON_PLAYER_PLAY, ICON_PLAYER_STOP, ICON_PLUS, ICON_POWER, ICON_REFRESH,
+    ICON_TRASH, ICON_VOLUME,
+};
 use vizia::prelude::*;
 use vst3::ComPtr;
 use vst3::Steinberg::Vst::IHostApplication;
@@ -43,182 +48,300 @@ use crate::vst3_host::{
 
 const STYLE: &str = r#"
     :root {
-        background-color: #101213;
-        color: #d8e0dc;
+        background-color: #111517;
+        color: #cdd6d0;
         font-size: 12px;
     }
 
-    label { color: #cad3cf; }
-
-    .root {
-        background-color: #101213;
+    label {
+        color: #c2ccc6;
+        text-wrap: false;
     }
 
-    .topbar,
-    .panel,
-    .transport-strip {
-        background-color: #171b1d;
+    .root { background-color: #111517; }
+
+    .top-strip {
+        background-color: #181e20;
         border-width: 1px;
-        border-color: #2a3337;
-        border-radius: 8px;
-        padding: 12px;
+        border-color: #2c3437;
+        corner-radius: 7px;
+        padding-left: 12px;
+        padding-right: 12px;
     }
 
-    .title {
-        color: #edf5ef;
-        font-size: 20px;
+    .panel,
+    .strip {
+        background-color: #161c1e;
+        border-width: 1px;
+        border-color: #2c3437;
+        corner-radius: 7px;
     }
 
-    .section-title {
-        color: #eef5f1;
-        font-size: 12px;
+    .wordmark { color: #f1f6f2; font-size: 17px; }
+
+    .brand-mark {
+        background-color: #59b6d8;
+        corner-radius: 3px;
+        width: 12px;
+        height: 12px;
     }
 
-    .muted,
-    .slot-meta,
-    .catalog-detail,
-    .meter-label {
-        color: #81908a;
-        font-size: 10px;
-    }
-
-    .value-label {
-        color: #edf5ef;
-        font-size: 11px;
-    }
-
-    .status-chip,
-    .count-chip,
-    .state-chip {
+    .run-chip {
         background-color: #20282b;
         border-width: 1px;
         border-color: #39464b;
-        border-radius: 6px;
-        color: #dce6e0;
+        corner-radius: 5px;
+        color: #9aa6a0;
+        font-size: 9px;
+        padding-left: 8px;
+        padding-right: 8px;
+        alignment: center;
+    }
+
+    .run-chip.is-live {
+        background-color: #24372d;
+        border-color: #79ad89;
+        color: #dff3e3;
+    }
+
+    .status-text {
+        color: #8d9994;
+        font-size: 11px;
+        text-overflow: ellipsis;
+    }
+
+    .accent-bar {
+        width: 4px;
+        height: 22px;
+        corner-radius: 2px;
+    }
+
+    .accent-audio { background-color: #59b6d8; }
+    .accent-tone { background-color: #7ed06d; }
+    .accent-transport { background-color: #ef6f88; }
+    .accent-warn { background-color: #d7a540; }
+
+    .section-title { color: #eef4ef; font-size: 12px; }
+
+    .section-sub {
+        color: #7c8883;
+        font-size: 9px;
+        text-overflow: ellipsis;
+    }
+
+    .field-label { color: #8e9a94; font-size: 10px; }
+    .value-strong { color: #eef5f0; font-size: 12px; }
+
+    .muted {
+        color: #8d9994;
+        font-size: 11px;
+        text-overflow: ellipsis;
+    }
+
+    .divider {
+        background-color: #29302f;
+        height: 1px;
+    }
+
+    button {
+        background-color: #1b2225;
+        border-width: 1px;
+        border-color: #313c3f;
+        corner-radius: 5px;
+        color: #d5e0da;
+        alignment: center;
+    }
+
+    button:hover { border-color: #59b6d8; }
+
+    .tool-button {
+        background-color: #20282b;
+        border-color: #39464b;
+        font-size: 11px;
+    }
+
+    .tool-button:hover {
+        background-color: #273235;
+        border-color: #59b6d8;
+    }
+
+    .btn-icon {
+        color: #d5e0da;
+        fill: #d5e0da;
+        width: 15px;
+        height: 15px;
+    }
+
+    .icon-btn { alignment: center; }
+    .icon-btn:hover { background-color: #232d30; border-color: #59b6d8; }
+
+    .icon-btn.danger:hover { border-color: #ef6f88; background-color: #33282a; }
+    .icon-btn.danger:hover .btn-icon { color: #f2b8bd; fill: #f2b8bd; }
+
+    .icon-btn.add {
+        background-color: #213b2c;
+        border-color: #4f8c66;
+    }
+    .icon-btn.add .btn-icon { color: #cdeecf; fill: #cdeecf; }
+    .icon-btn.add:hover { border-color: #7ed06d; background-color: #264634; }
+
+    .slot {
+        background-color: #1b2225;
+        border-width: 1px;
+        border-color: #2f3a3d;
+        corner-radius: 6px;
         padding-left: 8px;
         padding-right: 8px;
     }
 
-    .status-running {
-        background-color: #20372f;
-        border-color: #68ad8b;
-        color: #e6f7ec;
-    }
+    .slot:hover { border-color: #3c4a4d; }
 
-    .state-bypassed {
-        background-color: #3a3022;
-        border-color: #bd8846;
-        color: #f0d5aa;
-    }
-
-    .state-error {
-        background-color: #3a2528;
-        border-color: #b05d63;
-        color: #f1c2c6;
-    }
-
-    button.primary-button,
-    button.tool-button,
-    button.device-row,
-    button.slot-row,
-    button.catalog-row,
-    select.device-select button {
-        background-color: #20272a;
-        border-width: 1px;
-        border-color: #384448;
-        corner-radius: 6px;
-        color: #dce6e0;
-    }
-
-    button.primary-button:hover,
-    button.tool-button:hover,
-    button.device-row:hover,
-    button.slot-row:hover,
-    button.catalog-row:hover,
-    select.device-select button:hover {
-        background-color: #273235;
-        border-color: #72a994;
-    }
-
-    .slot-row,
-    .catalog-row-view,
-    .empty-state {
-        background-color: #151a1c;
-        border-width: 1px;
-        border-color: #2e383c;
-        corner-radius: 6px;
-        padding: 7px;
-    }
-
-    button.primary-button {
-        background-color: #254133;
-        border-color: #6cb18b;
-        color: #edf8f0;
-    }
-
-    button.stop-button {
-        background-color: #3a2528;
-        border-color: #b05d63;
-    }
-
-    button.device-selected,
-    button.catalog-compatible {
-        background-color: #21342e;
-        border-color: #72b894;
-    }
-
-    button.slot-bypassed {
-        background-color: #282725;
-        border-color: #7b6240;
-    }
-
-    .slot-bypassed {
-        background-color: #1d1c19;
+    .slot.is-bypassed {
+        background-color: #1f1d18;
         border-color: #6c573b;
     }
 
-    .catalog-compatible {
-        border-color: #4f7c68;
-    }
+    .slot-index { color: #6b7873; font-size: 10px; alignment: center; }
 
-    .device-dot,
-    .catalog-dot {
-        background-color: #53605b;
-        border-radius: 4px;
-        width: 8px;
-        height: 8px;
-    }
+    .slot-power .btn-icon { color: #79c39c; fill: #79c39c; }
+    .slot-power.is-bypassed .btn-icon { color: #cf9f5a; fill: #cf9f5a; }
 
-    .dot-selected,
-    .dot-compatible {
-        background-color: #72c299;
-    }
-
-    .dot-error {
-        background-color: #c96a6d;
-    }
-
-    .device-control {
-        background-color: #151a1c;
+    .slot-empty {
+        background-color: #14191b;
         border-width: 1px;
-        border-color: #2e383c;
+        border-color: #2a3336;
         corner-radius: 6px;
-        padding: 8px;
+        alignment: center;
     }
+
+    .row-name {
+        color: #e4ece7;
+        font-size: 12px;
+        text-overflow: ellipsis;
+    }
+
+    .row-path {
+        color: #6b7873;
+        font-size: 9px;
+        text-overflow: ellipsis;
+    }
+
+    .row-reason {
+        color: #c9a06a;
+        font-size: 9px;
+        text-overflow: ellipsis;
+    }
+
+    .mini-chip {
+        background-color: #20282b;
+        border-width: 1px;
+        border-color: #39464b;
+        corner-radius: 4px;
+        color: #93a39c;
+        font-size: 8px;
+        padding-left: 5px;
+        padding-right: 5px;
+        height: 16px;
+        alignment: center;
+    }
+
+    .dot {
+        background-color: #53605b;
+        corner-radius: 4px;
+        width: 7px;
+        height: 7px;
+    }
+
+    .dot.is-ok { background-color: #7ed06d; }
+    .dot.is-error { background-color: #ef6f88; }
+
+    .vendor-header {
+        color: #8fb6c9;
+        font-size: 9px;
+        padding-left: 2px;
+        padding-top: 4px;
+    }
+
+    .browse-row {
+        background-color: #1b2225;
+        border-width: 1px;
+        border-color: #2a3336;
+        corner-radius: 5px;
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+
+    .browse-row.is-compatible:hover { border-color: #59b6d8; }
+
+    .folder-row {
+        background-color: #1b2225;
+        border-width: 1px;
+        border-color: #2a3336;
+        corner-radius: 5px;
+        padding-left: 7px;
+        padding-right: 7px;
+    }
+
+    .inline-icon { color: #8e9a94; fill: #8e9a94; width: 16px; height: 16px; }
+    .inline-icon-sm { color: #6b7873; fill: #6b7873; width: 13px; height: 13px; }
+
+    .meter-label { color: #7c8883; font-size: 9px; }
+
+    .meter-track {
+        background-color: #0f1416;
+        border-width: 1px;
+        border-color: #2a3336;
+        corner-radius: 3px;
+    }
+
+    .meter-fill {
+        background-color: #66c08a;
+        corner-radius: 2px;
+    }
+
+    .meter-fill.is-hot { background-color: #ef6f88; }
+
+    .transport-btn {
+        background-color: #234a36;
+        border-color: #5aa37c;
+        color: #e9f8ef;
+        font-size: 13px;
+    }
+
+    .transport-btn:hover { background-color: #2a5a41; border-color: #7ed06d; }
+    .transport-btn .btn-icon { color: #e9f8ef; fill: #e9f8ef; }
+
+    .transport-btn.is-stop {
+        background-color: #45232a;
+        border-color: #ef6f88;
+        color: #f8dde1;
+    }
+    .transport-btn.is-stop:hover { background-color: #532a32; border-color: #ff8a9e; }
+    .transport-btn.is-stop .btn-icon { color: #f8dde1; fill: #f8dde1; }
+
+    .mute-btn.mute-on { background-color: #45232a; border-color: #ef6f88; }
+    .mute-btn.mute-on .btn-icon { color: #f2b8bd; fill: #f2b8bd; }
 
     select.device-select {
         width: 1s;
         min-width: auto;
-        height: 38px;
+        height: 32px;
     }
 
     select.device-select button {
+        background-color: #11171a;
+        border-width: 1px;
+        border-color: #2e383c;
+        corner-radius: 5px;
+        color: #e3ece7;
         width: 1s;
-        height: 38px;
+        height: 32px;
         alignment: left;
         padding-left: 10px;
         padding-right: 10px;
     }
+
+    select.device-select button:hover { border-color: #59b6d8; }
 
     select.device-select button > * {
         width: 1s;
@@ -227,36 +350,37 @@ const STYLE: &str = r#"
     }
 
     select.device-select label {
-        color: #edf5ef;
+        color: #e3ece7;
         text-wrap: false;
         text-overflow: ellipsis;
     }
 
     select.device-select svg {
-        fill: #96a69f;
+        fill: #8ea29b;
+        color: #8ea29b;
     }
 
     select.device-select popup {
-        background-color: #171b1d;
+        background-color: #181e20;
         border-width: 1px;
         border-color: #3a474c;
         corner-radius: 6px;
     }
 
     select.device-select list.selectable list-item {
-        background-color: #171b1d;
+        background-color: #181e20;
         color: #dce6e0;
-        height: 34px;
+        height: 30px;
     }
 
     select.device-select list.selectable list-item:hover,
     select.device-select list.selectable list-item.focused,
     select.device-select list.selectable list-item:focus-visible {
-        background-color: #233034;
+        background-color: #213034;
     }
 
     select.device-select list.selectable list-item .checkmark {
-        fill: #72c299;
+        fill: #59b6d8;
     }
 
     scrollview {
@@ -267,102 +391,49 @@ const STYLE: &str = r#"
         display: none;
     }
 
-    scrollview.h-scroll > scrollbar,
-    scrollview.v-scroll > scrollbar {
+    scrollview.v-scroll > scrollbar,
+    scrollview.h-scroll > scrollbar {
         display: flex;
     }
 
     scrollbar.vertical {
-        width: 8px;
+        width: 7px;
     }
 
     scrollbar.horizontal {
-        height: 8px;
+        height: 7px;
     }
 
     scrollbar .thumb {
-        background-color: #596a6f;
-        corner-radius: 4px;
+        background-color: #4a5559;
+        corner-radius: 3px;
         opacity: 0.8;
     }
 
-    slider {
-        height: 18px;
+    slider.master-slider {
+        height: 16px;
         width: 1s;
         alignment: left;
     }
 
-    slider .track {
-        background-color: #0d1112;
+    slider.master-slider .track {
+        background-color: #0f1416;
         height: 5px;
         corner-radius: 3px;
     }
 
-    slider .range {
-        background-color: #79b99d;
+    slider.master-slider .range {
+        background-color: #59b6d8;
         corner-radius: 3px;
     }
 
-    slider .thumb {
-        background-color: #dce6e0;
+    slider.master-slider .thumb {
+        background-color: #eef6f0;
         border-width: 1px;
-        border-color: #79b99d;
+        border-color: #59b6d8;
         corner-radius: 6px;
-        width: 13px;
-        height: 13px;
-    }
-
-    .vendor-header {
-        color: #eef5f1;
-        background-color: #20282b;
-        border-width: 1px;
-        border-color: #39464b;
-        corner-radius: 6px;
-        height: 26px;
-        padding-left: 8px;
-        padding-right: 8px;
-    }
-
-    .meter-group {
-        background-color: #141819;
-        border-width: 1px;
-        border-color: #2a3337;
-        corner-radius: 6px;
-        padding: 6px;
-    }
-
-    .master-control {
-        background-color: #141819;
-        border-width: 1px;
-        border-color: #2a3337;
-        corner-radius: 6px;
-        padding: 6px;
-    }
-
-    .meter-track {
-        background-color: #0d1112;
-        border-width: 1px;
-        border-color: #303a3e;
-        corner-radius: 4px;
-    }
-
-    .meter-fill {
-        background-color: #6db7a6;
-        corner-radius: 3px;
-    }
-
-    .meter-fill-hot {
-        background-color: #d99a4a;
-    }
-
-    .divider {
-        background-color: #2a3337;
-        height: 1px;
-    }
-
-    .vertical-divider {
-        background-color: #2a3337;
-        width: 1px;
+        width: 12px;
+        height: 12px;
     }
 "#;
 
@@ -1002,8 +1073,8 @@ impl Model for AppData {
 /// Launch the standalone Galad host window. Blocks until the window is closed.
 pub fn run() {
     diagnostics::log("ui: run enter");
-    let idle_logged = Arc::new(AtomicBool::new(false));
-    let idle_logged_for_callback = idle_logged.clone();
+    let idle_count = Arc::new(AtomicUsize::new(0));
+    let idle_count_for_callback = idle_count.clone();
     diagnostics::log("ui: Application::new begin");
     let result = vizia::Application::new(|cx| {
         diagnostics::log("ui: application closure start");
@@ -1077,16 +1148,40 @@ pub fn run() {
         build_ui(cx, signals);
         diagnostics::log("ui: build_ui done");
     })
-    .on_idle(move |_| {
-        if !idle_logged_for_callback.swap(true, Ordering::Relaxed) {
+    .on_idle(move |cx| {
+        let idle_index = idle_count_for_callback.fetch_add(1, Ordering::Relaxed);
+        if idle_index == 0 {
             diagnostics::log("ui: first on_idle");
+            diagnostics::log_window_probe("first-on-idle-before-redraw");
+            cx.needs_redraw(Entity::root());
+            diagnostics::request_visible_window_paint("first-on-idle");
+            diagnostics::log_window_probe("first-on-idle-after-paint-nudge");
+            diagnostics::log("ui: first on_idle requested redraw");
+        } else if idle_index == 1 {
+            diagnostics::log("ui: second on_idle");
+            diagnostics::log_window_probe("second-on-idle");
         }
     })
     .title("Galad")
-    .inner_size((1280u32, 780u32))
-    .min_inner_size(Some((1120u32, 700u32)));
+    .inner_size((1040u32, 680u32))
+    .min_inner_size(Some((940u32, 600u32)));
 
     diagnostics::log("ui: Application::new done; run begin");
+    let mut startup_wake_proxy = result.get_proxy();
+    diagnostics::log("ui: spawn startup wake pump");
+    thread::spawn(move || {
+        for index in 0..20 {
+            thread::sleep(Duration::from_millis(50));
+            let result = startup_wake_proxy.redraw();
+            diagnostics::log(format!(
+                "ui: startup wake pump redraw index={index} result={result:?}"
+            ));
+            if result.is_err() {
+                break;
+            }
+        }
+        diagnostics::log("ui: startup wake pump done");
+    });
     diagnostics::log("ui: spawn window probe");
     diagnostics::spawn_window_probe("ui-run");
     if let Err(error) = result.run() {
@@ -1096,92 +1191,426 @@ pub fn run() {
     diagnostics::log("ui: run exit");
 }
 
-/// Build the host UI view tree, binding to `signals`.
+/// Build the host UI view tree, binding to `signals`. Layout follows a DAW channel strip: a thin top
+/// strip (brand, run state, status, session), then a single vertical channel strip (INPUT meters →
+/// INSERTS slot list → MASTER fader + transport) beside a settings-style right column (audio-device
+/// card + a dense, vendor-grouped plugin browser with a scan-folders footer).
 pub fn build_ui(cx: &mut Context, signals: Signals) {
     VStack::new(cx, move |cx| {
-        topbar(cx, signals);
+        top_strip(cx, signals);
         HStack::new(cx, move |cx| {
-            device_panel(cx, signals);
-            chain_panel(cx, signals);
-            side_panel(cx, signals);
+            channel_strip(cx, signals);
+            right_column(cx, signals);
         })
         .width(Stretch(1.0))
         .height(Stretch(1.0))
         .horizontal_gap(Pixels(10.0));
-        transport_strip(cx, signals);
     })
     .class("root")
-    .padding(Pixels(12.0))
+    .padding(Pixels(10.0))
     .width(Stretch(1.0))
     .height(Stretch(1.0))
     .vertical_gap(Pixels(10.0));
 }
 
-fn topbar(cx: &mut Context, signals: Signals) {
+/// A bordered icon button wrapping a Tabler `Svg`. Callers chain `.on_press`, sizing, and extra
+/// classes onto the returned handle.
+fn icon_button<'a>(cx: &'a mut Context, icon: &'static str) -> Handle<'a, Button> {
+    Button::new(cx, move |cx| Svg::new(cx, icon).class("btn-icon")).class("icon-btn")
+}
+
+/// A full-width 1px divider.
+fn divider(cx: &mut Context) {
+    Element::new(cx)
+        .class("divider")
+        .width(Stretch(1.0))
+        .height(Pixels(1.0));
+}
+
+/// A section header: a colored accent bar, a title, a reactive sub-line, and optional trailing
+/// controls (built by `trailing`).
+fn section_header<D, F>(cx: &mut Context, title: &'static str, detail: D, accent: &'static str, trailing: F)
+where
+    D: Res<String> + Clone + 'static,
+    F: FnOnce(&mut Context),
+{
     HStack::new(cx, move |cx| {
+        Element::new(cx).class("accent-bar").class(accent);
         VStack::new(cx, move |cx| {
-            Label::new(cx, "Galad").class("title");
-            Label::new(cx, signals.status).class("muted");
+            Label::new(cx, title).class("section-title");
+            Label::new(cx, detail.clone())
+                .class("section-sub")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
         })
         .width(Stretch(1.0))
         .min_width(Pixels(0.0))
-        .vertical_gap(Pixels(2.0));
-        Binding::new(cx, signals.running, move |cx| {
-            let running = signals.running.get();
-            Label::new(cx, if running { "RUNNING" } else { "STOPPED" })
-                .class("status-chip")
-                .toggle_class("status-running", running)
-                .height(Pixels(26.0));
-        });
-        Button::new(cx, |cx| Label::new(cx, "Open Session"))
-            .on_press(|cx| cx.emit(AppEvent::Load))
-            .class("tool-button")
-            .width(Pixels(110.0))
-            .height(Pixels(30.0));
-        Button::new(cx, |cx| Label::new(cx, "Save Session"))
-            .on_press(|cx| cx.emit(AppEvent::Save))
-            .class("tool-button")
-            .width(Pixels(110.0))
-            .height(Pixels(30.0));
+        .vertical_gap(Pixels(1.0));
+        trailing(cx);
     })
-    .class("topbar")
-    .height(Pixels(62.0))
+    .height(Pixels(34.0))
+    .width(Stretch(1.0))
     .alignment(Alignment::Center)
     .horizontal_gap(Pixels(8.0));
 }
 
-fn device_panel(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        section_header(cx, "Audio Devices", None);
-        device_select(
+/// Reactive readout of the currently selected device name (or a placeholder).
+fn selected_name_memo(names: Signal<Vec<String>>, selected: Signal<Option<usize>>) -> Memo<String> {
+    Memo::new(move |_| {
+        let list = names.get();
+        selected
+            .get()
+            .and_then(|index| list.get(index).cloned())
+            .unwrap_or_else(|| "— no device —".to_string())
+    })
+}
+
+/// Top strip: brand, live/idle chip, the status/notice line, and session load/save.
+fn top_strip(cx: &mut Context, signals: Signals) {
+    HStack::new(cx, move |cx| {
+        Element::new(cx).class("brand-mark");
+        Label::new(cx, "Galad").class("wordmark");
+        Label::new(
             cx,
-            "Input Device",
-            "Select input device",
+            Memo::new(move |_| {
+                if signals.running.get() {
+                    "LIVE".to_string()
+                } else {
+                    "IDLE".to_string()
+                }
+            }),
+        )
+        .class("run-chip")
+        .toggle_class("is-live", signals.running)
+        .height(Pixels(22.0));
+
+        Spacer::new(cx);
+
+        Label::new(cx, signals.status)
+            .class("status-text")
+            .width(Stretch(1.0))
+            .min_width(Pixels(0.0));
+
+        Button::new(cx, |cx| {
+            HStack::new(cx, |cx| {
+                Svg::new(cx, ICON_FOLDER).class("btn-icon");
+                Label::new(cx, "Open");
+            })
+            .width(Auto)
+            .alignment(Alignment::Center)
+            .horizontal_gap(Pixels(6.0))
+        })
+        .on_press(|cx| cx.emit(AppEvent::Load))
+        .class("tool-button")
+        .width(Pixels(82.0))
+        .height(Pixels(30.0));
+        Button::new(cx, |cx| {
+            HStack::new(cx, |cx| {
+                Svg::new(cx, ICON_DEVICE_FLOPPY).class("btn-icon");
+                Label::new(cx, "Save");
+            })
+            .width(Auto)
+            .alignment(Alignment::Center)
+            .horizontal_gap(Pixels(6.0))
+        })
+        .on_press(|cx| cx.emit(AppEvent::Save))
+        .class("tool-button")
+        .width(Pixels(82.0))
+        .height(Pixels(30.0));
+    })
+    .class("top-strip")
+    .height(Pixels(46.0))
+    .width(Stretch(1.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(10.0));
+}
+
+/// The single channel strip: INPUT (meters) → INSERTS (the plugin chain, stretchy) → MASTER OUT
+/// (meters, fader, transport), in DAW top-to-bottom signal order.
+fn channel_strip(cx: &mut Context, signals: Signals) {
+    VStack::new(cx, move |cx| {
+        section_header(
+            cx,
+            "INPUT",
+            selected_name_memo(signals.input_names, signals.selected_input_index),
+            "accent-audio",
+            |_| {},
+        );
+        meter_pair(cx, signals.input_left_level, signals.input_right_level);
+        divider(cx);
+
+        section_header(
+            cx,
+            "INSERTS",
+            Memo::new(move |_| count_text(signals.chain.get().len(), "in chain")),
+            "accent-tone",
+            |_| {},
+        );
+        ScrollView::new(cx, move |cx| {
+            let chain = signals.chain;
+            Binding::new(cx, chain, move |cx| {
+                let rows = chain.get();
+                if rows.is_empty() {
+                    insert_empty(cx);
+                    return;
+                }
+                VStack::new(cx, move |cx| {
+                    for (index, row) in rows.into_iter().enumerate() {
+                        insert_slot(cx, index, row);
+                    }
+                })
+                .width(Stretch(1.0))
+                .vertical_gap(Pixels(5.0));
+            });
+        })
+        .class("v-scroll")
+        .show_horizontal_scrollbar(false)
+        .show_vertical_scrollbar(true)
+        .width(Stretch(1.0))
+        .height(Stretch(1.0));
+        divider(cx);
+
+        section_header(
+            cx,
+            "MASTER OUT",
+            selected_name_memo(signals.output_names, signals.selected_output_index),
+            "accent-transport",
+            |_| {},
+        );
+        meter_pair(cx, signals.output_left_level, signals.output_right_level);
+        master_fader(cx, signals);
+        transport_row(cx, signals);
+    })
+    .class("strip")
+    .width(Pixels(300.0))
+    .height(Stretch(1.0))
+    .padding(Pixels(12.0))
+    .vertical_gap(Pixels(9.0));
+}
+
+/// One insert slot: power/bypass toggle, index, plugin name, editor, reorder, remove.
+fn insert_slot(cx: &mut Context, index: usize, row: ChainRow) {
+    let bypassed = row.bypassed;
+    let name = row.name;
+    HStack::new(cx, move |cx| {
+        icon_button(cx, ICON_POWER)
+            .class("slot-power")
+            .toggle_class("is-bypassed", bypassed)
+            .width(Pixels(24.0))
+            .height(Pixels(24.0))
+            .on_press(move |cx| cx.emit(AppEvent::ToggleBypass(index)));
+        Label::new(cx, format!("{}", index + 1))
+            .class("slot-index")
+            .width(Pixels(14.0));
+        Label::new(cx, name.clone())
+            .class("row-name")
+            .width(Stretch(1.0))
+            .min_width(Pixels(0.0));
+        icon_button(cx, ICON_ADJUSTMENTS)
+            .width(Pixels(24.0))
+            .height(Pixels(24.0))
+            .on_press(move |cx| cx.emit(AppEvent::OpenEditor(index)));
+        icon_button(cx, ICON_CHEVRON_UP)
+            .width(Pixels(22.0))
+            .height(Pixels(24.0))
+            .on_press(move |cx| cx.emit(AppEvent::MoveUp(index)));
+        icon_button(cx, ICON_CHEVRON_DOWN)
+            .width(Pixels(22.0))
+            .height(Pixels(24.0))
+            .on_press(move |cx| cx.emit(AppEvent::MoveDown(index)));
+        icon_button(cx, ICON_TRASH)
+            .class("danger")
+            .width(Pixels(24.0))
+            .height(Pixels(24.0))
+            .on_press(move |cx| cx.emit(AppEvent::RemovePlugin(index)));
+    })
+    .class("slot")
+    .toggle_class("is-bypassed", bypassed)
+    .height(Pixels(36.0))
+    .width(Stretch(1.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(4.0));
+}
+
+/// Empty-state for the inserts list.
+fn insert_empty(cx: &mut Context) {
+    VStack::new(cx, |cx| {
+        Label::new(cx, "No inserts").class("muted");
+        Label::new(cx, "Add plugins from the browser").class("section-sub");
+    })
+    .class("slot-empty")
+    .width(Stretch(1.0))
+    .height(Pixels(68.0))
+    .alignment(Alignment::Center)
+    .vertical_gap(Pixels(3.0));
+}
+
+/// A stacked L/R meter pair.
+fn meter_pair(cx: &mut Context, left: Signal<f32>, right: Signal<f32>) {
+    VStack::new(cx, move |cx| {
+        meter(cx, "L", left);
+        meter(cx, "R", right);
+    })
+    .width(Stretch(1.0))
+    .height(Auto)
+    .vertical_gap(Pixels(4.0));
+}
+
+/// One meter channel: a label, a fill bar (hot near 0 dBFS), and a dB readout.
+fn meter(cx: &mut Context, label: &'static str, level: Signal<f32>) {
+    HStack::new(cx, move |cx| {
+        Label::new(cx, label).class("meter-label").width(Pixels(10.0));
+        HStack::new(cx, move |cx| {
+            Binding::new(cx, level, move |cx| {
+                let value = level.get();
+                let width = meter_width_percent(value);
+                let hot = value >= 0.99;
+                Element::new(cx)
+                    .class("meter-fill")
+                    .toggle_class("is-hot", hot)
+                    .width(Percentage(width))
+                    .height(Stretch(1.0));
+            });
+            Spacer::new(cx);
+        })
+        .class("meter-track")
+        .width(Stretch(1.0))
+        .min_width(Pixels(0.0))
+        .height(Pixels(7.0));
+        Label::new(cx, Memo::new(move |_| level_text(level.get())))
+            .class("meter-label")
+            .width(Pixels(50.0));
+    })
+    .width(Stretch(1.0))
+    .height(Pixels(16.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(6.0));
+}
+
+/// Master gain: volume icon, fader, dB readout.
+fn master_fader(cx: &mut Context, signals: Signals) {
+    HStack::new(cx, move |cx| {
+        Svg::new(cx, ICON_VOLUME).class("inline-icon");
+        Slider::new(cx, signals.master_gain_db)
+            .range(MASTER_GAIN_MIN_DB..MASTER_GAIN_MAX_DB)
+            .step(0.5f32)
+            .on_change(|cx, gain| cx.emit(AppEvent::SetMasterGain(gain)))
+            .class("master-slider")
+            .width(Stretch(1.0));
+        Label::new(cx, Memo::new(move |_| gain_text(signals.master_gain_db.get())))
+            .class("value-strong")
+            .width(Pixels(56.0));
+    })
+    .width(Stretch(1.0))
+    .height(Pixels(28.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(8.0));
+}
+
+/// Transport: a large start/stop button plus a mute toggle.
+fn transport_row(cx: &mut Context, signals: Signals) {
+    HStack::new(cx, move |cx| {
+        let running = signals.running;
+        Button::new(cx, move |cx| {
+            HStack::new(cx, move |cx| {
+                Binding::new(cx, running, move |cx| {
+                    Svg::new(
+                        cx,
+                        if running.get() {
+                            ICON_PLAYER_STOP
+                        } else {
+                            ICON_PLAYER_PLAY
+                        },
+                    )
+                    .class("btn-icon");
+                });
+                Label::new(
+                    cx,
+                    Memo::new(move |_| {
+                        if running.get() {
+                            "Stop".to_string()
+                        } else {
+                            "Start".to_string()
+                        }
+                    }),
+                );
+            })
+            .width(Auto)
+            .alignment(Alignment::Center)
+            .horizontal_gap(Pixels(7.0))
+        })
+        .on_press(move |cx| {
+            if running.get() {
+                cx.emit(AppEvent::Stop);
+            } else {
+                cx.emit(AppEvent::Start);
+            }
+        })
+        .class("transport-btn")
+        .toggle_class("is-stop", signals.running)
+        .width(Stretch(1.0))
+        .height(Pixels(38.0));
+
+        icon_button(cx, ICON_VOLUME)
+            .class("mute-btn")
+            .toggle_class("mute-on", signals.master_muted)
+            .width(Pixels(40.0))
+            .height(Pixels(38.0))
+            .on_press(|cx| cx.emit(AppEvent::ToggleMasterMute));
+    })
+    .width(Stretch(1.0))
+    .height(Pixels(38.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(8.0));
+}
+
+/// The right column: settings-style audio-device card over the plugin browser card.
+fn right_column(cx: &mut Context, signals: Signals) {
+    VStack::new(cx, move |cx| {
+        device_card(cx, signals);
+        browser_card(cx, signals);
+    })
+    .width(Stretch(1.0))
+    .height(Stretch(1.0))
+    .vertical_gap(Pixels(10.0));
+}
+
+/// Audio-device settings card: labelled Input/Output rows like a DAW preferences pane.
+fn device_card(cx: &mut Context, signals: Signals) {
+    VStack::new(cx, move |cx| {
+        section_header(
+            cx,
+            "AUDIO DEVICE",
+            Memo::new(|_| "input / output routing".to_string()),
+            "accent-audio",
+            |_| {},
+        );
+        device_field(
+            cx,
+            "Input",
+            "Select input",
             signals.input_names,
             signals.selected_input_index,
             true,
         );
-        Element::new(cx)
-            .class("divider")
-            .width(Stretch(1.0))
-            .height(Pixels(1.0));
-        device_select(
+        device_field(
             cx,
-            "Output Device",
-            "Select output device",
+            "Output",
+            "Select output",
             signals.output_names,
             signals.selected_output_index,
             false,
         );
     })
     .class("panel")
-    .width(Pixels(300.0))
-    .height(Stretch(1.0))
-    .min_height(Pixels(260.0))
+    .width(Stretch(1.0))
+    .height(Auto)
+    .padding(Pixels(12.0))
     .vertical_gap(Pixels(8.0));
 }
 
-fn device_select(
+/// One labelled device row: a fixed-width label and a dropdown.
+fn device_field(
     cx: &mut Context,
     label: &'static str,
     placeholder: &'static str,
@@ -1189,8 +1618,8 @@ fn device_select(
     selected: Signal<Option<usize>>,
     input: bool,
 ) {
-    VStack::new(cx, move |cx| {
-        Label::new(cx, label).class("meter-label");
+    HStack::new(cx, move |cx| {
+        Label::new(cx, label).class("field-label").width(Pixels(60.0));
         Select::new(cx, names, selected, true)
             .placeholder(placeholder)
             .on_select(move |cx, index| {
@@ -1203,491 +1632,180 @@ fn device_select(
             .class("device-select")
             .width(Stretch(1.0));
     })
-    .class("device-control")
     .width(Stretch(1.0))
-    .height(Pixels(82.0))
-    .vertical_gap(Pixels(6.0));
+    .height(Pixels(34.0))
+    .alignment(Alignment::Center)
+    .horizontal_gap(Pixels(8.0));
 }
 
-fn chain_panel(cx: &mut Context, signals: Signals) {
+/// Plugin browser card: vendor-grouped catalog (stretchy) over a scan-folders footer.
+fn browser_card(cx: &mut Context, signals: Signals) {
     VStack::new(cx, move |cx| {
         section_header(
             cx,
-            "Signal Path",
-            Some(Memo::new(move |_| {
-                count_text(signals.chain.get().len(), "loaded plugin")
-            })),
+            "PLUGINS",
+            Memo::new(move |_| count_text(signals.catalog.get().len(), "available")),
+            "accent-tone",
+            move |cx| {
+                icon_button(cx, ICON_REFRESH)
+                    .width(Pixels(28.0))
+                    .height(Pixels(26.0))
+                    .on_press(|cx| cx.emit(AppEvent::RescanPlugins));
+            },
         );
-        ScrollView::new(cx, move |cx| {
-            let chain = signals.chain;
-            Binding::new(cx, chain, move |cx| {
-                let rows = chain.get();
-                if rows.is_empty() {
-                    empty_state(cx, "No loaded plugins");
-                    return;
-                }
-                VStack::new(cx, move |cx| {
-                    for (index, row) in rows.into_iter().enumerate() {
-                        chain_row(cx, index, row);
-                    }
-                })
-                .width(Stretch(1.0))
-                .vertical_gap(Pixels(6.0));
-            });
-        })
-        .show_horizontal_scrollbar(false)
-        .show_vertical_scrollbar(true)
-        .width(Stretch(1.0))
-        .height(Stretch(1.0));
-    })
-    .class("panel")
-    .width(Stretch(1.0))
-    .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
-}
 
-fn chain_row(cx: &mut Context, index: usize, row: ChainRow) {
-    let bypassed = row.bypassed;
-    let name = row.name;
-    HStack::new(cx, move |cx| {
-        Label::new(cx, format!("{:02}", index + 1))
-            .class("count-chip")
-            .width(Pixels(34.0))
-            .height(Pixels(24.0));
-        VStack::new(cx, move |cx| {
-            Label::new(cx, name.clone())
-                .class("value-label")
-                .width(Stretch(1.0))
-                .min_width(Pixels(0.0));
-            Label::new(cx, if bypassed { "bypassed" } else { "active" }).class("slot-meta");
-        })
-        .width(Stretch(1.0))
-        .min_width(Pixels(0.0))
-        .vertical_gap(Pixels(1.0));
-        Label::new(cx, if bypassed { "BYPASS" } else { "ACTIVE" })
-            .class("state-chip")
-            .toggle_class("state-bypassed", bypassed)
-            .width(Pixels(66.0))
-            .height(Pixels(24.0));
-        Button::new(cx, |cx| Label::new(cx, "Editor"))
-            .on_press(move |cx| cx.emit(AppEvent::OpenEditor(index)))
-            .class("tool-button")
-            .width(Pixels(62.0))
-            .height(Pixels(28.0));
-        Button::new(cx, move |cx| {
-            Label::new(cx, if bypassed { "Enable" } else { "Bypass" })
-        })
-        .on_press(move |cx| cx.emit(AppEvent::ToggleBypass(index)))
-        .class("tool-button")
-        .width(Pixels(66.0))
-        .height(Pixels(28.0));
-        Button::new(cx, |cx| Label::new(cx, "Up"))
-            .on_press(move |cx| cx.emit(AppEvent::MoveUp(index)))
-            .class("tool-button")
-            .width(Pixels(44.0))
-            .height(Pixels(28.0));
-        Button::new(cx, |cx| Label::new(cx, "Down"))
-            .on_press(move |cx| cx.emit(AppEvent::MoveDown(index)))
-            .class("tool-button")
-            .width(Pixels(52.0))
-            .height(Pixels(28.0));
-        Button::new(cx, |cx| Label::new(cx, "Remove"))
-            .on_press(move |cx| cx.emit(AppEvent::RemovePlugin(index)))
-            .class("tool-button")
-            .width(Pixels(68.0))
-            .height(Pixels(28.0));
-    })
-    .class("slot-row")
-    .toggle_class("slot-bypassed", bypassed)
-    .height(Pixels(52.0))
-    .width(Stretch(1.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(7.0));
-}
-
-fn side_panel(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        vst3_folders_panel(cx, signals);
-        catalog_panel(cx, signals);
-    })
-    .width(Pixels(440.0))
-    .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
-}
-
-fn vst3_folders_panel(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        HStack::new(cx, move |cx| {
-            section_header(
-                cx,
-                "VST3 Folders",
-                Some(Memo::new(move |_| {
-                    count_text(signals.scan_folders.get().len(), "folder")
-                })),
-            );
-            Button::new(cx, |cx| Label::new(cx, "Add Folder"))
-                .on_press(|cx| cx.emit(AppEvent::AddScanFolder))
-                .class("tool-button")
-                .width(Pixels(96.0))
-                .height(Pixels(30.0));
-        })
-        .height(Pixels(32.0))
-        .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(8.0));
-        ScrollView::new(cx, move |cx| {
-            let folders = signals.scan_folders;
-            Binding::new(cx, folders, move |cx| {
-                let rows = folders.get();
-                if rows.is_empty() {
-                    empty_state(cx, "No VST3 folders");
-                    return;
-                }
-                VStack::new(cx, move |cx| {
-                    for row in rows {
-                        scan_folder_view(cx, row);
-                    }
-                })
-                .width(Stretch(1.0))
-                .vertical_gap(Pixels(5.0));
-            });
-        })
-        .show_horizontal_scrollbar(false)
-        .show_vertical_scrollbar(true)
-        .height(Stretch(1.0))
-        .width(Stretch(1.0));
-    })
-    .class("panel")
-    .width(Stretch(1.0))
-    .height(Pixels(162.0))
-    .vertical_gap(Pixels(8.0));
-}
-
-fn scan_folder_view(cx: &mut Context, row: ScanFolderRow) {
-    let system = row.system;
-    let custom_index = row.custom_index;
-    let path = row.path;
-    let name = row.name;
-    HStack::new(cx, move |cx| {
-        VStack::new(cx, move |cx| {
-            Label::new(cx, name.clone())
-                .class("value-label")
-                .width(Stretch(1.0))
-                .min_width(Pixels(0.0));
-            Label::new(cx, path.clone())
-                .class("catalog-detail")
-                .width(Stretch(1.0))
-                .min_width(Pixels(0.0));
-        })
-        .width(Stretch(1.0))
-        .min_width(Pixels(0.0))
-        .vertical_gap(Pixels(1.0));
-        Label::new(cx, if system { "SYSTEM" } else { "CUSTOM" })
-            .class("state-chip")
-            .width(Pixels(66.0))
-            .height(Pixels(24.0));
-        if let Some(custom_index) = custom_index {
-            Button::new(cx, |cx| Label::new(cx, "Remove"))
-                .on_press(move |cx| cx.emit(AppEvent::RemoveScanFolder(custom_index)))
-                .class("tool-button")
-                .width(Pixels(66.0))
-                .height(Pixels(26.0));
-        }
-    })
-    .class("catalog-row-view")
-    .height(Pixels(46.0))
-    .width(Stretch(1.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(7.0));
-}
-
-fn catalog_panel(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        HStack::new(cx, move |cx| {
-            section_header(
-                cx,
-                "Available VST3s",
-                Some(Memo::new(move |_| {
-                    count_text(signals.catalog.get().len(), "plugin")
-                })),
-            );
-            Button::new(cx, |cx| Label::new(cx, "Rescan"))
-                .on_press(|cx| cx.emit(AppEvent::RescanPlugins))
-                .class("tool-button")
-                .width(Pixels(70.0))
-                .height(Pixels(30.0));
-        })
-        .height(Pixels(32.0))
-        .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(8.0));
         ScrollView::new(cx, move |cx| {
             let catalog = signals.catalog;
             Binding::new(cx, catalog, move |cx| {
                 let rows = catalog.get();
                 if rows.is_empty() {
-                    empty_state(cx, "No available VST3s");
+                    Label::new(cx, "No plugins found. Add a folder, then Rescan.").class("muted");
                     return;
                 }
                 VStack::new(cx, move |cx| {
                     for group in catalog_groups(rows) {
                         Label::new(cx, group.vendor)
                             .class("vendor-header")
-                            .width(Stretch(1.0));
+                            .width(Stretch(1.0))
+                            .min_width(Pixels(0.0));
                         for row in group.rows {
                             catalog_row(cx, row);
                         }
                     }
                 })
                 .width(Stretch(1.0))
-                .vertical_gap(Pixels(5.0));
+                .vertical_gap(Pixels(3.0));
             });
         })
+        .class("v-scroll")
         .show_horizontal_scrollbar(false)
         .show_vertical_scrollbar(true)
-        .height(Stretch(1.0))
-        .width(Stretch(1.0));
+        .width(Stretch(1.0))
+        .height(Stretch(1.0));
+
+        divider(cx);
+
+        section_header(
+            cx,
+            "FOLDERS",
+            Memo::new(move |_| count_text(signals.scan_folders.get().len(), "folder")),
+            "accent-warn",
+            move |cx| {
+                icon_button(cx, ICON_FOLDER_PLUS)
+                    .width(Pixels(28.0))
+                    .height(Pixels(26.0))
+                    .on_press(|cx| cx.emit(AppEvent::AddScanFolder));
+            },
+        );
+
+        ScrollView::new(cx, move |cx| {
+            let folders = signals.scan_folders;
+            Binding::new(cx, folders, move |cx| {
+                let rows = folders.get();
+                if rows.is_empty() {
+                    Label::new(cx, "No folders").class("muted");
+                    return;
+                }
+                VStack::new(cx, move |cx| {
+                    for row in rows {
+                        folder_row(cx, row);
+                    }
+                })
+                .width(Stretch(1.0))
+                .vertical_gap(Pixels(4.0));
+            });
+        })
+        .class("v-scroll")
+        .show_horizontal_scrollbar(false)
+        .show_vertical_scrollbar(true)
+        .width(Stretch(1.0))
+        .height(Pixels(104.0));
     })
     .class("panel")
     .width(Stretch(1.0))
     .height(Stretch(1.0))
-    .vertical_gap(Pixels(10.0));
+    .padding(Pixels(12.0))
+    .vertical_gap(Pixels(8.0));
 }
 
+/// One scanned plugin: status dot, name, and an Add button — or the failure reason if incompatible.
+/// Dense single-line rows; the file path is intentionally omitted (the vendor group conveys it).
 fn catalog_row(cx: &mut Context, row: CatalogRow) {
     let index = row.catalog_index;
     let compatible = row.compatible;
-    let detail = if compatible {
-        "compatible".to_string()
+    let name = row.name;
+    let reason = if compatible {
+        String::new()
     } else if row.detail.is_empty() {
         "incompatible".to_string()
     } else {
         row.detail
     };
-    let path = row.path;
-    let name = row.name;
     HStack::new(cx, move |cx| {
         Element::new(cx)
-            .class("catalog-dot")
-            .toggle_class("dot-compatible", compatible)
-            .toggle_class("dot-error", !compatible);
-        VStack::new(cx, move |cx| {
-            Label::new(cx, name.clone())
-                .class("value-label")
-                .width(Stretch(1.0))
-                .min_width(Pixels(0.0));
-            Label::new(cx, detail.clone())
-                .class("catalog-detail")
-                .width(Stretch(1.0))
-                .min_width(Pixels(0.0));
-            Label::new(cx, path.clone())
-                .class("catalog-detail")
-                .width(Stretch(1.0))
-                .min_width(Pixels(0.0));
-        })
-        .width(Stretch(1.0))
-        .min_width(Pixels(0.0))
-        .vertical_gap(Pixels(1.0));
+            .class("dot")
+            .toggle_class("is-ok", compatible)
+            .toggle_class("is-error", !compatible);
+        Label::new(cx, name.clone())
+            .class("row-name")
+            .width(Stretch(1.0))
+            .min_width(Pixels(0.0));
         if compatible {
-            Button::new(cx, |cx| Label::new(cx, "Load"))
-                .on_press(move |cx| cx.emit(AppEvent::AddFromCatalog(index)))
-                .class("tool-button")
-                .width(Pixels(54.0))
-                .height(Pixels(26.0));
+            icon_button(cx, ICON_PLUS)
+                .class("add")
+                .width(Pixels(26.0))
+                .height(Pixels(24.0))
+                .on_press(move |cx| cx.emit(AppEvent::AddFromCatalog(index)));
         } else {
-            Label::new(cx, "BLOCK")
-                .class("state-chip")
-                .class("state-error")
-                .width(Pixels(54.0))
-                .height(Pixels(24.0));
+            Label::new(cx, reason.clone())
+                .class("row-reason")
+                .width(Auto)
+                .min_width(Pixels(0.0));
         }
     })
-    .class("catalog-row-view")
-    .toggle_class("catalog-compatible", compatible)
-    .height(Pixels(62.0))
+    .class("browse-row")
+    .toggle_class("is-compatible", compatible)
+    .height(Pixels(28.0))
     .width(Stretch(1.0))
     .alignment(Alignment::Center)
     .horizontal_gap(Pixels(7.0));
 }
 
-fn meter(cx: &mut Context, label: &'static str, level: Signal<f32>, hot: bool) {
-    VStack::new(cx, move |cx| {
-        HStack::new(cx, move |cx| {
-            Label::new(cx, label)
-                .class("meter-label")
-                .width(Stretch(1.0));
-            Label::new(cx, Memo::new(move |_| level_text(level.get()))).class("meter-label");
-        })
-        .height(Pixels(16.0))
-        .alignment(Alignment::Center);
-        Binding::new(cx, level, move |cx| {
-            let width = meter_width_percent(level.get());
-            HStack::new(cx, move |cx| {
-                Element::new(cx)
-                    .class("meter-fill")
-                    .toggle_class("meter-fill-hot", hot)
-                    .width(Percentage(width))
-                    .height(Stretch(1.0));
-                Spacer::new(cx);
-            })
-            .class("meter-track")
-            .width(Stretch(1.0))
-            .height(Pixels(12.0));
-        });
-    })
-    .width(Stretch(1.0))
-    .height(Pixels(34.0))
-    .vertical_gap(Pixels(3.0));
-}
-
-fn transport_strip(cx: &mut Context, signals: Signals) {
+/// One scan-folder row: folder icon, name + path (clipped), a SYS/USR chip, and remove for custom.
+fn folder_row(cx: &mut Context, row: ScanFolderRow) {
+    let system = row.system;
+    let custom_index = row.custom_index;
+    let path = row.path;
+    let name = row.name;
     HStack::new(cx, move |cx| {
-        let running = signals.running;
-        Button::new(cx, move |cx| {
-            Label::new(
-                cx,
-                Memo::new(move |_| {
-                    if running.get() {
-                        "Audio Off"
-                    } else {
-                        "Audio On"
-                    }
-                }),
-            )
+        Svg::new(cx, ICON_FOLDER).class("inline-icon-sm");
+        VStack::new(cx, move |cx| {
+            Label::new(cx, name.clone())
+                .class("row-name")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
+            Label::new(cx, path.clone())
+                .class("row-path")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
         })
-        .on_press(move |cx| {
-            if running.get() {
-                cx.emit(AppEvent::Stop);
-            } else {
-                cx.emit(AppEvent::Start);
-            }
-        })
-        .class("primary-button")
-        .toggle_class("stop-button", signals.running)
-        .width(Pixels(96.0))
-        .height(Pixels(34.0));
-        Element::new(cx)
-            .class("vertical-divider")
-            .width(Pixels(1.0))
-            .height(Pixels(58.0));
-        meter_group(
-            cx,
-            "Input",
-            signals.input_left_level,
-            signals.input_right_level,
-            false,
-        );
-        meter_group(
-            cx,
-            "Output",
-            signals.output_left_level,
-            signals.output_right_level,
-            true,
-        );
-        master_control(cx, signals);
-        Label::new(cx, signals.status)
-            .class("muted")
-            .width(Stretch(1.0))
-            .min_width(Pixels(0.0));
-    })
-    .class("transport-strip")
-    .height(Pixels(96.0))
-    .width(Stretch(1.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(10.0));
-}
-
-fn meter_group(
-    cx: &mut Context,
-    title: &'static str,
-    left: Signal<f32>,
-    right: Signal<f32>,
-    hot: bool,
-) {
-    VStack::new(cx, move |cx| {
-        Label::new(cx, title).class("meter-label");
-        meter(cx, "L", left, hot);
-        meter(cx, "R", right, hot);
-    })
-    .class("meter-group")
-    .width(Pixels(190.0))
-    .height(Pixels(72.0))
-    .vertical_gap(Pixels(2.0));
-}
-
-fn master_control(cx: &mut Context, signals: Signals) {
-    VStack::new(cx, move |cx| {
-        HStack::new(cx, move |cx| {
-            Label::new(cx, "Master")
-                .class("meter-label")
-                .width(Stretch(1.0));
-            Label::new(
-                cx,
-                Memo::new(move |_| gain_text(signals.master_gain_db.get())),
-            )
-            .class("meter-label");
-        })
-        .height(Pixels(16.0))
-        .alignment(Alignment::Center);
-        HStack::new(cx, move |cx| {
-            Slider::new(cx, signals.master_gain_db)
-                .range(MASTER_GAIN_MIN_DB..MASTER_GAIN_MAX_DB)
-                .step(0.5f32)
-                .on_change(|cx, gain| cx.emit(AppEvent::SetMasterGain(gain)));
-            Button::new(cx, move |cx| {
-                Label::new(
-                    cx,
-                    Memo::new(move |_| {
-                        if signals.master_muted.get() {
-                            "Muted"
-                        } else {
-                            "Mute"
-                        }
-                    }),
-                )
-            })
-            .on_press(|cx| cx.emit(AppEvent::ToggleMasterMute))
-            .class("tool-button")
-            .toggle_class("stop-button", signals.master_muted)
-            .width(Pixels(62.0))
-            .height(Pixels(28.0));
-        })
-        .height(Pixels(34.0))
-        .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(8.0));
-    })
-    .class("master-control")
-    .width(Pixels(250.0))
-    .height(Pixels(72.0))
-    .vertical_gap(Pixels(4.0));
-}
-
-fn section_header(cx: &mut Context, title: &'static str, count: Option<Memo<String>>) {
-    HStack::new(cx, move |cx| {
-        Label::new(cx, title)
-            .class("section-title")
-            .width(Stretch(1.0))
-            .min_width(Pixels(0.0));
-        if let Some(count) = count {
-            Label::new(cx, count)
-                .class("count-chip")
-                .height(Pixels(24.0));
+        .width(Stretch(1.0))
+        .min_width(Pixels(0.0))
+        .vertical_gap(Pixels(0.0));
+        Label::new(cx, if system { "SYS" } else { "USR" }).class("mini-chip");
+        if let Some(custom_index) = custom_index {
+            icon_button(cx, ICON_TRASH)
+                .class("danger")
+                .width(Pixels(24.0))
+                .height(Pixels(24.0))
+                .on_press(move |cx| cx.emit(AppEvent::RemoveScanFolder(custom_index)));
         }
     })
-    .height(Pixels(26.0))
+    .class("folder-row")
+    .height(Pixels(38.0))
     .width(Stretch(1.0))
     .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(8.0));
-}
-
-fn empty_state(cx: &mut Context, text: &'static str) {
-    VStack::new(cx, move |cx| {
-        Spacer::new(cx);
-        Label::new(cx, text).class("muted");
-        Spacer::new(cx);
-    })
-    .class("empty-state")
-    .width(Stretch(1.0))
-    .height(Pixels(96.0))
-    .alignment(Alignment::Center);
+    .horizontal_gap(Pixels(7.0));
 }
 
 fn count_text(count: usize, noun: &str) -> String {
