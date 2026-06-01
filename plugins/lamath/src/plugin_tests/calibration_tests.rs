@@ -275,3 +275,54 @@ fn calibration_battery_reports_sane_metrics_for_every_family_and_dynamic() {
         }
     }
 }
+
+/// M11 P4 step 5: the four resonator families are pairwise timbrally distinct (their
+/// onset spectral centroids differ by a clear margin), the String/Tube/Mesh bodies
+/// and the String stiffness having voiced each family to its own colour, and the
+/// Modal reference is unchanged by P4 (its centroid stays at a pinned value).
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
+#[test]
+fn families_are_pairwise_timbrally_distinct_and_modal_unchanged() {
+    use lindelion_dsp_utils::analysis::spectral_centroid_hz;
+
+    let sample_rate = 48_000.0;
+    let onset_centroid = |family: ResonatorFamily| {
+        let clip = render_family_clip(family, 100, sample_rate, 1.0);
+        spectral_centroid_hz(&clip.left[..24_000], sample_rate).unwrap_or(0.0)
+    };
+
+    let centroids: Vec<(&str, f32)> = ResonatorFamily::ALL
+        .into_iter()
+        .map(|family| (family.name(), onset_centroid(family)))
+        .collect();
+
+    // Pairwise distinct by a clear margin (the families don't collapse into one
+    // timbre); absolute target bands are left to the M12 audition.
+    for i in 0..centroids.len() {
+        for j in (i + 1)..centroids.len() {
+            let (name_a, a) = centroids[i];
+            let (name_b, b) = centroids[j];
+            let ratio = a.max(b) / a.min(b).max(1.0);
+            assert!(
+                ratio > 1.15,
+                "{name_a} and {name_b} centroids too close: {a} vs {b}"
+            );
+        }
+    }
+
+    // Modal is the untouched reference: its onset centroid stays at its pinned value
+    // (P4 changed only the String/Tube/Mesh paths).
+    let modal = centroids
+        .iter()
+        .find(|(name, _)| *name == "Modal")
+        .map(|(_, c)| *c)
+        .unwrap();
+    assert!(
+        (MODAL_REFERENCE_CENTROID_HZ * 0.95..=MODAL_REFERENCE_CENTROID_HZ * 1.05).contains(&modal),
+        "Modal centroid drifted from its pinned reference: {modal} vs {MODAL_REFERENCE_CENTROID_HZ}"
+    );
+}
+
+/// Pinned onset spectral centroid of the default Modal voice (M11 P4 step 5
+/// reference); P4 must not move it.
+const MODAL_REFERENCE_CENTROID_HZ: f32 = 1_856.0;

@@ -5,6 +5,7 @@
 
 use lindelion_dsp_utils::math::finite_clamp;
 
+use super::super::body::{OutputBody, mesh_output_body};
 use super::{MeshBoundaryConfig, MeshPoint, RectangularMesh2d, RectangularMesh2dConfig};
 
 const RUNTIME_MESH_WIDTH: usize = 14;
@@ -45,6 +46,9 @@ impl Default for MeshVoiceParams {
 pub struct MeshResonator {
     sample_rate: f32,
     mesh: RectangularMesh2d,
+    /// One-way shell body coloring the radiated mesh output (M11 P4). Fixed-
+    /// frequency, built once; a note only resets it.
+    body: OutputBody,
 }
 
 impl MeshResonator {
@@ -56,7 +60,11 @@ impl MeshResonator {
             sample_rate,
             ..RectangularMesh2dConfig::default()
         });
-        Self { sample_rate, mesh }
+        Self {
+            sample_rate,
+            mesh,
+            body: mesh_output_body(sample_rate),
+        }
     }
 
     pub fn configure(&mut self, params: MeshVoiceParams) {
@@ -66,9 +74,20 @@ impl MeshResonator {
 
     pub fn reset(&mut self) {
         self.mesh.reset();
+        self.body.reset();
     }
 
     pub fn process_sample(&mut self, excitation: f32) -> f32 {
+        // The shell body colors the radiated pickup output one-way; it never feeds
+        // back into the mesh, so it cannot affect the ring-out or stability.
+        self.body
+            .process_sample(self.mesh.process_sample(excitation))
+    }
+
+    /// Render the raw mesh pickup without the shell body (test-only reference for
+    /// isolating the body's coloration).
+    #[cfg(test)]
+    fn process_sample_bare(&mut self, excitation: f32) -> f32 {
         self.mesh.process_sample(excitation)
     }
 
@@ -176,6 +195,53 @@ mod tests {
             .rposition(|&level| level > threshold)
             .unwrap_or(0);
         (last * window + window / 2) as f32 / sample_rate
+    }
+
+    /// M11 P4 step 3: the one-way shell body colors the radiated mesh output — its
+    /// bridge-hill formant is emphasized relative to the bare mesh — while staying
+    /// bounded. (The body is one-way, so the mesh ring-out is covered by
+    /// `default_mesh_rings_with_metallic_shimmer_and_stays_stable`, which now renders
+    /// through the body and still passes.)
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
+    #[test]
+    fn mesh_shell_body_colors_the_radiated_output() {
+        use lindelion_dsp_utils::analysis::dft_magnitude_at;
+
+        let sample_rate = 48_000.0;
+        let render = |bare: bool| {
+            let mut mesh = MeshResonator::new(sample_rate);
+            mesh.configure(MeshVoiceParams::default());
+            (0..48_000)
+                .map(|index| {
+                    let excitation = (index == 0) as u8 as f32;
+                    if bare {
+                        mesh.process_sample_bare(excitation)
+                    } else {
+                        mesh.process_sample(excitation)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let bodied = render(false);
+        let bare = render(true);
+        assert_all_finite(&bodied);
+        assert!(peak_abs(&bodied) < 4.0, "peak_abs={}", peak_abs(&bodied));
+
+        // The bridge-hill formant (3.4 kHz) is emphasized by the body, relative to an
+        // off-formant reference (6 kHz), more than in the bare mesh.
+        let emphasis = |out: &[f32]| {
+            dft_magnitude_at(out, sample_rate, 3_400.0)
+                / dft_magnitude_at(out, sample_rate, 6_000.0).max(1.0e-9)
+        };
+        assert!(
+            emphasis(&bodied) > emphasis(&bare) * 1.2,
+            "shell body should emphasize the bridge-hill formant: bodied={}, bare={}",
+            emphasis(&bodied),
+            emphasis(&bare)
+        );
     }
 
     /// M11 P2 step 3: the default mesh voice rings with a long metallic shimmer

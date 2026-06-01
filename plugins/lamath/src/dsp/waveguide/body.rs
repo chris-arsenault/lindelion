@@ -33,12 +33,18 @@ const BODY_BACKGROUND_ADMITTANCE: f32 = 0.000_5;
 /// is only gently pulled near body resonances.
 const BODY_GAIN_SCALE: f32 = 0.08;
 
+/// Tube body voicing (M11 P4): fixed bore-body resonance and a broad bell-flare
+/// formant the played note sweeps across (a real instrument body, not a
+/// pitch-following formant).
+const TUBE_BORE_BODY_HZ: f32 = 280.0;
+const TUBE_BELL_FLARE_HZ: f32 = 1_500.0;
+
 /// A single body resonance as a driving-point **mobility/admittance**: a fixed
 /// **absolute** frequency (a real body resonates at the same Hz regardless of the
 /// played note — the string sweeps across it), a quality factor, and the peak
 /// admittance magnitude (the coupling strength of that resonance).
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct BodyMode {
+pub(super) struct BodyMode {
     frequency_hz: f32,
     q: f32,
     gain: f32,
@@ -453,8 +459,12 @@ impl BodyProfile {
                 }
             }
             WaveguideStyle::Tube => {
-                let low_body_hz = math::finite_clamp(frequency_hz * 2.0, 120.0, 1_400.0, 440.0);
-                let high_body_hz = math::finite_clamp(frequency_hz * 5.0, 500.0, 3_800.0, 1_400.0);
+                // M11 P4 step 4: a real instrument body resonates at fixed Hz that the
+                // played note sweeps across — a bore-body resonance and a broad
+                // bell-flare formant — rather than the old pitch-following ×2/×5
+                // formants. The radiation low-pass still tracks the loop cutoff.
+                let bore_body_hz = TUBE_BORE_BODY_HZ;
+                let bell_flare_hz = TUBE_BELL_FLARE_HZ;
                 let radiation_cutoff =
                     math::finite_clamp(loop_cutoff * 1.4, 2_200.0, sample_rate * 0.45, 10_000.0);
 
@@ -465,16 +475,91 @@ impl BodyProfile {
                         radiation_cutoff,
                         DEFAULT_BIQUAD_Q,
                     ),
-                    low_resonance: BiquadCoefficients::bandpass(sample_rate, low_body_hz, 1.25),
-                    high_resonance: BiquadCoefficients::bandpass(sample_rate, high_body_hz, 1.7),
+                    low_resonance: BiquadCoefficients::bandpass(sample_rate, bore_body_hz, 2.0),
+                    high_resonance: BiquadCoefficients::bandpass(sample_rate, bell_flare_hz, 1.6),
                     direct_gain: 0.72,
-                    low_resonance_gain: 0.14,
-                    high_resonance_gain: 0.12,
+                    low_resonance_gain: 0.18,
+                    high_resonance_gain: 0.16,
                     output_gain: TUBE_BOUNDARY.output_gain(params.boundary_reflection),
                 }
             }
         }
     }
+}
+
+/// A one-way modal coloration body (M11 P4): a parallel bank of fixed-frequency
+/// band-pass formants summed with a dry path, for a resonator that radiates
+/// *through* a body rather than coupling two-way into it (the Mesh, and any other
+/// output-coloring body). Reuses `BodyMode` for the formant set but, unlike
+/// `ReducedBody`, applies the mode gains directly (no String bridge-coupling
+/// scale) and never feeds back into the resonator. Fixed-size: the bank is built
+/// once at construction, so re-using a voice only `reset`s it (allocation-free).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct OutputBody {
+    filters: Vec<Biquad>,
+    gains: Vec<f32>,
+    dry_gain: f32,
+}
+
+impl OutputBody {
+    pub(super) fn new(sample_rate: f32, modes: &[BodyMode], dry_gain: f32) -> Self {
+        let sample_rate = core::sanitize_sample_rate(sample_rate);
+        let filters = modes
+            .iter()
+            .map(|mode| {
+                let frequency_hz =
+                    math::finite_clamp(mode.frequency_hz, 1.0, sample_rate * 0.45, 100.0);
+                let q = math::finite_clamp(mode.q, 0.5, 200.0, 10.0);
+                Biquad::new(BiquadCoefficients::bandpass(sample_rate, frequency_hz, q))
+            })
+            .collect();
+        let gains = modes
+            .iter()
+            .map(|mode| math::finite_clamp(mode.gain, 0.0, 8.0, 0.0))
+            .collect();
+        Self {
+            filters,
+            gains,
+            dry_gain: math::finite_clamp(dry_gain, 0.0, 2.0, 1.0),
+        }
+    }
+
+    pub(super) fn process_sample(&mut self, input: f32) -> f32 {
+        let input = math::snap_to_zero(input);
+        let mut wet = 0.0;
+        for (filter, &gain) in self.filters.iter_mut().zip(&self.gains) {
+            wet += gain * filter.process(input);
+        }
+        math::snap_to_zero(self.dry_gain * input + wet)
+    }
+
+    pub(super) fn reset(&mut self) {
+        for filter in &mut self.filters {
+            filter.reset();
+        }
+    }
+}
+
+/// Mesh body voicing (M11 P4): a low metallic shell/air resonance and a broad high
+/// "bridge-hill" formant, light gains so the mesh's own plate modes still dominate
+/// — a cymbal/gong shell radiating.
+const MESH_BODY_MODES: [BodyMode; 2] = [
+    BodyMode {
+        frequency_hz: 420.0,
+        q: 5.0,
+        gain: 0.35,
+    },
+    BodyMode {
+        frequency_hz: 3_400.0,
+        q: 2.5,
+        gain: 0.5,
+    },
+];
+
+/// Build the Mesh's one-way coloration body. The body is fixed (absolute formant
+/// frequencies, like a real shell), so the mesh builds it once and only resets it.
+pub(super) fn mesh_output_body(sample_rate: f32) -> OutputBody {
+    OutputBody::new(sample_rate, &MESH_BODY_MODES, 1.0)
 }
 
 #[cfg(test)]
