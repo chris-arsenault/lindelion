@@ -170,21 +170,59 @@ and correctly sized in the tail and stable. The energy references (tuned to the 
   full-velocity Tube *blooms* from RMS 0.004 → 0.019 (the brass cuivré dynamic), saturating the drive — the
   intended maximum. The battery asserts on computed *drive*, not raw energy, to allow this.
 
-### P9 — Whole-path gain staging + family level balance + no-clip  [depends on RT, P8]
+### P9 — Whole-path gain staging + family level balance + no-clip  [depends on RT, P8]  — ✅ DONE
+
+**Outcome (what was found + done):**
+- **Per-family levels were ~38 dB apart.** A single full-velocity voice peaks at Modal ≈ −1.7 dBFS but
+  String/Tube/Mesh at ≈ −36/−28/−40 dBFS, and the waveguides ran ~30 dB under a usable level. Added a
+  **per-family output makeup** (Modal 0.6× / String 32× / Tube 12× / Mesh 49×) bringing every family's
+  single voice to ≈ −6 dBFS peak, matched on **peak** (crest factors differ ~8×, so peak-matching avoids
+  clipping the plucky families). `crates`-clean: the makeup lives in `resonator_stack/makeup.rs`.
+- **Makeup is applied per-resonator, *before* the A/B mix, but the energy tap stays on the raw mix.** A
+  single post-mix makeup over-amplified a loud+quiet mix (Modal+waveguide parallel → rms 2.6); applying
+  each slot's makeup before the mix fixes it, and tapping energy from the raw mix keeps P8's bus untouched
+  (the pinned decoupling). `process_sample` now returns the raw mix and stores a `staged_output` the voice
+  reads for the audio path.
+- **Bow driver tamed + driver-trimmed.** `BOW_INJECTION_GAIN`/`BOW_OUTPUT_LIMIT` 4.0 → 0.12/0.5: a held bow
+  no longer runs to energy-bus RMS ~8.7 but locks at a sane forte ~0.3 (a self-oscillator's locked cycle
+  can't go arbitrarily low without un-locking). Because a self-oscillating bow is intrinsically ~8× a pluck
+  at the output, a **per-driver trim** (Bow 0.2×) folds into the makeup so a bowed note lands at a forte
+  level instead of slamming the limiter.
+- **Master soft-clip safety stage** (`dsp/master_stage.rs`, wired in `runtime` after the sympathetic
+  chamber): a stateless, lookahead-free, allocation-free per-sample soft clipper — identity below a −6 dBFS
+  knee (single notes untouched, bit-exact), soft knee to a −1 dBFS ceiling. **No loudness normalization** —
+  the P8 dynamic range is preserved; only the static makeup + safety clip.
+- **Sympathetic reference re-confirmed at the post-makeup mix.** `SYMPATHETIC_SEND_ENERGY_REF` 0.004 → 0.2
+  (the makeup raised the observed mix from ~0.0025 to ~0.1–0.34) so a forte note reaches meaningful send
+  drive and chords saturate.
+- Exit: `make ci` + `make test-integration` green.
+
 **Decided (P8 coupling):** gain staging is applied **output-side — after the M2 energy tap**
 (`observe_energy(resonator_output)`), so it never moves the resonator's physical vibration level that
 the dynamic effects key off. The energy bus stays the physical-amplitude tracker; the input/excitation
 drive is set physically (velocity/effort), not re-staged here. This decouples P8 from P9 by construction.
 Stage every stage (excitation → driver → contact → resonator → body → surrounding → output → sympathetic)
 to a healthy level (high SNR, target peak ≈ −18…−6 dBFS); balance family loudness at matched dynamics on
-the *real tails*; add a soft limiter (ceiling −0.3 dBFS, identity below threshold) + small final
-normalization on top of `INTERNAL_HEADROOM_DB`.
+the *real tails*; add a soft limiter + master makeup on top of `INTERNAL_HEADROOM_DB`.
+- **The core is ~30 dB too quiet.** A single full-velocity voice outputs RMS **0.0025 ≈ −52 dBFS** (P8
+  `max_out_energy`); P9 must add output-side makeup to reach the healthy target, *after* the M2 energy tap so
+  P8's calibration is untouched.
 - **From P8 — two things to fix here:** (1) the **bow driver self-oscillates absurdly hot** — a sustained
-  limit cycle reaches energy-bus RMS **2.6–8.7** (vs ~0.01 for a pluck), far above full-scale; the driver/
-  output gain needs taming so a held bow sits at a sane level. (2) the **sympathetic send reference (0.004)
-  observes the post-output mix**, the one energy reference *downstream* of this gain staging — re-confirm it
-  once the final output level is set here.
-- **[DECISION]** Per-stage healthy target, family loudness tolerance, limiter/normalization design.
+  limit cycle reaches energy-bus RMS **2.6–8.7** (vs ~0.01 for a pluck), far above full-scale; the driver
+  gain (`BOW_INJECTION_GAIN`/`BOW_OUTPUT_LIMIT = 4.0`) needs taming so a held bow sits at a sane level.
+  (2) the **sympathetic send reference (0.004) observes the post-output mix**, the one energy reference
+  *downstream* of this gain staging — re-confirm it once the final output level is set.
+- **Decided (P9 plan-phase, research-grounded — not blocking):**
+  - *Healthy target* — single full-velocity voice peaks ≈ **−12…−6 dBFS**, RMS ≈ **−18 dBFS** (the standard
+    instrument-bus staging level); the existing `INTERNAL_HEADROOM_DB = −12` stays as the polyphony headroom
+    (16 incoherent voices ≈ +12 dB → ≈ 0 dBFS), so the makeup goes *before* it (but after the energy tap).
+  - *Family tolerance* — Modal/String/Tube/Mesh within **±3 dB** at matched dynamics; **Modal is the loudness
+    reference** (sound untouched, level may move — cross-cutting constraint).
+  - *Limiter/normalization* — a per-sample, allocation-free, lookahead-free **soft clipper** (identity below
+    a ≈ −6 dBFS knee, soft-knee to a ≈ **−1 dBFS** ceiling) as the master safety stage. **No auto-loudness
+    normalization** — it would squash the P8 dynamic range we just calibrated; only the static per-family
+    makeup + the safety clip. Impact: a busy chord rides into the soft knee (gentle, transparent) rather than
+    being level-flattened.
 - Exit: `make test-integration` — families within loudness tolerance across vel 20/100/127; no gesture
   clips. `make ci` guards: limiter identity for unity sine; staged gain applied; no-alloc.
 

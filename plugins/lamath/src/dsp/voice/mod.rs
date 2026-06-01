@@ -324,11 +324,16 @@ impl<'a> Voice<'a> {
         );
         self.modulation.observe_energy(resonator_output);
 
+        // M11 P9: the audio path uses the per-resonator-made-up mix (level-matched across
+        // families, lifted to a healthy level), while the energy bus above stays the raw
+        // physical-vibration level the dynamic effects key off.
+        let staged_output = self.resonators.staged_output();
+
         // Effort/energy-scaled surrounding effects (M10) sit between the resonator and
         // the output stage, reading the same M2 bus the resonator did this sample.
         let surrounded = self
             .surrounding
-            .process(resonator_output, sources.effort, sources.energy);
+            .process(staged_output, sources.effort, sources.energy);
 
         let cutoff_mod = self
             .modulation

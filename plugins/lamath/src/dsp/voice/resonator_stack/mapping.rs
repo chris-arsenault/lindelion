@@ -4,11 +4,60 @@
 use lindelion_dsp_utils::math::{finite_clamp, finite_or, semitones_to_ratio, snap_to_zero};
 
 use crate::dsp::constants::{
-    LOWEST_RESONATOR_FREQUENCY_HZ, WAVEGUIDE_DISPERSION, WAVEGUIDE_PICKUP_POSITION,
+    LOWEST_RESONATOR_FREQUENCY_HZ, MODAL_DAMPING_MOD_OCTAVES, RESONATOR_POSITION_MOD_DEPTH,
+    STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_DISPERSION, WAVEGUIDE_LOOP_GAIN,
+    WAVEGUIDE_PICKUP_POSITION,
 };
 use crate::dsp::modal::ModalBankParams;
 use crate::dsp::waveguide::{MeshVoiceParams, WaveguideParams};
-use crate::{MeshConfig, ModalConfig, WaveguideConfig};
+use crate::{MeshConfig, ModalConfig, ResonatorConfig, WaveguideConfig};
+
+/// The waveguide loop gain governing a voice's structural ramp length: whichever slot
+/// holds a waveguide supplies it, else the default.
+pub(super) fn loop_gain_from_configs(
+    resonator_a: ResonatorConfig,
+    resonator_b: ResonatorConfig,
+) -> f32 {
+    match (resonator_a, resonator_b) {
+        (ResonatorConfig::Waveguide(config), _) => WAVEGUIDE_LOOP_GAIN.clamp(config.loop_gain),
+        (_, ResonatorConfig::Waveguide(config)) => WAVEGUIDE_LOOP_GAIN.clamp(config.loop_gain),
+        _ => WAVEGUIDE_LOOP_GAIN.default,
+    }
+}
+
+/// Apply live damping/position modulation to a per-slot config, clamped per model.
+pub(super) fn modulated_resonator_config(
+    config: ResonatorConfig,
+    damping_mod: f32,
+    position_mod: f32,
+) -> ResonatorConfig {
+    match config {
+        ResonatorConfig::Modal(mut config) => {
+            config.decay_global = (config.decay_global
+                * 2.0_f32.powf(damping_mod * MODAL_DAMPING_MOD_OCTAVES))
+            .clamp(0.01, 10.0);
+            config.position_of_strike = STRIKE_POSITION
+                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
+            ResonatorConfig::Modal(config)
+        }
+        ResonatorConfig::Waveguide(mut config) => {
+            config.loop_gain = WAVEGUIDE_LOOP_GAIN
+                .clamp(config.loop_gain + damping_mod * WAVEGUIDE_DAMPING_MOD_DEPTH);
+            config.position_of_strike = STRIKE_POSITION
+                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
+            ResonatorConfig::Waveguide(config)
+        }
+        ResonatorConfig::Mesh(mut config) => {
+            // Positive damping modulation lengthens the decay, so it lowers the
+            // mesh's boundary loss.
+            config.damping =
+                (config.damping - damping_mod * WAVEGUIDE_DAMPING_MOD_DEPTH).clamp(0.0, 1.0);
+            config.position_of_strike = STRIKE_POSITION
+                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
+            ResonatorConfig::Mesh(config)
+        }
+    }
+}
 
 pub(super) fn modal_params_from_config(
     config: &ModalConfig,

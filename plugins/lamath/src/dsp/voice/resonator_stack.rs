@@ -16,10 +16,7 @@ use super::{
     structural_ramp_samples,
 };
 use crate::dsp::{
-    constants::{
-        LOWEST_RESONATOR_FREQUENCY_HZ, MODAL_DAMPING_MOD_OCTAVES, RESONATOR_POSITION_MOD_DEPTH,
-        STRIKE_POSITION, WAVEGUIDE_DAMPING_MOD_DEPTH, WAVEGUIDE_LOOP_GAIN,
-    },
+    constants::{LOWEST_RESONATOR_FREQUENCY_HZ, WAVEGUIDE_LOOP_GAIN},
     modal::{ModalBank, ModalBankParams},
     waveguide::{MeshResonator, WaveguideParams, WaveguideResonator},
 };
@@ -27,12 +24,16 @@ use crate::dsp::{
 mod conditioners;
 mod contact;
 mod driver;
+mod makeup;
 mod mapping;
 use conditioners::BodyColorExciter;
 pub(super) use conditioners::SeriesConditioner;
 use contact::ContactStage;
 use driver::Driver;
-use mapping::{mesh_params_from_config, modal_params_from_config, waveguide_params_from_config};
+use mapping::{
+    loop_gain_from_configs, mesh_params_from_config, modal_params_from_config,
+    modulated_resonator_config, waveguide_params_from_config,
+};
 
 #[derive(Debug)]
 pub(super) struct ResonatorStack {
@@ -49,6 +50,8 @@ pub(super) struct ResonatorStack {
     body_color_exciter: BodyColorExciter,
     driver_config: DriverConfig,
     contact_config: ContactConfig,
+    /// M11 P9 per-resonator-made-up mix from the last `process_sample` (audio path).
+    staged_output: f32,
 }
 
 impl ResonatorStack {
@@ -77,7 +80,15 @@ impl ResonatorStack {
             body_color_exciter: BodyColorExciter::new(sample_rate),
             driver_config: DriverConfig::default(),
             contact_config: ContactConfig::default(),
+            staged_output: 0.0,
         }
+    }
+
+    /// M11 P9 staged output: the most recent `process_sample` mix with per-resonator
+    /// output makeup applied (see [`makeup`]). The voice uses this for the audio path
+    /// while tapping the energy bus from the raw (un-made-up) return value.
+    pub(super) fn staged_output(&self) -> f32 {
+        self.staged_output
     }
 
     pub(super) fn set_base_configs(
@@ -212,7 +223,11 @@ impl ResonatorStack {
         let excitation = snap_to_zero(excitation);
         let mix_a = self.parallel_mix_a.next_sample();
         let mix_b = self.parallel_mix_b.next_sample();
-        snap_to_zero(match self.routing.current() {
+        let makeup_a = makeup::resonator_output_makeup(self.resonator_a_config, self.driver_config);
+        let makeup_b = makeup::resonator_output_makeup(self.resonator_b_config, self.driver_config);
+        // (raw, staged): the raw A/B mix feeds the energy tap (P8's physical bus); the
+        // staged mix applies each slot's output makeup before the mix (P9 audio path).
+        let (raw, staged) = match self.routing.current() {
             ResonatorRouting::Parallel { .. } => {
                 let a = self
                     .resonator_a
@@ -220,25 +235,34 @@ impl ResonatorStack {
                 let b = self
                     .resonator_b
                     .process_sample(excitation, energy, effort, drive_gate);
-                a * mix_a + b * mix_b
+                (
+                    a * mix_a + b * mix_b,
+                    a * makeup_a * mix_a + b * makeup_b * mix_b,
+                )
             }
             ResonatorRouting::Series { .. } => {
                 let a = self
                     .resonator_a
                     .process_sample(excitation, energy, effort, drive_gate);
                 let conditioned = self.series_conditioner.process_sample(a);
-                self.resonator_b
-                    .process_sample(conditioned, energy, effort, drive_gate)
+                let out = self
+                    .resonator_b
+                    .process_sample(conditioned, energy, effort, drive_gate);
+                (out, out * makeup_b)
             }
             ResonatorRouting::BodyColor { .. } => {
                 let a = self
                     .resonator_a
                     .process_sample(excitation, energy, effort, drive_gate);
                 let colored_excitation = self.body_color_exciter.process_sample(excitation, a);
-                self.resonator_b
-                    .process_sample(colored_excitation, energy, effort, drive_gate)
+                let out =
+                    self.resonator_b
+                        .process_sample(colored_excitation, energy, effort, drive_gate);
+                (out, out * makeup_b)
             }
-        })
+        };
+        self.staged_output = snap_to_zero(staged);
+        snap_to_zero(raw)
     }
 
     pub(super) fn retune(&mut self, base_frequency: f32) {
@@ -547,47 +571,6 @@ fn parallel_mix_b_param(sample_rate: f32, mix: f32) -> SmoothedAtomicParam {
 fn runtime_smoothed_param(id: u32, sample_rate: f32, initial_plain: f32) -> SmoothedAtomicParam {
     smoothed_runtime_parameter(id, sample_rate, initial_plain)
         .expect("live routing parameter should have smoothing metadata")
-}
-
-fn loop_gain_from_configs(resonator_a: ResonatorConfig, resonator_b: ResonatorConfig) -> f32 {
-    match (resonator_a, resonator_b) {
-        (ResonatorConfig::Waveguide(config), _) => WAVEGUIDE_LOOP_GAIN.clamp(config.loop_gain),
-        (_, ResonatorConfig::Waveguide(config)) => WAVEGUIDE_LOOP_GAIN.clamp(config.loop_gain),
-        _ => WAVEGUIDE_LOOP_GAIN.default,
-    }
-}
-
-fn modulated_resonator_config(
-    config: ResonatorConfig,
-    damping_mod: f32,
-    position_mod: f32,
-) -> ResonatorConfig {
-    match config {
-        ResonatorConfig::Modal(mut config) => {
-            config.decay_global = (config.decay_global
-                * 2.0_f32.powf(damping_mod * MODAL_DAMPING_MOD_OCTAVES))
-            .clamp(0.01, 10.0);
-            config.position_of_strike = STRIKE_POSITION
-                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
-            ResonatorConfig::Modal(config)
-        }
-        ResonatorConfig::Waveguide(mut config) => {
-            config.loop_gain = WAVEGUIDE_LOOP_GAIN
-                .clamp(config.loop_gain + damping_mod * WAVEGUIDE_DAMPING_MOD_DEPTH);
-            config.position_of_strike = STRIKE_POSITION
-                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
-            ResonatorConfig::Waveguide(config)
-        }
-        ResonatorConfig::Mesh(mut config) => {
-            // Positive damping modulation lengthens the decay, so it lowers the
-            // mesh's boundary loss.
-            config.damping =
-                (config.damping - damping_mod * WAVEGUIDE_DAMPING_MOD_DEPTH).clamp(0.0, 1.0);
-            config.position_of_strike = STRIKE_POSITION
-                .clamp(config.position_of_strike + position_mod * RESONATOR_POSITION_MOD_DEPTH);
-            ResonatorConfig::Mesh(config)
-        }
-    }
 }
 
 #[cfg(test)]

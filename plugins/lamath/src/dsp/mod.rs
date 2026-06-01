@@ -2,6 +2,7 @@ pub(crate) mod constants;
 pub(crate) mod energy_follower;
 pub(crate) mod engine;
 mod excitation;
+pub(crate) mod master_stage;
 pub(crate) mod modal;
 mod sympathetic_chamber;
 mod voice;
@@ -18,6 +19,7 @@ pub(crate) use excitation::{
     ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
     MAX_EXCITATION_LAYERS, RuntimeExcitationSlot,
 };
+pub(crate) use master_stage::MasterStage;
 pub(crate) use sympathetic_chamber::SympatheticChamber;
 pub use voice::Oversampler2x;
 pub(crate) use voice::RESONATOR_OVERSAMPLING_LATENCY_SAMPLES;

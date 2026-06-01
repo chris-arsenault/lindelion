@@ -1,11 +1,13 @@
 //! M11 energy-bus calibration and gain-staging measurement tests for the voice.
 //! Split out of `voice/tests.rs` to keep that file within the 600-line size cap.
 
+use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms};
+
 use super::super::{Voice, VoiceTrigger};
 use super::{impulse, test_patch};
 use crate::{
-    MeshConfig, ModalConfig, OutputConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch,
-    WaveguideConfig, WaveguideStyle,
+    BowConfig, DriverConfig, MeshConfig, ModalConfig, OutputConfig, ResonatorConfig,
+    ResonatorRouting, ResonatorSynthPatch, WaveguideConfig, WaveguideStyle,
 };
 
 /// M11 P1: the per-stage gain-staging taps are wired and report finite,
@@ -139,6 +141,114 @@ fn dynamic_effect_energy_references_track_real_playing() {
         assert!(
             soft_drive < 0.25 && soft_drive < loud_drive * 0.5,
             "{label}: soft drive {soft_drive} should be clearly gentler than loud {loud_drive}"
+        );
+    }
+}
+
+/// M11 P9 step 1: the bow driver self-oscillates a *sustained but sane* tone. P8
+/// found a held bow blowing up to energy-bus RMS ~8.7 (vs ~0.01 for a pluck) — the
+/// `BOW_INJECTION_GAIN`/`BOW_OUTPUT_LIMIT` were far too hot. After taming, a held
+/// bowed String must still build and hold a steady limit cycle (it does not decay
+/// like a freed pluck) while staying bounded near the other sustained-driver scale.
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn bowed_string_sustains_while_held_but_bounded() {
+    let sample_rate = 48_000.0;
+    let mut patch = single_resonator_patch(ResonatorConfig::Waveguide(WaveguideConfig {
+        style: WaveguideStyle::String,
+        ..WaveguideConfig::default()
+    }));
+    patch.driver = DriverConfig::Bow(BowConfig::default());
+
+    let excitation = impulse(256);
+    let mut voice = Voice::new(sample_rate);
+    voice.trigger(VoiceTrigger::new(57, 1.0, &excitation, sample_rate, &patch));
+    let mut out = vec![0.0; 96_000];
+    let mut max_energy = 0.0_f32;
+    for sample in &mut out {
+        *sample = voice.process_sample();
+        max_energy = max_energy.max(voice.measured_energy());
+    }
+    assert_all_finite(&out);
+
+    // Bounded: the limit cycle never runs away — a locked bow self-oscillates to a
+    // steady ~0.3 energy (a forte sustained tone, ~26x lower than the P8 ~8.7 blow-up;
+    // a self-oscillator's locked cycle cannot go arbitrarily low without un-locking),
+    // and the output stays in range.
+    assert!(
+        max_energy < 0.5,
+        "held bow should stay a bounded limit cycle, not the P8 runaway: max_energy={max_energy}"
+    );
+    assert!(
+        peak_abs(&out) < 4.0,
+        "bow peak ran away: {}",
+        peak_abs(&out)
+    );
+
+    // Sustains: a steady limit cycle, not a decaying ring — the late window holds
+    // most of the mid-render level (a freed pluck would have decayed substantially).
+    let mid_rms = rms(&out[24_000..36_000]);
+    let late_rms = rms(&out[84_000..96_000]);
+    assert!(
+        late_rms > 0.005,
+        "bow died out instead of sustaining: late_rms={late_rms}"
+    );
+    assert!(
+        late_rms > mid_rms * 0.7,
+        "bow tail should hold a steady limit cycle: mid={mid_rms} late={late_rms}"
+    );
+}
+
+/// M11 P9 step 2: per-family output makeup levels and balances the families. The
+/// resonator families emerge ~38 dB apart (Modal ≈ −1.7 dBFS peak, String/Tube/Mesh
+/// ≈ −36/−28/−40 dBFS) and the waveguides run ~30 dB too quiet. The per-family makeup
+/// (output-side of the energy tap) must bring every family's single full-velocity
+/// voice to a healthy ≈ −6 dBFS peak, within ±3 dB of each other. Peak-matched (the
+/// families' crest factors differ too much to RMS-match without clipping a pluck).
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn per_family_output_makeup_levels_and_balances_families() {
+    let sample_rate = 48_000.0;
+    let excitation = impulse(256);
+    let families: [(&str, ResonatorConfig); 4] = [
+        ("Modal", ResonatorConfig::Modal(ModalConfig::default())),
+        (
+            "String",
+            ResonatorConfig::Waveguide(WaveguideConfig {
+                style: WaveguideStyle::String,
+                ..WaveguideConfig::default()
+            }),
+        ),
+        (
+            "Tube",
+            ResonatorConfig::Waveguide(WaveguideConfig {
+                style: WaveguideStyle::Tube,
+                ..WaveguideConfig::default()
+            }),
+        ),
+        ("Mesh", ResonatorConfig::Mesh(MeshConfig::default())),
+    ];
+    // Healthy, balanced band: −9…−3 dBFS peak (≈ −6 dBFS ± 3 dB) — guarantees every
+    // family is at a usable level and within ±3 dB of the others.
+    for (label, resonator) in families {
+        let patch = single_resonator_patch(resonator);
+        let mut voice = Voice::new(sample_rate);
+        voice.trigger(VoiceTrigger::new(57, 1.0, &excitation, sample_rate, &patch));
+        let mut out = vec![0.0; 48_000];
+        for sample in &mut out {
+            *sample = voice.process_sample();
+        }
+        assert_all_finite(&out);
+        let final_peak = voice.stage_peaks()[3];
+        assert!(
+            (0.35..=0.71).contains(&final_peak),
+            "{label}: single-voice final peak {final_peak} should sit in the healthy −9…−3 dBFS band"
         );
     }
 }

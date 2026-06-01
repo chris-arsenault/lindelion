@@ -185,3 +185,43 @@ fn processor_audio_path_does_not_allocate() {
         &mut right,
     );
 }
+
+/// M11 P9 step 3: the master soft-clip stage bounds dense polyphony. Sixteen
+/// simultaneous full-velocity notes on a now-made-up String patch sum far past full
+/// scale before the master stage; the soft clipper must hold the final mix at or below
+/// the −1 dBFS ceiling and finite (a single note, by contrast, sits below the −6 dBFS
+/// knee and is untouched — covered by the `master_stage` unit tests).
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
+#[test]
+fn master_stage_bounds_dense_polyphony_below_the_ceiling() {
+    let mut patch = pitch_tracking_waveguide_patch();
+    patch.polyphony = 16;
+    let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+    let events: Vec<MidiEvent> = (0..16)
+        .map(|index| {
+            MidiEvent::Note(NoteEvent::On {
+                channel: 0,
+                note: 48 + index,
+                velocity: 1.0,
+            })
+        })
+        .collect();
+    let mut left = vec![0.0; 8_192];
+    let mut right = vec![0.0; 8_192];
+    processor.process(&events, &mut left, &mut right);
+    // Let the held chord build over several more blocks.
+    let mut peak = peak_abs(&left).max(peak_abs(&right));
+    for _ in 0..16 {
+        processor.process(&[], &mut left, &mut right);
+        assert_all_finite(&left);
+        assert_all_finite(&right);
+        peak = peak.max(peak_abs(&left)).max(peak_abs(&right));
+    }
+    // db_to_gain(-1 dBFS) ceiling (mirrors MASTER_CLIP_CEILING).
+    assert!(
+        peak <= 0.891_3,
+        "master stage must hold dense polyphony at/below the -1 dBFS ceiling: peak={peak}"
+    );
+    // ...and it really was pushed into limiting (the makeup + chord exceeded the knee).
+    assert!(peak > 0.5, "the chord should have driven into the limiter: peak={peak}");
+}

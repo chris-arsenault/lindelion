@@ -24,8 +24,8 @@ use crate::{
     ResonatorSynthPatch,
     dsp::{
         ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
-        MAX_EXCITATION_LAYERS, RuntimeExcitationSlot, SelectedExcitations, SympatheticChamber,
-        SynthEngine, VoiceExpression, VoiceTrigger,
+        MAX_EXCITATION_LAYERS, MasterStage, RuntimeExcitationSlot, SelectedExcitations,
+        SympatheticChamber, SynthEngine, VoiceExpression, VoiceTrigger,
     },
     realtime_audio_analysis_expression_source, realtime_audio_analysis_note_detector,
 };
@@ -113,6 +113,10 @@ pub(crate) struct ResonatorProcessor<'a> {
     // the voice mix, owned here at the orchestration layer — the engine knows nothing
     // about it. Tuned each block to the sounding voices' pitches.
     sympathetic: SympatheticChamber,
+    // M11 P9: master output safety soft clipper on the final mix (after the sympathetic
+    // chamber) — bounds dense-polyphony peaks below −1 dBFS without touching the level
+    // of a single note (identity below the −6 dBFS knee).
+    master: MasterStage,
     selector: ExcitationSelector,
     expression_source: MidiExpressionSource<MIDI_EXPRESSION_VOICES>,
     audio_expression_source: RealtimeStreamingAudioAnalysisExpressionSource<MIDI_EXPRESSION_VOICES>,
@@ -180,6 +184,7 @@ impl<'a> ResonatorProcessor<'a> {
                 live_latch_state.capacity_samples(),
             ),
             sympathetic: SympatheticChamber::new(sample_rate),
+            master: MasterStage::new(),
             selector: ExcitationSelector::default(),
             expression_source: MidiExpressionSource::default(),
             audio_expression_source,
@@ -228,6 +233,7 @@ impl<'a> ResonatorProcessor<'a> {
         self.engine
             .render_add_with_live_excitation(left, right, live_excitation);
         self.run_sympathetic_chamber(left, right);
+        self.master.process_block(left, right);
         self.live_latch_state.push_sidechain_block(input.sidechain);
     }
 
@@ -253,6 +259,7 @@ impl<'a> ResonatorProcessor<'a> {
         self.engine.sync_expression_source(source);
         self.engine.render_add(left, right);
         self.run_sympathetic_chamber(left, right);
+        self.master.process_block(left, right);
     }
 
     /// Cross-voice sympathetic resonance (M10, ADR-0025). Tune the shared chamber to

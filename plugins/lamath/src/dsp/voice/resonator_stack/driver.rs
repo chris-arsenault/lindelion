@@ -71,13 +71,18 @@ const BOW_SHARP_SLIP_VELOCITY: f32 = 0.04;
 /// How strongly the incoming sample/sidechain excitation perturbs the bow (lets a
 /// note-on transient kick-start the motion; the sustained drive is the friction).
 const BOW_EXCITATION_COUPLING: f32 = 0.5;
-/// Injection gain of the friction force into the string. The string's input
-/// impedance means the friction must be pushed well above unity to lock the loop
-/// into Helmholtz motion (as the reed does); the friction saturation and the hard
-/// output clamp bound the limit cycle, so this scales the level, not a runaway.
-const BOW_INJECTION_GAIN: f32 = 4.0;
+/// Injection gain of the friction force into the string. Above a lock threshold
+/// (~0.08 here) the negative-resistance friction region overcomes the loop loss and
+/// the string self-oscillates; the limit-cycle amplitude then scales with this gain.
+/// M11 P9: lowered from 4.0 — at 4.0 the locked cycle ran to energy-bus RMS ~8.7
+/// (far above full scale, clipping everything downstream). 0.12 keeps a robust lock
+/// margin above the threshold while settling at a sane forte level (~0.3 RMS), which
+/// the output makeup and master limiter can then stage.
+const BOW_INJECTION_GAIN: f32 = 0.12;
 /// Hard safety clamp on the bow output so the active element can never run away.
-const BOW_OUTPUT_LIMIT: f32 = 4.0;
+/// M11 P9: lowered from 4.0 to bound the per-sub-sample drive near the (now much
+/// smaller) friction level while still admitting the note-on excitation kick.
+const BOW_OUTPUT_LIMIT: f32 = 0.5;
 
 #[derive(Debug, Default)]
 pub(super) enum Driver {
