@@ -397,6 +397,10 @@ mod tests {
         assert_eq!(result.slice_pitch_summaries().len(), saved_markers.len());
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn source_analyzer_limits_markers_to_playable_slice_count_by_salience() {
         let mut markers = Vec::new();

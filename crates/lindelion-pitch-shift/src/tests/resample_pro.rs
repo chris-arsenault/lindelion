@@ -222,6 +222,10 @@ fn resample_pro_variable_stretch_state_renders_without_allocating_after_initiali
     });
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_one_cent_sine_has_no_broadband_crunch() {
     let sample_rate = 48_000;
@@ -275,6 +279,10 @@ fn resample_pro_one_cent_harmonic_stack_does_not_invent_high_band_energy() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_one_cent_track_formant_does_not_invent_high_band_energy() {
     let sample_rate = 48_000;
@@ -309,6 +317,10 @@ fn resample_pro_one_cent_track_formant_does_not_invent_high_band_energy() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_fifty_cent_shift_suppresses_original_pitch_leakage() {
     let sample_rate = 48_000;
@@ -385,6 +397,10 @@ fn resample_pro_formant_track_moves_vowel_envelope_with_pitch() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_seven_semitone_shift_hits_target_pitch() {
     let sample_rate = 48_000;
@@ -408,6 +424,10 @@ fn resample_pro_seven_semitone_shift_hits_target_pitch() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_octave_up_rejects_unshiftable_high_frequency_input() {
     let sample_rate = 48_000;

@@ -90,6 +90,10 @@ fn promotion_gate_requires_complete_evidence_before_promoting() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn mesh_runtime_is_allocation_free_and_stable_at_parameter_extremes() {
     // Allocation-free, fixed-memory runtime: after construction, re-tuning and

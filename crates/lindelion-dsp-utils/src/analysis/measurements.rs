@@ -385,6 +385,10 @@ mod tests {
         assert!(partial_t60_seconds(&steady, sample_rate, frequency, 4_096, 2_048).is_none());
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn inharmonicity_ratios_detects_partial_stretch() {
         let sample_rate = 48_000.0;
@@ -444,6 +448,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn spectral_centroid_trajectory_falls_as_tone_darkens() {
         let sample_rate = 48_000.0;

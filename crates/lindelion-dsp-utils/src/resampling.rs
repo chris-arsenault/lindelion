@@ -324,6 +324,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "see make test-integration"
+    )]
     #[test]
     fn downshift_preserves_low_frequency_continuity() {
         let sample_rate = 48_000.0;

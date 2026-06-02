@@ -59,6 +59,10 @@ fn resample_pro_pitch_up_sine_sweep_rejects_folded_alias_band() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_bright_breath_noise_does_not_fold_into_inband_artifacts() {
     let pitch_ratio = 2.0;
@@ -95,6 +99,10 @@ fn resample_pro_bright_breath_noise_does_not_fold_into_inband_artifacts() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_downshift_preserves_low_frequency_phase_continuity() {
     let source_hz = 220.0;

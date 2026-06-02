@@ -10,6 +10,10 @@ use lindelion_sample_library::decode_wav_mono;
 use super::{note_on, source_analysis_from_samples};
 use crate::{LinnodPatch, PitchOffset};
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn pad_mode_one_cent_sax_fixture_stays_clean() {
     let (samples, sample_rate, source_f0_hz) = sax_fixture_audio();

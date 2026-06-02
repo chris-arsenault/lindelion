@@ -327,6 +327,10 @@ fn string_model_recomputes_when_params_move() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn body_coupling_two_way_changes_partial_decay() {
     let sample_rate = 48_000.0;
@@ -378,6 +382,10 @@ fn body_coupling_two_way_changes_partial_decay() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn body_coupled_string_stays_finite_and_decays_across_extremes() {
     let sample_rate = 48_000.0;
@@ -511,6 +519,10 @@ fn tension_drive_sharpens_pitch_and_settles() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn tension_stays_finite_and_bounded_under_extreme_drive() {
     let sample_rate = 48_000.0;

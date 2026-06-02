@@ -2,7 +2,11 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
-## v0.8.2 - 2026-06-02
+## v0.8.3 - 2026-06-02
+
+### Tests
+
+- Cut the `make ci` unit suite from ~119s to ~15s by moving 38 heavy DSP tests that had slipped the integration gate into the `integration-tests` feature (run via `make test-integration`), where the convention already puts multi-second fidelity/stability/tuning sweeps. Lamath alone was 95s of the 119s — its M9–M11 waveguide stability/tuning/timbre renders (extreme-drive bounds, decay-across-range, tuning matrices, the 96s source↔body balance timbre render) were never gated; likewise dsp-utils' spectral-centroid/inharmonicity measurement sweeps, the pitch-shift Resample Pro fidelity battery, and linnod's pitch-fidelity/analysis renders. No tests were deleted — every expensive test is a real assertion, so all moved (none were low-value). The allocation-free (ADR-0001) guards stay in the fast `make ci` path deliberately.
 
 ### Shared infrastructure
 

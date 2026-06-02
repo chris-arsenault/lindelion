@@ -84,6 +84,10 @@ fn string_dispersion_loop_stays_bounded_and_decays() {
     assert!(late < early * 0.7, "early={early}, late={late}");
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn measurement_harness_covers_excitation_styles() {
     let sample_rate = 48_000.0;
@@ -373,6 +377,10 @@ fn per_partial_decay_slope_holds_across_damping_settings() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn nonlinearity_aliasing_stays_bounded_and_linear_path_is_clean() {
     use lindelion_dsp_utils::analysis::{inter_peak_floor_ratio, peak_abs};

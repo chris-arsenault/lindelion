@@ -9,6 +9,10 @@ use super::{
 use crate::ModalPreset;
 use lindelion_dsp_utils::analysis::assert_all_finite;
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn ab_render_metrics_compare_waveguide_styles_against_modal_presets() {
     let sample_rate = 48_000.0;

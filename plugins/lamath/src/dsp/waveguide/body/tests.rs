@@ -3,6 +3,10 @@ use lindelion_dsp_utils::analysis::{
     assert_all_finite, audio_window_metrics, dft_magnitude_at, rms_difference,
 };
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn output_body_emphasizes_its_formant_frequencies() {
     // M11 P4 step 2: the one-way modal body colors a flat input toward its formant

@@ -111,6 +111,7 @@ fn midi_only_mode_ignores_sidechain_note_creation_and_preserves_midi_allocation(
     assert_eq!(expression_for_slot(&processor, 2, 64).stream.velocity, 0.75);
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn midi_plus_audio_mode_keeps_midi_and_audio_voice_ownership_separate() {
     let patch = audio_note_detection_patch(test_patch(), AudioInputMode::MidiPlusAudioCreatesNotes);
@@ -201,6 +202,7 @@ fn audio_note_off_does_not_release_midi_owned_voice_with_same_note() {
     assert_eq!(processor.audio_note_state.active, None);
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn sidechain_audio_creates_note_and_empty_input_releases_it() {
     let mut patch = test_patch();

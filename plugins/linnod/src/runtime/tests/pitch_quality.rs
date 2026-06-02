@@ -108,6 +108,10 @@ fn looped_pad_one_cent_pitch_offset_does_not_click_at_wrap() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_stretch_one_cent_pitch_offset_keeps_sine_clean() {
     let identity_left = render_resample_stretch_sine(

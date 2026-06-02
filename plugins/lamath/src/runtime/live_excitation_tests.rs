@@ -68,6 +68,7 @@ fn continuous_live_excitation_changes_midi_created_voice_render() {
     );
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn continuous_live_excitation_changes_audio_created_voice_render() {
     let dry_patch = audio_note_detection_patch(test_patch(), AudioInputMode::AudioCreatesNotes);
@@ -179,6 +180,7 @@ fn note_latched_live_excitation_changes_midi_created_voice_render() {
     );
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn note_latched_live_excitation_changes_audio_created_voice_render() {
     let dry_patch = audio_note_detection_patch(test_patch(), AudioInputMode::AudioCreatesNotes);

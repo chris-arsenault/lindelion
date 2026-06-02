@@ -121,6 +121,10 @@ fn resample_stretch_slice_render_is_guarded_resample_pro_region() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_stretch_point_render_is_resample_pro_sample() {
     let sample_rate = 48_000;

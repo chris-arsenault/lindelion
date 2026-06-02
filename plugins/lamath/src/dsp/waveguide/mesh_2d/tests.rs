@@ -4,6 +4,10 @@ use lindelion_dsp_utils::analysis::{
     assert_all_finite, audio_window_metrics, rms_difference, sampled_high_frequency_ratio,
 };
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn geometric_coupling_spreads_energy_upward_with_drive() {
     // A gong-like mesh: low-loss free boundary so a hard strike rings and the
@@ -49,6 +53,10 @@ fn geometric_coupling_spreads_energy_upward_with_drive() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn geometric_coupling_is_energy_stable_and_bounded_under_extreme_drive() {
     // Energy-conserving under drive: a lossless mesh at full geometric coupling
@@ -128,6 +136,10 @@ fn lossless_boundary_scattering_is_passive_without_new_excitation() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn boundary_loss_and_asymmetry_change_the_render() {
     let lossless = render_mesh(

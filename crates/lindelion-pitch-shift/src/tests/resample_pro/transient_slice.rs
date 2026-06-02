@@ -9,6 +9,10 @@ use crate::{
     PitchShiftSynthesisAlgorithm, ResidualMixPolicy,
 };
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn resample_pro_transient_has_low_preecho() {
     let sample_rate = 48_000;

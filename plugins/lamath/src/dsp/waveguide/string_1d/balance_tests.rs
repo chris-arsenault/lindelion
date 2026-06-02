@@ -39,6 +39,10 @@ fn source_body_balance_is_inert_at_zero_depth() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn source_body_balance_shifts_timbre_soft_vs_loud() {
     // With the balance engaged, soft playing settles on the warm, loop-damped pickup

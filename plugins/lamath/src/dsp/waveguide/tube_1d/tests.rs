@@ -31,6 +31,10 @@ fn tube_1d_renders_finite_decaying_audio() {
     assert!(early.peak_abs < 4.0);
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn tube_1d_tuning_matches_requested_pitch_across_matrix() {
     let sample_rates = [44_100.0, 48_000.0, 88_200.0, 96_000.0];
@@ -75,6 +79,10 @@ fn tube_1d_tuning_matches_requested_pitch_across_matrix() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn tube_1d_stays_finite_and_decays_across_full_range() {
     // Tuning accuracy degrades above the range checked above, but the bore
@@ -292,6 +300,10 @@ fn render_tube_sustained(
     output
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn steepening_brightens_with_drive_preserving_tuning() {
     let sample_rate = 48_000.0;
@@ -341,6 +353,10 @@ fn steepening_brightens_with_drive_preserving_tuning() {
     }
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn steepening_stays_finite_and_bounded_under_extreme_drive() {
     let sample_rate = 48_000.0;

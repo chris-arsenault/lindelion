@@ -480,6 +480,7 @@ fn parallel_mix_a_b_materially_changes_parallel_render() {
     assert!(rms_difference(&a_only.left[512..], &b_only.left[512..]) > 0.000_001);
 }
 
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
 #[test]
 fn parallel_modal_b_decay_controls_independent_tail() {
     let render = |b_decay| {

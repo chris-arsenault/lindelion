@@ -160,6 +160,10 @@ fn invalid_inputs_are_rejected_before_cache_creation() {
     );
 }
 
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
 #[test]
 fn synthesis_shifts_pitch_while_preserving_envelope_peak() {
     let analyzer = PitchShiftAnalyzer::new(PitchShiftAnalysisConfig {
