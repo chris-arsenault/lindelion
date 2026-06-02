@@ -8,11 +8,14 @@ Windows `IPlugView`→`HWND` Vizia/baseview editor attach — per
 [ADR-0023](../../docs/adr/0023-new-vsts-windows-only.md); it runs in the Galad host and Windows
 DAWs.
 
-**Current state (M0):** the crate exists with a bit-exact, zero-latency passthrough processor and
-the Windows `.vst3` bundle path. The Vizia editor and its Windows attach (M1), realtime analysis
-(M2), and the spectrogram/meter views (M3+) are later milestones. The cross-platform DSP/processor
-logic is tested in `make ci` (Linux); the Vizia view logic (later), the `IPlugView`→`HWND` baseview
-attach, and the Windows bundle are Windows-gated.
+**Current state: feature-complete (M0–M6).** Bit-exact zero-latency passthrough; single-component
+VST3; a Vizia editor with magnitude + reassigned spectrogram, level/LUFS meters, an analysis-signal
+panel, and selectable view / frequency-scale / color-map / dB-range controls whose settings persist
+in plugin state. The cross-platform DSP, display models, and editor build are tested in `make ci`
+(Linux); the Vizia view, the `IPlugView`→`HWND` attach, and the Windows bundle are Windows-gated and
+cross-built with cargo-xwin. On-target Windows load-and-run is the one unverified item
+([cenedril-backlog.md](../../docs/plugins/cenedril-backlog.md)). Full spec + architecture:
+[docs/plugins/cenedril.md](../../docs/plugins/cenedril.md).
 
 ## Build (Windows VST3)
 
@@ -28,7 +31,7 @@ rustup component add llvm-tools          # provides llvm-ar (multi-call) for the
 # clang-cl (the cross C compiler) — from your distro's clang/LLVM package, e.g. `dnf install clang`
 # llvm-lib (the MSVC archiver) — LLVM's llvm-ar is multi-call; symlink it onto PATH as llvm-lib:
 ln -sf "$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar" ~/.local/bin/llvm-lib
-make build-windows                       # stages Cenedril.vst3 in the bundle staging dir
+make build-windows PLUGIN=cenedril       # stages Cenedril.vst3 in the bundle staging dir
 ```
 
 Then copy the staged `Cenedril.vst3` to a Windows host, or load it in the Galad host, to verify.
@@ -40,6 +43,7 @@ Then copy the staged `Cenedril.vst3` to a Windows host, or load it in the Galad 
 > Inspect the bundled DLL's exports with binutils `objdump -p` (not `llvm-objdump`, which is not on
 > PATH here).
 
-- Decision: [ADR-0023 — New VSTs target Windows](../../docs/adr/0023-new-vsts-windows-only.md)
-- Implementation plan: [`CENEDRIL-VST-PLAN.md`](../../CENEDRIL-VST-PLAN.md)
-- M0 steps: [`CENEDRIL-M0-STEPS.md`](../../CENEDRIL-M0-STEPS.md)
+- Spec / architecture: [docs/plugins/cenedril.md](../../docs/plugins/cenedril.md)
+- Decisions: [ADR-0040 — Cenedril analysis and editor delivery](../../docs/adr/0040-cenedril-analysis-and-editor-delivery.md), [ADR-0023 — New VSTs target Windows](../../docs/adr/0023-new-vsts-windows-only.md)
+- Reassignment operator: [docs/dsp/reassignment.md](../../docs/dsp/reassignment.md)
+- Backlog: [docs/plugins/cenedril-backlog.md](../../docs/plugins/cenedril-backlog.md)

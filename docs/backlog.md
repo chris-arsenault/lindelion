@@ -38,8 +38,6 @@ Detailed milestones and the reuse/benchmark strategy live in
 - Field-validate Galad on Windows against a matrix of third-party VST3 plugins and a stability/leak
   soak run, recorded in [`galad/PLUGIN-MATRIX.md`](../galad/PLUGIN-MATRIX.md)
   ([ADR-0022](adr/0022-windows-vst3-host.md)).
-- Build Cenedril, a Windows-only Visualizer VST3 (spectrogram, meters, analysis-signal display;
-  [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `CENEDRIL-VST-PLAN.md`).
 - Build Lúmedir, a Windows-only Speech-Coach VST3 (cadence/rate, pitch dynamism, pauses, clarity vs
   target bands; [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `LUMEDIR-VST-PLAN.md`).
   Built M0–M3 (passthrough + off-thread `DeliveryWorker` computing the four delivery metrics).

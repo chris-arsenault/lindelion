@@ -12,6 +12,7 @@ Lindelion is a Rust workspace for audio instruments and shared plugin infrastruc
 | Linnod | Sindarin measured verse unit, from the `lind`/`lin-` song root | VST3 melodic slicer instrument with source analysis, slice playback, editor surface, and bundle support | [README](plugins/linnod/README.md), [spec](docs/plugins/linnod.md), [backlog](docs/plugins/linnod-backlog.md) |
 | Glirdir | Sindarin `glir-` + `-dir`, "singer" or "song-bearer" | VST3 sing-to-MIDI scratchpad with editor, drag/export, sample-library save, and bundle support | [README](plugins/glirdir/README.md), [spec](docs/plugins/glirdir.md), [backlog](docs/plugins/glirdir-backlog.md) |
 | Calóma | Quenya `cala` ("bright/clear") + `óma` ("voice"), "clear voice" | Windows-only speech-clarity VST3: a 20-effect serial chain with 3 signal orders, a self-contained Vizia editor (no host parameters), and per-order tuned defaults | [README](plugins/caloma/README.md), [spec](docs/plugins/caloma.md), [backlog](docs/plugins/caloma-backlog.md) |
+| Cenedril | Quenya/Sindarin "mirror, looking-glass" | Windows-only passthrough Visualizer VST3: bit-exact zero-latency passthrough with a Vizia editor — magnitude + reassigned spectrogram, level/LUFS meters, analysis-signal panel, and view/scale/colormap/range controls with persisted settings | [README](plugins/cenedril/README.md), [spec](docs/plugins/cenedril.md), [backlog](docs/plugins/cenedril-backlog.md) |
 
 ## Host application
 

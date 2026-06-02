@@ -22,6 +22,7 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `plugins/lamath` | Breath-excited resonator VST3 instrument. |
 | `plugins/linnod` | Melodic sample-slicer VST3 instrument with source analysis, patch model, realtime slice playback, editor bridge, and bundle metadata. |
 | `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: shared capture composition, phrase analysis, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
+| `plugins/cenedril` | Windows-only passthrough Visualizer VST3: bit-exact zero-latency passthrough with an allocation-free analysis tap (reassignment STFT, levels/LUFS, off-thread voicing), a single-component VST3, and a Vizia editor (spectrogram/meters/analysis panel + view/scale/colormap/range controls with persisted settings). See [Cenedril spec](plugins/cenedril.md). |
 | `galad/` | Standalone Windows realtime VST3 *host* application: WASAPI microphone → an ordered chain of arbitrary VST3 plugins → output device. Target-gated Windows-only and excluded from `make ci`. See [Windows VST3 Host](#windows-vst3-host-galad). |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
@@ -142,6 +143,8 @@ Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plug
 | Glirdir `midi_export.rs` / `sample_library.rs` | SMF drag/export payloads and shared sample-library scratchpad ingest. |
 | Linnod `analysis.rs` / `analysis_job.rs` / `worker.rs` | Product orchestration around source-sample loading, SwiftF0 pitch detection, onset markers, and pitch-shift cache preparation. |
 | Linnod `runtime.rs` | Source-backed slice playback, prepared Resample Stretch buffer ownership, voice ownership, envelopes, filtering, panning, and output limiting. |
+
+The Windows-only VSTs ([ADR-0023](adr/0023-new-vsts-windows-only.md)) keep the same `vst3_entry/` boundary but differ in shape. **Calóma** (speech effect) and **Cenedril** (passthrough visualizer) are **single-component** VST3s — one COM object is processor + controller — so their Vizia editors read analysis and state directly from the audio thread's lock-free cells rather than through host messages. Cenedril's analysis/delivery model is [ADR-0040](adr/0040-cenedril-analysis-and-editor-delivery.md); the per-product boundaries are in the specs ([Calóma](plugins/caloma.md), [Cenedril](plugins/cenedril.md)).
 
 ## Windows VST3 Host (Galad)
 

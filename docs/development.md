@@ -16,7 +16,8 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 | `make inspect-vst3 PLUGIN=linnod` | Inspect the installed Linnod VST3 bundle on macOS. |
 | `make validate-vst3 PLUGIN=linnod` | Run the shared validator wrapper against the installed Linnod bundle. |
 | `make host-windows-check` | Cross-compile the Galad Windows host (`galad`) for `x86_64-pc-windows-msvc` via cargo-xwin. |
-| `make build-windows` | Cross-compile the Windows-only VST3 plugins for `x86_64-pc-windows-msvc` via cargo-xwin. |
+| `make build-windows` | Cross-compile and stage all Windows-only VST3 plugins (`$(WINDOWS_PLUGINS)`) for `x86_64-pc-windows-msvc` via cargo-xwin. |
+| `make build-windows PLUGIN=cenedril` | Cross-compile and stage a single Windows-only plugin (mirrors macOS `make build PLUGIN=`). |
 | `make test-integration` | Run the heavy suite excluded from `make ci`: multi-second DSP fidelity/stability/tuning renders plus filesystem/thread-touching tests (per-crate `integration-tests` feature). |
 | `make test-models` | Run the `#[ignore]`d neural-network model-integration tests (ONNX Runtime). |
 | `make docs` | Run the `#[ignore]`d doc-data generators (plot/CSV/baseline writers). |

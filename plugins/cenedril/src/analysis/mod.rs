@@ -13,42 +13,65 @@ use std::sync::Arc;
 use lindelion_dsp_utils::{
     analysis::{peak_abs, rms},
     lufs::LufsMeter,
-    stft::StftProcessor,
+    reassign::ReassignStft,
 };
 use lindelion_plugin_shell::AudioInputBuffer;
 use lindelion_speech_signals::{AnalysisWorker, SignalSnapshot, inline::SpeechPresence};
 
-pub use ring::{FrameRing, MeterCell, MeterSnapshot};
+pub use ring::{FrameLanes, FrameRing, MeterCell, MeterSnapshot, SignalCell};
 
 use std::sync::Mutex;
 
-use lindelion_ui::cenedril_vizia::SpectrogramSource;
+use lindelion_ui::cenedril_vizia::{
+    MeterSource, ReassignedFrame, ReassignedSource, SettingsStore, SpectrogramSource,
+    meters::{MeterReadout, SignalReadout},
+};
+
+use crate::settings::SettingsCell;
 
 /// The plugin's implementation of the editor's [`SpectrogramSource`]: drains the lock-free frame
 /// ring on the editor thread. The view (in `lindelion-ui`) holds this as `Arc<dyn SpectrogramSource>`
 /// and never names the realtime ring type.
 pub struct CenedrilFrameSource {
     ring: Arc<FrameRing>,
+    meter: Arc<MeterCell>,
+    signal: Arc<SignalCell>,
+    settings: Arc<SettingsCell>,
     sample_rate: f32,
     scratch: Mutex<Vec<f32>>,
 }
 
 impl CenedrilFrameSource {
-    pub fn new(ring: Arc<FrameRing>, sample_rate: f32) -> Self {
-        let bins = ring.bins();
+    pub fn new(
+        ring: Arc<FrameRing>,
+        meter: Arc<MeterCell>,
+        signal: Arc<SignalCell>,
+        settings: Arc<SettingsCell>,
+        sample_rate: f32,
+    ) -> Self {
+        // Three lanes (magnitude, frequency offset, time offset) per bin.
+        let scratch_len = 3 * ring.bins();
         Self {
             ring,
+            meter,
+            signal,
+            settings,
             sample_rate,
-            scratch: Mutex::new(vec![0.0; bins]),
+            scratch: Mutex::new(vec![0.0; scratch_len]),
         }
     }
+}
+
+/// STFT frame size from the ring's bin count (`= (bins - 1) * 2`).
+fn frame_size_of(ring: &FrameRing) -> usize {
+    (ring.bins() - 1) * 2
 }
 
 impl SpectrogramSource for CenedrilFrameSource {
     fn drain_frames(&self, sink: &mut dyn FnMut(&[f32])) {
         let mut scratch = self.scratch.lock().expect("spectrogram scratch poisoned");
         self.ring
-            .drain_frames(&mut scratch, |_index, magnitudes| sink(magnitudes));
+            .drain_frames(&mut scratch, |_index, lanes| sink(lanes.magnitudes));
     }
 
     fn bins(&self) -> usize {
@@ -56,11 +79,105 @@ impl SpectrogramSource for CenedrilFrameSource {
     }
 
     fn frame_size(&self) -> usize {
-        (self.ring.bins() - 1) * 2
+        frame_size_of(&self.ring)
     }
 
     fn sample_rate(&self) -> f32 {
         self.sample_rate
+    }
+}
+
+impl ReassignedSource for CenedrilFrameSource {
+    fn drain_frames(&self, sink: &mut dyn FnMut(ReassignedFrame)) {
+        let mut scratch = self.scratch.lock().expect("reassigned scratch poisoned");
+        self.ring.drain_frames(&mut scratch, |_index, lanes| {
+            sink(ReassignedFrame {
+                magnitudes: lanes.magnitudes,
+                freq_offsets: lanes.freq_offsets,
+                time_offsets: lanes.time_offsets,
+            })
+        });
+    }
+
+    fn bins(&self) -> usize {
+        self.ring.bins()
+    }
+
+    fn frame_size(&self) -> usize {
+        frame_size_of(&self.ring)
+    }
+
+    fn hop(&self) -> usize {
+        // `ReassignStft` uses a 75 % overlap (hop = frame_size / 4).
+        frame_size_of(&self.ring) / 4
+    }
+
+    fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+}
+
+impl MeterSource for CenedrilFrameSource {
+    fn meters(&self) -> MeterReadout {
+        let m = self.meter.read();
+        MeterReadout {
+            peak: m.peak,
+            rms: m.rms,
+            crest: m.crest,
+            lufs_momentary: m.lufs_momentary,
+            lufs_short: m.lufs_short,
+            lufs_integrated: m.lufs_integrated,
+        }
+    }
+
+    fn signals(&self) -> SignalReadout {
+        let s = self.signal.read();
+        // Speech presence is computed inline on the audio thread (in the `MeterCell`); the rest come
+        // from the off-thread worker (the `SignalCell`).
+        let speech_presence = self.meter.read().speech_presence;
+        SignalReadout {
+            pitch_hz: s.pitch_hz,
+            pitch_confidence: s.pitch_confidence,
+            voicing_score: s.voicing_score,
+            voicing_state: s.voicing_state,
+            onset_flux_high: s.onset_flux_high,
+            spectral_flux: s.spectral_flux,
+            hnr_db: s.hnr_db,
+            speech_presence,
+        }
+    }
+}
+
+impl SettingsStore for CenedrilFrameSource {
+    fn active_view(&self) -> u32 {
+        self.settings.get().active_view
+    }
+    fn freq_scale(&self) -> u32 {
+        self.settings.get().freq_scale
+    }
+    fn color_map(&self) -> u32 {
+        self.settings.get().color_map
+    }
+    fn db_floor(&self) -> f32 {
+        self.settings.get().db_floor
+    }
+    fn db_ceil(&self) -> f32 {
+        self.settings.get().db_ceil
+    }
+    fn set_active_view(&self, value: u32) {
+        self.settings.set_active_view(value);
+    }
+    fn set_freq_scale(&self, value: u32) {
+        self.settings.set_freq_scale(value);
+    }
+    fn set_color_map(&self, value: u32) {
+        self.settings.set_color_map(value);
+    }
+    fn set_db_floor(&self, value: f32) {
+        self.settings.set_db_floor(value);
+    }
+    fn set_db_ceil(&self, value: f32) {
+        self.settings.set_db_ceil(value);
     }
 }
 
@@ -70,13 +187,13 @@ const FRAME_SIZE: usize = 2048;
 const FRAME_SLOTS: usize = 512;
 
 pub struct CenedrilAnalysis {
-    stft: StftProcessor,
+    reassign: ReassignStft,
     lufs: LufsMeter,
     ring: Arc<FrameRing>,
     meter: Arc<MeterCell>,
+    signal: Arc<SignalCell>,
     speech: SpeechPresence,
     mono: Vec<f32>,
-    mags: Vec<f32>,
     silence: Vec<f32>,
     /// The off-thread heavy-analysis worker (`SignalAnalyzer` → `SignalSnapshot`). `None` until
     /// started by the host path, so the audio-thread core is constructible thread-free for tests.
@@ -90,13 +207,13 @@ impl CenedrilAnalysis {
         let mut speech = SpeechPresence::new();
         speech.prepare(sample_rate);
         Self {
-            stft: StftProcessor::new(FRAME_SIZE),
+            reassign: ReassignStft::new(FRAME_SIZE),
             lufs: LufsMeter::new(sample_rate),
             ring: Arc::new(FrameRing::new(bins, FRAME_SLOTS)),
             meter: Arc::new(MeterCell::new()),
+            signal: Arc::new(SignalCell::new()),
             speech,
             mono: vec![0.0; max_block],
-            mags: vec![0.0; bins],
             silence: vec![0.0; max_block],
             worker: None,
         }
@@ -105,7 +222,7 @@ impl CenedrilAnalysis {
     /// Reconfigure for a new sample rate / max block. Off the audio thread (may resize scratch and
     /// restart the worker thread).
     pub fn reset(&mut self, sample_rate: f32, max_block: usize) {
-        self.stft.reset();
+        self.reassign.reset();
         self.lufs.reset(sample_rate);
         self.speech.prepare(sample_rate);
         self.speech.reset();
@@ -141,6 +258,12 @@ impl CenedrilAnalysis {
     /// The editor reads the meter snapshot from this cell (shared `Arc`).
     pub fn meter(&self) -> &Arc<MeterCell> {
         &self.meter
+    }
+
+    /// The editor reads the latest analysis-signal snapshot from this cell (shared `Arc`). The audio
+    /// thread publishes `AnalysisWorker::latest()` into it each block.
+    pub fn analysis(&self) -> &Arc<SignalCell> {
+        &self.signal
     }
 
     /// Audio thread: tap the input block. Allocation-free; reads the input only.
@@ -184,21 +307,19 @@ impl CenedrilAnalysis {
             speech_presence = self.speech.process(self.mono[i]);
         }
 
-        // Hand the clean mono block to the off-thread heavy-analysis worker (allocation-free push).
+        // Hand the clean mono block to the off-thread heavy-analysis worker (allocation-free push),
+        // then relay its latest snapshot into the editor-facing cell (atomic loads + stores only).
         if let Some(worker) = &self.worker {
             worker.push(&self.mono[..n]);
+            self.signal.publish(&worker.latest());
         }
 
-        // STFT magnitude frames → ring (disjoint field borrows).
+        // Reassignment frames (magnitude + frequency/time offsets) → ring (disjoint field borrows).
+        // `ReassignStft` reads the mono block (it does not modify it) and emits per-bin lanes; the
+        // magnitude lane is what the M3 spectrogram view consumes.
         let ring = &self.ring;
-        let mags = &mut self.mags;
-        self.stft.process(&mut self.mono[..n], |spectrum| {
-            for (i, bin) in spectrum.iter().enumerate() {
-                if i < mags.len() {
-                    mags[i] = bin.norm();
-                }
-            }
-            ring.push_frame(mags);
+        self.reassign.process(&self.mono[..n], |frame| {
+            ring.push_frame(frame.magnitudes, frame.freq_offsets, frame.time_offsets);
         });
 
         self.meter.publish(&MeterSnapshot {
@@ -245,19 +366,21 @@ mod tests {
             i += block;
         }
 
-        let mut scratch = vec![0.0f32; analysis.frame_ring().bins()];
+        let mut scratch = vec![0.0f32; 3 * analysis.frame_ring().bins()];
         let mut produced = 0usize;
         let mut last_peak_bin = 0usize;
-        analysis.frame_ring().drain_frames(&mut scratch, |_, mag| {
-            produced += 1;
-            let mut best = (0usize, 0.0f32);
-            for (bin, &v) in mag.iter().enumerate() {
-                if v > best.1 {
-                    best = (bin, v);
+        analysis
+            .frame_ring()
+            .drain_frames(&mut scratch, |_, lanes| {
+                produced += 1;
+                let mut best = (0usize, 0.0f32);
+                for (bin, &v) in lanes.magnitudes.iter().enumerate() {
+                    if v > best.1 {
+                        best = (bin, v);
+                    }
                 }
-            }
-            last_peak_bin = best.0;
-        });
+                last_peak_bin = best.0;
+            });
 
         assert!(produced > 0, "no STFT frames produced");
         let expected_bin = (freq / (sr / FRAME_SIZE as f32)).round() as i32;
@@ -279,6 +402,73 @@ mod tests {
     fn latest_snapshot_defaults_without_worker() {
         let analysis = CenedrilAnalysis::new(48_000.0, 512);
         assert_eq!(analysis.latest_snapshot(), SignalSnapshot::default());
+    }
+
+    #[test]
+    fn meter_source_reads_published_cells() {
+        use lindelion_ui::cenedril_vizia::MeterSource;
+
+        let ring = Arc::new(FrameRing::new(8, 4));
+        let meter = Arc::new(MeterCell::new());
+        let signal = Arc::new(SignalCell::new());
+        meter.publish(&MeterSnapshot {
+            peak: 0.5,
+            rms: 0.2,
+            crest: 2.5,
+            lufs_momentary: -18.0,
+            lufs_short: -19.0,
+            lufs_integrated: -20.0,
+            speech_presence: 0.6,
+        });
+        signal.publish(&SignalSnapshot {
+            pitch_hz: 147.0,
+            pitch_confidence: 0.8,
+            voicing_score: 0.7,
+            voicing_state: 2.0,
+            onset_flux_high: 0.4,
+            spectral_flux: 0.5,
+            hnr_db: 12.0,
+        });
+
+        let settings = Arc::new(SettingsCell::new());
+        let source = CenedrilFrameSource::new(ring, meter, signal, settings, 48_000.0);
+        let m = source.meters();
+        assert_eq!(m.peak, 0.5);
+        assert_eq!(m.crest, 2.5);
+        assert_eq!(m.lufs_integrated, -20.0);
+        let s = source.signals();
+        assert_eq!(s.voicing_state, 2.0);
+        assert_eq!(s.hnr_db, 12.0);
+        assert_eq!(s.speech_presence, 0.6); // routed from the MeterCell into the signal readout
+    }
+
+    #[test]
+    fn settings_store_reads_and_writes_through_the_cell() {
+        use lindelion_ui::cenedril_vizia::SettingsStore;
+
+        let settings = Arc::new(SettingsCell::new());
+        let source = CenedrilFrameSource::new(
+            Arc::new(FrameRing::new(8, 4)),
+            Arc::new(MeterCell::new()),
+            Arc::new(SignalCell::new()),
+            settings.clone(),
+            48_000.0,
+        );
+        // Defaults are read through the trait.
+        assert_eq!(source.active_view(), 0);
+        assert_eq!(source.db_floor(), -100.0);
+        // Writes via the trait reach the shared cell, and reads see them.
+        source.set_active_view(1);
+        source.set_freq_scale(1);
+        source.set_color_map(2);
+        source.set_db_floor(-80.0);
+        source.set_db_ceil(-6.0);
+        assert_eq!(source.active_view(), 1);
+        assert_eq!(source.freq_scale(), 1);
+        assert_eq!(source.color_map(), 2);
+        assert_eq!(source.db_floor(), -80.0);
+        assert_eq!(source.db_ceil(), -6.0);
+        assert_eq!(settings.get().active_view, 1); // same underlying cell
     }
 
     // Threaded + builds the SwiftF0 model — excluded from `make ci`; run via `make test-integration`.

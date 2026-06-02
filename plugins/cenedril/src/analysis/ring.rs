@@ -9,9 +9,24 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lindelion_dsp_utils::handoff::AtomicF32;
+use lindelion_speech_signals::SignalSnapshot;
+
+/// Per-bin lanes carried by each frame: STFT magnitude, the reassignment **frequency** offset
+/// (fractional bins added to the bin index), and the reassignment **time** offset (samples relative
+/// to the window center). Yielded as borrowed sub-slices of the consumer's drain scratch.
+pub struct FrameLanes<'a> {
+    pub magnitudes: &'a [f32],
+    pub freq_offsets: &'a [f32],
+    pub time_offsets: &'a [f32],
+}
+
+/// Number of per-bin lanes stored per frame (magnitude, frequency offset, time offset).
+const LANES: usize = 3;
 
 pub struct FrameRing {
     bins: usize,
+    /// `LANES * bins` — the f32 count per frame slot.
+    slot_stride: usize,
     slots_mask: usize,
     buffer: Box<[AtomicF32]>,
     write: AtomicUsize,
@@ -19,19 +34,22 @@ pub struct FrameRing {
 }
 
 impl FrameRing {
-    /// `slots_pow2` (the number of frame slots) must be a power of two; each slot holds `bins`
-    /// magnitudes. All storage is allocated here, off the audio thread.
+    /// `slots_pow2` (the number of frame slots) must be a power of two; each slot holds `LANES *
+    /// bins` values (the magnitude, frequency-offset, and time-offset lanes, planar). All storage is
+    /// allocated here, off the audio thread.
     pub fn new(bins: usize, slots_pow2: usize) -> Self {
         assert!(
             slots_pow2.is_power_of_two(),
             "frame slots must be a power of two"
         );
-        let buffer = (0..slots_pow2 * bins)
+        let slot_stride = LANES * bins;
+        let buffer = (0..slots_pow2 * slot_stride)
             .map(|_| AtomicF32::default())
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
             bins,
+            slot_stride,
             slots_mask: slots_pow2 - 1,
             buffer,
             write: AtomicUsize::new(0),
@@ -43,26 +61,33 @@ impl FrameRing {
         self.bins
     }
 
-    /// Producer (audio thread): publish one magnitude frame. Allocation-free. Extra/missing
-    /// magnitudes beyond `bins()` are ignored.
-    pub fn push_frame(&self, magnitudes: &[f32]) {
+    /// Producer (audio thread): publish one reassignment frame (three per-bin lanes, stored planar).
+    /// Allocation-free. Extra/missing values beyond `bins()` in any lane are ignored.
+    pub fn push_frame(&self, magnitudes: &[f32], freq_offsets: &[f32], time_offsets: &[f32]) {
         let w = self.write.load(Ordering::Relaxed);
-        let base = (w & self.slots_mask) * self.bins;
-        let n = magnitudes.len().min(self.bins);
-        for (slot, &mag) in self.buffer[base..base + n].iter().zip(&magnitudes[..n]) {
-            slot.store(mag);
+        let base = (w & self.slots_mask) * self.slot_stride;
+        for (lane, src) in [magnitudes, freq_offsets, time_offsets]
+            .into_iter()
+            .enumerate()
+        {
+            let off = base + lane * self.bins;
+            let n = src.len().min(self.bins);
+            for (slot, &v) in self.buffer[off..off + n].iter().zip(&src[..n]) {
+                slot.store(v);
+            }
         }
         self.write.store(w.wrapping_add(1), Ordering::Release);
     }
 
     /// Consumer (editor thread): deliver frames written since the last drain, oldest first, loading
-    /// each into `scratch` (len ≥ `bins()`). Lossy: if the consumer lagged more than the ring depth,
-    /// the oldest dropped frames are skipped so only the most recent contiguous run is delivered.
-    /// Returns the number of frames delivered. Allocation-free.
+    /// each into `scratch` (len ≥ `LANES * bins()`) and splitting it into the three lanes. Lossy: if
+    /// the consumer lagged more than the ring depth, the oldest dropped frames are skipped so only
+    /// the most recent contiguous run is delivered. Returns the number of frames delivered.
+    /// Allocation-free.
     pub fn drain_frames(
         &self,
         scratch: &mut [f32],
-        mut on_frame: impl FnMut(u64, &[f32]),
+        mut on_frame: impl FnMut(u64, FrameLanes),
     ) -> usize {
         let slots = self.slots_mask + 1;
         let w = self.write.load(Ordering::Acquire);
@@ -71,14 +96,31 @@ impl FrameRing {
             r = w.wrapping_sub(slots);
         }
         let available = w.wrapping_sub(r);
-        let n = scratch.len().min(self.bins);
+        let bins = (scratch.len() / LANES).min(self.bins);
         for k in 0..available {
             let idx = r.wrapping_add(k);
-            let base = (idx & self.slots_mask) * self.bins;
-            for (dst, src) in scratch[..n].iter_mut().zip(&self.buffer[base..base + n]) {
-                *dst = src.load();
+            let base = (idx & self.slots_mask) * self.slot_stride;
+            for lane in 0..LANES {
+                let off = base + lane * self.bins;
+                let dst = lane * bins;
+                for (d, s) in scratch[dst..dst + bins]
+                    .iter_mut()
+                    .zip(&self.buffer[off..off + bins])
+                {
+                    *d = s.load();
+                }
             }
-            on_frame(idx as u64, &scratch[..n]);
+            let (magnitudes, rest) = scratch.split_at(bins);
+            let (freq_offsets, rest) = rest.split_at(bins);
+            let time_offsets = &rest[..bins];
+            on_frame(
+                idx as u64,
+                FrameLanes {
+                    magnitudes,
+                    freq_offsets,
+                    time_offsets,
+                },
+            );
         }
         self.read.store(w, Ordering::Release);
         available
@@ -152,6 +194,62 @@ impl Default for MeterCell {
     }
 }
 
+/// Atomic single-slot hand-off for the worker's analysis [`SignalSnapshot`] (per-field `AtomicF32`,
+/// exactly like [`MeterCell`]). Published on the audio thread from `AnalysisWorker::latest()`, read by
+/// the editor. Reads may be cosmetically torn across fields, which is acceptable for a readout; both
+/// publish and read are allocation-free.
+pub struct SignalCell {
+    pitch_hz: AtomicF32,
+    pitch_confidence: AtomicF32,
+    voicing_score: AtomicF32,
+    voicing_state: AtomicF32,
+    onset_flux_high: AtomicF32,
+    spectral_flux: AtomicF32,
+    hnr_db: AtomicF32,
+}
+
+impl SignalCell {
+    pub fn new() -> Self {
+        Self {
+            pitch_hz: AtomicF32::default(),
+            pitch_confidence: AtomicF32::default(),
+            voicing_score: AtomicF32::default(),
+            voicing_state: AtomicF32::default(),
+            onset_flux_high: AtomicF32::default(),
+            spectral_flux: AtomicF32::default(),
+            hnr_db: AtomicF32::default(),
+        }
+    }
+
+    pub fn publish(&self, snapshot: &SignalSnapshot) {
+        self.pitch_hz.store(snapshot.pitch_hz);
+        self.pitch_confidence.store(snapshot.pitch_confidence);
+        self.voicing_score.store(snapshot.voicing_score);
+        self.voicing_state.store(snapshot.voicing_state);
+        self.onset_flux_high.store(snapshot.onset_flux_high);
+        self.spectral_flux.store(snapshot.spectral_flux);
+        self.hnr_db.store(snapshot.hnr_db);
+    }
+
+    pub fn read(&self) -> SignalSnapshot {
+        SignalSnapshot {
+            pitch_hz: self.pitch_hz.load(),
+            pitch_confidence: self.pitch_confidence.load(),
+            voicing_score: self.voicing_score.load(),
+            voicing_state: self.voicing_state.load(),
+            onset_flux_high: self.onset_flux_high.load(),
+            spectral_flux: self.spectral_flux.load(),
+            hnr_db: self.hnr_db.load(),
+        }
+    }
+}
+
+impl Default for SignalCell {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,13 +257,16 @@ mod tests {
     #[test]
     fn frames_drain_in_order_with_correct_magnitudes() {
         let ring = FrameRing::new(4, 8);
-        ring.push_frame(&[1.0, 2.0, 3.0, 4.0]);
-        ring.push_frame(&[5.0, 6.0, 7.0, 8.0]);
-        ring.push_frame(&[9.0, 10.0, 11.0, 12.0]);
+        let z = [0.0f32; 4];
+        ring.push_frame(&[1.0, 2.0, 3.0, 4.0], &z, &z);
+        ring.push_frame(&[5.0, 6.0, 7.0, 8.0], &z, &z);
+        ring.push_frame(&[9.0, 10.0, 11.0, 12.0], &z, &z);
 
-        let mut scratch = [0.0f32; 4];
+        let mut scratch = [0.0f32; 12]; // 3 lanes * 4 bins
         let mut got: Vec<(u64, Vec<f32>)> = Vec::new();
-        let n = ring.drain_frames(&mut scratch, |idx, mag| got.push((idx, mag.to_vec())));
+        let n = ring.drain_frames(&mut scratch, |idx, lanes| {
+            got.push((idx, lanes.magnitudes.to_vec()))
+        });
 
         assert_eq!(n, 3);
         assert_eq!(got[0], (0, vec![1.0, 2.0, 3.0, 4.0]));
@@ -177,12 +278,40 @@ mod tests {
     }
 
     #[test]
+    fn frames_carry_three_reassignment_lanes_in_order() {
+        let ring = FrameRing::new(2, 4);
+        ring.push_frame(&[1.0, 2.0], &[0.1, 0.2], &[-1.0, -2.0]);
+        ring.push_frame(&[3.0, 4.0], &[0.3, 0.4], &[-3.0, -4.0]);
+
+        let mut scratch = [0.0f32; 6]; // 3 lanes * 2 bins
+        let mut seen = 0usize;
+        let n = ring.drain_frames(&mut scratch, |_idx, lanes| {
+            match seen {
+                0 => {
+                    assert_eq!(lanes.magnitudes, [1.0, 2.0].as_slice());
+                    assert_eq!(lanes.freq_offsets, [0.1, 0.2].as_slice());
+                    assert_eq!(lanes.time_offsets, [-1.0, -2.0].as_slice());
+                }
+                1 => {
+                    assert_eq!(lanes.magnitudes, [3.0, 4.0].as_slice());
+                    assert_eq!(lanes.freq_offsets, [0.3, 0.4].as_slice());
+                    assert_eq!(lanes.time_offsets, [-3.0, -4.0].as_slice());
+                }
+                other => panic!("unexpected frame {other}"),
+            }
+            seen += 1;
+        });
+        assert_eq!(n, 2);
+        assert_eq!(seen, 2);
+    }
+
+    #[test]
     fn overflow_drops_oldest_and_keeps_recent_contiguous() {
         let ring = FrameRing::new(2, 4); // depth 4
         for i in 0..10u32 {
-            ring.push_frame(&[i as f32, i as f32]);
+            ring.push_frame(&[i as f32, i as f32], &[0.0, 0.0], &[0.0, 0.0]);
         }
-        let mut scratch = [0.0f32; 2];
+        let mut scratch = [0.0f32; 6]; // 3 lanes * 2 bins
         let mut idxs = Vec::new();
         let n = ring.drain_frames(&mut scratch, |idx, _| idxs.push(idx));
         assert_eq!(n, 4);
@@ -194,7 +323,7 @@ mod tests {
         let ring = FrameRing::new(1025, 512);
         let frame = vec![0.5f32; 1025];
         crate::assert_no_allocations("frame push", || {
-            ring.push_frame(&frame);
+            ring.push_frame(&frame, &frame, &frame);
         });
     }
 
@@ -219,6 +348,36 @@ mod tests {
         let cell = MeterCell::new();
         let snap = MeterSnapshot::default();
         crate::assert_no_allocations("meter publish", || {
+            cell.publish(&snap);
+        });
+    }
+
+    #[test]
+    fn signal_snapshot_round_trips() {
+        let cell = SignalCell::new();
+        let snap = SignalSnapshot {
+            pitch_hz: 147.0,
+            pitch_confidence: 0.8,
+            voicing_score: 0.7,
+            voicing_state: 2.0,
+            onset_flux_high: 0.4,
+            spectral_flux: 0.5,
+            hnr_db: 12.0,
+        };
+        cell.publish(&snap);
+        assert_eq!(cell.read(), snap);
+    }
+
+    #[test]
+    fn signal_cell_defaults_to_empty_snapshot() {
+        assert_eq!(SignalCell::new().read(), SignalSnapshot::default());
+    }
+
+    #[test]
+    fn signal_publish_is_allocation_free() {
+        let cell = SignalCell::new();
+        let snap = SignalSnapshot::default();
+        crate::assert_no_allocations("signal publish", || {
             cell.publish(&snap);
         });
     }

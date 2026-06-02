@@ -48,12 +48,26 @@ impl FixedSizePlugViewDelegate for CenedrilEditorView {
             let mut editor = self.editor.borrow_mut();
             *editor = None;
             let component = unsafe { &*self.controller };
+            // One concrete source drains the shared ring; hand the editor both trait views of it
+            // (magnitude + reassigned), so switching the view never double-drains.
+            let frame_source = std::sync::Arc::new(crate::analysis::CenedrilFrameSource::new(
+                component.frame_ring(),
+                component.meter(),
+                component.analysis(),
+                component.settings(),
+                component.sample_rate(),
+            ));
             let source: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SpectrogramSource> =
-                std::sync::Arc::new(crate::analysis::CenedrilFrameSource::new(
-                    component.frame_ring(),
-                    component.sample_rate(),
-                ));
-            let host = lindelion_ui::cenedril_vizia::CenedrilEditorHost::new(source);
+                frame_source.clone();
+            let reassigned: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::ReassignedSource> =
+                frame_source.clone();
+            let meters: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::MeterSource> =
+                frame_source.clone();
+            let settings: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SettingsStore> =
+                frame_source;
+            let host = lindelion_ui::cenedril_vizia::CenedrilEditorHost::new(
+                source, reassigned, meters, settings,
+            );
             *editor = Some(unsafe {
                 lindelion_ui::cenedril_vizia::CenedrilViziaEditor::attach(
                     parent,

@@ -15,7 +15,11 @@ use lindelion_plugin_shell::{
 };
 use vst3::{Class, Steinberg::Vst::*, Steinberg::*, uid};
 
-use crate::{Cenedril, analysis::FrameRing};
+use crate::{
+    Cenedril,
+    analysis::{FrameRing, MeterCell, SignalCell},
+    settings::SettingsCell,
+};
 
 pub(super) const CENEDRIL_BUSES: [Vst3BusInfo; 2] = [
     Vst3BusInfo::audio_input(2, "Input"),
@@ -62,6 +66,21 @@ impl CenedrilVst3Processor {
     /// A clone of the audio→editor frame ring, for the editor view to drain.
     pub(super) fn frame_ring(&self) -> Arc<FrameRing> {
         self.plugin.borrow().frame_ring()
+    }
+
+    /// A clone of the level/loudness meter cell, for the editor to read.
+    pub(super) fn meter(&self) -> Arc<MeterCell> {
+        self.plugin.borrow().meter()
+    }
+
+    /// A clone of the analysis-signal cell, for the editor to read.
+    pub(super) fn analysis(&self) -> Arc<SignalCell> {
+        self.plugin.borrow().analysis()
+    }
+
+    /// A clone of the editor-settings cell, for the editor to read/write.
+    pub(super) fn settings(&self) -> Arc<SettingsCell> {
+        self.plugin.borrow().settings()
     }
 
     /// The current audio sample rate, for the editor's frequency axis.

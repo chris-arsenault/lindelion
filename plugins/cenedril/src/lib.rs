@@ -2,6 +2,7 @@
 
 pub mod analysis;
 pub mod plugin;
+pub mod settings;
 mod vst3_entry;
 
 pub use lindelion_plugin_metadata::CENEDRIL_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;

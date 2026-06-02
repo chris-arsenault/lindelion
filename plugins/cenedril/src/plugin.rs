@@ -1,20 +1,22 @@
+use std::sync::Arc;
+
 use lindelion_plugin_shell::{
     AudioPlugin, ParameterInfo, PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
 };
 
 use crate::analysis::CenedrilAnalysis;
+use crate::settings::{self, SettingsCell};
 
 /// Cenedril is a passthrough Visualizer effect: audio is mirrored to the output bit-exact at zero
 /// declared latency, while a parallel analysis tap feeds the editor (the tap never touches the
 /// output). The editor itself is a later milestone.
 pub const DESCRIPTOR: PluginDescriptor = PluginDescriptor::effect("Cenedril", *b"lindelion_cenedr");
 
-const STATE_FORMAT_VERSION: u32 = 1;
-
 #[derive(Default)]
 pub struct Cenedril {
     setup: ProcessSetup,
     analysis: CenedrilAnalysis,
+    settings: Arc<SettingsCell>,
 }
 
 impl AudioPlugin for Cenedril {
@@ -41,11 +43,14 @@ impl AudioPlugin for Cenedril {
     }
 
     fn state(&self) -> PluginState {
-        PluginState::empty(STATE_FORMAT_VERSION)
+        settings::to_plugin_state(&self.settings.get())
+            .unwrap_or_else(|_| PluginState::empty(settings::FORMAT_VERSION))
     }
 
-    fn load_state(&mut self, _state: PluginState) {
-        // No persisted fields in M0; editor settings arrive in M6.
+    fn load_state(&mut self, state: PluginState) {
+        if let Ok(loaded) = settings::from_plugin_state(state) {
+            self.settings.set(loaded);
+        }
     }
 }
 
@@ -64,6 +69,21 @@ impl Cenedril {
     /// A clone of the audio→editor frame ring (shared `Arc`), for the editor to drain.
     pub fn frame_ring(&self) -> std::sync::Arc<crate::analysis::FrameRing> {
         self.analysis.frame_ring().clone()
+    }
+
+    /// A clone of the level/loudness meter cell (shared `Arc`), for the editor to read.
+    pub fn meter(&self) -> std::sync::Arc<crate::analysis::MeterCell> {
+        self.analysis.meter().clone()
+    }
+
+    /// A clone of the analysis-signal cell (shared `Arc`), for the editor to read.
+    pub fn analysis(&self) -> std::sync::Arc<crate::analysis::SignalCell> {
+        self.analysis.analysis().clone()
+    }
+
+    /// A clone of the editor-settings cell (shared `Arc`), for the editor to read/write.
+    pub fn settings(&self) -> Arc<SettingsCell> {
+        self.settings.clone()
     }
 }
 
@@ -116,5 +136,25 @@ mod tests {
 
         assert_eq!(left_out, left_in);
         assert_eq!(right_out, right_in);
+    }
+
+    #[test]
+    fn editor_settings_round_trip_across_state_reload() {
+        use crate::settings::CenedrilEditorSettings;
+
+        let a = Cenedril::default();
+        assert_eq!(a.settings().get(), CenedrilEditorSettings::default());
+        a.settings().set(CenedrilEditorSettings {
+            active_view: 1,
+            freq_scale: 1,
+            color_map: 2,
+            db_floor: -80.0,
+            db_ceil: -6.0,
+        });
+        let state = a.state();
+
+        let mut b = Cenedril::default();
+        b.load_state(state);
+        assert_eq!(b.settings().get(), a.settings().get());
     }
 }

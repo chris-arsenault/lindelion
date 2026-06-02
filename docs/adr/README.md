@@ -33,6 +33,7 @@
 | [0029](0029-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
 | [0030](0030-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |
 | [0031](0031-shared-body-idiophone-mode.md) | Shared-body idiophone mode (re-strikable persistent resonator) | Accepted | 2026-06-01 |
+| [0040](0040-cenedril-analysis-and-editor-delivery.md) | Cenedril analysis and editor delivery | Accepted | 2026-06-02 |
 
 ## Reserved number ranges (parallel workstreams)
 
@@ -45,6 +46,6 @@ unused tail once that stream is merged and done.
 | Range | Workstream |
 | ----- | ---------- |
 | 0032–0039 | Lamath resonator / shared-body idiophone (M2–M8) |
-| 0040–0047 | Cenedril visualizer (M4–M6) |
+| 0040 | Cenedril visualizer (M4–M6) — used; **0041–0047 reclaimed** (stream feature-complete) |
 | 0048–0055 | Lúmedir speech-coach (M4–M6) |
 | 0056+ | Unreserved — next new workstream |
