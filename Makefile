@@ -10,7 +10,7 @@ MACOS_TARGET ?= aarch64-apple-darwin
 # Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
 # Kept separate from the macOS PLUGINS list above.
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
-WINDOWS_PLUGINS ?= cenedril
+WINDOWS_PLUGINS ?= cenedril lumedir
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 CACHE_DIR ?= $(HOME)/.lindelion-cache
 LINDELION_CARGO_TARGET_DIR ?= $(CACHE_DIR)/target
@@ -49,6 +49,8 @@ test-models:
 	cargo test -p lindelion-speech-denoiser -p lindelion-speech-voice-gate --test integration -- --include-ignored
 	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration --features test-sync-analysis -- --include-ignored
 	cargo test -p lindelion-speech-air-exciter -p lindelion-speech-dereverberation -p lindelion-speech-room-tone -p lindelion-speech-spectral-contrast --test integration -- --include-ignored
+	cargo test -p lumedir --test dynamism_fixtures -- --include-ignored
+	cargo test -p lumedir --test delivery_fixtures -- --include-ignored
 
 # Integration tests: heavy DSP regression (fidelity/stability/tuning sweeps) plus filesystem- and
 # thread-touching tests. Gated behind the per-crate `integration-tests` feature, excluded from the
@@ -61,6 +63,8 @@ test-integration:
 	cargo test -p lindelion-dsp-utils --features integration-tests
 	cargo test -p lindelion-plugin-shell --features integration-tests
 	cargo test -p lindelion-sample-library --features integration-tests
+	cargo test -p lumedir --test integration --features test-sync-analysis -- --include-ignored
+	cargo test -p lumedir --features integration-tests
 
 bench:
 	cargo bench --workspace --no-fail-fast

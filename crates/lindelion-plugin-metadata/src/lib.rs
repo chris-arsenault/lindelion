@@ -52,12 +52,26 @@ pub const CENEDRIL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata
     controller_name: "Cenedril Controller",
 };
 
+pub const LUMEDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
+    package: "lumedir",
+    bundle_name: "Lumedir",
+    executable_name: "Lumedir",
+    bundle_identifier: "com.ahara.lumedir",
+    library_stem: "lumedir",
+    vst3_sub_categories: "Fx",
+    module_sub_categories: &["Fx"],
+    processor_cid: [0x1AEDC013, 0x2B5C4D20, 0x9E3F7A85, 0xC1582FB6],
+    controller_cid: [0x1AEDCD72, 0x7E9F4A31, 0xB2C16D39, 0x84F3A52E],
+    controller_name: "Lumedir Controller",
+};
+
 pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {
     match package {
         "lamath" => Some(LAMATH_VST3_BUNDLE_METADATA),
         "glirdir" => Some(GLIRDIR_VST3_BUNDLE_METADATA),
         "linnod" => Some(LINNOD_VST3_BUNDLE_METADATA),
         "cenedril" => Some(CENEDRIL_VST3_BUNDLE_METADATA),
+        "lumedir" => Some(LUMEDIR_VST3_BUNDLE_METADATA),
         _ => None,
     }
 }
@@ -84,6 +98,31 @@ mod tests {
             metadata_for_package("cenedril").unwrap(),
             CENEDRIL_VST3_BUNDLE_METADATA
         );
+        assert_eq!(
+            metadata_for_package("lumedir").unwrap(),
+            LUMEDIR_VST3_BUNDLE_METADATA
+        );
         assert!(metadata_for_package("unknown").is_none());
+    }
+
+    #[test]
+    fn every_plugin_cid_is_distinct() {
+        let metadata = [
+            LAMATH_VST3_BUNDLE_METADATA,
+            GLIRDIR_VST3_BUNDLE_METADATA,
+            LINNOD_VST3_BUNDLE_METADATA,
+            CENEDRIL_VST3_BUNDLE_METADATA,
+            LUMEDIR_VST3_BUNDLE_METADATA,
+        ];
+        let mut cids: Vec<[u32; 4]> = Vec::new();
+        for entry in metadata {
+            cids.push(entry.processor_cid);
+            cids.push(entry.controller_cid);
+        }
+        for (i, a) in cids.iter().enumerate() {
+            for b in &cids[i + 1..] {
+                assert_ne!(a, b, "duplicate VST3 CID {a:08X?}");
+            }
+        }
     }
 }

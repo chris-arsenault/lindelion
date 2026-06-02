@@ -4,6 +4,7 @@ pub mod cenedril_vizia;
 pub mod editor_surface;
 pub mod glirdir_vizia;
 pub mod linnod_vizia;
+pub mod lumedir_vizia;
 pub mod resonator_vizia;
 
 #[cfg(target_os = "macos")]

@@ -25,6 +25,10 @@ All notable user-visible changes to Lindelion are recorded here.
 
 - Completed Glirdir's VST3 buildout: sing-to-MIDI scratchpad with capture-first analysis worker, editor surface, drag/export with fallback paths, sample-library scratchpad save, patch and DAW state persistence, and macOS bundle support.
 
+### Lúmedir
+
+- Scaffolded Lúmedir (crate `plugins/lumedir`), the Windows-only passthrough Speech-Coach VST3: a bit-exact, zero-latency stereo passthrough that feeds a mono mix to the off-thread analysis worker (`lindelion-speech-signals`), with the Windows `.vst3` bundle path and a placeholder Vizia editor. The delivery-metric estimators (speaking rate, pitch dynamism, pauses, clarity) and the readout/summary views are later milestones.
+
 ### Shared infrastructure
 
 - Extracted shared Glirdir/Lamath surfaces into reusable crates: `lindelion-capture`, `lindelion-audio-expression`, `lindelion-phrase-analysis`, and `lindelion-midi`.

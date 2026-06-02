@@ -1,0 +1,32 @@
+[package]
+name = "lumedir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lindelion-dsp-utils.workspace = true
+lindelion-plugin-metadata.workspace = true
+lindelion-plugin-shell.workspace = true
+lindelion-speech-signals.workspace = true
+lindelion-ui.workspace = true
+vst3.workspace = true
+
+[dev-dependencies]
+lindelion-pitch-detect.workspace = true
+lindelion-sample-library = { workspace = true, features = ["wav-decoder"] }
+lindelion-test-allocator.workspace = true
+
+[features]
+# Heavy DSP/audio regression tests, excluded from the default `make ci` unit run
+# to keep it fast. Run them with `make test-integration`.
+integration-tests = []
+# Test-only: drive the analysis worker synchronously (inline on `push`) so a test can read the
+# resulting `SignalSnapshot` deterministically without a background thread. Forwards to
+# `lindelion-speech-signals/sync-analysis`. Used by the gated integration test via
+# `make test-integration`; off in the default `make ci` run (which uses the off-thread worker).
+test-sync-analysis = ["lindelion-speech-signals/sync-analysis"]

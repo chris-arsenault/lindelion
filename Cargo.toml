@@ -20,6 +20,7 @@ members = [
     "plugins/glirdir",
     "plugins/lamath",
     "plugins/linnod",
+    "plugins/lumedir",
     "speech/air-exciter",
     "speech/bass-enhancer",
     "speech/compressor",

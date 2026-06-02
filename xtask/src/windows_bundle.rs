@@ -74,4 +74,28 @@ mod tests {
         assert!(module_info.contains("CE9EDC726D8E4F31A1B05C2873E2941D"));
         assert!(module_info.contains(r#""Fx""#));
     }
+
+    #[test]
+    fn lumedir_windows_layout_places_dll_and_moduleinfo() {
+        let spec = BundleSpec::from_plugin("lumedir").expect("lumedir spec");
+        assert_eq!(windows_bundle_dir_name(&spec), "Lumedir.vst3");
+        assert_eq!(
+            windows_binary_relative_path(&spec),
+            "Contents/x86_64-win/Lumedir.vst3"
+        );
+        assert_eq!(
+            WINDOWS_MODULEINFO_RELATIVE_PATH,
+            "Contents/Resources/moduleinfo.json"
+        );
+    }
+
+    #[test]
+    fn lumedir_module_info_uses_effect_metadata() {
+        let spec = BundleSpec::from_plugin("lumedir").expect("lumedir spec");
+        let module_info = module_info(&spec);
+        assert!(module_info.contains(r#""Name": "Lumedir""#));
+        assert!(module_info.contains("1AEDC0132B5C4D209E3F7A85C1582FB6"));
+        assert!(module_info.contains("1AEDCD727E9F4A31B2C16D3984F3A52E"));
+        assert!(module_info.contains(r#""Fx""#));
+    }
 }

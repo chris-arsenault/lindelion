@@ -2163,6 +2163,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
+name = "lumedir"
+version = "0.3.0"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-pitch-detect",
+ "lindelion-plugin-metadata",
+ "lindelion-plugin-shell",
+ "lindelion-sample-library",
+ "lindelion-speech-signals",
+ "lindelion-test-allocator",
+ "lindelion-ui",
+ "vst3",
+]
+
+[[package]]
 name = "lzma-rust2"
 version = "0.15.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -26,7 +26,7 @@ Built properly: phases are ordered by dependency for a complete plugin, not by s
 - **Vocal reference = configurable fixed target bands** (e.g. rate band, min pitch-dynamism, max
   pause fraction). No reference recording.
 - **Both** a live running readout **and** an end-of-session summary.
-- **CI shape:** `plugins/coach` is a `make ci` member — the cross-platform delivery-analysis DSP
+- **CI shape:** `plugins/lumedir` is a `make ci` member — the cross-platform delivery-analysis DSP
   and Vizia view logic are tested on Linux; only the `IPlugView` HWND embedding and the Windows
   bundle are `cfg(windows)`.
 
@@ -49,7 +49,7 @@ accumulation**; the Vizia **readout + summary** views.
 *Source-of-truth ADRs:* [ADR-0023](docs/adr/0023-new-vsts-windows-only.md) (Windows-only, Vizia editor on `lindelion-ui`);
 [ADR-0001](docs/adr/0001-allocation-free-audio-thread.md) (audio thread allocation-free);
 [ADR-0022](docs/adr/0022-windows-vst3-host.md) (the host it runs in). Reserved home:
-`plugins/coach/README.md`.
+`plugins/lumedir/README.md`.
 
 ## Cross-cutting constraints
 
@@ -68,7 +68,7 @@ Exit gate for every phase: **`make ci` green** (Linux: cross-platform delivery D
 
 ### M0 — Coach plugin scaffold on the shared Windows platform [depends on Cenedril M0, M1]
 A working (silent) Windows plugin that feeds the analysis worker.
-- Register `plugins/coach` reusing Cenedril's Windows VST3 build path + Vizia editor stack;
+- Register `plugins/lumedir` reusing Cenedril's Windows VST3 build path + Vizia editor stack;
   passthrough processor (bit-exact, 0 latency); feed the `AnalysisWorker`; add bundle metadata; a
   placeholder editor.
 - **[DECISION]** confirm the name **Lúmedir**; where the delivery estimators live — promoted into
