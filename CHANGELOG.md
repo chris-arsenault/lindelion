@@ -2,7 +2,12 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
-## v0.8.1 - 2026-06-02
+## v0.8.2 - 2026-06-02
+
+### Shared infrastructure
+
+- Added a shared meter/gauge row widget (`lindelion-ui::vizia_meter::meter_row`) for the Windows VST editors: a labelled horizontal bar with a proportional `Signal<f32>` fill and a formatted value, plus its `METER_STYLE`. Cenedril's level/LUFS meters and analysis readouts and Lúmedir's delivery gauges all render through it, so the two milestones (Cenedril M5, Lúmedir M4) don't each build a meter — landing it now, ahead of both, removes the one real duplication risk in parallelizing those streams.
+- Reserved per-workstream ADR number ranges in the ADR index (Lamath resonator 0032–0039, Cenedril 0040–0047, Lúmedir 0048–0055) so concurrent branches draw from disjoint blocks and don't collide on a number at merge time.
 
 ### Shared infrastructure
 

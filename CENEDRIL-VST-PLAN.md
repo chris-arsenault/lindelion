@@ -39,11 +39,13 @@ audio→editor; the **Vizia** editor stack (`lindelion-ui`, already cross-platfo
 
 *Build new:* the **Windows VST3 build/bundle path** (entry-point macro already has
 `InitDll`/`ExitDll`; bundling is the gap); the **Windows `IPlugView`→`HWND` Vizia/baseview attach**
-(the macOS attach exists; baseview supports Windows child windows; this is the one new editor
-piece, reusable across the new VSTs); **LUFS** (ITU-R BS.1770 K-weighting + integration — absent
-today); a **streaming lock-free SPSC ring** for the scrolling spectrogram (the existing editor path
-caches a single latest value, insufficient for a frame stream); the spectrogram / reassignment /
-meter Vizia widgets; the **passthrough MAIN-in→out bus config** (Glirdir already does this shape).
+the spectrogram and **reassignment** Vizia rendering; the **passthrough MAIN-in→out bus config**
+(Glirdir already does this shape). *Now shared infrastructure (landed — reuse, do not rebuild):* the
+Windows `IPlugView`→`HWND` attach is `lindelion_ui::vizia_window::ViziaWindowEditor`; **LUFS** is
+`lindelion_dsp_utils::lufs`; the lock-free audio→editor hand-off is `lindelion_dsp_utils::handoff`
+(Cenedril's frame-granular `FrameRing` builds on its `AtomicF32`); and the **level/LUFS meters +
+analysis readouts** render through the shared `lindelion_ui::vizia_meter::meter_row` (the same widget
+Lúmedir's gauges use) — M4–M6 only supply each metric's value→fill mapping.
 
 *Source-of-truth ADRs:* [ADR-0023](docs/adr/0023-new-vsts-windows-only.md) (Windows-only, Vizia
 editor, build path); [ADR-0001](docs/adr/0001-allocation-free-audio-thread.md) (audio thread

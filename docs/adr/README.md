@@ -33,3 +33,18 @@
 | [0029](0029-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
 | [0030](0030-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |
 | [0031](0031-shared-body-idiophone-mode.md) | Shared-body idiophone mode (re-strikable persistent resonator) | Accepted | 2026-06-01 |
+
+## Reserved number ranges (parallel workstreams)
+
+Three workstreams (Lamath resonator, Cenedril, Lúmedir) develop concurrently on separate
+branches/worktrees. To stop two branches from both grabbing the next free number — which forces an
+ADR renumber on merge — each stream **draws its next ADR number from its reserved block below, not
+from the global maximum**. Add the row to the table above when the ADR is written. Reclaim a block's
+unused tail once that stream is merged and done.
+
+| Range | Workstream |
+| ----- | ---------- |
+| 0032–0039 | Lamath resonator / shared-body idiophone (M2–M8) |
+| 0040–0047 | Cenedril visualizer (M4–M6) |
+| 0048–0055 | Lúmedir speech-coach (M4–M6) |
+| 0056+ | Unreserved — next new workstream |

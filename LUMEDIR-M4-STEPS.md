@@ -37,8 +37,12 @@ verified by the Windows build + host. So most steps have a `make ci` codec/logic
 itself (Step 6) is the Windows-runtime exit.
 
 **No user `[DECISION]` in this phase.** The telemetry mechanism is established (Glirdir); the gauge
-visual treatment (numeric labels + horizontal meter bars, mirroring Cenedril's meter style) and the
-value→fill mappings are internal presentation choices, mine to set (target-band colouring is M5).
+visual treatment and the value→fill mappings are internal presentation choices, mine to set
+(target-band colouring is M5). **Render the gauges with the shared
+`lindelion_ui::vizia_meter::meter_row`** (label + proportional fill `Signal<f32>` + formatted value)
+and add its `METER_STYLE` to the editor — do **not** build a Lúmedir-specific meter bar; that widget
+is shared with Cenedril's meters precisely so it is built once. Only the per-metric value→fill
+mapping (e.g. rate 0–7 syl/s, dynamism 0–8 st) is Lúmedir's.
 
 ## Context / reuse map (re-derived for M4)
 

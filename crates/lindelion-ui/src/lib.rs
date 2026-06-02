@@ -12,6 +12,10 @@ pub mod resonator_vizia;
 #[cfg(target_os = "windows")]
 pub mod vizia_window;
 
+// Shared meter/gauge row for the Windows VST editors (Cenedril meters, Lúmedir gauges); Windows-only.
+#[cfg(target_os = "windows")]
+pub mod vizia_meter;
+
 #[cfg(target_os = "macos")]
 mod vizia_clipboard;
 #[cfg(target_os = "macos")]

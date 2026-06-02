@@ -65,7 +65,7 @@ Agent guide for sessions in the Lindelion repository.
 | `crates/lindelion-plugin-metadata` | Shared VST3 bundle metadata consumed by plugin factories and `xtask`. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, SMF emission. |
-| `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, product Vizia editors, and the shared Windows `IPlugView`→`HWND` Vizia attach (`vizia_window::ViziaWindowEditor`) the new VSTs' editors are thin newtypes over. |
+| `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, product Vizia editors, the shared Windows `IPlugView`→`HWND` Vizia attach (`vizia_window::ViziaWindowEditor`) the new VSTs' editors are thin newtypes over, and the shared meter/gauge row (`vizia_meter::meter_row`) the Windows VST editors (Cenedril meters/readouts, Lúmedir gauges) render through. |
 | `crates/lindelion-effect` | Host-agnostic effect-processor trait and neutral parameter/state/latency primitives (distinct from `plugin-shell`'s VST-coupled `AudioPlugin`). |
 | `crates/lindelion-fidelity` | Shared general-signal audio-fidelity test harness for effect crates. |
 | `speech/` | Speech-effect port of `hot-mic`: per-effect crates plus `speech/signals` analysis-signal derivation, tuned for spoken word. |
