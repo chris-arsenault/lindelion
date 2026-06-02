@@ -24,6 +24,7 @@ use crate::dsp::{
 mod conditioners;
 mod contact;
 mod driver;
+mod idiophone_body;
 mod makeup;
 mod mapping;
 use conditioners::BodyColorExciter;

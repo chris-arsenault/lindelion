@@ -1,4 +1,10 @@
 use super::*;
+use lindelion_dsp_utils::math::{midi_note_to_hz, semitones_to_ratio};
+
+/// Returned by the note-on path when a shared-body strike was enqueued instead of a
+/// voice — no voice slot was allocated, so this is deliberately not a valid slot index.
+/// The live note-on callers discard the return value.
+const SHARED_BODY_STRIKE_SLOT: usize = usize::MAX;
 
 impl<'a> ResonatorProcessor<'a> {
     pub(super) fn handle_event_with_live_latch(
@@ -94,6 +100,16 @@ impl<'a> ResonatorProcessor<'a> {
         onset_offset: usize,
         live_policy: LiveExcitationPolicy,
     ) -> usize {
+        // Shared-body idiophone mode (ADR-0031, M2): with the toggle on and the patch
+        // carrying an idiophone slot, a note-on strikes the runtime-owned body instead
+        // of allocating a voice — bypassing voice allocation and polyphony entirely. The
+        // body mirrors only the idiophone slot(s); a Waveguide slot is silenced in the
+        // body (whole-note strike — the toggle no-ops only when no idiophone slot is
+        // present). Note-off does nothing to the ring; explicit damp is M4.
+        if self.runtime_patch.patch.shared_body.enabled && self.patch_has_idiophone_slot() {
+            self.strike_shared_body(note, velocity);
+            return SHARED_BODY_STRIKE_SLOT;
+        }
         let live_latch = live_policy.latch_capture(&self.live_latch_state, sidechain, onset_offset);
         let slot = Self::start_voice_in_runtime(
             &self.runtime_patch,
@@ -109,6 +125,36 @@ impl<'a> ResonatorProcessor<'a> {
             self.audio_expression_source.voice_released(slot as u32);
         }
         slot
+    }
+
+    /// The shared body mirrors the patch's idiophone resonator stack (Modal/Mesh); the
+    /// toggle no-ops when neither slot is idiophone (ADR-0031, decision 2).
+    fn patch_has_idiophone_slot(&self) -> bool {
+        self.runtime_patch.patch.resonator_a.is_idiophone()
+            || self.runtime_patch.patch.resonator_b.is_idiophone()
+    }
+
+    /// Enqueue a strike onto the shared body from a note-on (ADR-0031, M2). Reuses the
+    /// voice's excitation selection (with the builtin fallback) and the `Voice::trigger`
+    /// force/pitch formulas; pitch bend is left out of the struck path in M2.
+    fn strike_shared_body(&mut self, note: u8, velocity: f32) {
+        let selected = self.selector.select(&self.runtime_patch.slots, velocity);
+        let selected = if selected.is_empty() {
+            SelectedExcitations::from_single(&BUILTIN_EXCITATION, BUILTIN_EXCITATION_SAMPLE_RATE)
+        } else {
+            selected
+        };
+        let depth = self
+            .runtime_patch
+            .patch
+            .modulation
+            .velocity_to_excitation_depth;
+        self.shared_body.strike(BodyStrike {
+            selected,
+            force_gain: velocity_to_gain(velocity, depth),
+            base_frequency: midi_note_to_hz(note as f32),
+            pitch_ratio: semitones_to_ratio(note as f32 - 60.0),
+        });
     }
 
     fn start_voice(&mut self, channel: u8, note: u8, velocity: f32) -> usize {

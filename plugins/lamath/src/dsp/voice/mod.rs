@@ -413,7 +413,7 @@ fn sanitize_unit(value: f32) -> f32 {
     }
 }
 
-fn velocity_to_gain(velocity: f32, depth: f32) -> f32 {
+pub(crate) fn velocity_to_gain(velocity: f32, depth: f32) -> f32 {
     let velocity = velocity.clamp(0.0, 1.0);
     let depth = depth.clamp(0.0, 1.0);
     (1.0 - depth) + velocity * depth

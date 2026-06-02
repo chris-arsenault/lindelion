@@ -23,9 +23,10 @@ use crate::{
     RealtimeStreamingAudioAnalysisExpressionSource, RealtimeStreamingAudioAnalysisNoteDetector,
     ResonatorSynthPatch,
     dsp::{
-        ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
-        MAX_EXCITATION_LAYERS, MasterStage, RuntimeExcitationSlot, SelectedExcitations, SharedBody,
-        SympatheticChamber, SynthEngine, VoiceExpression, VoiceTrigger,
+        BodyStrike, ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture,
+        LiveExcitationPreRoll, MAX_EXCITATION_LAYERS, MasterStage, RuntimeExcitationSlot,
+        SelectedExcitations, SharedBody, SympatheticChamber, SynthEngine, VoiceExpression,
+        VoiceTrigger, velocity_to_gain,
     },
     realtime_audio_analysis_expression_source, realtime_audio_analysis_note_detector,
 };
@@ -117,7 +118,7 @@ pub(crate) struct ResonatorProcessor<'a> {
     // resonant body that idiophone note-ons re-strike (M2+). Owned here at the
     // orchestration layer like the sympathetic chamber — the engine knows nothing about
     // it. Summed into the mix behind the `shared_body` toggle; silent and inert in M1.
-    shared_body: SharedBody,
+    shared_body: SharedBody<'a>,
     // M11 P9: master output safety soft clipper on the final mix (after the sympathetic
     // chamber) — bounds dense-polyphony peaks below −1 dBFS without touching the level
     // of a single note (identity below the −6 dBFS knee).

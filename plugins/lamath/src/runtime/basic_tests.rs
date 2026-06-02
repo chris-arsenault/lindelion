@@ -186,44 +186,45 @@ fn processor_audio_path_does_not_allocate() {
     );
 }
 
-/// Shared-body M1 regression guard (ADR-0031): with the body summed behind the
-/// `shared_body` toggle but not yet fed (silent), enabling the toggle must change
-/// nothing — the rendered output is identical with the toggle on and off. This guard
-/// tightens as later milestones make the body audible only under strikes.
+/// Shared-body M2 step 4 toggle-off regression guard (ADR-0031): the feature is fully
+/// defeated when off. With the body disabled an idiophone note-on takes the unchanged
+/// per-voice path — a voice is allocated and the body's `render_add` early-returns —
+/// rather than striking the body. (Supersedes the M1 "on == off bit-identical" guard,
+/// which no longer holds now that the toggle audibly strikes the body.)
 #[test]
-fn shared_body_toggle_is_silent_and_bit_identical_when_off() {
-    let render = |enabled: bool| -> (Vec<f32>, Vec<f32>) {
-        let mut patch = test_patch();
-        patch.shared_body.enabled = enabled;
-        let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
-        let mut left = vec![0.0; 4_096];
-        let mut right = vec![0.0; 4_096];
-        let note_on = MidiEvent::Note(NoteEvent::On {
+fn shared_body_toggle_off_takes_voice_path() {
+    let mut patch = test_patch();
+    patch.shared_body.enabled = false;
+    let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+    let mut left = vec![0.0; 4_096];
+    let mut right = vec![0.0; 4_096];
+
+    processor.process(
+        &[MidiEvent::Note(NoteEvent::On {
             channel: 0,
             note: 60,
             velocity: 1.0,
-        });
-        let note_off = MidiEvent::Note(NoteEvent::Off {
-            channel: 0,
-            note: 60,
-            velocity: 0.0,
-        });
-        processor.process(&[note_on], &mut left, &mut right);
-        processor.process(&[], &mut left, &mut right);
-        processor.process(&[note_off], &mut left, &mut right);
-        processor.process(&[], &mut left, &mut right);
-        (left, right)
-    };
+        })],
+        &mut left,
+        &mut right,
+    );
 
-    let (left_off, right_off) = render(false);
-    let (left_on, right_on) = render(true);
-
-    assert_eq!(left_off, left_on, "shared-body toggle must not change the mix in M1");
-    assert_eq!(right_off, right_on, "shared-body toggle must not change the mix in M1");
+    assert_eq!(
+        processor.active_voice_count(),
+        1,
+        "toggle off must allocate a voice, not strike the body",
+    );
+    assert_all_finite(&left);
+    assert!(peak_abs(&left) > 0.0, "the per-voice path must still render");
 }
 
+/// Shared-body M2 step 4 realtime no-alloc guard (ADR-0001/ADR-0031): the strike
+/// dispatch and the body's injector feed are allocation-free on the audio thread. With
+/// the toggle on, an idiophone note-on strikes the body (excitation selection + strike
+/// enqueue + first-strike configure), and the following block renders the ring (injector
+/// feed) — both must not allocate.
 #[test]
-fn shared_body_enabled_audio_path_does_not_allocate() {
+fn shared_body_strike_realtime_no_alloc() {
     let mut patch = test_patch();
     patch.shared_body.enabled = true;
     let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
@@ -236,19 +237,51 @@ fn shared_body_enabled_audio_path_does_not_allocate() {
     })];
 
     assert_runtime_process_does_not_allocate(
-        "processor process note-on (shared body enabled)",
+        "processor strike note-on (shared body on)",
         &mut processor,
         &events,
         &mut left,
         &mut right,
     );
     assert_runtime_process_does_not_allocate(
-        "processor process render-only (shared body enabled)",
+        "processor strike render-only (shared body on)",
         &mut processor,
         &[],
         &mut left,
         &mut right,
     );
+}
+
+/// Shared-body M2 step 3 (ADR-0031): with the toggle on and an idiophone patch (Modal
+/// slot A), a note-on strikes the shared body instead of allocating a voice — no voice
+/// is started, voice allocation/polyphony is bypassed, and the body rings in the same
+/// block.
+#[test]
+fn shared_body_on_strikes_idiophone_without_allocating_a_voice() {
+    let mut patch = test_patch();
+    patch.shared_body.enabled = true;
+    let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+    let mut left = vec![0.0; 4_096];
+    let mut right = vec![0.0; 4_096];
+
+    processor.process(
+        &[MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        })],
+        &mut left,
+        &mut right,
+    );
+
+    assert_eq!(
+        processor.active_voice_count(),
+        0,
+        "a struck idiophone note must not allocate a voice",
+    );
+    assert_all_finite(&left);
+    assert_all_finite(&right);
+    assert!(peak_abs(&left) > 0.0, "the struck body must ring");
 }
 
 /// M11 P9 step 3: the master soft-clip stage bounds dense polyphony. Sixteen
