@@ -21,6 +21,7 @@ Documentation index for the Lindelion audio-plugin workspace.
 | Speech effects family | [../speech/README.md](../speech/README.md) |
 | DSP module docs | [dsp/README.md](dsp/README.md) |
 | Local development commands | [development.md](development.md) |
+| Testing (suites; what stays in `make ci` vs moves to integration) | [development.md#testing](development.md#testing) |
 | Real-time audio performance contract | [performance.md](performance.md) |
 | macOS VST3 build and validation | [macos-vst3-build.md](macos-vst3-build.md) |
 | Workspace backlog | [backlog.md](backlog.md) |

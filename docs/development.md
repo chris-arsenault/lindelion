@@ -17,6 +17,33 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 | `make validate-vst3 PLUGIN=linnod` | Run the shared validator wrapper against the installed Linnod bundle. |
 | `make host-windows-check` | Cross-compile the Galad Windows host (`galad`) for `x86_64-pc-windows-msvc` via cargo-xwin. |
 | `make build-windows` | Cross-compile the Windows-only VST3 plugins for `x86_64-pc-windows-msvc` via cargo-xwin. |
+| `make test-integration` | Run the heavy suite excluded from `make ci`: multi-second DSP fidelity/stability/tuning renders plus filesystem/thread-touching tests (per-crate `integration-tests` feature). |
+| `make test-models` | Run the `#[ignore]`d neural-network model-integration tests (ONNX Runtime). |
+| `make docs` | Run the `#[ignore]`d doc-data generators (plot/CSV/baseline writers). |
+
+## Testing
+
+`make ci` runs **only the fast unit suite** (the default `cargo test --workspace`). It must stay fast and deterministic, so heavier tests live in separate, explicitly-invoked suites. There are four buckets:
+
+| Bucket | Runs in | Gated by | What belongs here |
+| ---- | ---- | ---- | ---- |
+| Fast unit | `make ci` | (default) | Pure, in-memory behaviour tests **and the audio-hygiene invariant guards** — allocation-free ([ADR-0001](adr/0001-allocation-free-audio-thread.md)) checks and finite/NaN/bounded-output checks — even though a few cost ~1–3s because they exercise the real audio path under the counting allocator. |
+| Heavy DSP | `make test-integration` | `#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]` | Multi-second DSP **fidelity/stability/tuning renders and sweeps**: range/matrix/extreme-drive stability, decay-across-range, tuning matrices, timbre and A/B characterizations, the pitch-shift fidelity battery, fixture renders. Also any test that writes files, spawns threads, sleeps, or reads wall-clock. |
+| NN models | `make test-models` | `#[ignore]` | ONNX Runtime model-integration tests (they saturate the CPU). |
+| Doc data | `make docs` | `#[ignore]` | plot/CSV/baseline generators. |
+
+**The decision rule when a test is slow.** Ask *why* it is slow:
+
+- It is a **render / sweep** — slow because it processes a lot of audio to measure fidelity, stability, or tuning across a range. → **Move it** to `make test-integration` with the gate above.
+- It is an **invariant guard** — slow because it must run the real audio path, but what it asserts is an always-true property ("allocates nothing", "stays finite", "output bounded"). → **Keep it in `make ci`.** A regression in audio hygiene must be caught on every commit, not only in the heavier suite. **Never gate a no-alloc / ADR-0001 test to integration to save time** — this is non-negotiable.
+
+In short: *move the render, keep the invariant.*
+
+**Never delete a test purely to make the suite faster.** Speed is solved by moving the test (or trimming an oversized sweep), which keeps the coverage. Deleting a test needs a separate, explicit *low-value* justification (redundant, trivial, or asserting nothing) — cost alone is not one.
+
+**Keep a cheap unit fallback.** Where the only coverage of a behaviour is a heavy gated test, also keep a small in-memory unit test for the core behaviour in `make ci`.
+
+**Maintenance — re-audit after large DSP merges.** Heavy renders repeatedly slip the gate when new DSP lands (this is how the suite grew to ~119s before being cut back to ~15s). After a sizable DSP merge, re-measure per-test timing and gate any new multi-second renders. A quick way without nextest/nightly: build the test binaries with `cargo test --workspace --no-run`, then time each `target/debug/deps/<binary>` directly (and, for a hot binary, time individual tests with `<binary> --exact <full::test::path> --test-threads 1`). The longest poles are the gate candidates.
 
 ## Bundle Work
 
