@@ -186,6 +186,71 @@ fn processor_audio_path_does_not_allocate() {
     );
 }
 
+/// Shared-body M1 regression guard (ADR-0031): with the body summed behind the
+/// `shared_body` toggle but not yet fed (silent), enabling the toggle must change
+/// nothing — the rendered output is identical with the toggle on and off. This guard
+/// tightens as later milestones make the body audible only under strikes.
+#[test]
+fn shared_body_toggle_is_silent_and_bit_identical_when_off() {
+    let render = |enabled: bool| -> (Vec<f32>, Vec<f32>) {
+        let mut patch = test_patch();
+        patch.shared_body.enabled = enabled;
+        let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+        let mut left = vec![0.0; 4_096];
+        let mut right = vec![0.0; 4_096];
+        let note_on = MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        });
+        let note_off = MidiEvent::Note(NoteEvent::Off {
+            channel: 0,
+            note: 60,
+            velocity: 0.0,
+        });
+        processor.process(&[note_on], &mut left, &mut right);
+        processor.process(&[], &mut left, &mut right);
+        processor.process(&[note_off], &mut left, &mut right);
+        processor.process(&[], &mut left, &mut right);
+        (left, right)
+    };
+
+    let (left_off, right_off) = render(false);
+    let (left_on, right_on) = render(true);
+
+    assert_eq!(left_off, left_on, "shared-body toggle must not change the mix in M1");
+    assert_eq!(right_off, right_on, "shared-body toggle must not change the mix in M1");
+}
+
+#[test]
+fn shared_body_enabled_audio_path_does_not_allocate() {
+    let mut patch = test_patch();
+    patch.shared_body.enabled = true;
+    let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+    let mut left = vec![0.0; 512];
+    let mut right = vec![0.0; 512];
+    let events = [MidiEvent::Note(NoteEvent::On {
+        channel: 0,
+        note: 60,
+        velocity: 1.0,
+    })];
+
+    assert_runtime_process_does_not_allocate(
+        "processor process note-on (shared body enabled)",
+        &mut processor,
+        &events,
+        &mut left,
+        &mut right,
+    );
+    assert_runtime_process_does_not_allocate(
+        "processor process render-only (shared body enabled)",
+        &mut processor,
+        &[],
+        &mut left,
+        &mut right,
+    );
+}
+
 /// M11 P9 step 3: the master soft-clip stage bounds dense polyphony. Sixteen
 /// simultaneous full-velocity notes on a now-made-up String patch sum far past full
 /// scale before the master stage; the soft clipper must hold the final mix at or below

@@ -16,7 +16,6 @@ use lindelion_plugin_shell::ExpressionStream;
 use self::{
     modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend},
     output_stage::OutputStage,
-    resonator_stack::ResonatorStack,
     surrounding::SurroundingStage,
 };
 use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
@@ -30,6 +29,7 @@ const PARAMETER_EPSILON: f32 = 0.000_001;
 const STRUCTURAL_RAMP_MS: f32 = 1.0;
 
 pub use oversampler::Oversampler2x;
+pub(crate) use resonator_stack::ResonatorStack;
 
 /// Fixed plugin latency the 2x oversampled waveguide/mesh path adds, in host
 /// samples (ADR-0016). Surfaced for the VST3 processor to report so hosts
