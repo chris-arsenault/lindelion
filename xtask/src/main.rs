@@ -9,6 +9,7 @@ const RUST_FILE_LINE_LIMIT: usize = 600;
 
 mod bundle;
 mod link_check;
+mod review_audio;
 #[cfg(test)]
 mod tests;
 mod windows_bundle;
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
         Some("lint-sizes") => run_size_lint(),
         Some("link-check") => run_link_check(),
         Some("bundle") => bundle::run_bundle(args.collect()),
+        Some("compress-review-audio") => review_audio::run_compress_review_audio(args.collect()),
         Some("plugin-info") => bundle::run_plugin_info(args.collect()),
         Some("validator") => bundle::run_validator(args.collect()),
         Some("help") | None => {
@@ -43,6 +45,10 @@ fn print_help() {
     println!("  link-check            Check Markdown relative links resolve");
     println!("  bundle [plugin] [--target <triple>] [--bundle-dir <dir>]");
     println!("                           Build a macOS .vst3 bundle");
+    println!(
+        "  compress-review-audio --source <dir> --out <dir> [--encoder ffmpeg] [--bitrate 192k] [--dry-run]"
+    );
+    println!("                           Compress generated review WAVs to MP3 previews");
     println!("  plugin-info [plugin] [--field <name>]");
     println!("                           Print shared plugin bundle metadata");
     println!("  validator [plugin] [--bundle <path>] [--validator <path>]");

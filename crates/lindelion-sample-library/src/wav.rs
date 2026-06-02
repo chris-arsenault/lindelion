@@ -1,6 +1,189 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::{self, Write},
+    path::Path,
+};
 
 use crate::{DecodedSample, SampleDecodeError};
+
+const WAV_HEADER_BYTES: u32 = 44;
+const WAV_RIFF_DATA_OVERHEAD_BYTES: u32 = 36;
+const STEREO_PCM16_BYTES_PER_FRAME: usize = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StereoPcm16WavMetrics {
+    pub sample_rate: u32,
+    pub frames: usize,
+    pub duration_seconds: f64,
+    pub peak: f32,
+    pub rms: f32,
+    pub peak_dbfs: f32,
+    pub rms_dbfs: f32,
+    pub data_bytes: u32,
+    pub file_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StereoPcm16WavChannel {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StereoPcm16WavError {
+    ChannelLengthMismatch {
+        left: usize,
+        right: usize,
+    },
+    Empty,
+    InvalidSampleRate,
+    NonFiniteSample {
+        channel: StereoPcm16WavChannel,
+        index: usize,
+    },
+    Silent,
+    PeakOutOfRange {
+        peak: f32,
+    },
+    DataTooLarge {
+        frames: usize,
+    },
+    Io {
+        kind: io::ErrorKind,
+    },
+}
+
+pub fn write_wav_stereo_pcm16(
+    path: &Path,
+    left: &[f32],
+    right: &[f32],
+    sample_rate: u32,
+) -> Result<StereoPcm16WavMetrics, StereoPcm16WavError> {
+    let metrics = validate_wav_stereo_pcm16(left, right, sample_rate)?;
+    let mut file = fs::File::create(path).map_err(wav_io_error)?;
+    file.write_all(b"RIFF").map_err(wav_io_error)?;
+    file.write_all(&(WAV_RIFF_DATA_OVERHEAD_BYTES + metrics.data_bytes).to_le_bytes())
+        .map_err(wav_io_error)?;
+    file.write_all(b"WAVEfmt ").map_err(wav_io_error)?;
+    file.write_all(&16u32.to_le_bytes()).map_err(wav_io_error)?;
+    file.write_all(&1u16.to_le_bytes()).map_err(wav_io_error)?;
+    file.write_all(&2u16.to_le_bytes()).map_err(wav_io_error)?;
+    file.write_all(&sample_rate.to_le_bytes())
+        .map_err(wav_io_error)?;
+    file.write_all(&(sample_rate * STEREO_PCM16_BYTES_PER_FRAME as u32).to_le_bytes())
+        .map_err(wav_io_error)?;
+    file.write_all(&(STEREO_PCM16_BYTES_PER_FRAME as u16).to_le_bytes())
+        .map_err(wav_io_error)?;
+    file.write_all(&16u16.to_le_bytes()).map_err(wav_io_error)?;
+    file.write_all(b"data").map_err(wav_io_error)?;
+    file.write_all(&metrics.data_bytes.to_le_bytes())
+        .map_err(wav_io_error)?;
+    for (&left, &right) in left.iter().zip(right) {
+        file.write_all(&pcm16(left).to_le_bytes())
+            .map_err(wav_io_error)?;
+        file.write_all(&pcm16(right).to_le_bytes())
+            .map_err(wav_io_error)?;
+    }
+    Ok(metrics)
+}
+
+pub fn validate_wav_stereo_pcm16(
+    left: &[f32],
+    right: &[f32],
+    sample_rate: u32,
+) -> Result<StereoPcm16WavMetrics, StereoPcm16WavError> {
+    validate_stereo_shape(left, right, sample_rate)?;
+    let data_bytes = stereo_pcm16_data_bytes(left.len())?;
+    let left_stats = channel_stats(left, StereoPcm16WavChannel::Left)?;
+    let right_stats = channel_stats(right, StereoPcm16WavChannel::Right)?;
+    let peak = left_stats.peak.max(right_stats.peak);
+    if peak == 0.0 {
+        return Err(StereoPcm16WavError::Silent);
+    }
+    if peak > 1.0 {
+        return Err(StereoPcm16WavError::PeakOutOfRange { peak });
+    }
+
+    let rms = left_stats.rms.max(right_stats.rms);
+    Ok(StereoPcm16WavMetrics {
+        sample_rate,
+        frames: left.len(),
+        duration_seconds: left.len() as f64 / f64::from(sample_rate),
+        peak,
+        rms,
+        peak_dbfs: amplitude_dbfs(peak),
+        rms_dbfs: amplitude_dbfs(rms),
+        data_bytes,
+        file_bytes: u64::from(WAV_HEADER_BYTES) + u64::from(data_bytes),
+    })
+}
+
+pub fn stereo_pcm16_data_bytes(frames: usize) -> Result<u32, StereoPcm16WavError> {
+    let bytes = frames
+        .checked_mul(STEREO_PCM16_BYTES_PER_FRAME)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .filter(|bytes| *bytes <= u32::MAX - WAV_RIFF_DATA_OVERHEAD_BYTES);
+    bytes.ok_or(StereoPcm16WavError::DataTooLarge { frames })
+}
+
+fn validate_stereo_shape(
+    left: &[f32],
+    right: &[f32],
+    sample_rate: u32,
+) -> Result<(), StereoPcm16WavError> {
+    if left.len() != right.len() {
+        return Err(StereoPcm16WavError::ChannelLengthMismatch {
+            left: left.len(),
+            right: right.len(),
+        });
+    }
+    if left.is_empty() {
+        return Err(StereoPcm16WavError::Empty);
+    }
+    if sample_rate == 0 {
+        return Err(StereoPcm16WavError::InvalidSampleRate);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChannelStats {
+    peak: f32,
+    rms: f32,
+}
+
+fn channel_stats(
+    samples: &[f32],
+    channel: StereoPcm16WavChannel,
+) -> Result<ChannelStats, StereoPcm16WavError> {
+    let mut peak = 0.0_f32;
+    let mut square_sum = 0.0_f64;
+    for (index, sample) in samples.iter().copied().enumerate() {
+        if !sample.is_finite() {
+            return Err(StereoPcm16WavError::NonFiniteSample { channel, index });
+        }
+        peak = peak.max(sample.abs());
+        square_sum += f64::from(sample) * f64::from(sample);
+    }
+    Ok(ChannelStats {
+        peak,
+        rms: (square_sum / samples.len() as f64).sqrt() as f32,
+    })
+}
+
+fn amplitude_dbfs(value: f32) -> f32 {
+    20.0 * value.log10()
+}
+
+fn pcm16(sample: f32) -> i16 {
+    debug_assert!(sample.is_finite());
+    debug_assert!((-1.0..=1.0).contains(&sample));
+    (sample * i16::MAX as f32).round() as i16
+}
+
+fn wav_io_error(error: io::Error) -> StereoPcm16WavError {
+    StereoPcm16WavError::Io { kind: error.kind() }
+}
 
 pub fn decode_wav_mono(path: &Path) -> Result<DecodedSample, SampleDecodeError> {
     let bytes = fs::read(path)?;

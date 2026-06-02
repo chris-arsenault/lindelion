@@ -16,3 +16,5 @@ dist/
 docs/plots/data/resample_pro_fidelity/
 /target-release/
 /target-build/
+review/lamath-render-catalog/
+review/lamath-render-catalog-comments.json

@@ -4,6 +4,10 @@ All notable user-visible changes to Lindelion are recorded here.
 
 ## v0.13.1 - 2026-06-02
 
+### Lamath
+
+- Added the Lamath review render catalog workflow: a deterministic offline render command for 68 WAV review cases, MP3 preview compression for check-in-sized listening artifacts, and a local React/TypeScript review UI that plays the catalog and saves per-file/category feedback to a JSON handoff file.
+
 ### Tooling
 
 - Added a Markdown relative-link check to `make ci` (xtask `link-check`): it walks every `.md` in the repo and fails the build if an inline `[text](path)` or `![alt](path)` link points at a missing file — catching the recurring doc defect (a plugin spec linking `adr/…` instead of `../adr/…`, or a retired plan leaving dangling references). External, `#anchor`-only, and in-code links are skipped; run it alone with `cargo run -p xtask -- link-check`.

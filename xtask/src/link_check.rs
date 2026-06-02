@@ -43,9 +43,12 @@ fn collect(dir: &Path, root: &Path, broken: &mut Vec<BrokenLink>) -> io::Result<
         if entry.file_type()?.is_dir() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            // Skip build output and hidden dirs (`target*`, `.git`, `.claude`, …).
+            // Skip build output, dependency trees, and hidden dirs.
             if name.starts_with('.')
-                || matches!(name.as_ref(), "target" | "target-build" | "target-release")
+                || matches!(
+                    name.as_ref(),
+                    "target" | "target-build" | "target-release" | "node_modules" | "dist"
+                )
             {
                 continue;
             }

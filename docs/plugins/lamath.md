@@ -326,7 +326,39 @@ Shared crates carry host protocol mechanics and host-neutral analysis contracts.
 
 ---
 
-## 12. Performance
+## 12. Review Render Catalog
+
+Lamath includes an offline review render catalog for subjective listening across
+the resonator dynamic-response surface. The catalog is a command-line tool, not
+a test harness: it renders audio artifacts for human review through the real
+Lamath synth path.
+
+The catalog currently covers 68 cases across eight groups:
+
+- baseline dynamics;
+- register range;
+- excitation drivers;
+- contact spread and contact-time darkening;
+- source/body balance;
+- surrounding effects;
+- chord and tail behavior;
+- bounded edge settings.
+
+`make render-lamath-audio` writes the WAV catalog to
+`review/lamath-render-catalog/` with a `manifest.toml` and `index.md`. The WAV
+tree is ignored because it is large and regeneratable. `make
+compress-review-audio` creates stageable MP3 previews under
+`review/audio-previews/lamath-render-catalog/`.
+
+The local React/TypeScript review UI in `tools/lamath-review-ui/` reads the
+manifest, plays the MP3 previews or WAV fallback, and writes per-file plus
+category comments to `review/lamath-render-catalog-comments.json` for later
+analysis. See [development.md](../development.md#review-audio) for commands,
+storage policy, and the Sulion dev-server port range.
+
+---
+
+## 13. Performance
 
 Current realtime targets:
 
@@ -359,7 +391,7 @@ Offline processing can use looser caps than realtime rendering when the host rep
 
 ---
 
-## 13. Current Implementation Status
+## 14. Current Implementation Status
 
 Implemented:
 
@@ -373,6 +405,7 @@ Implemented:
 - TOML patch save/load and DAW state roundtrip;
 - file-backed sample library with ingest, hashing, indexing, preview generation, moved-file recovery, and missing-sample reporting;
 - native editor command services for patch save/load/export, sample ingest/assignment/clear, and telemetry requests;
+- offline review render catalog with manifest/index generation, MP3 preview compression, and a local review UI for per-file/category feedback;
 - macOS VST3 bundle layout, moduleinfo generation, ad-hoc signing, staging, and install automation.
 
 ---

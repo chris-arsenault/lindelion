@@ -19,6 +19,13 @@ XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 # Repo root = the directory containing this Makefile. Robust to the invocation cwd (unlike $(CURDIR))
 # and unique per git worktree, so all build output is repo-local and worktrees never share a cache.
 REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(firstword $(MAKEFILE_LIST)))))
+LAMATH_REVIEW_DIR ?= $(REPO_ROOT)/review/lamath-render-catalog
+LAMATH_RENDER_ARGS ?= --all
+REVIEW_AUDIO_SOURCE_DIR ?= $(LAMATH_REVIEW_DIR)
+REVIEW_AUDIO_PREVIEW_DIR ?= $(REPO_ROOT)/review/audio-previews/lamath-render-catalog
+REVIEW_AUDIO_ENCODER ?= ffmpeg
+REVIEW_AUDIO_BITRATE ?= 192k
+REVIEW_AUDIO_ARGS ?=
 
 # All build output lives in the repo (gitignored), in dirs kept separate from ./target (the cargo
 # default used by `make ci`/tests) so release/iteration cache invalidation never crosses into it:
@@ -34,7 +41,7 @@ VST3_DIR ?= /Library/Audio/Plug-Ins/VST3/Ahara
 VST3_STAGED_BUNDLE ?= $(VST3_STAGING_DIR)/$(BUNDLE_NAME)
 VST3_INSTALLED_BUNDLE ?= $(VST3_DIR)/$(BUNDLE_NAME)
 
-.PHONY: ci fmt fmt-check clippy test test-models tune-defaults test-integration check bench bench-smoke host-macos-check macos-check build build-windows windows-sdk-prep host-windows-check host-windows-release release release-windows release-macos bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
+.PHONY: ci fmt fmt-check clippy test test-models tune-defaults render-lamath-audio compress-review-audio test-integration check bench bench-smoke host-macos-check macos-check build build-windows windows-sdk-prep host-windows-check host-windows-release release release-windows release-macos bundle-macos inspect-vst3 validate-vst3 cache-dir docs plugin-info
 
 ci: check host-macos-check
 
@@ -74,6 +81,12 @@ test-models:
 # not the debug-only `make ci` path).
 tune-defaults:
 	cargo test --release -p caloma --test tune_defaults -- --include-ignored --nocapture
+
+render-lamath-audio:
+	cargo run -p lamath --bin lamath-render-catalog -- --out "$(LAMATH_REVIEW_DIR)" $(LAMATH_RENDER_ARGS)
+
+compress-review-audio:
+	cargo run -p xtask -- compress-review-audio --source "$(REVIEW_AUDIO_SOURCE_DIR)" --out "$(REVIEW_AUDIO_PREVIEW_DIR)" --encoder "$(REVIEW_AUDIO_ENCODER)" --bitrate "$(REVIEW_AUDIO_BITRATE)" $(REVIEW_AUDIO_ARGS)
 
 # Integration tests: heavy DSP regression (fidelity/stability/tuning sweeps) plus filesystem- and
 # thread-touching tests. Gated behind the per-crate `integration-tests` feature, excluded from the

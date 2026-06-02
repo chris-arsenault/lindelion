@@ -21,6 +21,8 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 | `make test-integration` | Run the heavy suite excluded from `make ci`: multi-second DSP fidelity/stability/tuning renders plus filesystem/thread-touching tests (per-crate `integration-tests` feature). |
 | `make test-models` | Run the `#[ignore]`d neural-network model-integration tests (ONNX Runtime). |
 | `make docs` | Run the `#[ignore]`d doc-data generators (plot/CSV/baseline writers). |
+| `make render-lamath-audio` | Render the Lamath review audio catalog to local WAV artifacts under `review/lamath-render-catalog/`. |
+| `make compress-review-audio` | Compress a review-audio source tree to stageable MP3 previews under `review/audio-previews/lamath-render-catalog/`. |
 
 ## Testing
 
@@ -45,6 +47,37 @@ In short: *move the render, keep the invariant.*
 **Keep a cheap unit fallback.** Where the only coverage of a behaviour is a heavy gated test, also keep a small in-memory unit test for the core behaviour in `make ci`.
 
 **Maintenance — re-audit after large DSP merges.** Heavy renders repeatedly slip the gate when new DSP lands (this is how the suite grew to ~119s before being cut back to ~15s). After a sizable DSP merge, re-measure per-test timing and gate any new multi-second renders. A quick way without nextest/nightly: build the test binaries with `cargo test --workspace --no-run`, then time each `target/debug/deps/<binary>` directly (and, for a hot binary, time individual tests with `<binary> --exact <full::test::path> --test-threads 1`). The longest poles are the gate candidates.
+
+## Review Audio
+
+Lamath has a deterministic offline review catalog for subjective listening and
+human feedback. It is a tool and generated artifact workflow, not a test
+harness.
+
+`make render-lamath-audio` renders WAVs through the real Lamath synth path into
+`review/lamath-render-catalog/`. That directory is ignored because the WAVs are
+large and regeneratable. Pass `LAMATH_RENDER_ARGS` through to the binary for
+focused regeneration:
+
+```sh
+make render-lamath-audio LAMATH_RENDER_ARGS="--group baseline_dynamics"
+make render-lamath-audio LAMATH_RENDER_ARGS="--case baseline_modal_c4_v100"
+```
+
+The rendered catalog includes a machine-readable `manifest.toml` and a
+human-readable `index.md` beside the WAV folders.
+
+`make compress-review-audio` compresses a source review tree with `ffmpeg` and
+the configured encoder/bitrate. The default writes MP3 previews under
+`review/audio-previews/lamath-render-catalog/`; those previews are not ignored
+and are the stageable generated-audio artifact when their size is acceptable.
+
+The local review UI lives in `tools/lamath-review-ui/`. It reads the manifest,
+uses MP3 previews when present, falls back to WAVs, and writes per-file plus
+category comments to `review/lamath-render-catalog-comments.json`. The comments
+JSON is ignored because it is a local review handoff artifact. In a Sulion PTY,
+the UI defaults to `0.0.0.0:26000`, visible at `http://192.168.66.3:26000/`;
+use `PORT=26001` through `PORT=26010` if the first slot is occupied.
 
 ## Bundle Work
 

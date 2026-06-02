@@ -493,7 +493,10 @@ pub trait SampleLibrary {
 #[cfg(feature = "wav-decoder")]
 mod wav;
 #[cfg(feature = "wav-decoder")]
-pub use wav::decode_wav_mono;
+pub use wav::{
+    StereoPcm16WavChannel, StereoPcm16WavError, StereoPcm16WavMetrics, decode_wav_mono,
+    stereo_pcm16_data_bytes, validate_wav_stereo_pcm16, write_wav_stereo_pcm16,
+};
 
 #[cfg(all(test, feature = "file-library"))]
 mod tests;
