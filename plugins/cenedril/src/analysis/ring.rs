@@ -1,16 +1,19 @@
 //! Lock-free SPSC hand-off from the audio-thread analysis tap to the editor: a ring of STFT
-//! magnitude frames and an atomic meter snapshot. Mirrors the lock-free discipline of
-//! `speech/signals`'s `SampleRing` (single producer / single consumer, `f32`-as-`AtomicU32`,
-//! `Release`/`Acquire` on the indices, power-of-two mask, **lossy on overflow**) at frame
-//! granularity. The producer (audio thread) never allocates; the consumer (editor) loads frames
-//! into a caller-owned scratch buffer.
+//! magnitude frames and an atomic meter snapshot. Applies the same lock-free discipline as
+//! `lindelion-dsp-utils::handoff`'s `SampleRing` (single producer / single consumer, `f32` stored
+//! through [`AtomicF32`], `Release`/`Acquire` on the indices, power-of-two mask, **lossy on
+//! overflow**) but at frame granularity — a distinct structure, so it builds on the shared
+//! [`AtomicF32`] cell rather than the sample ring. The producer (audio thread) never allocates; the
+//! consumer (editor) loads frames into a caller-owned scratch buffer.
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use lindelion_dsp_utils::handoff::AtomicF32;
 
 pub struct FrameRing {
     bins: usize,
     slots_mask: usize,
-    buffer: Box<[AtomicU32]>,
+    buffer: Box<[AtomicF32]>,
     write: AtomicUsize,
     read: AtomicUsize,
 }
@@ -24,7 +27,7 @@ impl FrameRing {
             "frame slots must be a power of two"
         );
         let buffer = (0..slots_pow2 * bins)
-            .map(|_| AtomicU32::new(0))
+            .map(|_| AtomicF32::default())
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
@@ -47,7 +50,7 @@ impl FrameRing {
         let base = (w & self.slots_mask) * self.bins;
         let n = magnitudes.len().min(self.bins);
         for (slot, &mag) in self.buffer[base..base + n].iter().zip(&magnitudes[..n]) {
-            slot.store(mag.to_bits(), Ordering::Relaxed);
+            slot.store(mag);
         }
         self.write.store(w.wrapping_add(1), Ordering::Release);
     }
@@ -73,7 +76,7 @@ impl FrameRing {
             let idx = r.wrapping_add(k);
             let base = (idx & self.slots_mask) * self.bins;
             for (dst, src) in scratch[..n].iter_mut().zip(&self.buffer[base..base + n]) {
-                *dst = f32::from_bits(src.load(Ordering::Relaxed));
+                *dst = src.load();
             }
             on_frame(idx as u64, &scratch[..n]);
         }
@@ -98,52 +101,47 @@ pub struct MeterSnapshot {
 /// `speech/signals` worker's snapshot). Reads may be cosmetically torn across fields, which is
 /// acceptable for meters; both publish and read are allocation-free.
 pub struct MeterCell {
-    peak: AtomicU32,
-    rms: AtomicU32,
-    crest: AtomicU32,
-    lufs_momentary: AtomicU32,
-    lufs_short: AtomicU32,
-    lufs_integrated: AtomicU32,
-    speech_presence: AtomicU32,
+    peak: AtomicF32,
+    rms: AtomicF32,
+    crest: AtomicF32,
+    lufs_momentary: AtomicF32,
+    lufs_short: AtomicF32,
+    lufs_integrated: AtomicF32,
+    speech_presence: AtomicF32,
 }
 
 impl MeterCell {
     pub fn new() -> Self {
         Self {
-            peak: AtomicU32::new(0),
-            rms: AtomicU32::new(0),
-            crest: AtomicU32::new(0),
-            lufs_momentary: AtomicU32::new(0),
-            lufs_short: AtomicU32::new(0),
-            lufs_integrated: AtomicU32::new(0),
-            speech_presence: AtomicU32::new(0),
+            peak: AtomicF32::default(),
+            rms: AtomicF32::default(),
+            crest: AtomicF32::default(),
+            lufs_momentary: AtomicF32::default(),
+            lufs_short: AtomicF32::default(),
+            lufs_integrated: AtomicF32::default(),
+            speech_presence: AtomicF32::default(),
         }
     }
 
     pub fn publish(&self, snapshot: &MeterSnapshot) {
-        self.peak.store(snapshot.peak.to_bits(), Ordering::Relaxed);
-        self.rms.store(snapshot.rms.to_bits(), Ordering::Relaxed);
-        self.crest
-            .store(snapshot.crest.to_bits(), Ordering::Relaxed);
-        self.lufs_momentary
-            .store(snapshot.lufs_momentary.to_bits(), Ordering::Relaxed);
-        self.lufs_short
-            .store(snapshot.lufs_short.to_bits(), Ordering::Relaxed);
-        self.lufs_integrated
-            .store(snapshot.lufs_integrated.to_bits(), Ordering::Relaxed);
-        self.speech_presence
-            .store(snapshot.speech_presence.to_bits(), Ordering::Relaxed);
+        self.peak.store(snapshot.peak);
+        self.rms.store(snapshot.rms);
+        self.crest.store(snapshot.crest);
+        self.lufs_momentary.store(snapshot.lufs_momentary);
+        self.lufs_short.store(snapshot.lufs_short);
+        self.lufs_integrated.store(snapshot.lufs_integrated);
+        self.speech_presence.store(snapshot.speech_presence);
     }
 
     pub fn read(&self) -> MeterSnapshot {
         MeterSnapshot {
-            peak: f32::from_bits(self.peak.load(Ordering::Relaxed)),
-            rms: f32::from_bits(self.rms.load(Ordering::Relaxed)),
-            crest: f32::from_bits(self.crest.load(Ordering::Relaxed)),
-            lufs_momentary: f32::from_bits(self.lufs_momentary.load(Ordering::Relaxed)),
-            lufs_short: f32::from_bits(self.lufs_short.load(Ordering::Relaxed)),
-            lufs_integrated: f32::from_bits(self.lufs_integrated.load(Ordering::Relaxed)),
-            speech_presence: f32::from_bits(self.speech_presence.load(Ordering::Relaxed)),
+            peak: self.peak.load(),
+            rms: self.rms.load(),
+            crest: self.crest.load(),
+            lufs_momentary: self.lufs_momentary.load(),
+            lufs_short: self.lufs_short.load(),
+            lufs_integrated: self.lufs_integrated.load(),
+            speech_presence: self.speech_presence.load(),
         }
     }
 }

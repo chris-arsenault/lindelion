@@ -2,12 +2,13 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vizia::{ParentWindow, WindowHandle, WindowScalePolicy, prelude::*};
+use vizia::{WindowScalePolicy, prelude::*};
 
 use super::{
     CALOMA_EDITOR_HEIGHT, CALOMA_EDITOR_WIDTH, CALOMA_LEVEL_DB_MAX, CALOMA_LEVEL_DB_MIN,
     CalomaControlSurface, CalomaEditorHost, CalomaEditorSize,
 };
+use crate::vizia_window::ViziaWindowEditor;
 
 /// The catalog has 20 slots; an order uses a subset. The editor builds this many fixed effect rows
 /// and hides the ones the current order does not use (this vizia rev renders dynamic collections as
@@ -419,9 +420,10 @@ fn build_caloma_application(
     .with_scale_policy(WindowScalePolicy::ScaleFactor(1.0))
 }
 
-pub struct CalomaViziaEditor {
-    window: WindowHandle,
-}
+/// The Calóma editor: a thin newtype over the shared [`ViziaWindowEditor`], which owns the
+/// `IPlugView`→`HWND` attach and the close-on-drop teardown. The inner editor is an RAII guard —
+/// held only so its `Drop` closes the host window — hence never read directly.
+pub struct CalomaViziaEditor(#[allow(dead_code)] ViziaWindowEditor);
 
 impl CalomaViziaEditor {
     /// # Safety
@@ -431,16 +433,7 @@ impl CalomaViziaEditor {
         host: CalomaEditorHost,
         size: CalomaEditorSize,
     ) -> Self {
-        let parent = ParentWindow(parent);
-        let window = build_caloma_application(host, size).open_parented(&parent);
-        Self { window }
-    }
-}
-
-impl Drop for CalomaViziaEditor {
-    fn drop(&mut self) {
-        if self.window.is_open() {
-            self.window.close();
-        }
+        let application = build_caloma_application(host, size);
+        Self(unsafe { ViziaWindowEditor::attach(parent, application) })
     }
 }

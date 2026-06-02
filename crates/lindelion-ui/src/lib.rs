@@ -8,6 +8,10 @@ pub mod linnod_vizia;
 pub mod lumedir_vizia;
 pub mod resonator_vizia;
 
+// Shared Windows `IPlugView`→`HWND` Vizia attach for the new VSTs (ADR-0023); Windows-target only.
+#[cfg(target_os = "windows")]
+pub mod vizia_window;
+
 #[cfg(target_os = "macos")]
 mod vizia_clipboard;
 #[cfg(target_os = "macos")]

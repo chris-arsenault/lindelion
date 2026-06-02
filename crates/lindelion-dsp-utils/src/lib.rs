@@ -3,6 +3,7 @@ pub mod delay;
 pub mod envelope;
 pub mod envelope_follower;
 pub mod filters;
+pub mod handoff;
 pub mod interpolation;
 pub mod lufs;
 pub mod math;

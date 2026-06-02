@@ -49,8 +49,11 @@ value→fill mappings are internal presentation choices, mine to set (target-ban
   (`processor.rs` ~360–410); the controller's `IConnectionPoint`/`notify` store +
   `request_status`/`status` (`controller.rs`); the `GlirdirEditorCallbacks` vtable +
   `GlirdirEditorHost` (`crates/lindelion-ui/src/glirdir_vizia.rs` ~300–330) and how `editor.rs`
-  fills it; the Vizia `platform_state.rs` poll-and-render. Cenedril's M0/M1 `FixedSizePlugView` +
-  `IPlugView`→`HWND` attach (already in `lumedir_vizia/platform.rs`).
+  fills it; the Vizia `platform_state.rs` poll-and-render. The `FixedSizePlugView` +
+  `IPlugView`→`HWND` attach is **shared infrastructure**, not per-plugin: `lumedir_vizia/platform.rs`
+  already builds its view via `build_lumedir_application` and embeds it through
+  `lindelion_ui::vizia_window::ViziaWindowEditor` (the same helper Calóma and Cenedril use). M4 only
+  fills the view content + telemetry; it must **not** reintroduce a bespoke attach/`Drop`.
 - *The data:* `crate::delivery::DeliverySnapshot` (M3) — `syllables_per_second`, `words_per_minute`,
   `pitch_dynamism_semitones`, `pause_fraction`, `pause_count`, `clarity`. The editor-facing neutral
   mirror lives in `lindelion-ui` (which cannot depend on `plugins/lumedir`), exactly as

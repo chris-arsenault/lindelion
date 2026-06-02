@@ -2,6 +2,14 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.8.1 - 2026-06-02
+
+### Shared infrastructure
+
+- Deconflicted duplication left by the independently-forked plugin branches (a semantic pass over the recent merges). Lúmedir, forked earliest, had rebuilt two things Calóma and Cenedril already had.
+- Extracted the lock-free audio→worker hand-off into `lindelion-dsp-utils::handoff` — an `AtomicF32` cell and an SPSC `SampleRing`. The speech-signals `AnalysisWorker` and Lúmedir's `DeliveryWorker` had byte-identical copies of the ring; Cenedril's meter snapshot re-rolled the same per-field atomic encoding. All three now share the primitives (Cenedril's frame-granular `FrameRing` stays distinct but builds on `AtomicF32`).
+- Extracted the Windows `IPlugView`→`HWND` Vizia attach into `lindelion-ui::vizia_window::ViziaWindowEditor`. Calóma, Cenedril, and Lúmedir each carried their own copy of the `ParentWindow` + `open_parented` + close-on-drop boilerplate (Lúmedir's was a literal copy of Cenedril's, down to an unused `parent_view` parameter); their editors are now thin newtypes over the shared helper. The DSP analysis primitives (STFT, LUFS, pitch/voicing, flux, envelope) were already shared and needed no change.
+
 ## v0.8.0 - 2026-06-02
 
 ### Lúmedir

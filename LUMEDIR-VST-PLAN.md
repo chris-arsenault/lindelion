@@ -36,7 +36,10 @@ Built properly: phases are ordered by dependency for a complete plugin, not by s
 `latest()`): `pitch_hz`/`pitch_confidence`, `voicing_state` (0 silence/1 unvoiced/2 voiced),
 `onset_flux_high`, `spectral_flux`; the `SwiftF0` streaming f0 tracker (`PitchFrame`); the
 `AudioPlugin` + `vst3_entry` + `lindelion-plugin-metadata` scaffold (mirror **Linnod**);
-**Cenedril's M0/M1** Windows build path + Vizia editor stack. **Validation targets:**
+**Cenedril's M0/M1** Windows build path + Vizia editor stack — the `IPlugView`→`HWND` attach is the
+shared `lindelion_ui::vizia_window::ViziaWindowEditor` (Calóma/Cenedril/Lúmedir all embed through it),
+and the audio→worker hand-off is the shared `lindelion_dsp_utils::handoff` ring/cell, so neither is
+rebuilt here. **Validation targets:**
 `testdata/audio/FIXTURES.md` — per-fixture `syl/s` and `pstd` (semitones): slow 2.8 / fast 3.8
 syl/s; flat **1.1** / animated **7.4** pitch-std; a pauses fixture.
 

@@ -1,15 +1,17 @@
 //! Analysis worker: runs [`SignalAnalyzer`](crate::analyzer::SignalAnalyzer) off-thread and hands
 //! the latest snapshot back to the audio thread through a lock-free handoff.
 //!
-//! Audio thread → worker: a single-producer/single-consumer ring of `AtomicU32` sample bits
-//! (`push`). Worker → audio thread: per-signal `AtomicU32`s holding f32 bits (`latest`). Both
-//! audio-thread operations are allocation-free and non-blocking (ADR-0001); all heavy work and
-//! allocation happen on the worker thread.
+//! Audio thread → worker: a shared [`SampleRing`] (`push`). Worker → audio thread: per-signal
+//! [`AtomicF32`] cells (`latest`). Both audio-thread operations are allocation-free and non-blocking
+//! (ADR-0001); all heavy work and allocation happen on the worker thread. The lock-free primitives
+//! live in `lindelion-dsp-utils::handoff`, shared with the other analysis workers.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+use lindelion_dsp_utils::handoff::{AtomicF32, SampleRing};
 
 use crate::analyzer::{SignalAnalyzer, SignalSnapshot};
 
@@ -26,57 +28,15 @@ pub fn analysis_worker_constructions() -> usize {
     ANALYSIS_WORKER_CONSTRUCTIONS.load(Ordering::Relaxed)
 }
 
-// Single-producer/single-consumer ring of f32 bits. Safe via atomics (no `unsafe`). Lossy under
-// overflow, which is acceptable for control-rate analysis.
-struct SampleRing {
-    buffer: Box<[AtomicU32]>,
-    mask: usize,
-    write: AtomicUsize,
-    read: AtomicUsize,
-}
-
-impl SampleRing {
-    fn new(capacity_pow2: usize) -> Self {
-        let buffer = (0..capacity_pow2)
-            .map(|_| AtomicU32::new(0))
-            .collect::<Vec<_>>();
-        Self {
-            mask: capacity_pow2 - 1,
-            buffer: buffer.into_boxed_slice(),
-            write: AtomicUsize::new(0),
-            read: AtomicUsize::new(0),
-        }
-    }
-
-    fn push(&self, sample: f32) {
-        let w = self.write.load(Ordering::Relaxed);
-        self.buffer[w & self.mask].store(sample.to_bits(), Ordering::Relaxed);
-        self.write.store(w.wrapping_add(1), Ordering::Release);
-    }
-
-    fn drain_into(&self, out: &mut Vec<f32>, max: usize) -> usize {
-        let r = self.read.load(Ordering::Relaxed);
-        let w = self.write.load(Ordering::Acquire);
-        let available = w.wrapping_sub(r).min(max);
-        for i in 0..available {
-            let bits = self.buffer[r.wrapping_add(i) & self.mask].load(Ordering::Relaxed);
-            out.push(f32::from_bits(bits));
-        }
-        self.read
-            .store(r.wrapping_add(available), Ordering::Release);
-        available
-    }
-}
-
 struct Shared {
     ring: SampleRing,
-    pitch_hz: AtomicU32,
-    pitch_confidence: AtomicU32,
-    voicing_score: AtomicU32,
-    voicing_state: AtomicU32,
-    onset_flux_high: AtomicU32,
-    spectral_flux: AtomicU32,
-    hnr_db: AtomicU32,
+    pitch_hz: AtomicF32,
+    pitch_confidence: AtomicF32,
+    voicing_score: AtomicF32,
+    voicing_state: AtomicF32,
+    onset_flux_high: AtomicF32,
+    spectral_flux: AtomicF32,
+    hnr_db: AtomicF32,
     stop: AtomicBool,
 }
 
@@ -84,43 +44,36 @@ impl Shared {
     fn new() -> Self {
         Self {
             ring: SampleRing::new(RING_CAPACITY),
-            pitch_hz: AtomicU32::new(0),
-            pitch_confidence: AtomicU32::new(0),
-            voicing_score: AtomicU32::new(0),
-            voicing_state: AtomicU32::new(0),
-            onset_flux_high: AtomicU32::new(0),
-            spectral_flux: AtomicU32::new(0),
-            hnr_db: AtomicU32::new(0),
+            pitch_hz: AtomicF32::default(),
+            pitch_confidence: AtomicF32::default(),
+            voicing_score: AtomicF32::default(),
+            voicing_state: AtomicF32::default(),
+            onset_flux_high: AtomicF32::default(),
+            spectral_flux: AtomicF32::default(),
+            hnr_db: AtomicF32::default(),
             stop: AtomicBool::new(false),
         }
     }
 
     fn publish(&self, snapshot: &SignalSnapshot) {
-        self.pitch_hz
-            .store(snapshot.pitch_hz.to_bits(), Ordering::Relaxed);
-        self.pitch_confidence
-            .store(snapshot.pitch_confidence.to_bits(), Ordering::Relaxed);
-        self.voicing_score
-            .store(snapshot.voicing_score.to_bits(), Ordering::Relaxed);
-        self.voicing_state
-            .store(snapshot.voicing_state.to_bits(), Ordering::Relaxed);
-        self.onset_flux_high
-            .store(snapshot.onset_flux_high.to_bits(), Ordering::Relaxed);
-        self.spectral_flux
-            .store(snapshot.spectral_flux.to_bits(), Ordering::Relaxed);
-        self.hnr_db
-            .store(snapshot.hnr_db.to_bits(), Ordering::Relaxed);
+        self.pitch_hz.store(snapshot.pitch_hz);
+        self.pitch_confidence.store(snapshot.pitch_confidence);
+        self.voicing_score.store(snapshot.voicing_score);
+        self.voicing_state.store(snapshot.voicing_state);
+        self.onset_flux_high.store(snapshot.onset_flux_high);
+        self.spectral_flux.store(snapshot.spectral_flux);
+        self.hnr_db.store(snapshot.hnr_db);
     }
 
     fn snapshot(&self) -> SignalSnapshot {
         SignalSnapshot {
-            pitch_hz: f32::from_bits(self.pitch_hz.load(Ordering::Relaxed)),
-            pitch_confidence: f32::from_bits(self.pitch_confidence.load(Ordering::Relaxed)),
-            voicing_score: f32::from_bits(self.voicing_score.load(Ordering::Relaxed)),
-            voicing_state: f32::from_bits(self.voicing_state.load(Ordering::Relaxed)),
-            onset_flux_high: f32::from_bits(self.onset_flux_high.load(Ordering::Relaxed)),
-            spectral_flux: f32::from_bits(self.spectral_flux.load(Ordering::Relaxed)),
-            hnr_db: f32::from_bits(self.hnr_db.load(Ordering::Relaxed)),
+            pitch_hz: self.pitch_hz.load(),
+            pitch_confidence: self.pitch_confidence.load(),
+            voicing_score: self.voicing_score.load(),
+            voicing_state: self.voicing_state.load(),
+            onset_flux_high: self.onset_flux_high.load(),
+            spectral_flux: self.spectral_flux.load(),
+            hnr_db: self.hnr_db.load(),
         }
     }
 }

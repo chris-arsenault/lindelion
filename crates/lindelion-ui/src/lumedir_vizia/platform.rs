@@ -1,8 +1,9 @@
 use std::ffi::c_void;
 
-use vizia::{ParentWindow, WindowHandle, WindowScalePolicy, prelude::*};
+use vizia::{WindowScalePolicy, prelude::*};
 
 use super::{LUMEDIR_EDITOR_HEIGHT, LUMEDIR_EDITOR_WIDTH, LumedirEditorHost, LumedirEditorSize};
+use crate::vizia_window::ViziaWindowEditor;
 
 const STYLE: &str = r#"
     .lumedir-root {
@@ -28,13 +29,11 @@ const STYLE: &str = r#"
     }
 "#;
 
-/// Build the Lúmedir editor application. `_host`/`_parent_view` are threaded for parity with the
-/// other editors; the M0 view is a static placeholder and reads neither yet (delivery snapshots
-/// arrive in M4).
+/// Build the Lúmedir editor application. `_host` is threaded for parity with the other editors; the
+/// M0 view is a static placeholder and does not read it yet (delivery snapshots arrive in M4).
 fn build_lumedir_application(
     _host: LumedirEditorHost,
     size: LumedirEditorSize,
-    _parent_view: usize,
 ) -> vizia::Application<impl Fn(&mut Context) + Send + 'static> {
     let width = size.width.max(LUMEDIR_EDITOR_WIDTH) as u32;
     let height = size.height.max(LUMEDIR_EDITOR_HEIGHT) as u32;
@@ -59,9 +58,10 @@ fn build_placeholder_view(cx: &mut Context) {
     .class("lumedir-root");
 }
 
-pub struct LumedirViziaEditor {
-    window: WindowHandle,
-}
+/// The Lúmedir editor: a thin newtype over the shared [`ViziaWindowEditor`], which owns the
+/// `IPlugView`→`HWND` attach and the close-on-drop teardown. The inner editor is an RAII guard —
+/// held only so its `Drop` closes the host window — hence never read directly.
+pub struct LumedirViziaEditor(#[allow(dead_code)] ViziaWindowEditor);
 
 impl LumedirViziaEditor {
     /// # Safety
@@ -71,17 +71,7 @@ impl LumedirViziaEditor {
         host: LumedirEditorHost,
         size: LumedirEditorSize,
     ) -> Self {
-        let parent_view = parent as usize;
-        let parent = ParentWindow(parent);
-        let window = build_lumedir_application(host, size, parent_view).open_parented(&parent);
-        Self { window }
-    }
-}
-
-impl Drop for LumedirViziaEditor {
-    fn drop(&mut self) {
-        if self.window.is_open() {
-            self.window.close();
-        }
+        let application = build_lumedir_application(host, size);
+        Self(unsafe { ViziaWindowEditor::attach(parent, application) })
     }
 }

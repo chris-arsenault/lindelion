@@ -1,12 +1,13 @@
 use std::{ffi::c_void, sync::Arc, time::Duration};
 
-use vizia::{ParentWindow, WindowHandle, WindowScalePolicy, prelude::*, vg};
+use vizia::{WindowScalePolicy, prelude::*, vg};
 
 use super::{
     CENEDRIL_EDITOR_HEIGHT, CENEDRIL_EDITOR_WIDTH, CenedrilEditorHost, CenedrilEditorSize,
     SpectrogramSource,
     spectrogram::{Spectrogram, colormap},
 };
+use crate::vizia_window::ViziaWindowEditor;
 
 /// Spectrogram render resolution (rows = log-frequency bands, columns = time history). Upsampled to
 /// the view bounds with Skia bilinear sampling for a smooth, high-fidelity image.
@@ -138,7 +139,6 @@ fn compose_rgba(spectrogram: &Spectrogram, out: &mut Vec<u8>) {
 fn build_cenedril_application(
     host: CenedrilEditorHost,
     size: CenedrilEditorSize,
-    _parent_view: usize,
 ) -> vizia::Application<impl Fn(&mut Context) + Send + 'static> {
     let width = size.width.max(CENEDRIL_EDITOR_WIDTH) as u32;
     let height = size.height.max(CENEDRIL_EDITOR_HEIGHT) as u32;
@@ -157,9 +157,10 @@ fn build_cenedril_application(
     .with_scale_policy(WindowScalePolicy::ScaleFactor(1.0))
 }
 
-pub struct CenedrilViziaEditor {
-    window: WindowHandle,
-}
+/// The Cenedril editor: a thin newtype over the shared [`ViziaWindowEditor`], which owns the
+/// `IPlugView`→`HWND` attach and the close-on-drop teardown. The inner editor is an RAII guard —
+/// held only so its `Drop` closes the host window — hence never read directly.
+pub struct CenedrilViziaEditor(#[allow(dead_code)] ViziaWindowEditor);
 
 impl CenedrilViziaEditor {
     /// # Safety
@@ -169,17 +170,7 @@ impl CenedrilViziaEditor {
         host: CenedrilEditorHost,
         size: CenedrilEditorSize,
     ) -> Self {
-        let parent_view = parent as usize;
-        let parent = ParentWindow(parent);
-        let window = build_cenedril_application(host, size, parent_view).open_parented(&parent);
-        Self { window }
-    }
-}
-
-impl Drop for CenedrilViziaEditor {
-    fn drop(&mut self) {
-        if self.window.is_open() {
-            self.window.close();
-        }
+        let application = build_cenedril_application(host, size);
+        Self(unsafe { ViziaWindowEditor::attach(parent, application) })
     }
 }

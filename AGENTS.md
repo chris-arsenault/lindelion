@@ -54,7 +54,7 @@ Agent guide for sessions in the Lindelion repository.
 | Path | Purpose |
 | ---- | ---- |
 | `crates/lindelion-plugin-shell` | Shared plugin boundary, parameters, process context, MIDI/control events, state, typed VST3 messages, patch I/O, voice allocation. |
-| `crates/lindelion-dsp-utils` | DSP support: analysis, delay/interpolation, envelopes, filters, math, smoothing, saturation. |
+| `crates/lindelion-dsp-utils` | DSP support: analysis, delay/interpolation, envelopes, filters, math, smoothing, saturation, and the shared lock-free realtime hand-off primitives (`handoff`: `AtomicF32` + the SPSC `SampleRing`) used by the analysis workers. |
 | `crates/lindelion-test-allocator` | Counting allocator and `assert_no_allocations!` macro for realtime-path tests. |
 | `crates/lindelion-capture` | Host-synced audio capture state, scratchpad audio, capture settings, sync modes. |
 | `crates/lindelion-sample-library` | Sample references, loaded-audio ownership, hashing, ingest, previews, moved-file recovery. |
@@ -65,7 +65,7 @@ Agent guide for sessions in the Lindelion repository.
 | `crates/lindelion-plugin-metadata` | Shared VST3 bundle metadata consumed by plugin factories and `xtask`. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, SMF emission. |
-| `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, product Vizia editors. |
+| `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, product Vizia editors, and the shared Windows `IPlugView`→`HWND` Vizia attach (`vizia_window::ViziaWindowEditor`) the new VSTs' editors are thin newtypes over. |
 | `crates/lindelion-effect` | Host-agnostic effect-processor trait and neutral parameter/state/latency primitives (distinct from `plugin-shell`'s VST-coupled `AudioPlugin`). |
 | `crates/lindelion-fidelity` | Shared general-signal audio-fidelity test harness for effect crates. |
 | `speech/` | Speech-effect port of `hot-mic`: per-effect crates plus `speech/signals` analysis-signal derivation, tuned for spoken word. |
