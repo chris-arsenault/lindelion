@@ -323,6 +323,47 @@ fn info_plist(spec: &BundleSpec) -> String {
 }
 
 pub(crate) fn module_info(spec: &BundleSpec) -> String {
+    let audio_class = format!(
+        r#"    {{
+      "CID": "{processor_cid}",
+      "Category": "Audio Module Class",
+      "Name": "{name}",
+      "Vendor": "Ahara",
+      "Version": "{version}",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+{sub_categories}
+      ],
+      "Class Flags": 1,
+      "Cardinality": 2147483647
+    }}"#,
+        name = escape_json(spec.metadata.bundle_name),
+        version = escape_json(spec.version),
+        processor_cid = cid_hex(spec.metadata.processor_cid),
+        sub_categories = sub_categories_json(spec.metadata.module_sub_categories),
+    );
+    // Single-component plugins expose `IEditController` on the audio module class, so they list only
+    // that one class; separate processor + controller plugins also list the controller class.
+    let classes = if spec.metadata.single_component {
+        audio_class
+    } else {
+        format!(
+            r#"{audio_class},
+    {{
+      "CID": "{controller_cid}",
+      "Category": "Component Controller Class",
+      "Name": "{controller_name}",
+      "Vendor": "Ahara",
+      "Version": "{version}",
+      "SDKVersion": "VST 3.8.0",
+      "Class Flags": 0,
+      "Cardinality": 2147483647
+    }}"#,
+            version = escape_json(spec.version),
+            controller_cid = cid_hex(spec.metadata.controller_cid),
+            controller_name = escape_json(spec.metadata.controller_name),
+        )
+    };
     format!(
         r#"{{
   "Name": "{name}",
@@ -338,38 +379,12 @@ pub(crate) fn module_info(spec: &BundleSpec) -> String {
     }}
   }},
   "Classes": [
-    {{
-      "CID": "{processor_cid}",
-      "Category": "Audio Module Class",
-      "Name": "{name}",
-      "Vendor": "Ahara",
-      "Version": "{version}",
-      "SDKVersion": "VST 3.8.0",
-      "Sub Categories": [
-{sub_categories}
-      ],
-      "Class Flags": 1,
-      "Cardinality": 2147483647
-    }},
-    {{
-      "CID": "{controller_cid}",
-      "Category": "Component Controller Class",
-      "Name": "{controller_name}",
-      "Vendor": "Ahara",
-      "Version": "{version}",
-      "SDKVersion": "VST 3.8.0",
-      "Class Flags": 0,
-      "Cardinality": 2147483647
-    }}
+{classes}
   ]
 }}
 "#,
         name = escape_json(spec.metadata.bundle_name),
         version = escape_json(spec.version),
-        processor_cid = cid_hex(spec.metadata.processor_cid),
-        controller_cid = cid_hex(spec.metadata.controller_cid),
-        controller_name = escape_json(spec.metadata.controller_name),
-        sub_categories = sub_categories_json(spec.metadata.module_sub_categories),
     )
 }
 

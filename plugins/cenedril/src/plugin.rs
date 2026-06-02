@@ -2,15 +2,19 @@ use lindelion_plugin_shell::{
     AudioPlugin, ParameterInfo, PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
 };
 
+use crate::analysis::CenedrilAnalysis;
+
 /// Cenedril is a passthrough Visualizer effect: audio is mirrored to the output bit-exact at zero
-/// declared latency. (Analysis tap and editor are later milestones.)
+/// declared latency, while a parallel analysis tap feeds the editor (the tap never touches the
+/// output). The editor itself is a later milestone.
 pub const DESCRIPTOR: PluginDescriptor = PluginDescriptor::effect("Cenedril", *b"lindelion_cenedr");
 
 const STATE_FORMAT_VERSION: u32 = 1;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Cenedril {
     setup: ProcessSetup,
+    analysis: CenedrilAnalysis,
 }
 
 impl AudioPlugin for Cenedril {
@@ -24,12 +28,16 @@ impl AudioPlugin for Cenedril {
 
     fn reset(&mut self, setup: ProcessSetup) {
         self.setup = setup;
+        self.analysis
+            .reset(setup.sample_rate as f32, setup.max_block_size);
     }
 
     fn process(&mut self, context: ProcessContext<'_>) {
         let ProcessContext { input, buffer, .. } = context;
         passthrough_channel(input.left, buffer.left);
         passthrough_channel(input.right, buffer.right);
+        // Parallel analysis tap — reads `input` only, never the output (passthrough stays bit-exact).
+        self.analysis.process(input);
     }
 
     fn state(&self) -> PluginState {
@@ -38,6 +46,24 @@ impl AudioPlugin for Cenedril {
 
     fn load_state(&mut self, _state: PluginState) {
         // No persisted fields in M0; editor settings arrive in M6.
+    }
+}
+
+impl Cenedril {
+    /// Start the off-thread analysis worker. Called from the VST3 host processing path (not the
+    /// allocation-free/thread-free audio-thread core tests), since it spawns a thread.
+    pub fn start_analysis_worker(&mut self, sample_rate: f32) {
+        self.analysis.start_worker(sample_rate);
+    }
+
+    /// The latest heavy-analysis snapshot for the editor (M5).
+    pub fn latest_snapshot(&self) -> lindelion_speech_signals::SignalSnapshot {
+        self.analysis.latest_snapshot()
+    }
+
+    /// A clone of the audio→editor frame ring (shared `Arc`), for the editor to drain.
+    pub fn frame_ring(&self) -> std::sync::Arc<crate::analysis::FrameRing> {
+        self.analysis.frame_ring().clone()
     }
 }
 

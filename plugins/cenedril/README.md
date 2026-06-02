@@ -16,16 +16,29 @@ attach, and the Windows bundle are Windows-gated.
 
 ## Build (Windows VST3)
 
-Cenedril is cross-built from Linux as an MSVC-ABI `.vst3` with **cargo-xwin** (ADR-0023):
+Cenedril is cross-built from Linux as an MSVC-ABI `.vst3` with **cargo-xwin** (ADR-0023). It pulls
+the SwiftF0/ONNX analysis stack (`tract`), whose `tract-linalg` build script compiles C/asm SIMD
+kernels — so cross-compiling for Windows needs a full LLVM cross C-toolchain in addition to
+cargo-xwin's MS CRT/SDK:
 
 ```sh
 cargo install cargo-xwin                 # one-time; downloads the MS CRT/SDK on first build
 rustup target add x86_64-pc-windows-msvc # one-time
+rustup component add llvm-tools          # provides llvm-ar (multi-call) for the next step
+# clang-cl (the cross C compiler) — from your distro's clang/LLVM package, e.g. `dnf install clang`
+# llvm-lib (the MSVC archiver) — LLVM's llvm-ar is multi-call; symlink it onto PATH as llvm-lib:
+ln -sf "$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar" ~/.local/bin/llvm-lib
 make build-windows                       # stages Cenedril.vst3 in the bundle staging dir
 ```
 
-Then copy the staged `Cenedril.vst3` to a Windows host, or load it in the Galad host, to verify it
-passes audio through bit-exact at zero latency.
+Then copy the staged `Cenedril.vst3` to a Windows host, or load it in the Galad host, to verify.
+
+> **Cache gotcha:** `make build-windows` uses a separate target dir (`~/.lindelion-cache/target`)
+> from `make ci`. If that dir is on a different mount with mtime skew, cargo may not rebuild changed
+> workspace crates; if a Windows build links a stale crate, force it with
+> `CARGO_TARGET_DIR=~/.lindelion-cache/target cargo clean -p <crate> --target x86_64-pc-windows-msvc`.
+> Inspect the bundled DLL's exports with binutils `objdump -p` (not `llvm-objdump`, which is not on
+> PATH here).
 
 - Decision: [ADR-0023 — New VSTs target Windows](../../docs/adr/0023-new-vsts-windows-only.md)
 - Implementation plan: [`CENEDRIL-VST-PLAN.md`](../../CENEDRIL-VST-PLAN.md)

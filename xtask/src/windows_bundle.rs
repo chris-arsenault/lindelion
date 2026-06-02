@@ -95,13 +95,15 @@ mod tests {
     }
 
     #[test]
-    fn cenedril_module_info_uses_effect_metadata() {
+    fn cenedril_module_info_is_single_component_fx() {
         let spec = BundleSpec::from_plugin("cenedril").expect("cenedril spec");
         let module_info = module_info(&spec);
         assert!(module_info.contains(r#""Name": "Cenedril""#));
-        assert!(module_info.contains("CE9ED7131A5B4C208F3D6E94B2470FA1"));
-        assert!(module_info.contains("CE9EDC726D8E4F31A1B05C2873E2941D"));
+        assert!(module_info.contains("CE9ED7131A5B4C208F3D6E94B2470FA1")); // the component CID
         assert!(module_info.contains(r#""Fx""#));
+        // Single-component: no separate controller class.
+        assert!(!module_info.contains("CE9EDC726D8E4F31A1B05C2873E2941D"));
+        assert!(!module_info.contains("Component Controller Class"));
     }
 
     #[test]

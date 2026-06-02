@@ -2,6 +2,14 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.7.0 - 2026-06-02
+
+### Cenedril
+
+- Gave Cenedril its realtime analysis. An allocation-free audio-thread tap, parallel to the bit-exact passthrough, computes an STFT magnitude spectrum, peak/RMS/crest levels, BS.1770-4 **LUFS** (momentary/short-term/integrated — a new K-weighted meter in `lindelion-dsp-utils`, gated through a bounded histogram so it never allocates), and an inline speech-presence signal, and hands them to the editor over a lock-free SPSC frame ring plus an atomic meter snapshot. The allocating SwiftF0 signal analysis runs on an off-thread worker.
+- Added a scrolling STFT **spectrogram** to the Cenedril editor: a log-frequency, dB-scaled, magma-colored view rendered with Skia from the analysis ring (a ~66 ms drain-and-repaint), with the platform-neutral model `make ci`-validated (steady sine → a horizontal line, a sweep → a diagonal, silence → the floor).
+- Made Cenedril a **single-component** VST3 — one COM object is processor and controller — so the editor reads the audio thread's lock-free ring directly with no message marshaling; `make build-windows` stages a single-component `Cenedril.vst3`.
+
 ## v0.6.0 - 2026-06-01
 
 ### Lamath

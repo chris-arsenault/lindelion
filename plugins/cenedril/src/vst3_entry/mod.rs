@@ -6,12 +6,10 @@
 // is compiled (and `make ci`-tested) but unused, so allow dead code off-Windows.
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
-mod controller;
 mod editor;
 mod factory;
 mod processor;
 
 const SUBCATEGORY: &str = crate::VST3_BUNDLE_METADATA.vst3_sub_categories;
 
-use controller::CenedrilVst3Controller;
 use processor::CenedrilVst3Processor;

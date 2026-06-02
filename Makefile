@@ -76,6 +76,7 @@ test-integration:
 	cargo test -p lamath --features integration-tests
 	cargo test -p linnod --features integration-tests
 	cargo test -p glirdir --features integration-tests
+	cargo test -p cenedril --features integration-tests
 	cargo test -p lindelion-pitch-shift --features integration-tests
 	cargo test -p lindelion-dsp-utils --features integration-tests
 	cargo test -p lindelion-plugin-shell --features integration-tests

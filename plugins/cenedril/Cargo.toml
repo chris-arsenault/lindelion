@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 lindelion-dsp-utils.workspace = true
 lindelion-plugin-metadata.workspace = true
 lindelion-plugin-shell.workspace = true
+lindelion-speech-signals.workspace = true
 lindelion-ui.workspace = true
 vst3.workspace = true
 

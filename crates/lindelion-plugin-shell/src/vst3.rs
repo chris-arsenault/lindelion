@@ -53,6 +53,11 @@ pub struct Vst3BundleMetadata {
     pub processor_cid: [u32; 4],
     pub controller_cid: [u32; 4],
     pub controller_name: &'static str,
+    /// `true` for a single-component plugin (one COM object implements both `IComponent` and
+    /// `IEditController`); the bundle's `moduleinfo.json` then lists a single Audio Module Class
+    /// and `controller_cid`/`controller_name` are unused. `false` for separate processor +
+    /// controller classes.
+    pub single_component: bool,
 }
 
 pub fn copy_cstring(src: &str, dst: &mut [c_char]) {
