@@ -13,5 +13,5 @@ VST-per-effect without change.
 - Allocation-free `process` on the audio thread (see [ADR-0001](../../docs/adr/0001-allocation-free-audio-thread.md)).
 - No dependency on `lindelion-plugin-shell`, `vst3`, or `lindelion-ui` (see [ADR-0013](../../docs/adr/0013-host-agnostic-effect-core.md)).
 
-Scope and milestones: [HOTMIC-PORT-PLAN.md](../../HOTMIC-PORT-PLAN.md). Effect roster and
+Scope and milestones: [the speech-effect port reference](../../docs/speech/port.md). Effect roster and
 future work: [docs/backlog.md](../../docs/backlog.md).

@@ -1,9 +1,14 @@
-# Hot-Mic Effect Port — Implementation Plan
+# Speech Effect Port (from hot-mic) — Reference
 
-Temporary working plan (repo-root per AGENTS.md). Goal: re-implement the *intent* of
-hot-mic's channel-strip effects as idiomatic, allocation-free Rust effect crates, proven by
-objective audio fidelity tests. No VST integration yet; hot-mic's routing/shell/UI/WASAPI are
-out of scope.
+**Status: complete.** The port shipped — all effects are implemented as allocation-free Rust
+crates under `speech/` and ship in the Calóma VST3 (built M0–M6). This document is retained as the
+durable reference for the speech-effect port: the confirmed decisions, repository layout, packaging
+neutrality, the existing-DSP **reuse map**, the **analysis-signal strategy** and its benchmark gate,
+and the effect roster. The milestone sections below record how each tier was built.
+
+Goal of the port: re-implement the *intent* of hot-mic's channel-strip effects as idiomatic,
+allocation-free Rust effect crates, proven by objective audio fidelity tests. (hot-mic's
+routing/shell/UI/WASAPI were out of scope; VST integration arrived later as Calóma.)
 
 Source repo: `~/repos/hot-mic` (C# / .NET 10). Effects live in
 `src/HotMic.Core/Plugins/BuiltIn/`; per-effect specs in `hot-mic/docs/technical/`.
@@ -29,7 +34,7 @@ Source repo: `~/repos/hot-mic` (C# / .NET 10). Effects live in
 ## Repository layout (decided)
 
 Same workspace, layered so the product boundary is physical and a future split stays cheap
-([ADR-0012](docs/adr/0012-speech-effect-port-shared-workspace.md)).
+([ADR-0012](../adr/0012-speech-effect-port-shared-workspace.md)).
 
 | Path | Role |
 | ---- | ---- |
@@ -43,7 +48,7 @@ Shared foundations also reused from `crates/`: `lindelion-dsp-utils`, `lindelion
 each is implemented (M0+), so `make ci` stays green; the READMEs reserve the homes now.
 
 ## Packaging neutrality (cross-cutting constraint)
-See [ADR-0013](docs/adr/0013-host-agnostic-effect-core.md).
+See [ADR-0013](../adr/0013-host-agnostic-effect-core.md).
 
 
 The eventual packaging is **undecided** and must stay that way. The implementation must support
@@ -200,7 +205,7 @@ Seven milestones, **M0–M6**. Points that need your input are tagged inline wit
 | M4 | Whether to merge per-effect analysis workers into one shared worker — deferred until real end-state chain perf exists (M2 gate recorded). |
 | M5 | Confirm scoping ADR-0001 for NN inference (bounded inline alloc, no audio worker) + accept DFN3 (Apache/MIT) and Silero (MIT) licenses. RNNoise dropped. |
 | M6 | Whether you supply your own spoken-word recordings or I source public-domain / CC0 clips. |
-| Post-port | Packaging target: standalone app, single VST with prebaked flow, or one VST per effect (deferred by design — [ADR-0013](docs/adr/0013-host-agnostic-effect-core.md)). |
+| Post-port | Packaging target: standalone app, single VST with prebaked flow, or one VST per effect (deferred by design — [ADR-0013](../adr/0013-host-agnostic-effect-core.md)). |
 
 ### M0 — Foundation
 The host-agnostic effect trait, the shared fidelity harness, and one trivial effect (Gain) end
@@ -465,7 +470,7 @@ steps (run in order, red→green per step):
   `make ci` green.
 
 ### M4 — Shared analysis worker (CONTINGENT on real end-state perf)  [depends on M2]
-**`[DECISION]`** The M2 gate ([docs/perf/speech-signal-gate.md](docs/perf/speech-signal-gate.md))
+**`[DECISION]`** The M2 gate ([docs/perf/speech-signal-gate.md](../perf/speech-signal-gate.md))
 classified the cheap signals `self-derive-ok` and the SwiftF0+FFT analyzer `needs-worker`. The
 **sharing** decision is deliberately deferred: every effect keeps its **own** analysis worker
 for now, so the whole chain is built as individual self-contained signals. The micro-benchmarks
@@ -517,7 +522,7 @@ Expanded steps:
      streaming export, the `deep_filter` crate is broken on `tract 0.23`, and a libDF→`tract 0.23`
      port is a large, fragile translation against a dev API (de-risked and confirmed: heavy
      `tract-pulse`/API drift). So the denoiser runs hot-mic's proven self-contained streaming graph
-     on the **native ONNX Runtime via `ort`** ([ADR-0019](docs/adr/0019-denoiser-native-onnx-runtime.md)).
+     on the **native ONNX Runtime via `ort`** ([ADR-0019](../adr/0019-denoiser-native-onnx-runtime.md)).
    - Files: `speech/speech-denoiser/{Cargo.toml, src/lib.rs, tests/fidelity.rs}`,
      `crates/lindelion-fidelity/src/lib.rs` (added `BatteryOptions`/`run_general_battery_with` to
      scope out the latency heuristic for NN warm-up).
@@ -534,7 +539,7 @@ Expanded steps:
 3. **Silero Voice Gate (inline, native ONNX Runtime).**  [depends on #1] — **DONE**
    - Runtime (decided): `tract` cannot optimize Silero v5 (an `If`/`Squeeze` in the decoder fails
      analysis), so — like the denoiser — it runs on `ort`
-     ([ADR-0019](docs/adr/0019-denoiser-native-onnx-runtime.md)), correcting that ADR's earlier
+     ([ADR-0019](../adr/0019-denoiser-native-onnx-runtime.md)), correcting that ADR's earlier
      "Silero on tract" assumption.
    - Files: `speech/voice-gate/{Cargo.toml, src/lib.rs, tests/contract.rs, tests/integration.rs}`,
      `Cargo.toml` (member).

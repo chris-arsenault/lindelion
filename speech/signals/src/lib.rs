@@ -2,7 +2,7 @@
 //!
 //! Cheap signals (envelope/filter) are computed inline on the audio thread, allocation-free; the
 //! heavy signals (SwiftF0 voicing and FFT-based flux/HNR) are computed off-thread in the analysis
-//! worker and read back through a lock-free handoff. See `HOTMIC-PORT-PLAN.md` (M2) for the
+//! worker and read back through a lock-free handoff. See `docs/speech/port.md` (M2) for the
 //! realtime strategy and the benchmark gate.
 
 #![forbid(unsafe_code)]

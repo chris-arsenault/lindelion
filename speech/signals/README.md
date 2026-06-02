@@ -12,4 +12,4 @@ than sustained musical notes.
 
 A shared compute-once context is a benchmark-gated contingency, not a goal: it is built only if
 profiling shows real, shared, expensive redundancy. See the analysis-signal strategy and
-two-axis benchmark gate in [HOTMIC-PORT-PLAN.md](../../HOTMIC-PORT-PLAN.md).
+two-axis benchmark gate in [the speech-effect port reference](../../docs/speech/port.md).

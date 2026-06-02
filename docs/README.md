@@ -21,6 +21,7 @@ Documentation index for the Lindelion audio-plugin workspace.
 | Workspace architecture | [architecture.md](architecture.md) |
 | Architecture decisions | [adr/README.md](adr/README.md) |
 | Speech effects family | [../speech/README.md](../speech/README.md) |
+| Speech effect port (reuse map, analysis-signal strategy, roster) | [speech/port.md](speech/port.md) |
 | DSP module docs | [dsp/README.md](dsp/README.md) |
 | Local development commands | [development.md](development.md) |
 | Testing (suites; what stays in `make ci` vs moves to integration) | [development.md#testing](development.md#testing) |

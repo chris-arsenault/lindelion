@@ -14,7 +14,7 @@ Per-product backlogs cover product-specific work:
 
 Port the `hot-mic` channel-strip effects into Rust under `speech/`, tuned for spoken word.
 Detailed milestones and the reuse/benchmark strategy live in
-[HOTMIC-PORT-PLAN.md](../HOTMIC-PORT-PLAN.md).
+[the speech-effect port reference](speech/port.md).
 
 - Add the host-agnostic `lindelion-effect` trait crate and the shared `lindelion-fidelity`
   general-signal test harness, validated end-to-end against a gain effect.

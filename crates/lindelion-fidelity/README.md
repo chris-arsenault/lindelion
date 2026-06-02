@@ -12,4 +12,4 @@ improvement, and so on) layer on top, in each effect crate.
 This harness is distinct from the pitch-shift fidelity battery in `lindelion-pitch-shift`,
 which keeps its pitch-specific metrics (f0 error in cents, formant preservation, pre-echo).
 
-Scope and milestones: [HOTMIC-PORT-PLAN.md](../../HOTMIC-PORT-PLAN.md).
+Scope and milestones: [the speech-effect port reference](../../docs/speech/port.md).

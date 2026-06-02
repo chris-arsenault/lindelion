@@ -29,5 +29,5 @@ VST per effect). Nothing here depends on a host, a chain position, or a VST entr
   transient, dereverberation, room tone, spectral contrast, vitalizer.
 - **Tier 3 (ML / ONNX):** RNNoise, speech denoiser, voice gate (VAD).
 
-Milestones, reuse map, and the analysis-signal strategy: [HOTMIC-PORT-PLAN.md](../HOTMIC-PORT-PLAN.md).
+Milestones, reuse map, and the analysis-signal strategy: [the speech-effect port reference](../docs/speech/port.md).
 Future-state work: [docs/backlog.md](../docs/backlog.md).

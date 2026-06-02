@@ -16,8 +16,7 @@ This file tracks work that is not part of the current implemented Lamath spec in
 ## Whole-System Dynamic Response
 
 Tracked in full by [ADR-0014](../adr/0014-dynamic-response-effort-energy-bus.md) through
-[ADR-0017](../adr/0017-additive-physical-driver-layer.md) and the working plan at the repository
-root (`DYNAMIC-RESPONSE-PLAN.md`).
+[ADR-0017](../adr/0017-additive-physical-driver-layer.md).
 
 - Model Lamath as a driver → coupling → resonator → two-way body → surrounding chain in which a
   shared effort/energy bus changes timbre across the whole instrument with playing dynamics.
@@ -49,7 +48,7 @@ root (`DYNAMIC-RESPONSE-PLAN.md`).
 
 ## M11 Realism Polish (deferred from the voicing program)
 
-Deferred from the M11 voicing program (`PHASE-M11-PLAN.md`) once P1–P4 left the resonators
+Deferred from the M11 voicing program once P1–P4 left the resonators
 *functioning correctly* (every family rings, sustains, holds tune, and the four are timbrally distinct).
 These add **aliveness, not correct function**, and each adds real-time CPU cost the instrument may not be
 able to spare. Revisit as opt-in polish **after** the instrument is level-staged, control-calibrated, and
