@@ -49,6 +49,8 @@ In short: *move the render, keep the invariant.*
 
 Lamath, Glirdir, and Linnod are the current macOS VST3 bundle targets. Use [macos-vst3-build.md](macos-vst3-build.md) for macOS build, install, inspect, and validator steps.
 
+The Windows-only VST3s (Calóma, Lúmedir, Cenedril) bundle via `make build-windows` (cargo-xwin, MSVC ABI), staging each `*.vst3` for a Windows host or the Galad host. Their cross-platform DSP, the VST3-boundary load/run, persistence, and the soak/stability checks run on Linux (`make ci` + `make test-integration`); only each editor's on-screen rendering is confirmed on a Windows host ([ADR-0023](adr/0023-new-vsts-windows-only.md)).
+
 The Galad Windows host (`galad`) is target-gated and excluded from `make ci`; it is cross-compiled and checked with `make host-windows-check` (debug). See [galad/README.md](../galad/README.md) and [architecture.md](architecture.md#windows-vst3-host-galad).
 
 ## Release builds

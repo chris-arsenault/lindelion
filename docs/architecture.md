@@ -53,6 +53,21 @@ compute-once shared analysis (one worker; the four SwiftF0-consuming effects tak
 `SignalSnapshot`), and a self-contained Vizia editor as the sole control surface — it surfaces no
 host parameters ([ADR-0023](adr/0023-new-vsts-windows-only.md)). See [the spec](plugins/caloma.md).
 
+## Windows-only Analysis VSTs
+
+Two Windows-only **passthrough analysis** VST3s share one shape ([ADR-0023](adr/0023-new-vsts-windows-only.md)):
+audio is mirrored to the output bit-exact at zero latency while a tap feeds an **off-thread analysis
+worker** over the shared lock-free hand-off (`lindelion_dsp_utils::handoff`); the Vizia editor reads
+published snapshots on the UI thread, never the audio thread (ADR-0001). Both surface **no host
+parameters** and are therefore **single-component** VST3s (one COM object is processor + controller),
+so the editor reaches the worker directly with no message marshaling.
+
+- **Cenedril** — a visualizer (spectrogram, level/LUFS meters, analysis readouts).
+- **Lúmedir** — a speech coach: it scores delivery (speaking rate/WPM, pitch dynamism, pause
+  structure, clarity) against configurable target bands and presents a live readout plus a
+  manual-session summary ([ADR-0048](adr/0048-lumedir-single-component.md)). See
+  [the spec](plugins/lumedir.md) and [the delivery-metric DSP doc](dsp/delivery-metrics.md).
+
 - Shared capture and scratchpad audio live in `lindelion-capture`; product plugins own parameter stepping, naming, MIDI context projection, and other product semantics layered on top.
 - `lindelion-ui` owns reusable editor commands, editor services, and product editor surfaces while the workspace remains small.
 

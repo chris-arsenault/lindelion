@@ -33,6 +33,7 @@
 | [0029](0029-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
 | [0030](0030-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |
 | [0031](0031-shared-body-idiophone-mode.md) | Shared-body idiophone mode (re-strikable persistent resonator) | Accepted | 2026-06-01 |
+| [0048](0048-lumedir-single-component.md) | Lúmedir is a single-component VST3 | Accepted | 2026-06-02 |
 
 ## Reserved number ranges (parallel workstreams)
 

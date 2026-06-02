@@ -40,10 +40,11 @@ Detailed milestones and the reuse/benchmark strategy live in
   ([ADR-0022](adr/0022-windows-vst3-host.md)).
 - Build Cenedril, a Windows-only Visualizer VST3 (spectrogram, meters, analysis-signal display;
   [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `CENEDRIL-VST-PLAN.md`).
-- Build Lúmedir, a Windows-only Speech-Coach VST3 (cadence/rate, pitch dynamism, pauses, clarity vs
-  target bands; [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `LUMEDIR-VST-PLAN.md`).
-  Built M0–M3 (passthrough + off-thread `DeliveryWorker` computing the four delivery metrics).
-  Remaining: the Vizia live-readout/summary editor view (M4+) and on-target Windows load-verify.
+- Validate Lúmedir on a Windows host: load `Lumedir.vst3` in Galad and a Windows DAW and confirm the
+  Vizia editor renders (gauges, status strip, session summary, band steppers). Built through M0–M6
+  ([spec](plugins/lumedir.md), [ADR-0023](adr/0023-new-vsts-windows-only.md),
+  [ADR-0048](adr/0048-lumedir-single-component.md)); the functional path is covered on Linux by
+  `make ci` + `make test-integration`, so this is the on-target visual/host check only.
 
 ## Host integration
 
