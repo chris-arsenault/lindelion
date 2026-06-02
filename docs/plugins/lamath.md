@@ -64,7 +64,7 @@ flowchart LR
     MIX --> OUT[Stereo Out]
 ```
 
-Each voice owns independent excitation playback cursors, resonator state, modulation state, filter state, and output state. Voice allocation and ownership live above the voice DSP so MIDI-created and audio-created voices use the same runtime path.
+Each voice owns independent excitation playback cursors, resonator state, modulation state, filter state, and output state. Voice allocation and ownership live above the voice DSP so MIDI-created and audio-created voices use the same runtime path. In shared-body idiophone mode the idiophone resonator is instead promoted to a single runtime-owned body that note-ons re-strike rather than per-note voices (§4.4).
 
 ---
 
@@ -112,7 +112,7 @@ Realtime constraints:
 
 ## 4. Resonators
 
-Each voice has two resonator slots, A and B. Each slot can be a modal bank or a one-dimensional waveguide, and both slots may use the same model type.
+Each voice has two resonator slots, A and B. Each slot can be a modal bank, a one-dimensional waveguide, or a 2D waveguide mesh, and both slots may use the same model type.
 
 ### 4.1 Modal Bank
 
@@ -156,6 +156,24 @@ Series routing includes a high-pass and transient-bias gate before B to keep ste
 Body Color is intended for stable commuted/body-response sounds: A imprints early resonator color onto B without feeding A's long ringing tail into B continuously.
 When both resonator slots are modal banks, selecting `Series` is canonicalized to `Body Color` while preserving the routing mix values. Mixed modal/waveguide pairs keep all three routing modes available.
 
+### 4.4 Shared-Body Idiophone Mode
+
+An opt-in per-patch mode (`shared_body`, default off) promotes an idiophone patch's resonator to a single runtime-owned, persistent body that note-ons re-strike instead of allocating a per-note voice. Off is bit-identical to the per-voice behavior and the two coexist; the body is owned by the runtime alongside the sympathetic chamber, and the voice engine is unaware of it. Decisions and rejected alternatives live in [ADR-0031](../adr/0031-shared-body-idiophone-mode.md).
+
+**Strike path.** With the mode on and an idiophone slot present, a note-on drives the body, not a voice:
+
+- A note outside the configured key-switch damp range strikes the body, carrying force (velocity mapped to gain), pitch, and the velocity-selected excitation; a note inside the range damps it. Either way no voice is allocated and polyphony does not apply.
+- The body mirrors the patch's resonator stack restricted to the idiophone families (modal and mesh); a waveguide slot is silenced in the body, and the toggle no-ops when neither slot is idiophone. Waveguide slots otherwise stay polyphonic-per-voice.
+- A preallocated, allocation-free injector pool plays the selected excitation into the live body at the strike position, preserving the samples-as-excitation identity.
+
+**Per-strike retune.** Each strike after the first retunes the live body to the note through the state-preserving `retune` path (no buffer clear), then injects. The prior strike's ring keeps propagating in the persisted state while the tuning tracks the most recent strike, so the body is melodically playable.
+
+**Dynamics, coloration, and attack.** The body runs its own measured-energy follower on the raw resonator output, feeding the mesh geometric nonlinearity. The per-family output makeup applies as on a voice, so the body stages at the same level a same-family voice does, and the runtime master soft-clip bounds it. The body's decay is the envelope: the per-note amp envelope steps aside (unity amp gain, no per-note release), the patch's output filter and saturation apply as a static post-body coloration, and each strike arms the mechanical-noise attack burst scaled by the strike force.
+
+**Damp.** An inclusive MIDI-note key-switch range (`damp_key_low`..`damp_key_high`) damps the body: a note in range ramps the body's output to silence over a short choke ramp, then clears the ring so the next strike starts fresh. A strike re-opens the gate; note-off does nothing to the ring.
+
+**Summing and reset.** The runtime sums engine, then shared body, then sympathetic chamber, then master, so the body feeds the chamber and master like any voice energy. A patch change or reset silences the body and re-mirrors its configs.
+
 ---
 
 ## 5. Output Stage
@@ -177,6 +195,7 @@ The output path is intentionally compact. Resonators supply most of the timbral 
 - Voice stealing order is oldest released, then quietest released, then oldest active.
 - Note-on resets excitation cursors and envelopes. Resonator retrigger is patch-configurable and defaults to ringing carryover.
 - All voice state is allocated up front.
+- In shared-body idiophone mode, idiophone note-ons re-strike the runtime-owned body instead of allocating voices, bypassing voice allocation and polyphony entirely (§4.4).
 
 Lamath uses a per-voice expression stream:
 
@@ -279,6 +298,7 @@ The native Vizia editor exposes:
 - top-level patch save/load/export and library commands;
 - excitation slot controls;
 - Resonator A/B controls and routing;
+- shared-body mode toggle and key-switch damp-range controls;
 - output filter, saturation, gain, and pan controls;
 - envelope, LFO, and modulation controls;
 - sidechain source, audio-expression, note-detection, and live-excitation controls;
@@ -347,6 +367,7 @@ Implemented:
 - parameter updates that mutate patch state and update live runtime targets;
 - smoothed live output, loop-gain, filter, pitch-bend, saturation, and routing controls;
 - structural resonator and modulation changes that update future voices without killing active notes;
+- opt-in shared-body idiophone mode with per-strike ring-preserving retune, key-switch damp, body-scoped energy follower and staging, and static post-body coloration, covered by objective stability and fidelity sweeps;
 - DSP render, automation stress, sample-rate/buffer-size, offline, and no-allocation tests for the audio path;
 - sidechain note creation, MIDI/audio ownership, audio expression, continuous and note-latched live excitation, no-allocation coverage, and latency/CPU probe coverage;
 - TOML patch save/load and DAW state roundtrip;
@@ -364,3 +385,5 @@ Implemented:
 - **Mode:** a single vibrational frequency of a physical object.
 - **Position of strike:** where excitation is applied to the resonating object.
 - **Expression stream:** Lamath's per-voice continuous-control contract for pitch bend, pressure, brightness, velocity, and gate.
+- **Idiophone:** a body that sounds by vibrating as a whole (cymbal, gong, bell); here the modal and mesh resonator families. Modeled by the modal bank and the 2D mesh, which are linear-superposable physical models.
+- **Shared body:** in shared-body mode, the single runtime-owned persistent resonator that idiophone note-ons re-strike, in place of per-note voices (§4.4).

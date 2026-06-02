@@ -21,7 +21,7 @@ use crate::dsp::constants::{
 const INTERNAL_HEADROOM_DB: f32 = -12.0;
 
 #[derive(Debug)]
-pub(super) struct OutputStage {
+pub(crate) struct OutputStage {
     pub(super) config: OutputConfig,
     pub(super) filter: Svf,
     pub(super) filter_mode: StructuralParam<FilterMode>,
@@ -33,7 +33,7 @@ pub(super) struct OutputStage {
 }
 
 impl OutputStage {
-    pub(super) fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: f32) -> Self {
         let config = OutputConfig::default();
         Self {
             config,
@@ -56,7 +56,7 @@ impl OutputStage {
         }
     }
 
-    pub(super) fn reset(&mut self, config: OutputConfig) {
+    pub(crate) fn reset(&mut self, config: OutputConfig) {
         self.config = config;
         self.filter.reset();
         self.filter_mode.reset(config.filter_mode);
@@ -67,11 +67,11 @@ impl OutputStage {
         self.master_pan.reset_plain(config.master_pan);
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.reset(self.config);
     }
 
-    pub(super) fn set_config(&mut self, config: OutputConfig) {
+    pub(crate) fn set_config(&mut self, config: OutputConfig) {
         self.filter_mode.set_target(config.filter_mode);
         self.filter_cutoff.set_plain_target(config.filter_cutoff);
         self.filter_resonance
@@ -83,7 +83,7 @@ impl OutputStage {
         self.config = config;
     }
 
-    pub(super) fn apply_structural_transitions(&mut self) -> f32 {
+    pub(crate) fn apply_structural_transitions(&mut self) -> f32 {
         let filter_sample = self.filter_mode.next_sample();
         if filter_sample.change.is_some() {
             self.filter.reset();
@@ -91,7 +91,7 @@ impl OutputStage {
         filter_sample.gain
     }
 
-    pub(super) fn process_sample(
+    pub(crate) fn process_sample(
         &mut self,
         input: f32,
         sample_rate: f32,

@@ -13,11 +13,9 @@ use lindelion_dsp_utils::{
 };
 use lindelion_plugin_shell::ExpressionStream;
 
-use self::{
-    modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend},
-    output_stage::OutputStage,
-    surrounding::SurroundingStage,
-};
+use self::modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend};
+pub(crate) use self::output_stage::OutputStage;
+pub(crate) use self::surrounding::SurroundingStage;
 use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
 use crate::{
     ModulationConfig, ModulationDestination, OutputConfig, ResonatorRouting, ResonatorSynthPatch,
@@ -413,7 +411,7 @@ fn sanitize_unit(value: f32) -> f32 {
     }
 }
 
-fn velocity_to_gain(velocity: f32, depth: f32) -> f32 {
+pub(crate) fn velocity_to_gain(velocity: f32, depth: f32) -> f32 {
     let velocity = velocity.clamp(0.0, 1.0);
     let depth = depth.clamp(0.0, 1.0);
     (1.0 - depth) + velocity * depth

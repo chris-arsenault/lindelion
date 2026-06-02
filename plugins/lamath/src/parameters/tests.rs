@@ -45,6 +45,37 @@ fn shared_body_parameters_are_registered_as_stepped_controls() {
 }
 
 #[test]
+fn shared_body_params_are_editor_bound() {
+    let enabled = parameter_binding(SHARED_BODY_ENABLED_PARAMETER_ID)
+        .unwrap()
+        .editor()
+        .expect("shared-body enable must be editor-bound");
+    assert_eq!(enabled.slot(), EditorSurfaceSlot::SharedBodyEnabled);
+    assert!(matches!(
+        enabled.control(),
+        EditorControlKind::Binary { .. }
+    ));
+
+    for (id, slot) in [
+        (
+            SHARED_BODY_DAMP_KEY_LOW_PARAMETER_ID,
+            EditorSurfaceSlot::SharedBodyDampKeyLow,
+        ),
+        (
+            SHARED_BODY_DAMP_KEY_HIGH_PARAMETER_ID,
+            EditorSurfaceSlot::SharedBodyDampKeyHigh,
+        ),
+    ] {
+        let editor = parameter_binding(id)
+            .unwrap()
+            .editor()
+            .expect("shared-body damp key must be editor-bound");
+        assert_eq!(editor.slot(), slot);
+        assert!(matches!(editor.control(), EditorControlKind::Slider { .. }));
+    }
+}
+
+#[test]
 fn shared_body_parameter_path_reads_and_writes_patch() {
     let mut patch = ResonatorSynthPatch::default();
     ParameterPath::SharedBody(SharedBodyParameter::Enabled).apply_plain(&mut patch, 1.0);

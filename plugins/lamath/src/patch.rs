@@ -172,6 +172,15 @@ pub enum ResonatorConfig {
     Mesh(MeshConfig),
 }
 
+impl ResonatorConfig {
+    /// The idiophone resonator families (struck bodies) the shared body mirrors:
+    /// `Modal` and `Mesh`. `Waveguide` (String/Tube) is not an idiophone and the
+    /// shared-body toggle no-ops for it (ADR-0031, decision 2).
+    pub fn is_idiophone(&self) -> bool {
+        matches!(self, ResonatorConfig::Modal(_) | ResonatorConfig::Mesh(_))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModalPreset {
     Kalimba,

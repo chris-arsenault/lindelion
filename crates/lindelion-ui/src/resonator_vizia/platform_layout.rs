@@ -148,6 +148,27 @@ fn resonator_stack_section(cx: &mut Context, signals: EditorSignals) {
         })
         .height(Pixels(36.0))
         .horizontal_gap(Pixels(10.0));
+        // Shared-body idiophone mode (ADR-0031, M7): the body toggle and the key-switch
+        // damp range, alongside the Retrigger toggle as another resonator-behaviour control.
+        HStack::new(cx, move |cx| {
+            resonator_parameter_control(
+                cx,
+                signals.parameter(ResonatorEditorSurfaceSlot::SharedBodyEnabled),
+                crate::vizia_controls::Accent::Tone,
+            );
+            resonator_parameter_control(
+                cx,
+                signals.parameter(ResonatorEditorSurfaceSlot::SharedBodyDampKeyLow),
+                crate::vizia_controls::Accent::Tone,
+            );
+            resonator_parameter_control(
+                cx,
+                signals.parameter(ResonatorEditorSurfaceSlot::SharedBodyDampKeyHigh),
+                crate::vizia_controls::Accent::Tone,
+            );
+        })
+        .height(Pixels(36.0))
+        .horizontal_gap(Pixels(10.0));
     })
     .class("panel")
     .class("ll-panel")
