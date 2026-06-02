@@ -79,10 +79,13 @@ pub enum ResonatorEditorSurfaceSlot {
     ResonatorBMeshDamping,
     ResonatorBMeshTension,
     ResonatorBMeshPickupSpread,
+    SharedBodyEnabled,
+    SharedBodyDampKeyLow,
+    SharedBodyDampKeyHigh,
 }
 
 impl ResonatorEditorSurfaceSlot {
-    pub const ALL: [Self; 64] = [
+    pub const ALL: [Self; 67] = [
         Self::Master,
         Self::Cutoff,
         Self::Saturation,
@@ -147,6 +150,9 @@ impl ResonatorEditorSurfaceSlot {
         Self::ResonatorBMeshDamping,
         Self::ResonatorBMeshTension,
         Self::ResonatorBMeshPickupSpread,
+        Self::SharedBodyEnabled,
+        Self::SharedBodyDampKeyLow,
+        Self::SharedBodyDampKeyHigh,
     ];
 
     pub const fn index(self) -> usize {
@@ -215,6 +221,9 @@ impl ResonatorEditorSurfaceSlot {
             Self::ResonatorBMeshDamping => 61,
             Self::ResonatorBMeshTension => 62,
             Self::ResonatorBMeshPickupSpread => 63,
+            Self::SharedBodyEnabled => 64,
+            Self::SharedBodyDampKeyLow => 65,
+            Self::SharedBodyDampKeyHigh => 66,
         }
     }
 }
