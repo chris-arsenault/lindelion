@@ -355,6 +355,53 @@ fn shared_body_damp_key_silences_but_strike_and_note_off_keep_the_ring() {
     );
 }
 
+/// Shared-body M5 staging guard (ADR-0029): a single full-velocity strike sits at a
+/// usable level within the family staging target — audible and at/below full scale, not
+/// Shared-body staging guard (ADR-0029): a single full-velocity strike stages **like a
+/// same-family voice**. After M6 the body runs the voice's output stage (filter +
+/// saturation, amp envelope stepped aside), so it goes through the same coloration/level
+/// path a voice does — its peak now sits within a factor of a Mesh voice's peak on the
+/// same patch.
+///
+/// This became a clean comparison only at M6: before the output stage the body skipped the
+/// voice's filter/headroom/gain and was ~15× hotter than a voice (it read the raw
+/// `staged_output`); M6 brings it into line. The precise mesh-vs-modal balance is the M8
+/// voicing call.
+#[test]
+fn shared_body_mesh_strike_stages_like_a_voice() {
+    let mesh_peak = |shared_body: bool| -> f32 {
+        let mut patch = test_patch();
+        patch.resonator_a = ResonatorConfig::Mesh(crate::MeshConfig::default());
+        patch.shared_body.enabled = shared_body;
+        let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+        let mut left = vec![0.0; 8_192];
+        let mut right = vec![0.0; 8_192];
+        processor.process(
+            &[MidiEvent::Note(NoteEvent::On {
+                channel: 0,
+                note: 60,
+                velocity: 1.0,
+            })],
+            &mut left,
+            &mut right,
+        );
+        assert_all_finite(&left);
+        peak_abs(&left)
+    };
+
+    let voice_peak = mesh_peak(false);
+    let body_peak = mesh_peak(true);
+    assert!(voice_peak > 0.0, "the mesh voice must ring");
+    assert!(body_peak > 0.0, "the struck mesh body must ring");
+
+    let ratio = body_peak / voice_peak;
+    assert!(
+        (0.5..=2.0).contains(&ratio),
+        "the struck body must stage like a same-family voice through the M6 output stage: \
+         voice {voice_peak} body {body_peak} ratio {ratio}",
+    );
+}
+
 /// M11 P9 step 3: the master soft-clip stage bounds dense polyphony. Sixteen
 /// simultaneous full-velocity notes on a now-made-up String patch sum far past full
 /// scale before the master stage; the soft clipper must hold the final mix at or below

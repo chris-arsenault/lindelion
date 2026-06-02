@@ -13,11 +13,9 @@ use lindelion_dsp_utils::{
 };
 use lindelion_plugin_shell::ExpressionStream;
 
-use self::{
-    modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend},
-    output_stage::OutputStage,
-    surrounding::SurroundingStage,
-};
+use self::modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend};
+pub(crate) use self::output_stage::OutputStage;
+pub(crate) use self::surrounding::SurroundingStage;
 use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
 use crate::{
     ModulationConfig, ModulationDestination, OutputConfig, ResonatorRouting, ResonatorSynthPatch,

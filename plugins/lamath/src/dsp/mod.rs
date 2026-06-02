@@ -23,9 +23,11 @@ pub(crate) use excitation::{
 pub(crate) use master_stage::MasterStage;
 pub(crate) use shared_body::{BodyStrike, SharedBody};
 pub(crate) use sympathetic_chamber::SympatheticChamber;
+pub(crate) use voice::OutputStage;
 pub use voice::Oversampler2x;
 pub(crate) use voice::RESONATOR_OVERSAMPLING_LATENCY_SAMPLES;
 pub(crate) use voice::ResonatorStack;
+pub(crate) use voice::SurroundingStage;
 pub(crate) use voice::VoiceExpression;
 pub use voice::VoiceTrigger;
 pub(crate) use voice::velocity_to_gain;

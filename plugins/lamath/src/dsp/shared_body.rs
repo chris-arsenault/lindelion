@@ -1,4 +1,4 @@
-//! Shared-body idiophone mode (M1–M3, ADR-0031).
+//! Shared-body idiophone mode (M1–M5, ADR-0031).
 //!
 //! A single, runtime-owned **persistent** resonant body that idiophone note-ons
 //! re-strike instead of allocating a per-note voice. Owned by the runtime at the
@@ -17,13 +17,15 @@
 //! the state-preserving path (no buffer clear), so the prior ring keeps decaying while
 //! the tuning tracks the latest strike.
 //!
-//! Key-switch damp (M4), the body energy follower / gain staging (M5), and amp-envelope
-//! bypass (M6) land in later milestones. Until M5 the body is driven with zero
-//! energy/effort/drive-gate — Modal ignores them and Mesh simply runs without geometric
-//! drive, so a strike still rings.
+//! M4 adds the key-switch damp (a choke ramp to silence). M5 gives the body its own
+//! measured-energy follower on the **raw** resonator output, driving the Mesh geometric
+//! nonlinearity (Modal ignores energy); staging stays via the per-family-made-up
+//! `staged_output`, and effort/drive-gate stay zero (idiophone has no bow/reed). The
+//! amp-envelope bypass + static post-body coloration (M6) lands later.
 
-use crate::dsp::ResonatorStack;
-use crate::{ResonatorRouting, ResonatorSynthPatch};
+use crate::dsp::energy_follower::EnergyFollower;
+use crate::dsp::{OutputStage, ResonatorStack, SurroundingStage};
+use crate::{ResonatorRouting, ResonatorSynthPatch, SurroundingConfig};
 
 use super::excitation::{SelectedExcitations, VoiceExcitation};
 
@@ -89,6 +91,21 @@ pub(crate) struct SharedBody<'a> {
     choking: bool,
     /// Per-sample decrement of `choke_gain` while choking (1.0 / ramp samples).
     choke_step: f32,
+    /// Body-scoped measured-energy bus (M5, ADR-0029): an `EnergyFollower` on the **raw**
+    /// resonator output drives the body's nonlinearity (Mesh geometric coupling). Like the
+    /// voice, the followed RMS of one sample feeds the next sample's `energy` arg.
+    energy_follower: EnergyFollower,
+    body_energy: f32,
+    /// Static post-body coloration (M6): the voice's output filter + saturation, applied
+    /// with the per-note amp envelope stepped aside (`amp = 1.0`) — the body's decay is the
+    /// envelope. A continuous stage (not retriggered per strike), configured from
+    /// `patch.output`.
+    output: OutputStage,
+    /// Per-strike attack noise (M6): the voice's `SurroundingStage` mechanical-noise burst,
+    /// armed on each strike. Radiation brightening is defeated (noise-only) — M6 specifies
+    /// only the attack burst. Scaled by the strike force, supplied as `body_effort`.
+    surrounding: SurroundingStage,
+    body_effort: f32,
 }
 
 impl<'a> SharedBody<'a> {
@@ -105,6 +122,10 @@ impl<'a> SharedBody<'a> {
         // to the idiophone families (Modal/Mesh) at strike time.
         stack.set_base_configs(patch.resonator_a, patch.resonator_b);
         let choke_step = 1.0 / (CHOKE_RAMP_MS * 0.001 * sample_rate).max(1.0);
+        let mut output = OutputStage::new(sample_rate);
+        output.reset(patch.output);
+        let mut surrounding = SurroundingStage::new(sample_rate);
+        surrounding.set_config(noise_only_surrounding(patch));
         Self {
             stack,
             sample_rate,
@@ -116,6 +137,11 @@ impl<'a> SharedBody<'a> {
             choke_gain: 1.0,
             choking: false,
             choke_step,
+            energy_follower: EnergyFollower::new(sample_rate),
+            body_energy: 0.0,
+            output,
+            surrounding,
+            body_effort: 0.0,
         }
     }
 
@@ -146,6 +172,9 @@ impl<'a> SharedBody<'a> {
             .excitation
             .trigger(strike.selected, self.sample_rate, strike.pitch_ratio);
         injector.gain = strike.force_gain;
+        // Arm the per-strike mechanical-noise attack (M6), scaled by the strike force.
+        self.body_effort = strike.force_gain.clamp(0.0, 1.0);
+        self.surrounding.trigger();
     }
 
     /// Key-switch damp (M4, decision 4): begin ramping the body's output gain toward
@@ -201,12 +230,30 @@ impl<'a> SharedBody<'a> {
                     excitation += injector.excitation.next_sample() * injector.gain;
                 }
             }
-            // Zero energy/effort/drive-gate until the M5 body energy follower lands; the
-            // unconfigured (unstruck) stack returns 0.0. `staged_output` is the voice's
-            // P9 audio tap. The choke ramp (M4) attenuates the output toward silence on a
-            // key-switch damp.
-            self.stack.process_sample(excitation, 0.0, 0.0, 0.0);
-            let sample = self.stack.staged_output() * self.next_choke_gain();
+            // Body-scoped energy bus (M5, ADR-0029): feed the previous sample's followed
+            // energy into the nonlinearity (Mesh geometric drive; Modal ignores it), then
+            // observe the **raw** resonator output to update it for the next sample —
+            // staging stays decoupled from dynamics. Effort/drive-gate stay zero (idiophone
+            // has no bow/reed). `staged_output` is the per-family-made-up audio tap; the
+            // choke ramp (M4) attenuates it toward silence on a key-switch damp.
+            let raw = self
+                .stack
+                .process_sample(excitation, self.body_energy, 0.0, 0.0);
+            self.body_energy = self.energy_follower.observe(raw);
+            let staged = self.stack.staged_output();
+            // Per-strike attack noise (M6): the mechanical-noise burst, scaled by the strike
+            // force; radiation brightening is defeated (noise-only) by the body's config.
+            let surrounded = self
+                .surrounding
+                .process(staged, self.body_effort, self.body_energy);
+            // Static post-body coloration (M6): the patch's output filter + saturation,
+            // with the per-note amp envelope stepped aside (`amp = 1.0`) — the body's decay
+            // is the envelope. The choke ramp (M4) attenuates the colored output to silence.
+            let structural = self.output.apply_structural_transitions();
+            let colored =
+                self.output
+                    .process_sample(surrounded, self.sample_rate, 0.0, 1.0, structural);
+            let sample = colored * self.next_choke_gain();
             left[index] += sample;
             right[index] += sample;
         }
@@ -218,6 +265,8 @@ impl<'a> SharedBody<'a> {
         self.stack
             .set_base_configs(patch.resonator_a, patch.resonator_b);
         self.routing = patch.routing;
+        self.output.set_config(patch.output);
+        self.surrounding.set_config(noise_only_surrounding(patch));
     }
 
     /// Silence the body's ring and disarm every injector (panic / patch change / reset),
@@ -229,7 +278,21 @@ impl<'a> SharedBody<'a> {
         self.struck = false;
         self.choking = false;
         self.choke_gain = 1.0;
+        self.energy_follower.reset();
+        self.body_energy = 0.0;
+        self.output.clear();
+        self.surrounding.reset();
+        self.body_effort = 0.0;
     }
+}
+
+/// The body's surrounding config: the patch's mechanical-noise depth, with radiation
+/// brightening defeated. M6 specifies only the per-strike attack burst, not the M10
+/// energy-scaled radiation high-shelf.
+fn noise_only_surrounding(patch: &ResonatorSynthPatch) -> SurroundingConfig {
+    let mut config = patch.surrounding;
+    config.radiation_brightness = 0.0;
+    config
 }
 
 #[cfg(test)]

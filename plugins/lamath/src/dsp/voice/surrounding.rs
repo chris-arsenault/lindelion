@@ -56,7 +56,7 @@ const NOISE_ENVELOPE_FLOOR: f32 = 1.0e-4;
 const NOISE_PRNG_SEED: u32 = 0x9E37_79B9;
 
 #[derive(Debug)]
-pub(super) struct SurroundingStage {
+pub(crate) struct SurroundingStage {
     config: SurroundingConfig,
     sample_rate: f32,
     // Radiation brightening (M10 step 5): an energy-scaled high-shelf. Built flat at
@@ -75,7 +75,7 @@ pub(super) struct SurroundingStage {
 }
 
 impl SurroundingStage {
-    pub(super) fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: f32) -> Self {
         let safe_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
             sample_rate
         } else {
@@ -105,19 +105,19 @@ impl SurroundingStage {
 
     /// Select the surrounding-effects config from the patch (M10). Set at note-on,
     /// mirroring the driver/contact config setters.
-    pub(super) fn set_config(&mut self, config: SurroundingConfig) {
+    pub(crate) fn set_config(&mut self, config: SurroundingConfig) {
         self.config = config;
     }
 
     /// Arm the per-note surrounding effects (the mechanical-noise burst) at note-on.
-    pub(super) fn trigger(&mut self) {
+    pub(crate) fn trigger(&mut self) {
         self.pick_envelope = 1.0;
         self.breath_envelope = 1.0;
         self.pick_filter.reset();
         self.breath_filter.reset();
     }
 
-    pub(super) fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.radiation_shelf.reset();
         self.pick_envelope = 0.0;
         self.breath_envelope = 0.0;
@@ -130,7 +130,7 @@ impl SurroundingStage {
     /// player effort, `energy` is the measured resonator energy). At the defeated
     /// default this returns the sample unchanged. Mechanical noise is added first (it
     /// is part of the radiated attack), then radiation brightening colours the sum.
-    pub(super) fn process(&mut self, sample: f32, effort: f32, energy: f32) -> f32 {
+    pub(crate) fn process(&mut self, sample: f32, effort: f32, energy: f32) -> f32 {
         let noised = self.apply_mechanical_noise(sample, effort);
         self.apply_radiation_brightening(noised, energy)
     }
