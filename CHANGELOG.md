@@ -2,6 +2,12 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.13.1 - 2026-06-02
+
+### Tooling
+
+- Added a Markdown relative-link check to `make ci` (xtask `link-check`): it walks every `.md` in the repo and fails the build if an inline `[text](path)` or `![alt](path)` link points at a missing file — catching the recurring doc defect (a plugin spec linking `adr/…` instead of `../adr/…`, or a retired plan leaving dangling references). External, `#anchor`-only, and in-code links are skipped; run it alone with `cargo run -p xtask -- link-check`.
+
 ## v0.13.0 - 2026-06-02
 
 ### Lamath

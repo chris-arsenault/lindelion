@@ -6,7 +6,7 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 
 | Command | Purpose |
 | ---- | ---- |
-| `make ci` | Run the canonical local check path: workspace checks, a macOS-target workspace check on macOS hosts, and bench compile smoke tests. |
+| `make ci` | Run the canonical local check path: rustfmt, clippy, the file-size lint, a Markdown relative-link check, and the unit tests, plus a macOS-target workspace check on macOS hosts. |
 | `make build` | Build, stage, and install all bundleable macOS VST3 plugins on macOS. |
 | `make build PLUGIN=lamath` | Build, stage, and install only Lamath on macOS. |
 | `make build PLUGIN=glirdir` | Build, stage, and install only Glirdir on macOS. |

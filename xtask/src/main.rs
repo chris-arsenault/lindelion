@@ -8,6 +8,7 @@ use std::{
 const RUST_FILE_LINE_LIMIT: usize = 600;
 
 mod bundle;
+mod link_check;
 #[cfg(test)]
 mod tests;
 mod windows_bundle;
@@ -17,6 +18,7 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("workspace") | Some("check") => run_ci(),
         Some("lint-sizes") => run_size_lint(),
+        Some("link-check") => run_link_check(),
         Some("bundle") => bundle::run_bundle(args.collect()),
         Some("plugin-info") => bundle::run_plugin_info(args.collect()),
         Some("validator") => bundle::run_validator(args.collect()),
@@ -38,6 +40,7 @@ fn print_help() {
     println!("Commands:");
     println!("  check|workspace       Run Rust fmt, clippy, and tests");
     println!("  lint-sizes            Check Rust source file size limits");
+    println!("  link-check            Check Markdown relative links resolve");
     println!("  bundle [plugin] [--target <triple>] [--bundle-dir <dir>]");
     println!("                           Build a macOS .vst3 bundle");
     println!("  plugin-info [plugin] [--field <name>]");
@@ -109,6 +112,12 @@ fn run_ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    println!("Running doc link check...");
+    if let Err(error) = link_check::check_doc_links(Path::new(".")) {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
+
     println!("Running test...");
     let status = Command::new("cargo")
         .args(TEST_ARGS)
@@ -131,6 +140,16 @@ fn run_ci() -> ExitCode {
 
 fn run_size_lint() -> ExitCode {
     match lint_rust_file_sizes(Path::new(".")) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_link_check() -> ExitCode {
+    match link_check::check_doc_links(Path::new(".")) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
