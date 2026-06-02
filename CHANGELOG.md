@@ -2,6 +2,16 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.7.1 - 2026-06-02
+
+### Lamath
+
+- Started the shared-body idiophone mode ([ADR-0031](docs/adr/0031-shared-body-idiophone-mode.md)): an allocation-free, persistent shared-body skeleton wired into the voice/resonator stack. It is silent groundwork — the re-strikable persistent-resonator behavior arrives in later milestones — so existing patches and the default patch are unchanged.
+
+### Code organization
+
+- Split four over-limit Lamath source files into focused submodules to satisfy the 600-line file-size lint: driver/contact patch configs out of `patch.rs`, the modulation-slot path policy out of `parameters/paths.rs`, and the driver/contact-range and expanded-parameter test groups out of their test files.
+
 ## v0.7.0 - 2026-06-02
 
 ### Cenedril

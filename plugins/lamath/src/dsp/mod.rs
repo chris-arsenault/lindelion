@@ -4,6 +4,7 @@ pub(crate) mod engine;
 mod excitation;
 pub(crate) mod master_stage;
 pub(crate) mod modal;
+mod shared_body;
 mod sympathetic_chamber;
 mod voice;
 pub(crate) mod waveguide;
@@ -20,9 +21,11 @@ pub(crate) use excitation::{
     MAX_EXCITATION_LAYERS, RuntimeExcitationSlot,
 };
 pub(crate) use master_stage::MasterStage;
+pub(crate) use shared_body::SharedBody;
 pub(crate) use sympathetic_chamber::SympatheticChamber;
 pub use voice::Oversampler2x;
 pub(crate) use voice::RESONATOR_OVERSAMPLING_LATENCY_SAMPLES;
+pub(crate) use voice::ResonatorStack;
 pub(crate) use voice::VoiceExpression;
 pub use voice::VoiceTrigger;
 pub use waveguide::WaveguideStyle;

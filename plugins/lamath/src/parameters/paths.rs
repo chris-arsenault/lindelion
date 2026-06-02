@@ -570,34 +570,6 @@ impl EnvelopeParameter {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ModulationSlotParameter {
-    Enabled,
-    Source,
-    Destination,
-    Amount,
-}
-
-impl ModulationSlotParameter {
-    fn plain_value(self, config: &ModulationConfig, slot: usize) -> Option<f32> {
-        let slot = config.slots.get(slot)?;
-        Some(match self {
-            Self::Enabled => bool_plain(slot.enabled),
-            Self::Source => slot.source.plain(),
-            Self::Destination => slot.destination.plain(),
-            Self::Amount => slot.amount,
-        })
-    }
-
-    fn apply_plain(self, config: &mut ModulationConfig, slot: usize, value: f32) {
-        let Some(slot) = config.slots.get_mut(slot) else {
-            return;
-        };
-        match self {
-            Self::Enabled => slot.enabled = bool_from_plain(value),
-            Self::Source => slot.source = ModulationSource::from_plain(value),
-            Self::Destination => slot.destination = ModulationDestination::from_plain(value),
-            Self::Amount => slot.amount = finite_value(value, -1.0, 1.0, 0.0),
-        }
-    }
-}
+// The modulation-slot parameter path lives in a separate file to keep this one under
+// the repository file-size limit; `include!` keeps it in this module verbatim.
+include!("paths/modulation_slot.rs");

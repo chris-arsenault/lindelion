@@ -36,7 +36,7 @@ use mapping::{
 };
 
 #[derive(Debug)]
-pub(super) struct ResonatorStack {
+pub(crate) struct ResonatorStack {
     resonator_a: ResonatorEngine,
     resonator_b: ResonatorEngine,
     pub(super) routing: StructuralParam<ResonatorRouting>,
@@ -55,7 +55,7 @@ pub(super) struct ResonatorStack {
 }
 
 impl ResonatorStack {
-    pub(super) fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: f32) -> Self {
         let routing = ResonatorRouting::Parallel {
             mix_a: 1.0,
             mix_b: 0.0,
@@ -87,11 +87,11 @@ impl ResonatorStack {
     /// M11 P9 staged output: the most recent `process_sample` mix with per-resonator
     /// output makeup applied (see [`makeup`]). The voice uses this for the audio path
     /// while tapping the energy bus from the raw (un-made-up) return value.
-    pub(super) fn staged_output(&self) -> f32 {
+    pub(crate) fn staged_output(&self) -> f32 {
         self.staged_output
     }
 
-    pub(super) fn set_base_configs(
+    pub(crate) fn set_base_configs(
         &mut self,
         resonator_a: ResonatorConfig,
         resonator_b: ResonatorConfig,
@@ -213,7 +213,7 @@ impl ResonatorStack {
         routing_sample.gain
     }
 
-    pub(super) fn process_sample(
+    pub(crate) fn process_sample(
         &mut self,
         excitation: f32,
         energy: f32,
@@ -281,7 +281,7 @@ impl ResonatorStack {
         loop_gain_from_configs(self.resonator_a_config, self.resonator_b_config)
     }
 
-    pub(super) fn clear(&mut self, sample_rate: f32) {
+    pub(crate) fn clear(&mut self, sample_rate: f32) {
         self.base_resonator_a_config = ResonatorConfig::Modal(ModalConfig::default());
         self.base_resonator_b_config = ResonatorConfig::Waveguide(WaveguideConfig::default());
         self.resonator_a_config = self.base_resonator_a_config;
