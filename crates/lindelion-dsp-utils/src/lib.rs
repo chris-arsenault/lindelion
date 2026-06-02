@@ -11,6 +11,7 @@ pub mod ola;
 pub mod params;
 pub mod phase;
 pub mod playback;
+pub mod reassign;
 pub mod resampling;
 pub mod saturation;
 pub mod smoothing;

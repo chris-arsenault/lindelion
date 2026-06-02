@@ -1,16 +1,20 @@
 DEFAULT_PLUGIN ?= lamath
 PLUGINS ?= lamath glirdir linnod
-ifeq ($(origin PLUGIN), undefined)
-BUILD_PLUGINS ?= $(PLUGINS)
-PLUGIN ?= $(DEFAULT_PLUGIN)
-else
-BUILD_PLUGINS ?= $(PLUGIN)
-endif
 MACOS_TARGET ?= aarch64-apple-darwin
 # Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
 # Kept separate from the macOS PLUGINS list above.
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
 WINDOWS_PLUGINS ?= cenedril caloma lumedir
+# `make build [PLUGIN=x]` and `make build-windows [PLUGIN=x]` build a single plugin when PLUGIN is
+# set on the command line, else the full macOS / Windows plugin lists respectively.
+ifeq ($(origin PLUGIN), undefined)
+BUILD_PLUGINS ?= $(PLUGINS)
+WINDOWS_BUILD_PLUGINS ?= $(WINDOWS_PLUGINS)
+PLUGIN ?= $(DEFAULT_PLUGIN)
+else
+BUILD_PLUGINS ?= $(PLUGIN)
+WINDOWS_BUILD_PLUGINS ?= $(PLUGIN)
+endif
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 # Repo root = the directory containing this Makefile. Robust to the invocation cwd (unlike $(CURDIR))
 # and unique per git worktree, so all build output is repo-local and worktrees never share a cache.
@@ -194,7 +198,7 @@ build-windows: cache-dir
 			if [ -e "$$dir/$$have" ] && [ ! -e "$$dir/$$want" ]; then ln -s "$$have" "$$dir/$$want"; fi; \
 		done; \
 	done
-	@for plugin in $(WINDOWS_PLUGINS); do \
+	@for plugin in $(WINDOWS_BUILD_PLUGINS); do \
 		bundle_name="$$(CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$$plugin" --field bundle-file)"; \
 		staged_bundle="$(VST3_STAGING_DIR)/$$bundle_name"; \
 		echo "Building Windows VST3 bundle for $$plugin..."; \

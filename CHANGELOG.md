@@ -2,6 +2,20 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.12.0 - 2026-06-02
+
+### Cenedril
+
+- Cenedril is feature-complete (M0–M6): the Windows-only passthrough Visualizer VST3 ships its full editor — a selectable **magnitude or time-frequency reassigned** spectrogram, peak/RMS/crest + BS.1770-4 LUFS meters, an analysis-signal panel (voicing, speech presence, onset/spectral flux, HNR, pitch), and controls for the view, frequency scale (log/linear), color map (magma/viridis/grayscale), and dB display range — with all editor settings persisted in plugin state across reload. The audio path stays a bit-exact, zero-latency, allocation-free parallel tap; the editor reads the analysis from lock-free cells of a single-component VST3 ([ADR-0040](docs/adr/0040-cenedril-analysis-and-editor-delivery.md), [spec](docs/plugins/cenedril.md)). On-target Windows load-and-run remains to be verified.
+
+### Shared DSP
+
+- Added `lindelion-dsp-utils::reassign::ReassignStft`, a forward-only method-of-reassignment STFT analyzer: per bin it emits the magnitude plus time/frequency reassignment offsets, allocation-free on the audio thread. It is Cenedril's single spectral tap (the magnitude spectrogram reads it as a byproduct of the reassigned analysis). See [docs/dsp/reassignment.md](docs/dsp/reassignment.md).
+
+### Build
+
+- `make build-windows` now accepts `PLUGIN=<name>` to cross-compile and stage a single Windows-only plugin (e.g. `make build-windows PLUGIN=cenedril`), mirroring macOS `make build PLUGIN=`. Without it, all `$(WINDOWS_PLUGINS)` build as before.
+
 ## v0.11.0 - 2026-06-02
 
 ### Lúmedir
