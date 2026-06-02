@@ -1,21 +1,24 @@
+use std::sync::Arc;
+
 use lindelion_plugin_shell::{
     AudioPlugin, ParameterInfo, PluginDescriptor, PluginState, ProcessContext, ProcessSetup,
 };
 use lindelion_speech_signals::SignalSnapshot;
 
-use crate::DeliveryWorker;
-use crate::delivery::{DeliveryConfig, DeliverySnapshot};
+use crate::delivery::DeliverySnapshot;
+use crate::{DeliveryReader, DeliveryWorker, SharedConfig, config_io};
 
 /// Lúmedir is a passthrough Speech-Coach effect: audio is mirrored to the output bit-exact at zero
 /// declared latency, while a mono mix is fed to the off-thread delivery worker, which assembles the
 /// delivery snapshot (rate/WPM, dynamism, pauses, clarity) the editor reads.
 pub const DESCRIPTOR: PluginDescriptor = PluginDescriptor::effect("Lumedir", *b"lindelion_lumedr");
 
-const STATE_FORMAT_VERSION: u32 = 1;
-
 #[derive(Default)]
 pub struct Lumedir {
     setup: ProcessSetup,
+    /// Live coaching config (syllables-per-word factor + target bands), shared with the editor
+    /// (writer) and the delivery worker (reads the factor). Persisted via [`crate::config_io`].
+    shared_config: Arc<SharedConfig>,
     /// Off-thread delivery worker, (re)built on `reset` at the host sample rate. The audio thread
     /// only feeds it (allocation-free); all analysis and aggregation happen on its worker thread.
     worker: Option<DeliveryWorker>,
@@ -34,10 +37,11 @@ impl AudioPlugin for Lumedir {
 
     fn reset(&mut self, setup: ProcessSetup) {
         self.setup = setup;
-        // Spawn the worker and size the feed buffer here (not on the audio thread).
+        // Spawn the worker and size the feed buffer here (not on the audio thread). The worker reads
+        // the live factor from the shared config, so it survives factor edits without a respawn.
         self.worker = Some(DeliveryWorker::new(
             setup.sample_rate as f32,
-            DeliveryConfig::default(),
+            Arc::clone(&self.shared_config),
         ));
         self.mono_scratch.clear();
         self.mono_scratch.resize(setup.max_block_size, 0.0);
@@ -57,11 +61,15 @@ impl AudioPlugin for Lumedir {
     }
 
     fn state(&self) -> PluginState {
-        PluginState::empty(STATE_FORMAT_VERSION)
+        // Serialize the live coaching config (factor + target bands) the editor has been editing.
+        config_io::to_plugin_state(&self.shared_config.to_config())
+            .unwrap_or_else(|_| PluginState::empty(config_io::FORMAT_VERSION))
     }
 
-    fn load_state(&mut self, _state: PluginState) {
-        // No persisted fields in M0; editor settings arrive in M6.
+    fn load_state(&mut self, state: PluginState) {
+        if let Ok(config) = config_io::from_plugin_state(state) {
+            self.shared_config.load_from_config(&config);
+        }
     }
 }
 
@@ -81,6 +89,17 @@ impl Lumedir {
             .as_ref()
             .map(DeliveryWorker::latest_snapshot)
             .unwrap_or_default()
+    }
+
+    /// A cloneable read handle onto the worker's snapshots, for the editor to poll off the audio
+    /// thread. `None` before `reset` has spawned the worker.
+    pub fn delivery_reader(&self) -> Option<DeliveryReader> {
+        self.worker.as_ref().map(DeliveryWorker::reader)
+    }
+
+    /// The shared coaching config (factor + target bands), for the editor to read and edit.
+    pub fn shared_config(&self) -> Arc<SharedConfig> {
+        Arc::clone(&self.shared_config)
     }
 }
 
@@ -151,5 +170,24 @@ mod tests {
             plugin.latest_delivery(),
             crate::delivery::DeliverySnapshot::default()
         );
+    }
+
+    #[test]
+    fn state_round_trips_the_coaching_config() {
+        use crate::config::{LumedirConfig, TargetBands};
+
+        let edited = LumedirConfig {
+            syllables_per_word: 1.9,
+            bands: TargetBands {
+                wpm_max: 175.0,
+                clarity_min: 0.7,
+                ..TargetBands::default()
+            },
+        };
+        // Load the edited config, then serialize via `state()` and confirm it round-trips.
+        let mut plugin = Lumedir::default();
+        plugin.load_state(crate::config_io::to_plugin_state(&edited).unwrap());
+        let decoded = crate::config_io::from_plugin_state(plugin.state()).unwrap();
+        assert_eq!(decoded, edited);
     }
 }

@@ -17,6 +17,7 @@ Per-module reference docs for DSP types in the Lindelion workspace. Each doc fol
 | [Onset detection](onset-detect.md) | `crates/lindelion-onset-detect/` | SuperFlux / energy / pitch-stability / manual-grid onset detectors, batch + streaming |
 | [Pitch detection](pitch-detect.md) | `crates/lindelion-pitch-detect/` | SwiftF0 ONNX-backed pitch tracker plus zero-crossing fallback |
 | [Phrase analysis](phrase-analysis.md) | `crates/lindelion-phrase-analysis/` | Pipeline orchestrator: pitch → onsets → note segmentation |
+| [Lúmedir delivery metrics](delivery-metrics.md) | `plugins/lumedir/src/` | Off-thread speaking-rate, pitch-dynamism, pause-structure, and clarity estimators with fixture validation |
 | [Resample Pro pitch shifting](resample-pro.md) | `crates/lindelion-pitch-shift/` + `plugins/linnod/src/runtime/prepared_resample_pro.rs` | Phase-aware stretch-plus-resample pitch shifting with setup-time Linnod slice preparation |
 | [Pitch-shift fidelity techniques](pitch-shift-techniques.md) | `crates/lindelion-pitch-shift/` | Catalog of evaluated pitch-shift techniques: active, retained-selectable, and backlogged, with findings ([ADR-0010](../adr/0010-resample-pro-fidelity-strategy.md)) |
 | [Ableton Complex Pro reference](ableton-complex-pro.md) | Public Ableton/zplane sources + Lindelion comparison | Clean-room reference for Complex Pro-style pitch and time-stretch behavior |

@@ -87,7 +87,7 @@ pub const LUMEDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata 
     processor_cid: [0x1AEDC013, 0x2B5C4D20, 0x9E3F7A85, 0xC1582FB6],
     controller_cid: [0x1AEDCD72, 0x7E9F4A31, 0xB2C16D39, 0x84F3A52E],
     controller_name: "Lumedir Controller",
-    single_component: false,
+    single_component: true,
 };
 
 pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {

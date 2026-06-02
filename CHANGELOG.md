@@ -2,6 +2,31 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.11.0 - 2026-06-02
+
+### Lúmedir
+
+- Validated Lúmedir M6 on Linux — the plugin is **feature-complete (M0–M6)**. Settings persistence (target bands + syllables-per-word factor) already round-trips from M5; M6 adds the validation surface: a **full VST3-boundary load/run test** (factory → `IComponent`/`IAudioProcessor` → `process`, asserting bit-exact 0-latency passthrough through the actual COM entry path a host uses, on Linux), a **bounded-allocation soak** over the delivery estimators (the repo's counting allocator via `count_allocations`, warmed past the 2000-frame pitch-dynamism window so a real leak would show as batch-over-batch growth), and an **off-thread worker stability soak** (finite/in-range snapshots over a long run, no deadlock, clean thread join). The soaks run via `make test-integration`; the VST3-boundary test runs in `make ci`.
+- The Windows `.vst3` is produced with a full MSVC link (`make build-windows`). The only validation that requires a Windows host — the editor window's *visual* rendering (Vizia is gated to the Windows target, ADR-0023) and loading into a third-party DAW — is a documented checklist in the plugin README; everything functional is proven on Linux.
+
+### Documentation
+
+- Moved Lúmedir's documentation to its durable home now that the feature is complete: removed the temporary root tracking docs (`LUMEDIR-VST-PLAN.md` + the `M0`–`M4` step files), added the spec [`docs/plugins/lumedir.md`](docs/plugins/lumedir.md), the delivery-metric DSP reference [`docs/dsp/delivery-metrics.md`](docs/dsp/delivery-metrics.md), and [ADR-0048](docs/adr/0048-lumedir-single-component.md) (single-component VST3); refreshed the architecture, docs index, AGENTS code map, and backlog.
+
+## v0.10.0 - 2026-06-02
+
+### Lúmedir
+
+- Built Lúmedir M5 — session summary + target-band scoring. The editor now scores each live metric against a configurable target band (`BandStatus`: below / in / above), shows an in/out-of-band status strip, and — under manual Start/Stop session control — accumulates an end-of-session summary (per-metric mean + fraction of samples in band). Session accumulation and the metric→status scoring are platform-neutral and `make ci`-tested; the summary/scoring/edit view is compile-checked on the Windows build.
+- Added configurable coaching config — the syllables-per-word factor plus per-metric target bands — with defaults grounded in public-speaking norms (speaking rate 120–160 WPM / 3.0–4.0 syl/s; pitch dynamism ≥ 3.0 semitones; pause fraction 0.10–0.30; clarity ≥ 0.6). The config persists in plugin state via the shared versioned-TOML patch format and is edited live through a lock-free `SharedConfig`; the delivery worker reads the factor each publish, so WPM tracks factor edits without a respawn (no audio-thread locks, ADR-0001). The editor exposes factor + band steppers.
+
+## v0.9.0 - 2026-06-02
+
+### Lúmedir
+
+- Built Lúmedir M4 — the **live running-readout** Vizia editor. Six delivery gauges (speaking rate, words/min, pitch dynamism, pause fraction, pause count, clarity) render through the shared `lindelion-ui::vizia_meter::meter_row`, updating ~15 fps from the off-thread delivery worker's snapshots — read on the UI thread through a lock-free `DeliveryReader`, never the audio thread. The metric→bar-fill mappings and value formatters are platform-neutral and `make ci`-tested (display spans anchored on the `FIXTURES.md` delivery targets); the Vizia view itself is compile-checked on the Windows build and visually verified on a Windows host.
+- Converted Lúmedir to a **single-component VST3** (one COM object implements `IComponent` + `IAudioProcessor` + `IEditController`), replacing the two-class processor/controller split. Lúmedir exposes no host parameters, so the separate controller existed only to forward `createView`; folding it onto the processor lets the editor read the worker's delivery snapshots directly — no `IConnectionPoint`/`IMessage` marshaling — matching Cenedril and Calóma.
+
 ## v0.8.3 - 2026-06-02
 
 ### Tests

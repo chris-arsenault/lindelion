@@ -78,11 +78,18 @@ impl DeliveryAggregator {
             .update(signal.voicing_state, signal.onset_flux_high);
     }
 
-    /// Assemble the current delivery snapshot.
+    /// Assemble the current delivery snapshot using the aggregator's configured factor.
     pub fn snapshot(&self) -> DeliverySnapshot {
+        self.snapshot_with_factor(self.config.syllables_per_word)
+    }
+
+    /// Assemble the current delivery snapshot, deriving WPM with the supplied syllables-per-word
+    /// factor. The worker passes the live factor from [`crate::SharedConfig`] so editor edits to the
+    /// factor are reflected without respawning the aggregator.
+    pub fn snapshot_with_factor(&self, syllables_per_word: f32) -> DeliverySnapshot {
         DeliverySnapshot {
             syllables_per_second: self.rate.syllables_per_second(),
-            words_per_minute: self.rate.words_per_minute(self.config.syllables_per_word),
+            words_per_minute: self.rate.words_per_minute(syllables_per_word),
             pitch_dynamism_semitones: self.dynamism.semitone_std(),
             pause_fraction: self.pauses.pause_fraction(),
             pause_count: self.pauses.pause_count() as u32,
@@ -162,5 +169,65 @@ mod tests {
         }
         aggregator.reset();
         assert_eq!(aggregator.snapshot(), DeliverySnapshot::default());
+    }
+
+    /// Soak (bounded allocation): the delivery estimators are the M5/M1–M3 leak surface (every
+    /// other crate's analysis is shared + separately tested). Over a long run — warmed *past* the
+    /// pitch-dynamism window (2000 voiced frames) so allocation is at steady state — per-iteration
+    /// allocation must not keep growing. Measured with the repo's counting allocator
+    /// (`count_allocations`, the `assert_no_allocations!` family), not a new tool. Gated to the
+    /// integration suite (long run); run via `make test-integration`.
+    #[test]
+    #[cfg_attr(
+        not(feature = "integration-tests"),
+        ignore = "soak: long run past the 2000-frame dynamism window; run via make test-integration"
+    )]
+    fn aggregator_soak_does_not_grow_allocations() {
+        let mut aggregator = DeliveryAggregator::new(SR, DeliveryConfig::default());
+        let block = voiced_block(256);
+        let voiced = |i: usize| SignalSnapshot {
+            voicing_state: 2.0,
+            pitch_hz: if i.is_multiple_of(2) { 150.0 } else { 160.0 },
+            onset_flux_high: 4.0,
+            ..SignalSnapshot::default()
+        };
+
+        // Warm past the dynamism window so `semitone_std`'s window-sized scratch is at full size and
+        // per-iteration allocation has plateaued (the warmup ramp would otherwise mask the test).
+        for i in 0..2_500 {
+            aggregator.update(&block, &voiced(i));
+            let _ = aggregator.snapshot();
+        }
+
+        const BATCH: usize = 300;
+        let first = lindelion_test_allocator::count_allocations(|| {
+            for i in 0..BATCH {
+                aggregator.update(&block, &voiced(i));
+                let _ = aggregator.snapshot();
+            }
+        });
+        let second = lindelion_test_allocator::count_allocations(|| {
+            for i in 0..BATCH {
+                aggregator.update(&block, &voiced(i));
+                let _ = aggregator.snapshot();
+            }
+        });
+
+        // No batch-over-batch growth ⇒ no unbounded accumulation over a soak.
+        assert!(
+            second <= first,
+            "steady-state allocations grew over the soak: first batch={first}, second batch={second}"
+        );
+        // Still finite + in-range after the soak.
+        let snapshot = aggregator.snapshot();
+        assert!(
+            snapshot.syllables_per_second.is_finite()
+                && snapshot.words_per_minute.is_finite()
+                && snapshot.pitch_dynamism_semitones.is_finite()
+        );
+        assert!(
+            (0.0..=1.0).contains(&snapshot.clarity)
+                && (0.0..=1.0).contains(&snapshot.pause_fraction)
+        );
     }
 }

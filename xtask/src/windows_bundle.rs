@@ -127,12 +127,14 @@ mod tests {
     }
 
     #[test]
-    fn lumedir_module_info_uses_effect_metadata() {
+    fn lumedir_module_info_is_single_component_fx() {
         let spec = BundleSpec::from_plugin("lumedir").expect("lumedir spec");
         let module_info = module_info(&spec);
         assert!(module_info.contains(r#""Name": "Lumedir""#));
-        assert!(module_info.contains("1AEDC0132B5C4D209E3F7A85C1582FB6"));
-        assert!(module_info.contains("1AEDCD727E9F4A31B2C16D3984F3A52E"));
+        assert!(module_info.contains("1AEDC0132B5C4D209E3F7A85C1582FB6")); // the component CID
         assert!(module_info.contains(r#""Fx""#));
+        // Single-component: no separate controller class.
+        assert!(!module_info.contains("1AEDCD727E9F4A31B2C16D3984F3A52E"));
+        assert!(!module_info.contains("Component Controller Class"));
     }
 }

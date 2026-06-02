@@ -33,6 +33,7 @@
 | [0029](0029-m11-gain-staging.md) | M11 gain staging: per-family makeup and master soft-clip | Accepted | 2026-06-01 |
 | [0030](0030-bow-friction-driver.md) | Bow friction driver | Accepted | 2026-06-01 |
 | [0031](0031-shared-body-idiophone-mode.md) | Shared-body idiophone mode (re-strikable persistent resonator) | Accepted | 2026-06-01 |
+| [0048](0048-lumedir-single-component.md) | Lúmedir is a single-component VST3 | Accepted | 2026-06-02 |
 
 ## Reserved number ranges (parallel workstreams)
 
@@ -46,5 +47,5 @@ unused tail once that stream is merged and done.
 | ----- | ---------- |
 | 0032–0039 | Lamath resonator / shared-body idiophone (M2–M8) |
 | 0040–0047 | Cenedril visualizer (M4–M6) |
-| 0048–0055 | Lúmedir speech-coach (M4–M6) |
-| 0056+ | Unreserved — next new workstream |
+| ~~0049–0055~~ | Lúmedir speech-coach — **done (M0–M6); used only 0048, tail reclaimed** |
+| 0049+ | Unreserved — next new workstream |

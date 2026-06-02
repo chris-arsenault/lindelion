@@ -1,40 +1,27 @@
 use lindelion_plugin_shell::vst3::{Vst3ClassRegistration, Vst3PluginFactory};
 use vst3::{ComPtr, ComWrapper, Steinberg::*};
 
-use crate::{DESCRIPTOR, VST3_BUNDLE_METADATA};
+use crate::DESCRIPTOR;
 
-use super::{LumedirVst3Controller, LumedirVst3Processor, SUBCATEGORY};
+use super::{LumedirVst3Processor, SUBCATEGORY};
 
-const CONTROLLER_NAME: &str = VST3_BUNDLE_METADATA.controller_name;
-
-const LUMEDIR_VST3_CLASSES: &[Vst3ClassRegistration] = &[
-    Vst3ClassRegistration::audio_processor(
-        LumedirVst3Processor::CID,
-        DESCRIPTOR.name,
-        SUBCATEGORY,
-        create_processor,
-    ),
-    Vst3ClassRegistration::edit_controller(
-        LumedirVst3Controller::CID,
-        CONTROLLER_NAME,
-        create_controller,
-    ),
-];
+// Single-component: one Audio Module Class that also implements `IEditController`. The host queries
+// the controller interface on this object, so there is no separate controller class registration.
+const LUMEDIR_VST3_CLASSES: &[Vst3ClassRegistration] = &[Vst3ClassRegistration::audio_processor(
+    LumedirVst3Processor::CID,
+    DESCRIPTOR.name,
+    SUBCATEGORY,
+    create_component,
+)];
 
 fn lumedir_vst3_factory() -> Vst3PluginFactory {
     Vst3PluginFactory::new(&DESCRIPTOR, LUMEDIR_VST3_CLASSES)
 }
 
-fn create_processor() -> ComPtr<FUnknown> {
+fn create_component() -> ComPtr<FUnknown> {
     ComWrapper::new(LumedirVst3Processor::new())
         .to_com_ptr::<FUnknown>()
-        .expect("processor must expose FUnknown")
-}
-
-fn create_controller() -> ComPtr<FUnknown> {
-    ComWrapper::new(LumedirVst3Controller::new())
-        .to_com_ptr::<FUnknown>()
-        .expect("controller must expose FUnknown")
+        .expect("component must expose FUnknown")
 }
 
 lindelion_plugin_shell::export_vst3_entrypoints!(lumedir_vst3_factory());
@@ -48,28 +35,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lumedir_registers_processor_and_controller_with_shared_factory() {
+    fn lumedir_registers_a_single_component_class() {
         let factory = lumedir_vst3_factory();
 
-        assert_eq!(factory.class_count(), 2);
-        assert_eq!(unsafe { factory.countClasses() }, 2);
+        assert_eq!(factory.class_count(), 1);
+        assert_eq!(unsafe { factory.countClasses() }, 1);
 
-        let mut processor = unsafe { std::mem::zeroed::<PClassInfo2>() };
+        let mut component = unsafe { std::mem::zeroed::<PClassInfo2>() };
         assert_eq!(
-            unsafe { factory.getClassInfo2(0, &mut processor) },
+            unsafe { factory.getClassInfo2(0, &mut component) },
             kResultOk
         );
-        assert_eq!(processor.cid, LumedirVst3Processor::CID);
-        assert_eq!(c_string(&processor.name), DESCRIPTOR.name);
-        assert_eq!(c_string(&processor.subCategories), SUBCATEGORY);
-
-        let mut controller = unsafe { std::mem::zeroed::<PClassInfo>() };
-        assert_eq!(
-            unsafe { factory.getClassInfo(1, &mut controller) },
-            kResultOk
-        );
-        assert_eq!(controller.cid, LumedirVst3Controller::CID);
-        assert_eq!(c_string(&controller.name), CONTROLLER_NAME);
+        assert_eq!(component.cid, LumedirVst3Processor::CID);
+        assert_eq!(c_string(&component.name), DESCRIPTOR.name);
+        assert_eq!(c_string(&component.subCategories), SUBCATEGORY);
     }
 
     fn c_string(buffer: &[c_char]) -> String {

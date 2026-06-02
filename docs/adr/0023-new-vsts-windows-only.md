@@ -72,8 +72,9 @@ stack.
 - **Generic host-parameter editor only** (no custom UI). Could expose a parameter-style plugin's
   controls, but not the visual plugins, whose value *is* custom rendering (Cenedril's spectrogram,
   the Coach's readouts — both expressible in Vizia). Rejected as the general approach. (As built,
-  Calóma went further: it is self-contained with a custom Vizia editor and **no host parameters** —
-  [ADR-0020](0020-caloma-speech-vst-packaging.md).)
+  Calóma and the Speech Coach (Lúmedir) went further: both are self-contained with a custom Vizia
+  editor and **no host parameters** — [ADR-0020](0020-caloma-speech-vst-packaging.md),
+  [ADR-0048](0048-lumedir-single-component.md).)
 
 ## Consequences
 
