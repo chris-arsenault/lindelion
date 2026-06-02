@@ -10,7 +10,7 @@ MACOS_TARGET ?= aarch64-apple-darwin
 # Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
 # Kept separate from the macOS PLUGINS list above.
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
-WINDOWS_PLUGINS ?= cenedril caloma
+WINDOWS_PLUGINS ?= cenedril caloma lumedir
 XWIN_CACHE_DIR ?= $(HOME)/.cache/cargo-xwin
 # Repo root = the directory containing this Makefile. Robust to the invocation cwd (unlike $(CURDIR))
 # and unique per git worktree, so all build output is repo-local and worktrees never share a cache.
@@ -59,6 +59,8 @@ test-models:
 	cargo test -p lindelion-speech-bass-enhancer -p lindelion-speech-consonant-transient -p lindelion-speech-dynamic-eq -p lindelion-speech-upward-expander --test integration -- --include-ignored
 	cargo test -p lindelion-speech-air-exciter -p lindelion-speech-dereverberation -p lindelion-speech-room-tone -p lindelion-speech-spectral-contrast --test integration -- --include-ignored
 	cargo test -p caloma --test chain --test chain_e2e --test full_chain_fidelity -- --include-ignored
+	cargo test -p lumedir --test dynamism_fixtures -- --include-ignored
+	cargo test -p lumedir --test delivery_fixtures -- --include-ignored
 
 # Offline default-tuning (M5): run the seeded full-chain search per signal order and write the
 # winning patches into plugins/caloma/src/defaults/<order>.toml. Heavy (loads the NN models, runs the
@@ -82,6 +84,8 @@ test-integration:
 	cargo test -p lindelion-plugin-shell --features integration-tests
 	cargo test -p lindelion-sample-library --features integration-tests
 	cargo test -p galad --features integration-tests
+	cargo test -p lumedir --test integration --features test-sync-analysis -- --include-ignored
+	cargo test -p lumedir --features integration-tests
 
 bench:
 	cargo bench --workspace --no-fail-fast
@@ -264,7 +268,7 @@ release:
 	@if [ "$$(uname -s)" = "Darwin" ]; then $(MAKE) release-macos; else $(MAKE) release-windows; fi
 
 # Windows release: galad.exe (via host-windows-release) + the Windows VST3 plugin bundles
-# ($(WINDOWS_PLUGINS): cenedril, +caloma/lumedir as they land), cross-compiled into target-release.
+# ($(WINDOWS_PLUGINS): cenedril, caloma, lumedir), cross-compiled into target-release.
 release-windows: host-windows-release
 	@for plugin in $(WINDOWS_PLUGINS); do \
 		bundle_name="$$(CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$$plugin" --field bundle-file)"; \

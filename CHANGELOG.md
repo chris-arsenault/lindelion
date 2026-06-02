@@ -2,7 +2,13 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
-## v0.7.1 - 2026-06-02
+## v0.8.0 - 2026-06-02
+
+### Lúmedir
+
+- Built Lúmedir (M0–M3), the Windows-only passthrough Speech-Coach VST3 (crate `plugins/lumedir`): audio passes through bit-exact at zero latency while a mono mix feeds an off-thread delivery worker that computes live delivery metrics. Two-class VST3 with the Windows `.vst3` bundle path (`WINDOWS_PLUGINS += lumedir`) and a placeholder Vizia editor (`lindelion-ui::lumedir_vizia`); the live readout view is a later milestone.
+- Added the delivery-metric estimators, each plugin-local, pure, and fixture-validated: **speaking rate/cadence** (an envelope-peak syllable-nuclei detector over the intensity contour → syllables/min over a sliding window, with WPM derived via a configurable syllables-per-word factor); **pitch dynamism** (windowed voiced-f0 from SwiftF0 → semitone standard deviation, so flat reads far below animated); **pause structure** (energy-frame silence runs → pause fraction/count/length); and **clarity** (voicing ratio plus onset sharpness).
+- Assembled the metrics into a complete delivery snapshot published by a plugin-local off-thread `DeliveryWorker` (transport modeled on the existing analysis worker, reusing the shared `SignalAnalyzer`/`lindelion-speech-signals`), exposed to the editor via `latest_delivery()`. The estimators' heavy/ONNX tests are gated to `make test-integration` / `make test-models`, out of the `make ci` unit path.
 
 ### Lamath
 

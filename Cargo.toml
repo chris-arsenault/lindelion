@@ -22,6 +22,7 @@ members = [
     "plugins/glirdir",
     "plugins/lamath",
     "plugins/linnod",
+    "plugins/lumedir",
     "speech/air-exciter",
     "speech/bass-enhancer",
     "speech/compressor",
@@ -47,7 +48,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 license = "UNLICENSED"
 authors = ["Ahara"]

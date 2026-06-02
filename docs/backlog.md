@@ -42,6 +42,8 @@ Detailed milestones and the reuse/benchmark strategy live in
   [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `CENEDRIL-VST-PLAN.md`).
 - Build Lúmedir, a Windows-only Speech-Coach VST3 (cadence/rate, pitch dynamism, pauses, clarity vs
   target bands; [ADR-0023](adr/0023-new-vsts-windows-only.md); plan at `LUMEDIR-VST-PLAN.md`).
+  Built M0–M3 (passthrough + off-thread `DeliveryWorker` computing the four delivery metrics).
+  Remaining: the Vizia live-readout/summary editor view (M4+) and on-target Windows load-verify.
 
 ## Host integration
 
