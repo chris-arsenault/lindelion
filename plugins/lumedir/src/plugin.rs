@@ -3,8 +3,8 @@ use lindelion_plugin_shell::{
 };
 use lindelion_speech_signals::SignalSnapshot;
 
-use crate::DeliveryWorker;
 use crate::delivery::{DeliveryConfig, DeliverySnapshot};
+use crate::{DeliveryReader, DeliveryWorker};
 
 /// Lúmedir is a passthrough Speech-Coach effect: audio is mirrored to the output bit-exact at zero
 /// declared latency, while a mono mix is fed to the off-thread delivery worker, which assembles the
@@ -81,6 +81,12 @@ impl Lumedir {
             .as_ref()
             .map(DeliveryWorker::latest_snapshot)
             .unwrap_or_default()
+    }
+
+    /// A cloneable read handle onto the worker's snapshots, for the editor to poll off the audio
+    /// thread. `None` before `reset` has spawned the worker.
+    pub fn delivery_reader(&self) -> Option<DeliveryReader> {
+        self.worker.as_ref().map(DeliveryWorker::reader)
     }
 }
 

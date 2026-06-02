@@ -2,6 +2,13 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.9.0 - 2026-06-02
+
+### Lúmedir
+
+- Built Lúmedir M4 — the **live running-readout** Vizia editor. Six delivery gauges (speaking rate, words/min, pitch dynamism, pause fraction, pause count, clarity) render through the shared `lindelion-ui::vizia_meter::meter_row`, updating ~15 fps from the off-thread delivery worker's snapshots — read on the UI thread through a lock-free `DeliveryReader`, never the audio thread. The metric→bar-fill mappings and value formatters are platform-neutral and `make ci`-tested (display spans anchored on the `FIXTURES.md` delivery targets); the Vizia view itself is compile-checked on the Windows build and visually verified on a Windows host.
+- Converted Lúmedir to a **single-component VST3** (one COM object implements `IComponent` + `IAudioProcessor` + `IEditController`), replacing the two-class processor/controller split. Lúmedir exposes no host parameters, so the separate controller existed only to forward `createView`; folding it onto the processor lets the editor read the worker's delivery snapshots directly — no `IConnectionPoint`/`IMessage` marshaling — matching Cenedril and Calóma.
+
 ## v0.8.3 - 2026-06-02
 
 ### Tests

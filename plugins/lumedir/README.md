@@ -9,12 +9,18 @@ attach — per [ADR-0023](../../docs/adr/0023-new-vsts-windows-only.md), reusing
 platform foundation; it runs in the Galad host and Windows DAWs. (The crate/dir is `lumedir`,
 matching the product name; an earlier codename was `coach`.)
 
-**Current state (M0):** the crate exists with a bit-exact, zero-latency passthrough processor that
-**feeds the off-thread analysis worker** (`lindelion-speech-signals`), the Windows `.vst3` bundle
-path, and a placeholder Vizia editor. The delivery-metric estimators (speaking rate M1, pitch
-dynamism + pauses M2, clarity M3), the live readout/summary views (M4/M5), and persistence (M6) are
-later milestones. The cross-platform DSP/processor and Vizia view logic are tested in `make ci`
-(Linux); the `IPlugView`→`HWND` baseview attach and the Windows bundle are Windows-gated.
+**Current state (M0–M4):** a bit-exact, zero-latency passthrough processor that **feeds the
+off-thread delivery worker** (`DeliveryWorker` over `lindelion-speech-signals`), the Windows `.vst3`
+bundle path, the M1–M3 delivery-metric estimators (speaking rate, pitch dynamism, pause structure,
+clarity) assembled into a `DeliverySnapshot`, and the M4 **live running-readout** Vizia editor —
+delivery gauges rendered through the shared `lindelion-ui::vizia_meter::meter_row`, polling the
+worker's snapshots off the audio thread. It is a **single-component VST3** (one COM object is
+processor + controller), so the editor reads the worker's snapshots directly through a lock-free
+`DeliveryReader` — mirroring Cenedril and Calóma, which also expose no host parameters. The
+end-of-session summary + target-band scoring (M5) and persistence (M6) are later milestones. The
+cross-platform DSP/processor, the delivery source/host wiring, and the metric→gauge mappings are
+tested in `make ci` (Linux); the Vizia view, the `IPlugView`→`HWND` baseview attach, and the Windows
+bundle are Windows-gated (compile-checked via the Windows build, visuals verified on a Windows host).
 
 ## Build (Windows VST3)
 

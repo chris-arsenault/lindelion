@@ -195,6 +195,36 @@ impl DeliveryWorker {
     pub fn latest_snapshot(&self) -> SignalSnapshot {
         self.shared.signal_snapshot()
     }
+
+    /// A cloneable, `Send + Sync` read handle onto the worker's published snapshots, for the editor
+    /// (UI thread) to poll. It shares the same lock-free atomic cells the worker stores into, so it
+    /// never touches the audio thread or the `RefCell<Lumedir>` — mirroring Cenedril's `frame_ring`
+    /// handle to its audio→editor ring.
+    pub fn reader(&self) -> DeliveryReader {
+        DeliveryReader {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
+/// A lock-free read handle onto a [`DeliveryWorker`]'s latest published snapshots. Holds a clone of
+/// the worker's `Arc<Shared>`, so reads are atomic loads — safe from the editor thread, allocation-
+/// free, and unaffected by the worker's lifetime.
+#[derive(Clone)]
+pub struct DeliveryReader {
+    shared: Arc<Shared>,
+}
+
+impl DeliveryReader {
+    /// The latest delivery snapshot (default before the worker has published anything).
+    pub fn latest_delivery(&self) -> DeliverySnapshot {
+        self.shared.delivery_snapshot()
+    }
+
+    /// The latest underlying signal snapshot.
+    pub fn latest_snapshot(&self) -> SignalSnapshot {
+        self.shared.signal_snapshot()
+    }
 }
 
 impl Drop for DeliveryWorker {
@@ -209,6 +239,14 @@ impl Drop for DeliveryWorker {
 #[cfg(all(test, not(feature = "test-sync-analysis")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reader_starts_at_the_default_delivery_snapshot() {
+        let worker = DeliveryWorker::new(48_000.0, DeliveryConfig::default());
+        let reader = worker.reader();
+        assert_eq!(reader.latest_delivery(), DeliverySnapshot::default());
+        assert_eq!(reader.latest_snapshot(), SignalSnapshot::default());
+    }
 
     #[test]
     fn push_and_latest_are_allocation_free() {

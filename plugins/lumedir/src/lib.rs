@@ -9,7 +9,7 @@ pub mod plugin;
 pub mod speaking_rate;
 mod vst3_entry;
 
-pub use delivery_worker::DeliveryWorker;
+pub use delivery_worker::{DeliveryReader, DeliveryWorker};
 
 pub use lindelion_plugin_metadata::LUMEDIR_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;
 pub use plugin::{DESCRIPTOR, Lumedir};

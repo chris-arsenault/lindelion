@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::ffi::c_char;
 
 use lindelion_plugin_shell::{
     AudioPlugin, ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
@@ -11,20 +12,31 @@ use lindelion_plugin_shell::{
 };
 use vst3::{Class, Steinberg::Vst::*, Steinberg::*, uid};
 
-use crate::Lumedir;
+use crate::{DeliveryReader, Lumedir};
 
 pub(super) const LUMEDIR_BUSES: [Vst3BusInfo; 2] = [
     Vst3BusInfo::audio_input(2, "Input"),
     Vst3BusInfo::audio_output(2, "Output"),
 ];
 
+/// Lúmedir is a **single-component** plugin: one COM object implements `IComponent` +
+/// `IAudioProcessor` + `IEditController`, so the editor (`createView`) reads the off-thread delivery
+/// worker's snapshots **directly** through a cloned `DeliveryReader` — no message marshaling, no
+/// shared-state handshake (matches Cenedril/Calóma, which also expose no host parameters). (`vst3`
+/// allows the shared `IPluginBase` because both `IComponentTrait` and `IEditControllerTrait` extend
+/// `IPluginBaseTrait`.)
 pub(super) struct LumedirVst3Processor {
     plugin: RefCell<Lumedir>,
     setup: Cell<ShellProcessSetup>,
 }
 
 impl Class for LumedirVst3Processor {
-    type Interfaces = (IComponent, IAudioProcessor, IProcessContextRequirements);
+    type Interfaces = (
+        IComponent,
+        IAudioProcessor,
+        IProcessContextRequirements,
+        IEditController,
+    );
 }
 
 impl LumedirVst3Processor {
@@ -35,13 +47,6 @@ impl LumedirVst3Processor {
         crate::VST3_BUNDLE_METADATA.processor_cid[3],
     );
 
-    const CONTROLLER_CID: TUID = uid(
-        crate::VST3_BUNDLE_METADATA.controller_cid[0],
-        crate::VST3_BUNDLE_METADATA.controller_cid[1],
-        crate::VST3_BUNDLE_METADATA.controller_cid[2],
-        crate::VST3_BUNDLE_METADATA.controller_cid[3],
-    );
-
     pub(super) fn new() -> Self {
         let setup = ShellProcessSetup::default();
         let mut plugin = Lumedir::default();
@@ -50,6 +55,11 @@ impl LumedirVst3Processor {
             plugin: RefCell::new(plugin),
             setup: Cell::new(setup),
         }
+    }
+
+    /// A cloneable read handle onto the delivery worker's snapshots, for the editor view to poll.
+    pub(super) fn delivery_reader(&self) -> Option<DeliveryReader> {
+        self.plugin.borrow().delivery_reader()
     }
 }
 
@@ -64,12 +74,10 @@ impl IPluginBaseTrait for LumedirVst3Processor {
 }
 
 impl IComponentTrait for LumedirVst3Processor {
-    unsafe fn getControllerClassId(&self, class_id: *mut TUID) -> tresult {
-        if class_id.is_null() {
-            return kInvalidArgument;
-        }
-        *class_id = Self::CONTROLLER_CID;
-        kResultOk
+    unsafe fn getControllerClassId(&self, _class_id: *mut TUID) -> tresult {
+        // Single-component: this object is its own controller, so there is no separate controller
+        // class. The host detects this and queries `IEditController` on the component.
+        kNotImplemented
     }
 
     unsafe fn setIoMode(&self, _mode: IoMode) -> tresult {
@@ -231,6 +239,72 @@ impl IAudioProcessorTrait for LumedirVst3Processor {
 impl IProcessContextRequirementsTrait for LumedirVst3Processor {
     unsafe fn getProcessContextRequirements(&self) -> u32 {
         0
+    }
+}
+
+// Single-component edit controller: Lúmedir exposes no parameters; `createView` returns the editor
+// view, which (on Windows) reads this component's delivery snapshots directly.
+impl IEditControllerTrait for LumedirVst3Processor {
+    unsafe fn setComponentState(&self, _state: *mut IBStream) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn setState(&self, _state: *mut IBStream) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn getState(&self, _state: *mut IBStream) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn getParameterCount(&self) -> i32 {
+        0
+    }
+
+    unsafe fn getParameterInfo(&self, _param_index: i32, _info: *mut ParameterInfo) -> tresult {
+        kInvalidArgument
+    }
+
+    unsafe fn getParamStringByValue(
+        &self,
+        _id: u32,
+        _value_normalized: f64,
+        _string: *mut String128,
+    ) -> tresult {
+        kInvalidArgument
+    }
+
+    unsafe fn getParamValueByString(
+        &self,
+        _id: u32,
+        _string: *mut TChar,
+        _value_normalized: *mut f64,
+    ) -> tresult {
+        kInvalidArgument
+    }
+
+    unsafe fn normalizedParamToPlain(&self, _id: u32, value_normalized: f64) -> f64 {
+        value_normalized
+    }
+
+    unsafe fn plainParamToNormalized(&self, _id: u32, plain_value: f64) -> f64 {
+        plain_value
+    }
+
+    unsafe fn getParamNormalized(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    unsafe fn setParamNormalized(&self, _id: u32, _value: f64) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn setComponentHandler(&self, _handler: *mut IComponentHandler) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn createView(&self, _name: *const c_char) -> *mut IPlugView {
+        super::editor::create_editor_view(self)
     }
 }
 
