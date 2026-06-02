@@ -1,5 +1,6 @@
 // Cenedril — Windows-only passthrough Visualizer VST3 (M0 scaffold).
 
+pub mod analysis;
 pub mod plugin;
 mod vst3_entry;
 

@@ -11,6 +11,7 @@ pub const LAMATH_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     processor_cid: [0x4B410E03, 0x80AD49B6, 0x9B7D5479, 0xF4A9B0D1],
     controller_cid: [0x15C8B012, 0xF4B64F5E, 0x93D9AA38, 0x69383E3B],
     controller_name: "Lamath Controller",
+    single_component: false,
 };
 
 pub const GLIRDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
@@ -24,6 +25,7 @@ pub const GLIRDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata 
     processor_cid: [0x7C2E2B8A, 0xB1C44F0D, 0xA6F92427, 0x6C9E0D5B],
     controller_cid: [0x0D0466D2, 0x53E446E5, 0x8E90CF13, 0x25B5E241],
     controller_name: "Glirdir Controller",
+    single_component: false,
 };
 
 pub const LINNOD_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
@@ -37,6 +39,7 @@ pub const LINNOD_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     processor_cid: [0x8EDB8B28, 0x7BC44EDC, 0xA13D9D83, 0x2A84A152],
     controller_cid: [0x34F2E7B1, 0x8D9C4D56, 0xB6D72819, 0x62D1C0AA],
     controller_name: "Linnod Controller",
+    single_component: false,
 };
 
 pub const CENEDRIL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
@@ -50,6 +53,7 @@ pub const CENEDRIL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata
     processor_cid: [0xCE9ED713, 0x1A5B4C20, 0x8F3D6E94, 0xB2470FA1],
     controller_cid: [0xCE9EDC72, 0x6D8E4F31, 0xA1B05C28, 0x73E2941D],
     controller_name: "Cenedril Controller",
+    single_component: true,
 };
 
 pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {

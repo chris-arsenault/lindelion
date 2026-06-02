@@ -9,12 +9,12 @@ use lindelion_plugin_shell::vst3::{
 use lindelion_ui::cenedril_vizia::{CENEDRIL_EDITOR_HEIGHT, CENEDRIL_EDITOR_WIDTH};
 use vst3::{ComWrapper, Steinberg::*};
 
-use super::CenedrilVst3Controller;
+use super::CenedrilVst3Processor;
 
 const EDITOR_SIZE: FixedSizePlugViewSize =
     FixedSizePlugViewSize::new(CENEDRIL_EDITOR_WIDTH, CENEDRIL_EDITOR_HEIGHT);
 
-pub(super) fn create_editor_view(controller: &CenedrilVst3Controller) -> *mut IPlugView {
+pub(super) fn create_editor_view(controller: &CenedrilVst3Processor) -> *mut IPlugView {
     ComWrapper::new(FixedSizePlugView::new(
         CenedrilEditorView::new(controller),
         EDITOR_SIZE,
@@ -26,13 +26,13 @@ pub(super) fn create_editor_view(controller: &CenedrilVst3Controller) -> *mut IP
 
 struct CenedrilEditorView {
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-    controller: *const CenedrilVst3Controller,
+    controller: *const CenedrilVst3Processor,
     #[cfg(target_os = "windows")]
     editor: RefCell<Option<lindelion_ui::cenedril_vizia::CenedrilViziaEditor>>,
 }
 
 impl CenedrilEditorView {
-    fn new(controller: &CenedrilVst3Controller) -> Self {
+    fn new(controller: &CenedrilVst3Processor) -> Self {
         Self {
             controller,
             #[cfg(target_os = "windows")]
@@ -47,8 +47,13 @@ impl FixedSizePlugViewDelegate for CenedrilEditorView {
         {
             let mut editor = self.editor.borrow_mut();
             *editor = None;
-            let host =
-                lindelion_ui::cenedril_vizia::CenedrilEditorHost::new(self.controller as usize);
+            let component = unsafe { &*self.controller };
+            let source: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SpectrogramSource> =
+                std::sync::Arc::new(crate::analysis::CenedrilFrameSource::new(
+                    component.frame_ring(),
+                    component.sample_rate(),
+                ));
+            let host = lindelion_ui::cenedril_vizia::CenedrilEditorHost::new(source);
             *editor = Some(unsafe {
                 lindelion_ui::cenedril_vizia::CenedrilViziaEditor::attach(
                     parent,
@@ -85,7 +90,7 @@ mod tests {
 
     #[test]
     fn create_editor_view_returns_non_null_plug_view() {
-        let controller = CenedrilVst3Controller::new();
+        let controller = CenedrilVst3Processor::new();
         let view = create_editor_view(&controller);
         assert!(!view.is_null());
         // Reclaim the leaked COM reference created by `into_raw` so the test allocates nothing net.

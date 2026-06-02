@@ -93,7 +93,8 @@ Prove the reusable Windows editor attach before building views on it. **Expanded
   glitch on open/close.
 
 ### M2 — Realtime analysis core + lock-free snapshot hand-off [depends on M0]
-The allocation-free audio-thread analysis and the stream to the editor.
+The allocation-free audio-thread analysis and the stream to the editor. **Expanded to steps in
+[`CENEDRIL-M2-STEPS.md`](CENEDRIL-M2-STEPS.md).**
 - Audio thread, allocation-free: `StftProcessor` (magnitude frames), peak/RMS, and **LUFS**
   (BS.1770 K-weighting + integration, built new) → a **lock-free SPSC ring** of frames + a meter
   snapshot. An **off-thread worker** runs `SignalAnalyzer` → `SignalSnapshot`s.
@@ -103,7 +104,7 @@ The allocation-free audio-thread analysis and the stream to the editor.
   cross-platform in `make ci`.
 
 ### M3 — Spectrogram view (STFT-magnitude) [depends on M1, M2]
-The core display.
+The core display. **Expanded to steps in [`CENEDRIL-M3-STEPS.md`](CENEDRIL-M3-STEPS.md).**
 - Render a scrolling STFT-magnitude spectrogram in the Vizia editor (custom canvas drawing, as the
   resonator view already does) from the frame ring: log-frequency scale, dB color map, time scroll
   — off the audio thread.

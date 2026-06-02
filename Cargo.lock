@@ -447,6 +447,7 @@ dependencies = [
  "lindelion-dsp-utils",
  "lindelion-plugin-metadata",
  "lindelion-plugin-shell",
+ "lindelion-speech-signals",
  "lindelion-test-allocator",
  "lindelion-ui",
  "vst3",
