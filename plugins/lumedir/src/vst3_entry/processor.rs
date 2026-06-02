@@ -61,6 +61,11 @@ impl LumedirVst3Processor {
     pub(super) fn delivery_reader(&self) -> Option<DeliveryReader> {
         self.plugin.borrow().delivery_reader()
     }
+
+    /// The shared coaching config, for the editor to read and edit (factor + target bands).
+    pub(super) fn shared_config(&self) -> std::sync::Arc<crate::SharedConfig> {
+        self.plugin.borrow().shared_config()
+    }
 }
 
 impl IPluginBaseTrait for LumedirVst3Processor {
@@ -336,5 +341,69 @@ mod tests {
     fn processor_reports_zero_latency() {
         let processor = LumedirVst3Processor::new();
         assert_eq!(unsafe { processor.getLatencySamples() }, 0);
+    }
+
+    #[test]
+    fn loads_and_runs_bit_exact_passthrough_through_the_vst3_boundary() {
+        use std::ptr;
+
+        // Exercise the actual VST3 host entry path (the COM `IAudioProcessor`/`IComponent`
+        // methods), not just the `AudioPlugin` trait: a host calls `setupProcessing` →
+        // `setActive(true)` → `process` with a `ProcessData`. This is the "loads/runs correctly"
+        // validation, driven on Linux through the same COM surface a real host uses.
+        let processor = LumedirVst3Processor::new();
+
+        let mut setup: ProcessSetup = unsafe { std::mem::zeroed() };
+        setup.processMode = ProcessModes_::kRealtime as i32;
+        setup.symbolicSampleSize = SymbolicSampleSizes_::kSample32 as i32;
+        setup.sampleRate = 48_000.0;
+        setup.maxSamplesPerBlock = 1024;
+        assert_eq!(unsafe { processor.setupProcessing(&mut setup) }, kResultOk);
+        assert_eq!(unsafe { processor.setActive(1) }, kResultOk);
+
+        let left_in = [0.0_f32, 0.5, -0.25, 1.0];
+        let right_in = [-1.0_f32, 0.123, 0.0, -0.5];
+        let mut left_out = [9.0_f32; 4];
+        let mut right_out = [9.0_f32; 4];
+
+        let mut in_channels = [
+            left_in.as_ptr() as *mut Sample32,
+            right_in.as_ptr() as *mut Sample32,
+        ];
+        let mut out_channels = [left_out.as_mut_ptr(), right_out.as_mut_ptr()];
+        let mut input_bus = AudioBusBuffers {
+            numChannels: 2,
+            silenceFlags: 0,
+            __field0: AudioBusBuffers__type0 {
+                channelBuffers32: in_channels.as_mut_ptr(),
+            },
+        };
+        let mut output_bus = AudioBusBuffers {
+            numChannels: 2,
+            silenceFlags: 0,
+            __field0: AudioBusBuffers__type0 {
+                channelBuffers32: out_channels.as_mut_ptr(),
+            },
+        };
+        let mut data = ProcessData {
+            processMode: ProcessModes_::kRealtime as i32,
+            symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
+            numSamples: 4,
+            numInputs: 1,
+            numOutputs: 1,
+            inputs: &mut input_bus,
+            outputs: &mut output_bus,
+            inputParameterChanges: ptr::null_mut(),
+            outputParameterChanges: ptr::null_mut(),
+            inputEvents: ptr::null_mut(),
+            outputEvents: ptr::null_mut(),
+            processContext: ptr::null_mut(),
+        };
+
+        assert_eq!(unsafe { processor.process(&mut data) }, kResultOk);
+
+        // The host's output buffers are filled bit-exact from the input (0-latency passthrough).
+        assert_eq!(left_out, left_in);
+        assert_eq!(right_out, right_in);
     }
 }

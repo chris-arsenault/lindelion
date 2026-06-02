@@ -39,15 +39,42 @@ pub trait DeliverySource: Send + Sync {
     fn clarity(&self) -> f32;
 }
 
-/// Everything the editor needs from the plugin. Cheap to clone (`Arc` inside).
+/// The eight editable target-band edges, as a UI-side DTO. The plugin's persisted `TargetBands`
+/// lives in the plugin crate; this crosses the editor boundary (the surface converts between them).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoachBands {
+    pub rate_min: f32,
+    pub rate_max: f32,
+    pub wpm_min: f32,
+    pub wpm_max: f32,
+    pub dynamism_min: f32,
+    pub pause_min: f32,
+    pub pause_max: f32,
+    pub clarity_min: f32,
+}
+
+/// The editor's read/write access to the coaching config plus plugin-side scoring. Implemented by
+/// the plugin over its lock-free `SharedConfig` + `TargetBands` (the plugin owns the band schema and
+/// the scoring; the editor edits and reads through this trait).
+pub trait CoachConfigSurface: Send + Sync {
+    fn syllables_per_word(&self) -> f32;
+    fn set_syllables_per_word(&self, value: f32);
+    fn bands(&self) -> CoachBands;
+    fn set_bands(&self, bands: CoachBands);
+    /// Score a live sample against the current bands (the plugin owns the scoring logic).
+    fn status(&self, sample: DeliverySample) -> SampleStatuses;
+}
+
+/// Everything the editor needs from the plugin. Cheap to clone (`Arc`s inside).
 #[derive(Clone)]
 pub struct LumedirEditorHost {
     pub source: Arc<dyn DeliverySource>,
+    pub config: Arc<dyn CoachConfigSurface>,
 }
 
 impl LumedirEditorHost {
-    pub fn new(source: Arc<dyn DeliverySource>) -> Self {
-        Self { source }
+    pub fn new(source: Arc<dyn DeliverySource>, config: Arc<dyn CoachConfigSurface>) -> Self {
+        Self { source, config }
     }
 }
 
@@ -139,6 +166,155 @@ pub fn fmt_clarity(clarity: f32) -> String {
     format!("{:.0}%", clarity.clamp(0.0, 1.0) * 100.0)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Target-band scoring boundary + session accumulation.
+// ---------------------------------------------------------------------------------------------
+
+/// Where a metric reading falls relative to its target band. The shared boundary enum: the plugin's
+/// `TargetBands` scoring returns it (computed plugin-side, since `lindelion-ui` cannot depend on the
+/// plugin crate) and the editor colors its live + session gauges by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandStatus {
+    /// Inside the band (good).
+    InBand,
+    /// Below the band's lower edge / floor.
+    Below,
+    /// Above the band's upper edge (two-sided bands only).
+    Above,
+}
+
+/// One sampled delivery datapoint (the five live metrics) the session accumulator folds in.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DeliverySample {
+    pub rate: f32,
+    pub wpm: f32,
+    pub dynamism: f32,
+    pub pause_fraction: f32,
+    pub clarity: f32,
+}
+
+/// The per-metric band status for one sample, as scored by the plugin. Paired with a
+/// [`DeliverySample`] when recording into the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SampleStatuses {
+    pub rate: BandStatus,
+    pub wpm: BandStatus,
+    pub dynamism: BandStatus,
+    pub pause_fraction: BandStatus,
+    pub clarity: BandStatus,
+}
+
+/// Running mean + in-band fraction for one metric over a session.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MetricSummary {
+    pub mean: f32,
+    pub in_band_fraction: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct MetricAccumulator {
+    sum: f64,
+    in_band: u64,
+    count: u64,
+}
+
+impl MetricAccumulator {
+    fn record(&mut self, value: f32, status: BandStatus) {
+        self.sum += value as f64;
+        if status == BandStatus::InBand {
+            self.in_band += 1;
+        }
+        self.count += 1;
+    }
+
+    fn summary(&self) -> MetricSummary {
+        if self.count == 0 {
+            return MetricSummary::default();
+        }
+        MetricSummary {
+            mean: (self.sum / self.count as f64) as f32,
+            in_band_fraction: self.in_band as f32 / self.count as f32,
+        }
+    }
+}
+
+/// End-of-session summary: per-metric mean + fraction of samples that scored in-band, plus the
+/// sample count.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SessionSummary {
+    pub rate: MetricSummary,
+    pub wpm: MetricSummary,
+    pub dynamism: MetricSummary,
+    pub pause_fraction: MetricSummary,
+    pub clarity: MetricSummary,
+    pub sample_count: u64,
+}
+
+/// Accumulates the live delivery snapshot stream into a session summary, under manual start/stop
+/// (the M5 session-boundary decision). The editor calls [`start`](Self::start) to begin a fresh
+/// session, [`record`](Self::record) each refresh tick while active, and [`stop`](Self::stop) to
+/// freeze it; the running [`summary`](Self::summary) is the end-of-session readout. Band-agnostic:
+/// the caller scores each sample (the plugin owns the bands) and passes the statuses in.
+#[derive(Debug, Clone, Default)]
+pub struct SessionAccumulator {
+    active: bool,
+    rate: MetricAccumulator,
+    wpm: MetricAccumulator,
+    dynamism: MetricAccumulator,
+    pause_fraction: MetricAccumulator,
+    clarity: MetricAccumulator,
+    sample_count: u64,
+}
+
+impl SessionAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Begin a fresh session: clear all running totals and mark active.
+    pub fn start(&mut self) {
+        *self = Self {
+            active: true,
+            ..Self::default()
+        };
+    }
+
+    /// Freeze the session (stop folding in new samples); the summary is preserved.
+    pub fn stop(&mut self) {
+        self.active = false;
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Fold one sampled datapoint into the session (ignored when not active).
+    pub fn record(&mut self, sample: DeliverySample, statuses: SampleStatuses) {
+        if !self.active {
+            return;
+        }
+        self.rate.record(sample.rate, statuses.rate);
+        self.wpm.record(sample.wpm, statuses.wpm);
+        self.dynamism.record(sample.dynamism, statuses.dynamism);
+        self.pause_fraction
+            .record(sample.pause_fraction, statuses.pause_fraction);
+        self.clarity.record(sample.clarity, statuses.clarity);
+        self.sample_count += 1;
+    }
+
+    /// The current session summary (per-metric mean + in-band fraction).
+    pub fn summary(&self) -> SessionSummary {
+        SessionSummary {
+            rate: self.rate.summary(),
+            wpm: self.wpm.summary(),
+            dynamism: self.dynamism.summary(),
+            pause_fraction: self.pause_fraction.summary(),
+            clarity: self.clarity.summary(),
+            sample_count: self.sample_count,
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod platform;
 
@@ -174,15 +350,42 @@ mod tests {
         }
     }
 
+    struct StubConfig;
+
+    impl CoachConfigSurface for StubConfig {
+        fn syllables_per_word(&self) -> f32 {
+            1.5
+        }
+        fn set_syllables_per_word(&self, _value: f32) {}
+        fn bands(&self) -> CoachBands {
+            CoachBands {
+                rate_min: 3.0,
+                rate_max: 4.0,
+                wpm_min: 120.0,
+                wpm_max: 160.0,
+                dynamism_min: 3.0,
+                pause_min: 0.1,
+                pause_max: 0.3,
+                clarity_min: 0.6,
+            }
+        }
+        fn set_bands(&self, _bands: CoachBands) {}
+        fn status(&self, _sample: DeliverySample) -> SampleStatuses {
+            statuses_all_in()
+        }
+    }
+
     #[test]
     fn editor_host_exposes_every_delivery_metric_from_its_source() {
-        let host = LumedirEditorHost::new(Arc::new(StubSource));
+        let host = LumedirEditorHost::new(Arc::new(StubSource), Arc::new(StubConfig));
         assert_eq!(host.source.syllables_per_second(), 3.2);
         assert_eq!(host.source.words_per_minute(), 128.0);
         assert_eq!(host.source.pitch_dynamism_semitones(), 4.5);
         assert_eq!(host.source.pause_fraction(), 0.2);
         assert_eq!(host.source.pause_count(), 7);
         assert_eq!(host.source.clarity(), 0.8);
+        assert_eq!(host.config.syllables_per_word(), 1.5);
+        assert_eq!(host.config.bands().wpm_max, 160.0);
     }
 
     #[test]
@@ -246,6 +449,86 @@ mod tests {
                 "rate {rate} fill {fill} not mid-gauge"
             );
         }
+    }
+
+    fn statuses(
+        rate: BandStatus,
+        wpm: BandStatus,
+        dynamism: BandStatus,
+        pause: BandStatus,
+        clarity: BandStatus,
+    ) -> SampleStatuses {
+        SampleStatuses {
+            rate,
+            wpm,
+            dynamism,
+            pause_fraction: pause,
+            clarity,
+        }
+    }
+
+    #[test]
+    fn session_accumulates_means_and_in_band_fractions() {
+        use BandStatus::{Below, InBand};
+        let mut session = SessionAccumulator::new();
+        session.start();
+        // Two samples: rate 2.0 (below) then 4.0 (in) → mean 3.0, 1/2 in band.
+        session.record(
+            DeliverySample {
+                rate: 2.0,
+                wpm: 100.0,
+                dynamism: 1.0,
+                pause_fraction: 0.4,
+                clarity: 0.5,
+            },
+            statuses(Below, Below, Below, Below, Below),
+        );
+        session.record(
+            DeliverySample {
+                rate: 4.0,
+                wpm: 140.0,
+                dynamism: 5.0,
+                pause_fraction: 0.2,
+                clarity: 0.9,
+            },
+            statuses(InBand, InBand, InBand, InBand, InBand),
+        );
+        let summary = session.summary();
+        assert_eq!(summary.sample_count, 2);
+        assert!((summary.rate.mean - 3.0).abs() < 1.0e-6);
+        assert!((summary.rate.in_band_fraction - 0.5).abs() < 1.0e-6);
+        assert!((summary.wpm.mean - 120.0).abs() < 1.0e-6);
+        assert!((summary.clarity.in_band_fraction - 0.5).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn session_ignores_records_when_stopped_and_start_clears() {
+        let mut session = SessionAccumulator::new();
+        // Not started: records are ignored.
+        session.record(DeliverySample::default(), statuses_all_in());
+        assert_eq!(session.summary().sample_count, 0);
+
+        session.start();
+        session.record(DeliverySample::default(), statuses_all_in());
+        session.stop();
+        // Stopped: further records ignored, prior count preserved.
+        session.record(DeliverySample::default(), statuses_all_in());
+        assert_eq!(session.summary().sample_count, 1);
+        assert!(!session.is_active());
+
+        // A new session clears the prior totals.
+        session.start();
+        assert_eq!(session.summary().sample_count, 0);
+    }
+
+    fn statuses_all_in() -> SampleStatuses {
+        statuses(
+            BandStatus::InBand,
+            BandStatus::InBand,
+            BandStatus::InBand,
+            BandStatus::InBand,
+            BandStatus::InBand,
+        )
     }
 
     #[test]

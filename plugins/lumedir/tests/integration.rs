@@ -87,10 +87,11 @@ fn worker_reads_silence_from_fed_silence() {
     ignore = "needs test-sync-analysis for a deterministic delivery snapshot"
 )]
 fn delivery_worker_yields_a_complete_delivery_snapshot() {
-    use lumedir::DeliveryWorker;
-    use lumedir::delivery::DeliveryConfig;
+    use std::sync::Arc;
 
-    let worker = DeliveryWorker::new(SR as f32, DeliveryConfig::default());
+    use lumedir::{DeliveryWorker, SharedConfig};
+
+    let worker = DeliveryWorker::new(SR as f32, Arc::new(SharedConfig::default()));
     // Push in small chunks (≈ one frame each), as the off-thread loop drains.
     for chunk in voiced_tone(BLOCK).chunks(256) {
         worker.push(chunk);
@@ -118,4 +119,41 @@ fn delivery_worker_yields_a_complete_delivery_snapshot() {
         delivery.clarity > 0.0,
         "expected non-zero clarity, got {delivery:?}"
     );
+}
+
+/// Soak (off-thread stability): drive the real background worker over a long stream; every published
+/// snapshot stays finite + in-range (no NaN/blow-up), the worker keeps draining (no deadlock), and
+/// `Drop` joins its thread cleanly. Spawns a thread + sleeps ⇒ gated to the integration suite. Built
+/// only for the off-thread build (`test-sync-analysis` runs `push` inline, which is neither what
+/// this exercises nor cheap to drag in via `--include-ignored`).
+#[cfg(not(feature = "test-sync-analysis"))]
+#[test]
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "off-thread soak spawns the worker thread and sleeps; run via make test-integration"
+)]
+fn worker_soak_is_stable_off_thread() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use lumedir::{DeliveryWorker, SharedConfig};
+
+    let worker = DeliveryWorker::new(SR as f32, Arc::new(SharedConfig::default()));
+    let block = voiced_tone(512);
+
+    for _ in 0..400 {
+        worker.push(&block);
+        std::thread::sleep(Duration::from_millis(1));
+        let d = worker.latest_delivery();
+        assert!(
+            d.syllables_per_second.is_finite()
+                && d.words_per_minute.is_finite()
+                && d.pitch_dynamism_semitones.is_finite(),
+            "non-finite delivery over the soak: {d:?}"
+        );
+        assert!((0.0..=1.0).contains(&d.clarity) && (0.0..=1.0).contains(&d.pause_fraction));
+    }
+
+    // Dropping the worker joins its background thread cleanly (no hang/panic).
+    drop(worker);
 }

@@ -21,6 +21,7 @@ use std::time::Duration;
 use lindelion_dsp_utils::handoff::{AtomicF32, SampleRing};
 use lindelion_speech_signals::{SignalAnalyzer, SignalSnapshot};
 
+use crate::SharedConfig;
 use crate::delivery::{DeliveryAggregator, DeliveryConfig, DeliverySnapshot};
 
 const RING_CAPACITY: usize = 1 << 16; // power of two; ~1.3 s at 48 kHz
@@ -111,9 +112,9 @@ impl Shared {
     }
 }
 
-fn worker_loop(shared: Arc<Shared>, sample_rate: f32, config: DeliveryConfig) {
+fn worker_loop(shared: Arc<Shared>, sample_rate: f32, config: Arc<SharedConfig>) {
     let mut analyzer = SignalAnalyzer::new(sample_rate as u32);
-    let mut aggregator = DeliveryAggregator::new(sample_rate, config);
+    let mut aggregator = DeliveryAggregator::new(sample_rate, DeliveryConfig::default());
     let mut local = Vec::with_capacity(DRAIN_MAX);
     while !shared.stop.load(Ordering::Acquire) {
         local.clear();
@@ -121,7 +122,8 @@ fn worker_loop(shared: Arc<Shared>, sample_rate: f32, config: DeliveryConfig) {
             let snapshot = analyzer.process(&local);
             aggregator.update(&local, &snapshot);
             shared.publish_signal(&snapshot);
-            shared.publish_delivery(&aggregator.snapshot());
+            // Derive WPM with the live editor-set factor (a Relaxed atomic load, off the audio thread).
+            shared.publish_delivery(&aggregator.snapshot_with_factor(config.syllables_per_word()));
         } else {
             thread::sleep(IDLE_SLEEP);
         }
@@ -138,12 +140,15 @@ pub struct DeliveryWorker {
     shared: Arc<Shared>,
     handle: Option<JoinHandle<()>>,
     #[cfg(feature = "test-sync-analysis")]
+    config: Arc<SharedConfig>,
+    #[cfg(feature = "test-sync-analysis")]
     inline: std::sync::Mutex<(SignalAnalyzer, DeliveryAggregator)>,
 }
 
 impl DeliveryWorker {
-    /// Spawn the worker for audio at `sample_rate`.
-    pub fn new(sample_rate: f32, config: DeliveryConfig) -> Self {
+    /// Spawn the worker for audio at `sample_rate`, reading the live syllables-per-word factor from
+    /// the shared coaching config (so editor edits take effect without respawning).
+    pub fn new(sample_rate: f32, config: Arc<SharedConfig>) -> Self {
         let shared = Arc::new(Shared::new());
         #[cfg(not(feature = "test-sync-analysis"))]
         {
@@ -159,9 +164,10 @@ impl DeliveryWorker {
             Self {
                 shared,
                 handle: None,
+                config,
                 inline: std::sync::Mutex::new((
                     SignalAnalyzer::new(sample_rate as u32),
-                    DeliveryAggregator::new(sample_rate, config),
+                    DeliveryAggregator::new(sample_rate, DeliveryConfig::default()),
                 )),
             }
         }
@@ -182,7 +188,9 @@ impl DeliveryWorker {
             let snapshot = analyzer.process(block);
             aggregator.update(block, &snapshot);
             self.shared.publish_signal(&snapshot);
-            self.shared.publish_delivery(&aggregator.snapshot());
+            self.shared.publish_delivery(
+                &aggregator.snapshot_with_factor(self.config.syllables_per_word()),
+            );
         }
     }
 
@@ -242,7 +250,7 @@ mod tests {
 
     #[test]
     fn reader_starts_at_the_default_delivery_snapshot() {
-        let worker = DeliveryWorker::new(48_000.0, DeliveryConfig::default());
+        let worker = DeliveryWorker::new(48_000.0, Arc::new(SharedConfig::default()));
         let reader = worker.reader();
         assert_eq!(reader.latest_delivery(), DeliverySnapshot::default());
         assert_eq!(reader.latest_snapshot(), SignalSnapshot::default());
@@ -250,7 +258,7 @@ mod tests {
 
     #[test]
     fn push_and_latest_are_allocation_free() {
-        let worker = DeliveryWorker::new(48_000.0, DeliveryConfig::default());
+        let worker = DeliveryWorker::new(48_000.0, Arc::new(SharedConfig::default()));
         let block = [0.1_f32; 512];
         crate::assert_no_allocations("delivery worker push + latest", || {
             worker.push(&block);
