@@ -422,3 +422,77 @@ fn shared_body_strike_fires_attack_noise() {
         "the attack noise must be transient (decays away): early {early_diff} late {late_diff}",
     );
 }
+
+/// Render `samples` of a fresh enabled default (Modal) body struck once at `force`.
+fn render_default_strike(force: f32, samples: usize) -> Vec<f32> {
+    let patch = ResonatorSynthPatch::default();
+    let mut body = SharedBody::new(SR, &patch);
+    body.set_enabled(true);
+    body.strike(strike_at(force, 220.0));
+    let mut left = vec![0.0; samples];
+    let mut right = vec![0.0; samples];
+    body.render_add(&mut left, &mut right);
+    left
+}
+
+/// M8 (ADR-0001/ADR-0029): the audio-hygiene invariant guard — dense overlapping strikes
+/// at varied pitch and force keep the body finite and bounded (no runaway). The body is a
+/// passive resonator with an energy-conserving nonlinearity, so accumulated excitation must
+/// stay bounded. (Invariant guard → stays in `make ci`, not the integration suite.)
+#[test]
+fn shared_body_dense_strikes_stay_bounded() {
+    let patch = ResonatorSynthPatch::default();
+    let mut body = SharedBody::new(SR, &patch);
+    body.set_enabled(true);
+
+    let mut left = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    let mut peak = 0.0_f32;
+    for index in 0..100 {
+        let note = 48.0 + (index % 24) as f32;
+        let freq = 440.0 * 2.0_f32.powf((note - 69.0) / 12.0);
+        let force = 0.3 + 0.7 * ((index % 7) as f32 / 6.0);
+        body.strike(strike_at(force, freq));
+        left.fill(0.0);
+        right.fill(0.0);
+        body.render_add(&mut left, &mut right);
+        assert_all_finite(&left);
+        peak = peak.max(peak_abs(&left));
+    }
+    // Ring out a tail; it must stay finite and bounded too.
+    for _ in 0..64 {
+        left.fill(0.0);
+        right.fill(0.0);
+        body.render_add(&mut left, &mut right);
+        assert_all_finite(&left);
+        peak = peak.max(peak_abs(&left));
+    }
+    assert!(
+        peak < 8.0,
+        "dense overlapping strikes must stay bounded (no runaway): peak {peak}",
+    );
+}
+
+/// M8: dynamics respond monotonically — a harder strike is louder than a soft one.
+#[test]
+fn shared_body_hard_strike_louder_than_soft() {
+    let soft = peak_abs(&render_default_strike(0.2, 4_096));
+    let hard = peak_abs(&render_default_strike(1.0, 4_096));
+    assert!(soft > 0.0, "a soft strike must still ring");
+    assert!(
+        hard > soft,
+        "a harder strike must be louder than a soft one: hard {hard} soft {soft}",
+    );
+}
+
+/// M8: the body's decay is the envelope — the ring sustains well past the onset.
+#[test]
+fn shared_body_ring_sustains() {
+    // ~0.25 s at 48 kHz.
+    let rendered = render_default_strike(1.0, 12_000);
+    assert_all_finite(&rendered);
+    assert!(
+        peak_abs(&rendered[11_000..]) > 0.0,
+        "the body ring must sustain past ~0.25 s (the decay is the envelope)",
+    );
+}

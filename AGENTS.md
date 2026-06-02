@@ -41,7 +41,7 @@ Agent guide for sessions in the Lindelion repository.
 | Name | Meaning | Current state |
 | ---- | ---- | ---- |
 | Lindelion | Quenya `lindelë` + `-ion`, bearer of the art of music | Workspace/project |
-| Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs |
+| Lamath | Sindarin, "echo" or "ringing of voices" | VST3 resonator instrument with MIDI and sidechain audio inputs, plus an opt-in shared-body idiophone mode (re-strikable persistent resonator; see [ADR-0031](docs/adr/0031-shared-body-idiophone-mode.md)) |
 | Linnod | Sindarin measured verse unit | Melodic slicer VST3 instrument |
 | Calóma | Quenya `cala` (bright/clear) + `óma` (voice), "clear voice" | Windows-only speech-clarity VST3 (built M0–M6): 20-effect serial chain, 3 signal orders, self-contained single-component VST3, Vizia editor as the sole control surface (no host params), per-order tuned defaults. See [ADR-0020](docs/adr/0020-caloma-speech-vst-packaging.md), [spec](docs/plugins/caloma.md) |
 | Glirdir | Sindarin `glir-` + `-dir`, singer/song-bearer | VST3 sing-to-MIDI scratchpad |

@@ -2,6 +2,12 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.9.0 - 2026-06-02
+
+### Lamath
+
+- Added an opt-in **shared-body idiophone mode** (`shared_body` patch toggle, default off). When on, an idiophone patch's resonator becomes a single persistent body that note-ons re-strike instead of allocating a per-note voice: a strike injects the velocity-selected excitation at force into the live body, each strike retunes it ring-preserving so it stays melodically playable, and the body's own decay is the envelope — the per-note amp envelope steps aside, the output filter and saturation apply as a static post-body coloration, and each strike arms the attack-noise burst. A configurable key-switch MIDI range damps the body to silence over a short ramp; note-off does nothing to the ring. The body runs its own energy follower and stages like a same-family voice, summed engine → shared body → sympathetic chamber → master. Off is bit-identical to the per-voice behavior, and waveguide (string/tube) slots stay polyphonic-per-voice. Exposed in the editor as a Body Mode toggle and damp-range controls, and covered by objective stability and fidelity sweeps. See [ADR-0031](docs/adr/0031-shared-body-idiophone-mode.md) and the [Lamath spec](docs/plugins/lamath.md).
+
 ## v0.8.3 - 2026-06-02
 
 ### Tests
