@@ -3,15 +3,15 @@
 **Name:** Calóma
 **Name etymology:** Quenya `cala` ("bright/clear") + `óma` ("voice") — "clear voice".
 **Target:** **Windows-only** VST3 audio **effect** (mic → clarified speech), for the Galad host
-([ADR-0022](adr/0022-windows-vst3-host.md)) or a Windows DAW. Per [ADR-0023](adr/0023-new-vsts-windows-only.md).
+([ADR-0022](../adr/0022-windows-vst3-host.md)) or a Windows DAW. Per [ADR-0023](../adr/0023-new-vsts-windows-only.md).
 **Status:** Built through M0–M6. Self-contained single-component VST3 with a Vizia editor and
 per-order committed defaults. Linux `make ci` and the heavy `make test-models` fidelity gates pass;
 `make build-windows` cross-compiles and stages `Caloma.vst3` (including the editor) via cargo-xwin.
 On-target Windows load-and-run is the one item not yet verified.
 
 This document describes the behavior implemented in the workspace today. The packaging decision is
-[ADR-0020](adr/0020-caloma-speech-vst-packaging.md) and the Windows-only / Vizia-editor decision is
-[ADR-0023](adr/0023-new-vsts-windows-only.md); remaining work lives in
+[ADR-0020](../adr/0020-caloma-speech-vst-packaging.md) and the Windows-only / Vizia-editor decision is
+[ADR-0023](../adr/0023-new-vsts-windows-only.md); remaining work lives in
 [caloma-backlog.md](caloma-backlog.md).
 
 ---
@@ -27,7 +27,7 @@ Design principles:
 
 - **One opinionated chain, three orders.** A 3-valued **signal-order** parameter selects one of
   three curated topologies (the slot sequence + which slots are enabled). Orders are *starting
-  points*: selecting one loads that order's committed default tuning ([ADR-0020](adr/0020-caloma-speech-vst-packaging.md)).
+  points*: selecting one loads that order's committed default tuning ([ADR-0020](../adr/0020-caloma-speech-vst-packaging.md)).
 - **Self-contained and host-agnostic.** Calóma surfaces **no host-automatable parameters** and uses
   no host bridges. Its **Vizia editor is the sole control surface**; settings persist in the plugin
   state. (See §4.)
@@ -36,10 +36,10 @@ Design principles:
 - **Bounded realtime path.** The audio thread does not allocate or block; order switching and live
   control changes are lock-free (ADR-0001).
 - **Speech-only tuning.** Defaults, thresholds, and band centers are tuned for spoken-word clarity,
-  kept out of the shared `crates/` foundations ([ADR-0012](adr/0012-speech-effect-port-shared-workspace.md)).
+  kept out of the shared `crates/` foundations ([ADR-0012](../adr/0012-speech-effect-port-shared-workspace.md)).
 
 ConvolutionReverb is **not** part of the product (it adds reverberation, against the clarity goal;
-Dereverberation is the speech tool) — [ADR-0020](adr/0020-caloma-speech-vst-packaging.md).
+Dereverberation is the speech tool) — [ADR-0020](../adr/0020-caloma-speech-vst-packaging.md).
 
 ## 2. Signal path
 
@@ -78,9 +78,9 @@ spectral/onset flux, HNR) computes the `SignalSnapshot` once per block at the ch
 (post-preprocessing tap, D4). The four SwiftF0-consuming effects (bass-enhancer, consonant-transient,
 dynamic-eq, upward-expander) take an **injected** `&SignalSnapshot` rather than each embedding a
 worker — the M1 refactor that retired the per-effect workers and the test-only `sync-analysis`
-feature ([ADR-0013](adr/0013-host-agnostic-effect-core.md): the neutral effect trait stays
+feature ([ADR-0013](../adr/0013-host-agnostic-effect-core.md): the neutral effect trait stays
 signals-free; injection is a speech-layer concern). The neural slots (DFN3 denoiser, Silero
-voice-gate) run their own inline inference ([ADR-0018](adr/0018-nn-inference-allocation.md)); they are
+voice-gate) run their own inline inference ([ADR-0018](../adr/0018-nn-inference-allocation.md)); they are
 chain slots, not analysis consumers.
 
 ## 4. VST3 boundary and the Vizia control surface

@@ -3,17 +3,17 @@
 **Name:** Lúmedir
 **Name etymology:** Quenya `lúme` ("time/rhythm") + `-dir` ("keeper") — "keeper of timing".
 **Target:** **Windows-only** passthrough VST3 **analysis** plugin (mic → unchanged audio + delivery
-feedback), for the Galad host ([ADR-0022](adr/0022-windows-vst3-host.md)) or a Windows DAW. Per
-[ADR-0023](adr/0023-new-vsts-windows-only.md).
-**Status:** Built through M0–M6. Single-component VST3 ([ADR-0048](adr/0048-lumedir-single-component.md))
+feedback), for the Galad host ([ADR-0022](../adr/0022-windows-vst3-host.md)) or a Windows DAW. Per
+[ADR-0023](../adr/0023-new-vsts-windows-only.md).
+**Status:** Built through M0–M6. Single-component VST3 ([ADR-0048](../adr/0048-lumedir-single-component.md))
 with a Vizia editor. Linux `make ci` and `make test-integration` validate the DSP, the VST3-boundary
 load/run, persistence, scoring, and the soak/stability checks; `make build-windows` cross-compiles
 and stages `Lumedir.vst3` via cargo-xwin. The editor's on-screen rendering is confirmed on a Windows
 host (see [README](../../plugins/lumedir/README.md#windows-host-validation-user-performed)).
 
 This document describes the behavior implemented in the workspace today. The Windows-only / Vizia
-decision is [ADR-0023](adr/0023-new-vsts-windows-only.md); the single-component packaging is
-[ADR-0048](adr/0048-lumedir-single-component.md); remaining work lives in the
+decision is [ADR-0023](../adr/0023-new-vsts-windows-only.md); the single-component packaging is
+[ADR-0048](../adr/0048-lumedir-single-component.md); remaining work lives in the
 [backlog](../backlog.md).
 
 ---
@@ -36,7 +36,7 @@ Design principles:
   audio path does not allocate or block (ADR-0001).
 - **Self-contained and host-agnostic.** Lúmedir surfaces **no host-automatable parameters**; its
   Vizia editor is the sole control surface, and settings persist in the plugin state. Because it has
-  no host parameters, it is a single-component VST3 ([ADR-0048](adr/0048-lumedir-single-component.md)).
+  no host parameters, it is a single-component VST3 ([ADR-0048](../adr/0048-lumedir-single-component.md)).
 - **Speech-tuned.** Metric windows, band centers, and defaults are tuned for spoken word and kept
   out of the shared `crates/` foundations.
 
@@ -118,9 +118,9 @@ per-metric `TargetBands`. Defaults, grounded in public-speaking guidance:
 
 - **Single-component VST3** — one COM object implements `IComponent` + `IAudioProcessor` +
   `IEditController`, so `createView` and the audio processing share an object and the editor reads
-  the worker directly ([ADR-0048](adr/0048-lumedir-single-component.md)).
+  the worker directly ([ADR-0048](../adr/0048-lumedir-single-component.md)).
 - **Windows build.** `make build-windows WINDOWS_PLUGINS=lumedir` cross-compiles the MSVC-ABI DLL
-  and stages `Lumedir.vst3` (`Contents/x86_64-win/`) via cargo-xwin ([ADR-0023](adr/0023-new-vsts-windows-only.md)).
+  and stages `Lumedir.vst3` (`Contents/x86_64-win/`) via cargo-xwin ([ADR-0023](../adr/0023-new-vsts-windows-only.md)).
 - **Validation.** The cross-platform DSP, the VST3-boundary load/run (factory → `IComponent`/
   `IAudioProcessor` → `process`), config persistence, band scoring, and session accumulation run in
   `make ci`; the delivery-aggregator bounded-allocation soak and the off-thread worker stability soak

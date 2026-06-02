@@ -23,6 +23,9 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `plugins/linnod` | Melodic sample-slicer VST3 instrument with source analysis, patch model, realtime slice playback, editor bridge, and bundle metadata. |
 | `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: shared capture composition, phrase analysis, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
 | `plugins/cenedril` | Windows-only passthrough Visualizer VST3: bit-exact zero-latency passthrough with an allocation-free analysis tap (reassignment STFT, levels/LUFS, off-thread voicing), a single-component VST3, and a Vizia editor (spectrogram/meters/analysis panel + view/scale/colormap/range controls with persisted settings). See [Cenedril spec](plugins/cenedril.md). |
+| `plugins/caloma` | Windows-only speech-clarity VST3: a 20-effect serial chain over 3 signal orders, single-component, with a Vizia editor as the sole control surface (no host parameters) and per-order tuned defaults. See [Calóma spec](plugins/caloma.md). |
+| `plugins/lumedir` | Windows-only passthrough Speech-Coach VST3: bit-exact zero-latency passthrough feeding an off-thread delivery worker (speaking rate, pitch dynamism, pauses, clarity) with target-band scoring, single-component, and a Vizia live-readout editor. See [Lúmedir spec](plugins/lumedir.md). |
+| `speech/` | Speech-effect port of `hot-mic`: per-effect crates plus `speech/signals` analysis-signal derivation, tuned for spoken word. See [Speech Effect Layer](#speech-effect-layer). |
 | `galad/` | Standalone Windows realtime VST3 *host* application: WASAPI microphone → an ordered chain of arbitrary VST3 plugins → output device. Target-gated Windows-only and excluded from `make ci`. See [Windows VST3 Host](#windows-vst3-host-galad). |
 | `xtask` | Repository automation for checks and macOS VST3 bundle construction. |
 
