@@ -100,14 +100,19 @@ impl<'a> ResonatorProcessor<'a> {
         onset_offset: usize,
         live_policy: LiveExcitationPolicy,
     ) -> usize {
-        // Shared-body idiophone mode (ADR-0031, M2): with the toggle on and the patch
-        // carrying an idiophone slot, a note-on strikes the runtime-owned body instead
-        // of allocating a voice — bypassing voice allocation and polyphony entirely. The
-        // body mirrors only the idiophone slot(s); a Waveguide slot is silenced in the
-        // body (whole-note strike — the toggle no-ops only when no idiophone slot is
-        // present). Note-off does nothing to the ring; explicit damp is M4.
+        // Shared-body idiophone mode (ADR-0031, M2/M4): with the toggle on and the patch
+        // carrying an idiophone slot, a note-on drives the runtime-owned body instead of
+        // allocating a voice — bypassing voice allocation and polyphony entirely. A note
+        // inside the configured key-switch range damps the body (ramp to silence); any
+        // other note strikes it (whole-note strike — the body mirrors only the idiophone
+        // slot(s), a Waveguide slot is silenced). The toggle no-ops only when no idiophone
+        // slot is present. Note-off does nothing to the ring (decision 4).
         if self.runtime_patch.patch.shared_body.enabled && self.patch_has_idiophone_slot() {
-            self.strike_shared_body(note, velocity);
+            if self.note_in_damp_range(note) {
+                self.shared_body.damp();
+            } else {
+                self.strike_shared_body(note, velocity);
+            }
             return SHARED_BODY_STRIKE_SLOT;
         }
         let live_latch = live_policy.latch_capture(&self.live_latch_state, sidechain, onset_offset);
@@ -132,6 +137,13 @@ impl<'a> ResonatorProcessor<'a> {
     fn patch_has_idiophone_slot(&self) -> bool {
         self.runtime_patch.patch.resonator_a.is_idiophone()
             || self.runtime_patch.patch.resonator_b.is_idiophone()
+    }
+
+    /// A note inside the inclusive key-switch damp range damps the shared body instead of
+    /// striking it (ADR-0031, decision 4). An empty range (`low > high`) damps nothing.
+    fn note_in_damp_range(&self, note: u8) -> bool {
+        let config = &self.runtime_patch.patch.shared_body;
+        config.damp_key_low <= note && note <= config.damp_key_high
     }
 
     /// Enqueue a strike onto the shared body from a note-on (ADR-0031, M2). Reuses the

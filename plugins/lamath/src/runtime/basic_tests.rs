@@ -284,6 +284,77 @@ fn shared_body_on_strikes_idiophone_without_allocating_a_voice() {
     assert!(peak_abs(&left) > 0.0, "the struck body must ring");
 }
 
+/// Shared-body M4 step 2 (ADR-0031, decision 4): a note inside the key-switch damp range
+/// damps the body (ramp to silence); an out-of-range note strikes it; note-off leaves the
+/// ring intact. None of these allocate a voice in shared-body mode.
+#[test]
+fn shared_body_damp_key_silences_but_strike_and_note_off_keep_the_ring() {
+    let mut patch = test_patch();
+    patch.shared_body.enabled = true;
+    patch.shared_body.damp_key_low = 0;
+    patch.shared_body.damp_key_high = 11;
+    let mut processor = ResonatorProcessor::with_builtin_excitation(48_000.0, patch);
+
+    // (a) An out-of-range note strikes the body — no voice, and it rings.
+    let mut left = vec![0.0; 4_096];
+    let mut right = vec![0.0; 4_096];
+    processor.process(
+        &[MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        })],
+        &mut left,
+        &mut right,
+    );
+    assert_eq!(
+        processor.active_voice_count(),
+        0,
+        "a shared-body strike must not allocate a voice",
+    );
+    assert!(peak_abs(&left) > 0.0, "an out-of-range note must strike and ring");
+
+    // (b) Note-off does nothing to the ring.
+    let mut left_off = vec![0.0; 512];
+    let mut right_off = vec![0.0; 512];
+    processor.process(
+        &[MidiEvent::Note(NoteEvent::Off {
+            channel: 0,
+            note: 60,
+            velocity: 0.0,
+        })],
+        &mut left_off,
+        &mut right_off,
+    );
+    assert!(
+        peak_abs(&left_off) > 0.0,
+        "note-off must leave the ring intact",
+    );
+
+    // (c) An in-range note damps the body to silence within the ramp.
+    let mut left_damp = vec![0.0; 4_096];
+    let mut right_damp = vec![0.0; 4_096];
+    processor.process(
+        &[MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 5,
+            velocity: 1.0,
+        })],
+        &mut left_damp,
+        &mut right_damp,
+    );
+    assert_eq!(
+        processor.active_voice_count(),
+        0,
+        "a damp key must not allocate a voice",
+    );
+    assert_eq!(
+        peak_abs(&left_damp[3_584..]),
+        0.0,
+        "the damp key must silence the body within the ramp",
+    );
+}
+
 /// M11 P9 step 3: the master soft-clip stage bounds dense polyphony. Sixteen
 /// simultaneous full-velocity notes on a now-made-up String patch sum far past full
 /// scale before the master stage; the soft clipper must hold the final mix at or below

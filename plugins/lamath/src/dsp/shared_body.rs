@@ -1,4 +1,4 @@
-//! Shared-body idiophone mode (M1–M2, ADR-0031).
+//! Shared-body idiophone mode (M1–M3, ADR-0031).
 //!
 //! A single, runtime-owned **persistent** resonant body that idiophone note-ons
 //! re-strike instead of allocating a per-note voice. Owned by the runtime at the
@@ -12,12 +12,15 @@
 //! first strike and arms a preallocated **injector pool** (each a [`VoiceExcitation`]
 //! reused from the per-voice path) that plays the selected excitation into the live body
 //! at the strike position baked into the resonator config. Overlapping strikes add fresh
-//! injectors without re-configuring, so the existing ring keeps propagating.
+//! injectors, so the existing ring keeps propagating. M3 makes the body melodically
+//! playable: every strike after the first **retunes** the live body to the new pitch via
+//! the state-preserving path (no buffer clear), so the prior ring keeps decaying while
+//! the tuning tracks the latest strike.
 //!
-//! Per-strike ring-preserving *retune* (M3), key-switch damp (M4), the body energy
-//! follower / gain staging (M5), and amp-envelope bypass (M6) land in later milestones.
-//! Until M5 the body is driven with zero energy/effort/drive-gate — Modal ignores them
-//! and Mesh simply runs without geometric drive, so a strike still rings.
+//! Key-switch damp (M4), the body energy follower / gain staging (M5), and amp-envelope
+//! bypass (M6) land in later milestones. Until M5 the body is driven with zero
+//! energy/effort/drive-gate — Modal ignores them and Mesh simply runs without geometric
+//! drive, so a strike still rings.
 
 use crate::dsp::ResonatorStack;
 use crate::{ResonatorRouting, ResonatorSynthPatch};
@@ -32,6 +35,11 @@ const FALLBACK_SAMPLE_RATE: f32 = 48_000.0;
 /// they are all live a new strike steals the oldest. Working value for M2 — the final
 /// pool size is an M8 voicing call (ADR-0031).
 const INJECTOR_POOL_SIZE: usize = 16;
+
+/// Damp/choke ramp length (ms): a key-switch damp ramps the body's output gain to zero
+/// over this window, then clears the ring (ADR-0031, M4, decision 4). Working value — the
+/// final choke feel is an M8 voicing call.
+const CHOKE_RAMP_MS: f32 = 60.0;
 
 /// One armed strike: a reused [`VoiceExcitation`] playing the selected excitation into
 /// the body, scaled by the strike's force gain. `gain == 0.0` marks a free slot.
@@ -69,12 +77,18 @@ pub(crate) struct SharedBody<'a> {
     enabled: bool,
     /// The body mirrors the patch routing so its idiophone configure matches the patch.
     routing: ResonatorRouting,
-    /// `true` once a strike has configured the stack out of `Silent`. M2 configures on
-    /// the first strike only; M3 replaces this with a per-strike ring-preserving retune.
+    /// `true` once a strike has configured the stack out of `Silent`. The first strike
+    /// configures; every later strike retunes the live body ring-preserving (M3).
     struck: bool,
     injectors: [Injector<'a>; INJECTOR_POOL_SIZE],
     /// Round-robin steal cursor used only when the whole pool is live.
     cursor: usize,
+    /// Output gain ramp for the key-switch damp (M4): `1.0` open, ramping to `0.0` while
+    /// `choking`, at which point the ring is cleared. A strike re-opens it.
+    choke_gain: f32,
+    choking: bool,
+    /// Per-sample decrement of `choke_gain` while choking (1.0 / ramp samples).
+    choke_step: f32,
 }
 
 impl<'a> SharedBody<'a> {
@@ -90,6 +104,7 @@ impl<'a> SharedBody<'a> {
         // configures them, so the freshly-built body is silent. The configure restricts
         // to the idiophone families (Modal/Mesh) at strike time.
         stack.set_base_configs(patch.resonator_a, patch.resonator_b);
+        let choke_step = 1.0 / (CHOKE_RAMP_MS * 0.001 * sample_rate).max(1.0);
         Self {
             stack,
             sample_rate,
@@ -98,6 +113,9 @@ impl<'a> SharedBody<'a> {
             struck: false,
             injectors: [Injector::default(); INJECTOR_POOL_SIZE],
             cursor: 0,
+            choke_gain: 1.0,
+            choking: false,
+            choke_step,
         }
     }
 
@@ -105,16 +123,22 @@ impl<'a> SharedBody<'a> {
         self.enabled = enabled;
     }
 
-    /// Strike the body: on the first strike configure the stack to its idiophone config
-    /// at the strike's base frequency (M2 configures once — M3 retunes ring-preserving
-    /// per strike), then arm a free injector to play the selected excitation scaled by
-    /// the strike force. Overlapping strikes add injectors without re-configuring, so the
-    /// existing ring is never choked.
+    /// Strike the body: the first strike configures the stack to its idiophone config at
+    /// the strike's base frequency; every later strike **retunes** the live body to the
+    /// new pitch via the state-preserving path (no buffer clear), so the prior strike's
+    /// decaying ring keeps propagating while the tuning tracks the latest strike (ADR-0031
+    /// decision 3). Then a free injector is armed to play the selected excitation scaled
+    /// by the strike force. Overlapping strikes add injectors without choking the ring.
     pub(crate) fn strike(&mut self, strike: BodyStrike<'a>) {
+        // A strike re-opens the output gate, cancelling any in-progress damp ramp.
+        self.choking = false;
+        self.choke_gain = 1.0;
         if !self.struck {
             self.stack
                 .configure_idiophone_body(strike.base_frequency, true, self.routing);
             self.struck = true;
+        } else {
+            self.stack.retune_idiophone_body(strike.base_frequency);
         }
         let index = self.free_injector_index();
         let injector = &mut self.injectors[index];
@@ -122,6 +146,28 @@ impl<'a> SharedBody<'a> {
             .excitation
             .trigger(strike.selected, self.sample_rate, strike.pitch_ratio);
         injector.gain = strike.force_gain;
+    }
+
+    /// Key-switch damp (M4, decision 4): begin ramping the body's output gain toward
+    /// silence. The ring keeps decaying audibly through the ramp and is cleared once the
+    /// gain reaches zero, so a damped body is dead and the next strike starts fresh.
+    /// Idempotent while already choking; a strike re-opens the gate.
+    pub(crate) fn damp(&mut self) {
+        self.choking = true;
+    }
+
+    /// Advance the choke ramp one sample, returning the gain to apply this sample. On
+    /// reaching zero it clears the ring so the body is truly silent and re-strikes fresh.
+    fn next_choke_gain(&mut self) -> f32 {
+        if !self.choking {
+            return self.choke_gain;
+        }
+        let gain = self.choke_gain;
+        self.choke_gain -= self.choke_step;
+        if self.choke_gain <= 0.0 {
+            self.silence();
+        }
+        gain
     }
 
     /// Pick a free injector (never armed, or finished playing); steal the oldest
@@ -157,9 +203,10 @@ impl<'a> SharedBody<'a> {
             }
             // Zero energy/effort/drive-gate until the M5 body energy follower lands; the
             // unconfigured (unstruck) stack returns 0.0. `staged_output` is the voice's
-            // P9 audio tap.
+            // P9 audio tap. The choke ramp (M4) attenuates the output toward silence on a
+            // key-switch damp.
             self.stack.process_sample(excitation, 0.0, 0.0, 0.0);
-            let sample = self.stack.staged_output();
+            let sample = self.stack.staged_output() * self.next_choke_gain();
             left[index] += sample;
             right[index] += sample;
         }
@@ -180,6 +227,8 @@ impl<'a> SharedBody<'a> {
         self.injectors = [Injector::default(); INJECTOR_POOL_SIZE];
         self.cursor = 0;
         self.struck = false;
+        self.choking = false;
+        self.choke_gain = 1.0;
     }
 }
 
