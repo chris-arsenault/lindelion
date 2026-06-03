@@ -3,8 +3,8 @@ use std::time::Duration;
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use lamath::{
     BenchSelectedExcitations as SelectedExcitations, BenchSynthEngine as SynthEngine,
-    BenchVoiceTrigger as VoiceTrigger, ModalConfig, ModalPreset, OutputConfig, ResonatorConfig,
-    ResonatorRouting, ResonatorSynthPatch, WaveguideConfig,
+    BenchVoiceTrigger as VoiceTrigger, ModalConfig, ModalPreset, OutputConfig, ResonatorRouting,
+    ResonatorSynthPatch,
 };
 use lindelion_dsp_utils::analysis::assert_all_finite;
 
@@ -20,16 +20,18 @@ fn impulse() -> Vec<f32> {
 fn test_patch(polyphony: usize) -> ResonatorSynthPatch {
     ResonatorSynthPatch {
         polyphony: polyphony as u8,
-        resonator_a: ResonatorConfig::Modal(ModalConfig {
+        resonator_a: ModalConfig {
             mode_count: 16,
             preset: ModalPreset::GenericStrike,
             decay_global: 0.4,
             ..ModalConfig::default()
-        }),
-        resonator_b: ResonatorConfig::Waveguide(WaveguideConfig {
-            loop_gain: 0.9,
-            ..WaveguideConfig::default()
-        }),
+        },
+        resonator_b: ModalConfig {
+            mode_count: 32,
+            preset: ModalPreset::Bell,
+            decay_global: 1.0,
+            ..ModalConfig::default()
+        },
         routing: ResonatorRouting::Parallel {
             mix_a: 0.8,
             mix_b: 0.2,

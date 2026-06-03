@@ -93,7 +93,13 @@ impl ResonatorVst3Processor {
         let pitch_bend_range = self
             .synth
             .try_borrow()
-            .map(|synth| synth.patch().modulation.pitch_bend_range_semitones)
+            .map(|synth| {
+                synth
+                    .patch()
+                    .audio_expression
+                    .mapping
+                    .pitch_bend_range_semitones
+            })
             .unwrap_or(DEFAULT_PITCH_BEND_RANGE_SEMITONES);
         MidiEventNormalizer::new(RESONATOR_MIDI_CONTROLLER_ROUTES, pitch_bend_range)
     }

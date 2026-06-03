@@ -33,10 +33,6 @@ name = "modal"
 harness = false
 
 [[bench]]
-name = "waveguide"
-harness = false
-
-[[bench]]
 name = "engine"
 harness = false
 

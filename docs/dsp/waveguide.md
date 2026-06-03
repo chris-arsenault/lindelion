@@ -121,7 +121,7 @@ Constructor: `WaveguideResonator::new(sample_rate, lowest_frequency_hz)` sizes t
 
 Impulse response over 8192 samples (~0.17 s at 48 kHz). String style at 240 Hz, loop gain 0.95, loop-filter cutoff 12 kHz, resonance 0, strike position 0.5. The decay envelope and harmonic content visible in the waveform reflect the loop-filter damping and the fractional-tap injection at the midpoint of the delay.
 
-Parameter sweep plots (loop gain, loop-filter cutoff, strike position, tube vs string, boundary reflection) are not yet emitted — they would extend `plugins/lamath/src/dsp/waveguide.rs`'s test module with additional CSV-emit functions on the same pattern as the impulse-response test.
+Parameter sweep plots (loop gain, loop-filter cutoff, strike position, tube vs string, boundary reflection) are not yet emitted; they would extend the extracted string/wind crate tests with additional CSV-emit functions on the same pattern as the impulse-response test.
 
 ## 6. Realtime contract
 
@@ -177,7 +177,7 @@ for sample in &mut output[1..] {
 
 - Karplus & Strong — *Digital Synthesis of Plucked-String and Drum Timbres* (Computer Music Journal, 1983).
 - Julius O. Smith — [*Physical Audio Signal Processing*: Digital Waveguide Models](https://ccrma.stanford.edu/~jos/pasp/Digital_Waveguide_Models.html).
-- Source: [`plugins/lamath/src/dsp/waveguide.rs`](../../plugins/lamath/src/dsp/waveguide.rs).
+- Sources: [`crates/lindelion-string/src/model.rs`](../../crates/lindelion-string/src/model.rs), [`crates/lindelion-wind/src/tube.rs`](../../crates/lindelion-wind/src/tube.rs).
 - Building blocks: [`DelayLine`](delay-line.md), [`FirstOrderAllpass`](allpass.md), [`Biquad`](biquad.md).
 - Sibling resonator: [`ModalBank`](modal-bank.md).
 - Technique catalog: [Waveguide resonator techniques](waveguide-techniques.md).

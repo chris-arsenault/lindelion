@@ -147,4 +147,4 @@ for sample in output[1..].iter_mut() {
 - Perry Cook — *Real Sound Synthesis for Interactive Applications* (A K Peters, 2002), chapters on physical modeling of bars and bells.
 - Source: [`plugins/lamath/src/dsp/modal.rs`](../../plugins/lamath/src/dsp/modal.rs).
 - ADR-0001: [Allocation-free audio thread](../adr/0001-allocation-free-audio-thread.md).
-- Related: WaveguideResonator in [`plugins/lamath/src/dsp/waveguide.rs`](../../plugins/lamath/src/dsp/waveguide.rs) (separate doc pending).
+- Related: extracted waveguide models in [`crates/lindelion-string/src/model.rs`](../../crates/lindelion-string/src/model.rs) and [`crates/lindelion-wind/src/tube.rs`](../../crates/lindelion-wind/src/tube.rs).

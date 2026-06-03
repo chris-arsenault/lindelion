@@ -12,4 +12,4 @@ For a compile-only smoke check:
 cargo bench -p lamath --no-run
 ```
 
-These benches exercise host-free Lamath DSP paths: modal banks, waveguides, and the synth engine render/note-on hot paths. For steadier Linux timing, pin the process to one core and use a performance CPU governor.
+These benches exercise host-free Lamath DSP paths: modal banks and the synth engine render/note-on hot paths. For steadier Linux timing, pin the process to one core and use a performance CPU governor.

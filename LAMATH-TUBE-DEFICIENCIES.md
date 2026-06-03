@@ -5,6 +5,44 @@ Assessment from ADR-0032, the Lamath spec, the backlog, the reed/bore code
 `resonator_stack.rs`, the full-synth guards in `tube_voice_tests.rs`, and memory of
 this thread.
 
+## Current state (2026-06-05) — extracted to its own crate + plugin
+
+The tube has been extracted out of the monolithic Lamath: the DSP now lives in
+`crates/lindelion-wind` (`ReedTube`/`ReedTubeParams`/`ReedTubeSwitches`, `ReedDriver`,
+`TubeBody`) and the product in `plugins/lamath-tube` (`TubeProcessor`). The **plugin layer
+is built out**, addressing several items: 8 key-switchable **articulation excitations**
+(Tongue/Sforzando/Legato/Staccato/Marcato/Breath/Accent/Slur) replace the generic builtin
+impulse (**F12** "fat tongue" + **F11** bound articulation), brightness/damping/pressure/
+stiffness/embouchure/bell are patch params, and `ReedTubeSwitches` give per-component A/B
+toggles (bell / bore-steepening / body). `TubeBody` already carries a formant pair (≈280 Hz
+bore body + ≈1500 Hz bell flare) as A1 scaffolding.
+
+**The core DSP in `lindelion-wind` is unchanged from v0.15.1** — `tube.rs`'s bell tap is still
+the non-energy-conserving `output_sample` (squares the tone), and `reed.rs` is still the
+memoryless, blowing-pressure-invariant beating reed with the narrow 0.60–0.76 window and
+white-noise breath. So the **headline DSP redesign is where work picks up**:
+
+1. **Energy-conserving bell+bore** — ✅ *structural fix done (2026-06-05), pending ear-validation.*
+   `output_sample` now radiates the bell-end pressure `incident + reflected` (= `(1+R)·incident`,
+   bounded by the incident wave: lows mostly reflect/stay in the bore, highs radiate), shaped by the
+   fixed far-field HF filter. Removed the old non-conservative tap: the `×2.5` gain, the `effort²`
+   gating, and the double-count (it reflected the whole wave *and* re-emitted a high-pass of it).
+   Guarded by `bell_radiation_does_not_depend_on_effort` (the bell is now fixed-efficiency, not
+   `effort²`-gated). **Caveat:** the radiated signal is the full internal traveling wave (~2.6× the
+   warm pickup tap), so bell-on is legitimately brighter than bell-off — whether that now reads as a
+   good clarinet-with-air or still too bright is an **ear** question (needs the audition harness;
+   metrics are useless for square-vs-clarinet). The level/spectral *balance* (default `bell_radiation`,
+   the far-field filter shape) is the tuning that follows, with ears.
+2. **Brightness from the source** (`reed.rs`): the beating duty cycle should shift with blowing
+   pressure so the bore generates more harmonics when blown harder (real cuivré) — not the bell
+   tap. Levers: the narrow window + the memoryless reed.
+3. **Body/formant (A1)** (`body.rs`): tune `TubeBody` into a real resonant body so the clarinet
+   reads warm, now that the bell won't be feeding it a square.
+4. **Shaped breath** (item 14, `reed.rs`): white-noise turbulence → band/formant-shaped air.
+
+No audition/render harness exists for `lamath-tube` yet (the old catalog lived in `lamath`,
+now modal-only) — one is a prerequisite for ear-validating the redesign.
+
 ## First, a scoping caveat
 
 The driven-wind Tube **shipped and works** at the baseline bar: it self-oscillates

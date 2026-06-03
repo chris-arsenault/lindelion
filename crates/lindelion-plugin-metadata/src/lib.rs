@@ -30,6 +30,36 @@ pub const LAMATH_CYMBAL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMet
     single_component: true,
 };
 
+pub const LAMATH_TUBE_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
+    package: "lamath-tube",
+    bundle_name: "Lamath Tube",
+    executable_name: "LamathTube",
+    bundle_identifier: "com.ahara.lamathtube",
+    library_stem: "lamath_tube",
+    windows_runtime_dlls: &[],
+    vst3_sub_categories: "Instrument|Synth",
+    module_sub_categories: &["Instrument", "Synth"],
+    processor_cid: [0x7A41B5D0, 0x2C874F19, 0xA57E1D43, 0xC96B02E8],
+    controller_cid: [0x7A41B5D1, 0x6B2E4A7C, 0x934F2E18, 0x5D8C30A9],
+    controller_name: "Lamath Tube Controller",
+    single_component: true,
+};
+
+pub const LAMATH_STRINGED_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
+    package: "lamath-stringed",
+    bundle_name: "Lamath Stringed",
+    executable_name: "LamathStringed",
+    bundle_identifier: "com.ahara.lamathstringed",
+    library_stem: "lamath_stringed",
+    windows_runtime_dlls: &[],
+    vst3_sub_categories: "Instrument|Synth",
+    module_sub_categories: &["Instrument", "Synth"],
+    processor_cid: [0x62A51D10, 0x7E3B4D92, 0x8F1640C7, 0xB29D5E31],
+    controller_cid: [0x62A51D11, 0x946A4C28, 0xA45E2F7B, 0x7C1B90D4],
+    controller_name: "Lamath Stringed Controller",
+    single_component: true,
+};
+
 pub const GLIRDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     package: "glirdir",
     bundle_name: "Glirdir",
@@ -109,6 +139,8 @@ pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {
     match package {
         "lamath" => Some(LAMATH_VST3_BUNDLE_METADATA),
         "lamath-cymbal" => Some(LAMATH_CYMBAL_VST3_BUNDLE_METADATA),
+        "lamath-tube" => Some(LAMATH_TUBE_VST3_BUNDLE_METADATA),
+        "lamath-stringed" => Some(LAMATH_STRINGED_VST3_BUNDLE_METADATA),
         "glirdir" => Some(GLIRDIR_VST3_BUNDLE_METADATA),
         "linnod" => Some(LINNOD_VST3_BUNDLE_METADATA),
         "cenedril" => Some(CENEDRIL_VST3_BUNDLE_METADATA),
@@ -124,34 +156,19 @@ mod tests {
 
     #[test]
     fn metadata_lookup_covers_bundleable_plugins() {
-        assert_eq!(
-            metadata_for_package("lamath").unwrap(),
-            LAMATH_VST3_BUNDLE_METADATA
-        );
-        assert_eq!(
-            metadata_for_package("lamath-cymbal").unwrap(),
-            LAMATH_CYMBAL_VST3_BUNDLE_METADATA
-        );
-        assert_eq!(
-            metadata_for_package("glirdir").unwrap(),
-            GLIRDIR_VST3_BUNDLE_METADATA
-        );
-        assert_eq!(
-            metadata_for_package("linnod").unwrap(),
-            LINNOD_VST3_BUNDLE_METADATA
-        );
-        assert_eq!(
-            metadata_for_package("cenedril").unwrap(),
-            CENEDRIL_VST3_BUNDLE_METADATA
-        );
-        assert_eq!(
-            metadata_for_package("caloma").unwrap(),
-            CALOMA_VST3_BUNDLE_METADATA
-        );
-        assert_eq!(
-            metadata_for_package("lumedir").unwrap(),
-            LUMEDIR_VST3_BUNDLE_METADATA
-        );
+        for (package, metadata) in [
+            ("lamath", LAMATH_VST3_BUNDLE_METADATA),
+            ("lamath-cymbal", LAMATH_CYMBAL_VST3_BUNDLE_METADATA),
+            ("lamath-tube", LAMATH_TUBE_VST3_BUNDLE_METADATA),
+            ("lamath-stringed", LAMATH_STRINGED_VST3_BUNDLE_METADATA),
+            ("glirdir", GLIRDIR_VST3_BUNDLE_METADATA),
+            ("linnod", LINNOD_VST3_BUNDLE_METADATA),
+            ("cenedril", CENEDRIL_VST3_BUNDLE_METADATA),
+            ("caloma", CALOMA_VST3_BUNDLE_METADATA),
+            ("lumedir", LUMEDIR_VST3_BUNDLE_METADATA),
+        ] {
+            assert_eq!(metadata_for_package(package).unwrap(), metadata);
+        }
         assert!(metadata_for_package("unknown").is_none());
     }
 
@@ -168,6 +185,8 @@ mod tests {
         let metadata = [
             LAMATH_VST3_BUNDLE_METADATA,
             LAMATH_CYMBAL_VST3_BUNDLE_METADATA,
+            LAMATH_TUBE_VST3_BUNDLE_METADATA,
+            LAMATH_STRINGED_VST3_BUNDLE_METADATA,
             GLIRDIR_VST3_BUNDLE_METADATA,
             LINNOD_VST3_BUNDLE_METADATA,
             CENEDRIL_VST3_BUNDLE_METADATA,

@@ -20,8 +20,8 @@
 
 use lindelion_dsp_utils::{
     delay::DelayLine,
+    energy::EnergyFollower,
     filters::OnePoleLowpass,
-    idiophone::EnergyFollower,
     math::{self, midi_note_to_hz},
 };
 

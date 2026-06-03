@@ -1,8 +1,5 @@
-use lindelion_dsp_utils::{
-    db_to_gain,
-    idiophone::{EnergyFollower, MeshResonator, MeshVoiceParams},
-    math::midi_note_to_hz,
-};
+use lindelion_dsp_utils::{db_to_gain, math::midi_note_to_hz};
+use lindelion_idiophone::{EnergyFollower, MeshResonator, MeshVoiceParams};
 use lindelion_plugin_shell::{MidiEvent, NoteEvent};
 
 use crate::patch::CymbalPatch;

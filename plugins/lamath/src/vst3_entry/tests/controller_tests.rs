@@ -58,37 +58,6 @@ fn controller_roundtrips_v2_patch_surface() {
 }
 
 #[test]
-fn controller_roundtrips_expression_slot_choices() {
-    let controller = ResonatorVst3Controller::new();
-
-    assert_eq!(
-        controller.set_value(81, normalized_parameter_value(81, 4.0)),
-        kResultOk
-    );
-    assert_eq!(
-        controller.set_value(82, normalized_parameter_value(82, 5.0)),
-        kResultOk
-    );
-
-    {
-        let patch = controller.patch.borrow();
-        assert_eq!(
-            patch.modulation.slots[0].source,
-            crate::ModulationSource::ModWheel
-        );
-        assert_eq!(
-            patch.modulation.slots[0].destination,
-            crate::ModulationDestination::ExcitationGain
-        );
-    }
-
-    let patch = controller.patch.borrow();
-    let values = parameter_values_from_patch(&patch);
-    assert_parameter_value(&values, 81, 4.0);
-    assert_parameter_value(&values, 82, 5.0);
-}
-
-#[test]
 fn controller_slot_assignment_updates_patch_and_summary_before_processor_bridge() {
     let controller = ResonatorVst3Controller::new();
     let reference = SampleReference::new("sample-hash", "Samples/kick.wav");
@@ -126,7 +95,7 @@ fn processor_notify_applies_patch_payload() {
 }
 
 #[test]
-fn component_state_projection_covers_expanded_parameter_surface() {
+fn component_state_projection_covers_modal_parameter_surface() {
     let mut patch = crate::ResonatorSynthPatch {
         output: crate::OutputConfig {
             filter_mode: crate::FilterMode::HighPass,
@@ -138,23 +107,18 @@ fn component_state_projection_covers_expanded_parameter_surface() {
             mix_a: 0.5,
             mix_b: 0.5,
         },
-        resonator_a: crate::ResonatorConfig::Waveguide(crate::WaveguideConfig {
-            style: crate::WaveguideStyle::Tube,
-            loop_gain: 0.96,
-            dispersion: 0.62,
-            boundary_reflection: -0.4,
-            ..crate::WaveguideConfig::default()
-        }),
-        resonator_b: crate::ResonatorConfig::Modal(crate::ModalConfig {
+        resonator_a: crate::ModalConfig {
             preset: crate::ModalPreset::MetalBar,
             brightness: 0.75,
             ..crate::ModalConfig::default()
-        }),
+        },
+        resonator_b: crate::ModalConfig {
+            preset: crate::ModalPreset::Bell,
+            decay_global: 2.0,
+            ..crate::ModalConfig::default()
+        },
         ..crate::ResonatorSynthPatch::default()
     };
-    patch.modulation.lfo.shape = crate::LfoShape::Square;
-    patch.modulation.slots[0].source = crate::ModulationSource::Brightness;
-    patch.modulation.slots[0].destination = crate::ModulationDestination::ResonatorBPosition;
     patch.audio_input.mode = crate::AudioInputMode::MidiPlusAudioCreatesNotes;
     patch.audio_expression.enabled = true;
     patch.audio_expression.mapping.pitch_bend_range_semitones = 12.0;
@@ -167,16 +131,10 @@ fn component_state_projection_covers_expanded_parameter_surface() {
     assert_parameter_value(&values, 5, -0.25);
     assert_parameter_value(&values, 7, 2.0);
     assert_parameter_value(&values, 10, 1.0);
-    assert_parameter_value(&values, 20, 1.0);
-    assert_parameter_value(&values, 32, 0.96);
-    assert_parameter_value(&values, 35, 1.0);
-    assert_parameter_value(&values, 36, -0.4);
-    assert_parameter_value(&values, 37, 0.62);
-    assert_parameter_value(&values, 41, 4.0);
-    assert_parameter_value(&values, 46, 0.75);
-    assert_parameter_value(&values, 69, 3.0);
-    assert_parameter_value(&values, 81, 5.0);
-    assert_parameter_value(&values, 82, 4.0);
+    assert_parameter_value(&values, 21, 4.0);
+    assert_parameter_value(&values, 26, 0.75);
+    assert_parameter_value(&values, 41, 2.0);
+    assert_parameter_value(&values, 47, 2.0);
     assert_parameter_value(&values, 100, 2.0);
     assert_parameter_value(&values, 101, 1.0);
     assert_parameter_value(&values, 102, 12.0);

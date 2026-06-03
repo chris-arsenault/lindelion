@@ -14,9 +14,7 @@ use crate::{
 };
 
 use super::structural_ramp_samples;
-use crate::dsp::constants::{
-    FILTER_CUTOFF_MOD_OCTAVES, MASTER_GAIN_DB, OUTPUT_FILTER_CUTOFF_HZ, OUTPUT_FILTER_Q,
-};
+use crate::dsp::constants::{FILTER_CUTOFF_MOD_OCTAVES, OUTPUT_FILTER_CUTOFF_HZ, OUTPUT_FILTER_Q};
 
 const INTERNAL_HEADROOM_DB: f32 = -12.0;
 
@@ -123,11 +121,6 @@ impl OutputStage {
     pub(super) fn next_pan(&mut self) -> f32 {
         self.master_pan.next_sample()
     }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn output_gain(gain_db: f32) -> f32 {
-    db_to_gain(MASTER_GAIN_DB.clamp(gain_db))
 }
 
 fn sanitize_output_filter_cutoff(cutoff_hz: f32) -> f32 {

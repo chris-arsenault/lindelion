@@ -203,10 +203,7 @@ fn resonator_tool_button(
 }
 
 fn is_centered(control: EditorParameterControl) -> bool {
-    matches!(
-        control.editor.slot(),
-        ResonatorEditorSurfaceSlot::Pan | ResonatorEditorSurfaceSlot::Mod1Amount
-    )
+    matches!(control.editor.slot(), ResonatorEditorSurfaceSlot::Pan)
 }
 
 const ROUTING_CHOICES: &[crate::vizia_controls::IconSegmentedChoice] = &[

@@ -1,0 +1,105 @@
+use lindelion_dsp_utils::{
+    filters::{Biquad, BiquadCoefficients},
+    math,
+};
+
+use super::{DEFAULT_BIQUAD_Q, TUBE_BOUNDARY, core, tube::ReedTubeParams};
+
+const TUBE_BORE_BODY_HZ: f32 = 280.0;
+const TUBE_BELL_FLARE_HZ: f32 = 1_500.0;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TubeBody {
+    sample_rate: f32,
+    highpass: Biquad,
+    lowpass: Biquad,
+    low_resonance: Biquad,
+    high_resonance: Biquad,
+    prepared: Option<(ReedTubeParams, BodyProfile)>,
+}
+
+impl TubeBody {
+    pub fn new(sample_rate: f32) -> Self {
+        let sample_rate = core::sanitize_sample_rate(sample_rate);
+        Self {
+            sample_rate,
+            highpass: Biquad::new(BiquadCoefficients::identity()),
+            lowpass: Biquad::new(BiquadCoefficients::identity()),
+            low_resonance: Biquad::new(BiquadCoefficients::identity()),
+            high_resonance: Biquad::new(BiquadCoefficients::identity()),
+            prepared: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.highpass.reset();
+        self.lowpass.reset();
+        self.low_resonance.reset();
+        self.high_resonance.reset();
+        self.prepared = None;
+    }
+
+    pub fn process_sample(&mut self, input: f32, params: ReedTubeParams) -> f32 {
+        let profile = self.prepared_profile(params);
+        let input = math::snap_to_zero(input);
+        let radiating_input = self.highpass.process(input);
+        let direct = self.lowpass.process(radiating_input) * profile.direct_gain;
+        let low_body = self.low_resonance.process(radiating_input) * profile.low_resonance_gain;
+        let high_body = self.high_resonance.process(radiating_input) * profile.high_resonance_gain;
+
+        math::snap_to_zero((direct + low_body + high_body) * profile.output_gain)
+    }
+
+    fn prepared_profile(&mut self, params: ReedTubeParams) -> BodyProfile {
+        if let Some((cached_params, profile)) = self.prepared
+            && cached_params == params
+        {
+            return profile;
+        }
+
+        let profile = BodyProfile::from_params(self.sample_rate, params);
+        self.highpass.set_coefficients(profile.highpass);
+        self.lowpass.set_coefficients(profile.lowpass);
+        self.low_resonance.set_coefficients(profile.low_resonance);
+        self.high_resonance.set_coefficients(profile.high_resonance);
+        self.prepared = Some((params, profile));
+        profile
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BodyProfile {
+    highpass: BiquadCoefficients,
+    lowpass: BiquadCoefficients,
+    low_resonance: BiquadCoefficients,
+    high_resonance: BiquadCoefficients,
+    direct_gain: f32,
+    low_resonance_gain: f32,
+    high_resonance_gain: f32,
+    output_gain: f32,
+}
+
+impl BodyProfile {
+    fn from_params(sample_rate: f32, params: ReedTubeParams) -> Self {
+        let sample_rate = core::sanitize_sample_rate(sample_rate);
+        let loop_cutoff = math::finite_clamp(
+            params.loop_filter_cutoff_hz,
+            20.0,
+            sample_rate * 0.45,
+            8_000.0,
+        );
+        let radiation_cutoff =
+            math::finite_clamp(loop_cutoff * 1.4, 2_200.0, sample_rate * 0.45, 10_000.0);
+
+        Self {
+            highpass: BiquadCoefficients::highpass(sample_rate, 45.0, DEFAULT_BIQUAD_Q),
+            lowpass: BiquadCoefficients::lowpass(sample_rate, radiation_cutoff, DEFAULT_BIQUAD_Q),
+            low_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_BORE_BODY_HZ, 2.0),
+            high_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_BELL_FLARE_HZ, 1.6),
+            direct_gain: 0.72,
+            low_resonance_gain: 0.18,
+            high_resonance_gain: 0.16,
+            output_gain: TUBE_BOUNDARY.output_gain(params.boundary_reflection),
+        }
+    }
+}

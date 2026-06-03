@@ -1950,11 +1950,44 @@ name = "lamath-cymbal"
 version = "0.15.2"
 dependencies = [
  "lindelion-dsp-utils",
+ "lindelion-idiophone",
  "lindelion-plugin-metadata",
  "lindelion-plugin-shell",
  "lindelion-sample-library",
  "lindelion-test-allocator",
  "lindelion-ui",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+ "vst3",
+]
+
+[[package]]
+name = "lamath-stringed"
+version = "0.15.2"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-plugin-metadata",
+ "lindelion-plugin-shell",
+ "lindelion-sample-library",
+ "lindelion-string",
+ "lindelion-test-allocator",
+ "lindelion-ui",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+ "vst3",
+]
+
+[[package]]
+name = "lamath-tube"
+version = "0.15.2"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-plugin-metadata",
+ "lindelion-plugin-shell",
+ "lindelion-sample-library",
+ "lindelion-test-allocator",
+ "lindelion-ui",
+ "lindelion-wind",
  "serde",
  "toml 0.9.12+spec-1.1.0",
  "vst3",
@@ -2068,6 +2101,14 @@ dependencies = [
  "lindelion-effect",
  "lindelion-test-allocator",
  "realfft",
+]
+
+[[package]]
+name = "lindelion-idiophone"
+version = "0.15.2"
+dependencies = [
+ "lindelion-dsp-utils",
+ "lindelion-test-allocator",
 ]
 
 [[package]]
@@ -2388,6 +2429,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lindelion-string"
+version = "0.15.2"
+dependencies = [
+ "lindelion-dsp-utils",
+]
+
+[[package]]
 name = "lindelion-test-allocator"
 version = "0.15.2"
 
@@ -2402,6 +2450,13 @@ dependencies = [
  "raw-window-handle 0.5.2",
  "rfd",
  "vizia",
+]
+
+[[package]]
+name = "lindelion-wind"
+version = "0.15.2"
+dependencies = [
+ "lindelion-dsp-utils",
 ]
 
 [[package]]

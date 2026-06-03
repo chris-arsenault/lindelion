@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 lindelion-dsp-utils.workspace = true
+lindelion-idiophone.workspace = true
 lindelion-plugin-metadata.workspace = true
 lindelion-plugin-shell.workspace = true
 lindelion-sample-library = { workspace = true, features = ["file-library"] }

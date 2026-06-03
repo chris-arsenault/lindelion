@@ -36,48 +36,6 @@ impl ResonanceQ {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct TubeBoundaryModel {
-    pub(crate) reflection: FloatRange,
-    pub(crate) excitation_loss_per_reflection: f32,
-    pub(crate) min_excitation_gain: f32,
-    pub(crate) output_base_gain: f32,
-    pub(crate) output_reflection_gain: f32,
-}
-
-impl TubeBoundaryModel {
-    pub(crate) const fn new(
-        reflection: FloatRange,
-        excitation_loss_per_reflection: f32,
-        min_excitation_gain: f32,
-        output_base_gain: f32,
-        output_reflection_gain: f32,
-    ) -> Self {
-        Self {
-            reflection,
-            excitation_loss_per_reflection,
-            min_excitation_gain,
-            output_base_gain,
-            output_reflection_gain,
-        }
-    }
-
-    pub(crate) fn reflection(self, value: f32) -> f32 {
-        self.reflection.clamp(value)
-    }
-
-    pub(crate) fn excitation_coupling(self, value: f32) -> f32 {
-        let reflection = self.reflection(value).abs();
-        (1.0 - reflection * self.excitation_loss_per_reflection)
-            .clamp(self.min_excitation_gain, 1.0)
-    }
-
-    pub(crate) fn output_gain(self, value: f32) -> f32 {
-        let reflection = self.reflection(value).abs();
-        self.output_base_gain + reflection * self.output_reflection_gain
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SeriesConditionerParams {
     pub(crate) highpass_cutoff_hz: f32,
     pub(crate) highpass_q: f32,
@@ -135,24 +93,12 @@ pub(crate) const DEFAULT_BIQUAD_Q: f32 = 0.707;
 pub(crate) const MASTER_GAIN_DB: FloatRange = FloatRange::new(-60.0, 12.0, 0.0);
 pub(crate) const MASTER_GAIN_LINEAR: FloatRange = FloatRange::new(0.001, 3.981_071_7, 1.0);
 pub(crate) const OUTPUT_FILTER_CUTOFF_HZ: FloatRange = FloatRange::new(20.0, 20_000.0, 20_000.0);
-pub(crate) const WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ: FloatRange =
-    FloatRange::new(20.0, 20_000.0, 8_000.0);
 pub(crate) const FILTER_RESONANCE: FloatRange = FloatRange::new(0.0, 0.999, 0.0);
-pub(crate) const WAVEGUIDE_LOOP_GAIN: FloatRange = FloatRange::new(0.0, 0.999, 0.97);
-pub(crate) const WAVEGUIDE_DISPERSION: FloatRange = FloatRange::new(0.0, 1.0, 1.0);
 pub(crate) const STRIKE_POSITION: FloatRange = FloatRange::new(0.001, 0.999, 0.5);
-pub(crate) const WAVEGUIDE_PICKUP_POSITION: FloatRange = FloatRange::new(0.001, 0.999, 0.82);
 
 pub(crate) const OUTPUT_FILTER_Q: ResonanceQ = ResonanceQ::new(DEFAULT_BIQUAD_Q, 8.0);
-pub(crate) const WAVEGUIDE_LOOP_FILTER_Q: ResonanceQ = ResonanceQ::new(0.55, 4.0);
 
 pub(crate) const FILTER_CUTOFF_MOD_OCTAVES: f32 = 4.0;
-pub(crate) const MODAL_DAMPING_MOD_OCTAVES: f32 = 2.0;
-pub(crate) const RESONATOR_POSITION_MOD_DEPTH: f32 = 0.5;
-pub(crate) const WAVEGUIDE_DAMPING_MOD_DEPTH: f32 = 0.25;
-
-pub(crate) const TUBE_BOUNDARY: TubeBoundaryModel =
-    TubeBoundaryModel::new(FloatRange::new(-1.0, 1.0, -0.75), 0.25, 0.5, 0.8, 0.2);
 
 pub(crate) const SERIES_CONDITIONER: SeriesConditionerParams =
     SeriesConditionerParams::new(80.0, DEFAULT_BIQUAD_Q, 0.01, 0.000_2, 1.0e-6, 0.04, 0.96);
@@ -160,14 +106,6 @@ pub(crate) const SERIES_CONDITIONER: SeriesConditionerParams =
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn boundary_model_numerics_are_pinned() {
-        assert_eq!(TUBE_BOUNDARY.reflection(f32::NAN), -0.75);
-        assert_eq!(TUBE_BOUNDARY.reflection(2.0), 1.0);
-        assert_eq!(TUBE_BOUNDARY.excitation_coupling(0.75), 0.8125);
-        assert!((TUBE_BOUNDARY.output_gain(0.75) - 0.95).abs() < 0.000_001);
-    }
 
     #[test]
     fn series_conditioner_envelope_numerics_are_pinned() {

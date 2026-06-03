@@ -1,3 +1,20 @@
+use lindelion_audio_expression::{
+    DEFAULT_AUDIO_NOTE_MINIMUM_LENGTH_MS, DEFAULT_AUDIO_NOTE_ONSET_SENSITIVITY,
+    DEFAULT_AUDIO_NOTE_PITCH_CONFIDENCE, DEFAULT_AUDIO_NOTE_RELEASE_FLOOR_RMS,
+    DEFAULT_AUDIO_NOTE_VELOCITY_AMOUNT, DEFAULT_BRIGHTNESS_CEILING_HZ, DEFAULT_BRIGHTNESS_FLOOR_HZ,
+    DEFAULT_PITCH_BEND_RANGE_SEMITONES, DEFAULT_PRESSURE_CEILING_RMS, DEFAULT_PRESSURE_FLOOR_RMS,
+};
+use lindelion_dsp_utils::db_to_gain;
+use lindelion_plugin_shell::{ParameterCodec, ParameterPatchPath};
+
+use crate::dsp::constants::{
+    FILTER_RESONANCE, MASTER_GAIN_DB, OUTPUT_FILTER_CUTOFF_HZ, STRIKE_POSITION,
+};
+use crate::{
+    AudioInputMode, FilterMode, LiveExcitationMode, ModalConfig, ModalPreset, OutputConfig,
+    ResonatorRouting, ResonatorSynthPatch, SurroundingConfig,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParameterPath {
     Output(OutputParameter),
@@ -12,37 +29,16 @@ pub(crate) enum ParameterPath {
     LiveExcitation(LiveExcitationParameter),
     Resonator {
         slot: ResonatorSlot,
-        parameter: ResonatorParameter,
+        parameter: ModalParameter,
     },
-    Envelope {
-        target: EnvelopeTarget,
-        parameter: EnvelopeParameter,
-    },
-    LfoRate,
-    LfoShape,
-    LfoTempoSync,
-    PitchBendRange,
-    VelocityExcitationDepth,
-    Driver(DriverParameter),
-    Contact(ContactParameter),
     Surrounding(SurroundingParameter),
-    SharedBody(SharedBodyParameter),
-    ModulationSlot {
-        slot: usize,
-        parameter: ModulationSlotParameter,
-    },
 }
 
 impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
     fn plain_value(self, patch: &ResonatorSynthPatch) -> f32 {
         match self {
             Self::Output(parameter) => parameter.plain_value(patch.output),
-            Self::RoutingMode => RoutingMode::from_routing(crate::normalize_routing_for_resonator_models(
-                patch.routing,
-                patch.resonator_a,
-                patch.resonator_b,
-            ))
-            .plain(),
+            Self::RoutingMode => RoutingMode::from_routing(patch.routing).plain(),
             Self::ParallelMixA => parallel_mix_a(patch.routing),
             Self::ParallelMixB => parallel_mix_b(patch.routing),
             Self::ParallelMixBalance => parallel_mix_balance(patch.routing),
@@ -52,19 +48,7 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::NoteDetection(parameter) => parameter.plain_value(patch),
             Self::LiveExcitation(parameter) => parameter.plain_value(patch),
             Self::Resonator { slot, parameter } => parameter.plain_value(slot.config(patch)),
-            Self::Envelope { target, parameter } => parameter.plain_value(target.config(patch)),
-            Self::LfoRate => patch.modulation.lfo.rate_hz,
-            Self::LfoShape => patch.modulation.lfo.shape.plain(),
-            Self::LfoTempoSync => bool_plain(patch.modulation.lfo.tempo_sync),
-            Self::PitchBendRange => patch.modulation.pitch_bend_range_semitones,
-            Self::VelocityExcitationDepth => patch.modulation.velocity_to_excitation_depth,
-            Self::Driver(parameter) => parameter.plain_value(patch.driver),
-            Self::Contact(parameter) => parameter.plain_value(patch.contact),
             Self::Surrounding(parameter) => parameter.plain_value(patch.surrounding),
-            Self::SharedBody(parameter) => parameter.plain_value(patch.shared_body),
-            Self::ModulationSlot { slot, parameter } => parameter
-                .plain_value(&patch.modulation, slot)
-                .unwrap_or_default(),
         }
     }
 
@@ -91,42 +75,9 @@ impl ParameterPatchPath<ResonatorSynthPatch> for ParameterPath {
             Self::Resonator { slot, parameter } => {
                 parameter.apply_plain(slot.config_mut(patch), value);
             }
-            Self::Envelope { target, parameter } => {
-                parameter.apply_plain(target.config_mut(patch), value);
-            }
-            Self::LfoRate => {
-                patch.modulation.lfo.rate_hz = finite_value(value, 0.01, 100.0, 2.0);
-            }
-            Self::LfoShape => {
-                patch.modulation.lfo.shape = LfoShape::from_plain(value);
-            }
-            Self::LfoTempoSync => {
-                patch.modulation.lfo.tempo_sync = bool_from_plain(value);
-            }
-            Self::PitchBendRange => {
-                patch.modulation.pitch_bend_range_semitones = finite_value(
-                    value,
-                    0.0,
-                    24.0,
-                    DEFAULT_PITCH_BEND_RANGE_SEMITONES,
-                );
-            }
-            Self::VelocityExcitationDepth => {
-                patch.modulation.velocity_to_excitation_depth = finite_value(value, 0.0, 1.0, 1.0);
-            }
-            Self::Driver(parameter) => parameter.apply_plain(&mut patch.driver, value),
-            Self::Contact(parameter) => parameter.apply_plain(&mut patch.contact, value),
-            Self::Surrounding(parameter) => {
-                parameter.apply_plain(&mut patch.surrounding, value)
-            }
-            Self::SharedBody(parameter) => {
-                parameter.apply_plain(&mut patch.shared_body, value)
-            }
-            Self::ModulationSlot { slot, parameter } => {
-                parameter.apply_plain(&mut patch.modulation, slot, value);
-            }
+            Self::Surrounding(parameter) => parameter.apply_plain(&mut patch.surrounding, value),
         }
-        patch.normalize_routing_for_resonator_models();
+        patch.normalize_routing();
     }
 }
 
@@ -141,7 +92,7 @@ pub(crate) enum OutputParameter {
 }
 
 impl OutputParameter {
-    fn plain_value(self, output: crate::OutputConfig) -> f32 {
+    fn plain_value(self, output: OutputConfig) -> f32 {
         match self {
             Self::MasterGain => output.master_gain_db,
             Self::FilterCutoff => output.filter_cutoff,
@@ -152,17 +103,13 @@ impl OutputParameter {
         }
     }
 
-    fn apply_plain(self, output: &mut crate::OutputConfig, value: f32) {
+    fn apply_plain(self, output: &mut OutputConfig, value: f32) {
         match self {
             Self::MasterGain => output.master_gain_db = MASTER_GAIN_DB.clamp(value),
-            Self::FilterCutoff => {
-                output.filter_cutoff = OUTPUT_FILTER_CUTOFF_HZ.clamp(value);
-            }
+            Self::FilterCutoff => output.filter_cutoff = OUTPUT_FILTER_CUTOFF_HZ.clamp(value),
             Self::Saturation => output.saturation_drive = finite_value(value, 0.0, 1.0, 0.0),
             Self::Pan => output.master_pan = finite_value(value, -1.0, 1.0, 0.0),
-            Self::FilterResonance => {
-                output.filter_resonance = FILTER_RESONANCE.clamp(value);
-            }
+            Self::FilterResonance => output.filter_resonance = FILTER_RESONANCE.clamp(value),
             Self::FilterMode => output.filter_mode = FilterMode::from_plain(value),
         }
     }
@@ -195,12 +142,8 @@ impl AudioExpressionParameter {
         match self {
             Self::Enabled => patch.audio_expression.enabled = bool_from_plain(value),
             Self::PitchBendRange => {
-                patch.audio_expression.mapping.pitch_bend_range_semitones = finite_value(
-                    value,
-                    0.0,
-                    48.0,
-                    DEFAULT_PITCH_BEND_RANGE_SEMITONES,
-                );
+                patch.audio_expression.mapping.pitch_bend_range_semitones =
+                    finite_value(value, 0.0, 48.0, DEFAULT_PITCH_BEND_RANGE_SEMITONES);
             }
             Self::PressureFloor => {
                 patch.audio_expression.mapping.pressure_floor_rms =
@@ -247,36 +190,20 @@ impl AudioNoteDetectionParameter {
         let detection = &mut patch.note_detection;
         match self {
             Self::OnsetSensitivity => {
-                detection.onset_sensitivity = finite_value(
-                    value,
-                    0.0,
-                    1.0,
-                    DEFAULT_AUDIO_NOTE_ONSET_SENSITIVITY,
-                );
+                detection.onset_sensitivity =
+                    finite_value(value, 0.0, 1.0, DEFAULT_AUDIO_NOTE_ONSET_SENSITIVITY);
             }
             Self::ReleaseFloor => {
-                detection.note_release_floor_rms = finite_value(
-                    value,
-                    0.0,
-                    1.0,
-                    DEFAULT_AUDIO_NOTE_RELEASE_FLOOR_RMS,
-                );
+                detection.note_release_floor_rms =
+                    finite_value(value, 0.0, 1.0, DEFAULT_AUDIO_NOTE_RELEASE_FLOOR_RMS);
             }
             Self::MinimumLength => {
-                detection.minimum_note_length_ms = finite_value(
-                    value,
-                    1.0,
-                    2_000.0,
-                    DEFAULT_AUDIO_NOTE_MINIMUM_LENGTH_MS,
-                );
+                detection.minimum_note_length_ms =
+                    finite_value(value, 1.0, 2_000.0, DEFAULT_AUDIO_NOTE_MINIMUM_LENGTH_MS);
             }
             Self::PitchConfidence => {
-                detection.pitch_confidence = finite_value(
-                    value,
-                    0.0,
-                    1.0,
-                    DEFAULT_AUDIO_NOTE_PITCH_CONFIDENCE,
-                );
+                detection.pitch_confidence =
+                    finite_value(value, 0.0, 1.0, DEFAULT_AUDIO_NOTE_PITCH_CONFIDENCE);
             }
             Self::VelocityAmount => {
                 detection.velocity_amount =
@@ -332,46 +259,17 @@ pub(crate) enum ResonatorSlot {
 }
 
 impl ResonatorSlot {
-    fn config(self, patch: &ResonatorSynthPatch) -> ResonatorConfig {
+    fn config(self, patch: &ResonatorSynthPatch) -> ModalConfig {
         match self {
             Self::A => patch.resonator_a,
             Self::B => patch.resonator_b,
         }
     }
 
-    fn config_mut(self, patch: &mut ResonatorSynthPatch) -> &mut ResonatorConfig {
+    fn config_mut(self, patch: &mut ResonatorSynthPatch) -> &mut ModalConfig {
         match self {
             Self::A => &mut patch.resonator_a,
             Self::B => &mut patch.resonator_b,
-        }
-    }
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResonatorParameter {
-    Model,
-    Modal(ModalParameter),
-    Waveguide(WaveguideParameter),
-    Mesh(MeshParameter),
-}
-
-impl ResonatorParameter {
-    fn plain_value(self, config: ResonatorConfig) -> f32 {
-        match self {
-            Self::Model => ResonatorModel::from_config(config).plain(),
-            Self::Modal(parameter) => parameter.plain_value(modal_config_from(config)),
-            Self::Waveguide(parameter) => parameter.plain_value(waveguide_config_from(config)),
-            Self::Mesh(parameter) => parameter.plain_value(mesh_config_from(config)),
-        }
-    }
-
-    fn apply_plain(self, config: &mut ResonatorConfig, value: f32) {
-        match self {
-            Self::Model => *config = ResonatorModel::from_plain(value).config_from(*config),
-            Self::Modal(parameter) => parameter.apply_if_selected(config, value),
-            Self::Waveguide(parameter) => parameter.apply_if_selected(config, value),
-            Self::Mesh(parameter) => parameter.apply_if_selected(config, value),
         }
     }
 }
@@ -404,36 +302,6 @@ impl ModalParameter {
         }
     }
 
-    fn apply_if_selected(self, config: &mut ResonatorConfig, value: f32) {
-        match config {
-            ResonatorConfig::Modal(modal) => self.apply_plain(modal, value),
-            ResonatorConfig::Waveguide(waveguide) => {
-                // Fundamental tune and strike position are shared resonator concepts.
-                match self {
-                    Self::Semitone => {
-                        waveguide.semitone_offset =
-                            finite_value(value, -24.0, 24.0, 0.0).round() as i8;
-                    }
-                    Self::Cents => waveguide.cent_offset = finite_value(value, -100.0, 100.0, 0.0),
-                    Self::StrikePosition => {
-                        waveguide.position_of_strike = STRIKE_POSITION.clamp(value);
-                    }
-                    _ => {}
-                }
-            }
-            ResonatorConfig::Mesh(mesh) => match self {
-                Self::Semitone => {
-                    mesh.semitone_offset = finite_value(value, -24.0, 24.0, 0.0).round() as i8;
-                }
-                Self::Cents => mesh.cent_offset = finite_value(value, -100.0, 100.0, 0.0),
-                Self::StrikePosition => {
-                    mesh.position_of_strike = STRIKE_POSITION.clamp(value);
-                }
-                _ => {}
-            },
-        }
-    }
-
     fn apply_plain(self, config: &mut ModalConfig, value: f32) {
         match self {
             Self::Preset => config.preset = ModalPreset::from_plain(value),
@@ -448,128 +316,224 @@ impl ModalParameter {
             Self::Brightness => config.brightness = finite_value(value, 0.0, 1.0, 0.5),
             Self::Decay => config.decay_global = finite_value(value, 0.05, 10.0, 1.0),
             Self::DecayTilt => config.decay_tilt = finite_value(value, 0.0, 1.0, 0.5),
-            Self::StrikePosition => {
-                config.position_of_strike = STRIKE_POSITION.clamp(value);
-            }
+            Self::StrikePosition => config.position_of_strike = STRIKE_POSITION.clamp(value),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WaveguideParameter {
-    LoopFilter,
-    LoopResonance,
-    LoopGain,
-    Nonlinearity,
-    Dispersion,
-    Position,
-    Style,
-    BoundaryReflection,
-    SourceBodyBalance,
+pub(crate) enum SurroundingParameter {
+    MechanicalNoise,
+    RadiationBrightness,
+    Sympathetic,
 }
 
-impl WaveguideParameter {
-    fn plain_value(self, config: WaveguideConfig) -> f32 {
+impl SurroundingParameter {
+    fn plain_value(self, config: SurroundingConfig) -> f32 {
         match self {
-            Self::LoopFilter => config.loop_filter_cutoff,
-            Self::LoopResonance => config.loop_filter_resonance,
-            Self::LoopGain => config.loop_gain,
-            Self::Nonlinearity => config.loop_nonlinearity,
-            Self::Dispersion => config.dispersion,
-            Self::Position => config.position_of_strike,
-            Self::Style => config.style.plain(),
-            Self::BoundaryReflection => config.boundary_reflection,
-            Self::SourceBodyBalance => config.source_body_balance,
+            Self::MechanicalNoise => config.mechanical_noise,
+            Self::RadiationBrightness => config.radiation_brightness,
+            Self::Sympathetic => config.sympathetic,
         }
     }
 
-    fn apply_if_selected(self, config: &mut ResonatorConfig, value: f32) {
-        match config {
-            ResonatorConfig::Waveguide(waveguide) => self.apply_plain(waveguide, value),
-            ResonatorConfig::Modal(modal) => {
-                if self == Self::Position {
-                    modal.position_of_strike = STRIKE_POSITION.clamp(value);
-                }
-            }
-            ResonatorConfig::Mesh(mesh) => {
-                if self == Self::Position {
-                    mesh.position_of_strike = STRIKE_POSITION.clamp(value);
-                }
-            }
-        }
-    }
-
-    fn apply_plain(self, config: &mut WaveguideConfig, value: f32) {
+    fn apply_plain(self, config: &mut SurroundingConfig, value: f32) {
+        let value = finite_value(value, 0.0, 1.0, 0.0);
         match self {
-            Self::LoopFilter => {
-                config.loop_filter_cutoff = WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ.clamp(value)
-            }
-            Self::LoopResonance => config.loop_filter_resonance = FILTER_RESONANCE.clamp(value),
-            Self::LoopGain => config.loop_gain = WAVEGUIDE_LOOP_GAIN.clamp(value),
-            Self::Nonlinearity => config.loop_nonlinearity = finite_value(value, 0.0, 1.0, 0.0),
-            Self::Dispersion => config.dispersion = WAVEGUIDE_DISPERSION.clamp(value),
-            Self::Position => config.position_of_strike = STRIKE_POSITION.clamp(value),
-            Self::Style => config.style = WaveguideStyle::from_plain(value),
-            Self::BoundaryReflection => {
-                config.boundary_reflection = TUBE_BOUNDARY.reflection(value);
-            }
-            Self::SourceBodyBalance => {
-                config.source_body_balance = finite_value(value, 0.0, 1.0, 0.0);
-            }
+            Self::MechanicalNoise => config.mechanical_noise = value,
+            Self::RadiationBrightness => config.radiation_brightness = value,
+            Self::Sympathetic => config.sympathetic = value,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EnvelopeTarget {
-    Amp,
-    Secondary,
-}
-
-impl EnvelopeTarget {
-    fn config(self, patch: &ResonatorSynthPatch) -> EnvelopeConfig {
-        match self {
-            Self::Amp => patch.modulation.amp_envelope,
-            Self::Secondary => patch.modulation.secondary_envelope,
-        }
-    }
-
-    fn config_mut(self, patch: &mut ResonatorSynthPatch) -> &mut EnvelopeConfig {
-        match self {
-            Self::Amp => &mut patch.modulation.amp_envelope,
-            Self::Secondary => &mut patch.modulation.secondary_envelope,
-        }
-    }
+enum MixSide {
+    A,
+    B,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EnvelopeParameter {
-    Attack,
-    Decay,
-    Sustain,
-    Release,
+enum RoutingMode {
+    Parallel,
+    Series,
+    BodyColor,
 }
 
-impl EnvelopeParameter {
-    fn plain_value(self, config: EnvelopeConfig) -> f32 {
-        match self {
-            Self::Attack => config.attack_ms,
-            Self::Decay => config.decay_ms,
-            Self::Sustain => config.sustain,
-            Self::Release => config.release_ms,
+impl RoutingMode {
+    fn from_routing(routing: ResonatorRouting) -> Self {
+        match routing {
+            ResonatorRouting::Parallel { .. } => Self::Parallel,
+            ResonatorRouting::Series { .. } => Self::Series,
+            ResonatorRouting::BodyColor { .. } => Self::BodyColor,
         }
     }
 
-    fn apply_plain(self, config: &mut EnvelopeConfig, value: f32) {
+    fn apply_to(self, current: ResonatorRouting) -> ResonatorRouting {
+        let mix_a = parallel_mix_a(current);
+        let mix_b = parallel_mix_b(current);
         match self {
-            Self::Attack => config.attack_ms = finite_value(value, 0.0, 5_000.0, 1.0),
-            Self::Decay => config.decay_ms = finite_value(value, 0.0, 5_000.0, 80.0),
-            Self::Sustain => config.sustain = finite_value(value, 0.0, 1.0, 1.0),
-            Self::Release => config.release_ms = finite_value(value, 0.0, 10_000.0, 250.0),
+            Self::Parallel => ResonatorRouting::Parallel { mix_a, mix_b },
+            Self::Series => ResonatorRouting::Series { mix_a, mix_b },
+            Self::BodyColor => ResonatorRouting::BodyColor { mix_a, mix_b },
         }
     }
 }
 
-// The modulation-slot parameter path lives in a separate file to keep this one under
-// the repository file-size limit; `include!` keeps it in this module verbatim.
-include!("paths/modulation_slot.rs");
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for AudioInputMode {
+        max: 2;
+        fallback: Self::Off;
+        0 => Self::Off, "Off";
+        1 => Self::AudioCreatesNotes, "Audio Notes";
+        2 => Self::MidiPlusAudioCreatesNotes, "MIDI + Audio";
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for LiveExcitationMode {
+        max: 3;
+        fallback: Self::Off;
+        0 => Self::Off, "Off";
+        1 => Self::Continuous, "Continuous";
+        2 => Self::NoteLatched, "Note Latched";
+        3 => Self::ContinuousAndNoteLatched, "Cont + Latch";
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for FilterMode {
+        max: 2;
+        fallback: Self::LowPass;
+        0 => Self::LowPass, "LP";
+        1 => Self::BandPass, "BP";
+        2 => Self::HighPass, "HP";
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for RoutingMode {
+        max: 2;
+        fallback: Self::Parallel;
+        0 => Self::Parallel, "Parallel";
+        1 => Self::Series, "Series";
+        2 => Self::BodyColor, "Body Color";
+    }
+}
+
+lindelion_plugin_shell::define_parameter_codec! {
+    impl ParameterCodec for ModalPreset {
+        max: 6;
+        fallback: Self::GenericStrike;
+        0 => Self::Kalimba, "Kalimba";
+        1 => Self::Marimba, "Marimba";
+        2 => Self::Bell, "Bell";
+        3 => Self::GlassBowl, "Glass Bowl";
+        4 => Self::MetalBar, "Metal Bar";
+        5 => Self::Woodblock, "Woodblock";
+        6 => Self::GenericStrike, "Generic";
+    }
+}
+
+pub(crate) fn output_gain_from_plain(gain_db: f32) -> f32 {
+    db_to_gain(MASTER_GAIN_DB.clamp(gain_db))
+}
+
+fn parallel_mix_a(routing: ResonatorRouting) -> f32 {
+    match routing {
+        ResonatorRouting::Parallel { mix_a, .. } => mix_a,
+        ResonatorRouting::Series { mix_a, .. } => mix_a,
+        ResonatorRouting::BodyColor { mix_a, .. } => mix_a,
+    }
+}
+
+fn parallel_mix_b(routing: ResonatorRouting) -> f32 {
+    match routing {
+        ResonatorRouting::Parallel { mix_b, .. } => mix_b,
+        ResonatorRouting::Series { mix_b, .. } => mix_b,
+        ResonatorRouting::BodyColor { mix_b, .. } => mix_b,
+    }
+}
+
+fn set_parallel_mix(routing: ResonatorRouting, side: MixSide, value: f32) -> ResonatorRouting {
+    let mut mix_a = parallel_mix_a(routing);
+    let mut mix_b = parallel_mix_b(routing);
+    match side {
+        MixSide::A => mix_a = finite_value(value, 0.0, 1.0, 0.5),
+        MixSide::B => mix_b = finite_value(value, 0.0, 1.0, 0.5),
+    }
+    match routing {
+        ResonatorRouting::Parallel { .. } => ResonatorRouting::Parallel { mix_a, mix_b },
+        ResonatorRouting::Series { .. } => ResonatorRouting::Series { mix_a, mix_b },
+        ResonatorRouting::BodyColor { .. } => ResonatorRouting::BodyColor { mix_a, mix_b },
+    }
+}
+
+fn parallel_mix_balance(routing: ResonatorRouting) -> f32 {
+    let mix_a = finite_value(parallel_mix_a(routing), 0.0, 1.0, 0.5);
+    let mix_b = finite_value(parallel_mix_b(routing), 0.0, 1.0, 0.5);
+    let total = mix_a + mix_b;
+    if total > f32::EPSILON {
+        mix_b / total
+    } else {
+        0.5
+    }
+}
+
+fn set_parallel_mix_balance(routing: ResonatorRouting, value: f32) -> ResonatorRouting {
+    let mix_b = finite_value(value, 0.0, 1.0, 0.5);
+    let mix_a = 1.0 - mix_b;
+    match routing {
+        ResonatorRouting::Parallel { .. } => ResonatorRouting::Parallel { mix_a, mix_b },
+        ResonatorRouting::Series { .. } => ResonatorRouting::Series { mix_a, mix_b },
+        ResonatorRouting::BodyColor { .. } => ResonatorRouting::BodyColor { mix_a, mix_b },
+    }
+}
+
+fn bool_from_plain(value: f32) -> bool {
+    finite_value(value, 0.0, 1.0, 0.0) >= 0.5
+}
+
+fn bool_plain(value: bool) -> f32 {
+    if value { 1.0 } else { 0.0 }
+}
+
+pub(crate) fn audio_input_mode_label_from_plain(value: f32) -> &'static str {
+    AudioInputMode::label_from_plain(value)
+}
+
+pub(crate) fn live_excitation_mode_label_from_plain(value: f32) -> &'static str {
+    LiveExcitationMode::label_from_plain(value)
+}
+
+pub(crate) fn filter_mode_label_from_plain(value: f32) -> &'static str {
+    FilterMode::label_from_plain(value)
+}
+
+pub(crate) fn routing_label_from_plain(value: f32) -> &'static str {
+    RoutingMode::label_from_plain(value)
+}
+
+pub(crate) fn modal_preset_label_from_plain(value: f32) -> &'static str {
+    ModalPreset::label_from_plain(value)
+}
+
+pub(crate) fn retrigger_label_from_plain(value: f32) -> &'static str {
+    if bool_from_plain(value) {
+        "Retrigger"
+    } else {
+        "Carry"
+    }
+}
+
+pub(crate) fn enabled_label_from_plain(value: f32) -> &'static str {
+    if bool_from_plain(value) { "On" } else { "Off" }
+}
+
+fn finite_value(value: f32, min: f32, max: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        default
+    }
+}

@@ -2,7 +2,7 @@
 
 *Sindarin **Lamath**: "echo" or "ringing of voices." Six letters, pronounced LAH-math; paired phonetically with Glirdir.*
 
-Lamath is Lindelion's implemented breath-excited resonator VST3 instrument. It combines sample-slot excitation with modal/waveguide resonators and an optional sidechain input on the same instrument.
+Lamath is Lindelion's dual modal resonator VST3 instrument. It combines sample-slot excitation, live excitation, and optional sidechain input on the same instrument.
 
 ## Current Behavior
 
@@ -10,7 +10,6 @@ Lamath is Lindelion's implemented breath-excited resonator VST3 instrument. It c
 - Optional sidechain audio can create and release notes, or run alongside MIDI in a mixed MIDI/audio mode.
 - Sidechain audio can drive expression and live excitation. Expression uses shared `lindelion-audio-expression` analysis; Lamath owns voice allocation, MIDI/audio ownership policy, sidechain bus policy, and continuous/note-latched excitation routing.
 - Live excitation is patch-configurable as `Off`, `Continuous`, `NoteLatched`, or `ContinuousAndNoteLatched`.
-- An opt-in shared-body idiophone mode promotes an idiophone patch's resonator to a single persistent body that note-ons re-strike (instead of per-note voices), with per-strike ring-preserving retune and a key-switch damp; off is bit-identical to the per-voice behavior. See the [spec](../../docs/plugins/lamath.md) §4.4 and [ADR-0031](../../docs/adr/0031-shared-body-idiophone-mode.md).
 - The offline review render catalog produces deterministic WAVs, compressed MP3 previews, and a local review UI for per-file/category feedback. See the [spec](../../docs/plugins/lamath.md#12-review-render-catalog) and [development docs](../../docs/development.md#review-audio).
 - The realtime path is covered by no-allocation tests for audio note creation, continuous excitation, note-latched excitation, and mixed MIDI/audio mode.
 

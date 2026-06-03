@@ -1,12 +1,12 @@
 use lindelion_plugin_shell::{ControlEvent, MidiControllerRoute, MidiEvent};
 use vst3::Steinberg::Vst::*;
 
-use crate::{RESONATOR_BRIGHTNESS_CONTROLLER, RESONATOR_MOD_WHEEL_CONTROLLER};
+use crate::{RESONATOR_BRIGHTNESS_CONTROLLER, RESONATOR_PRESSURE_CONTROLLER};
 
 pub(super) const RESONATOR_MIDI_CONTROLLER_ROUTES: &[MidiControllerRoute] = &[
     MidiControllerRoute::new(
         controller_number(ControllerNumbers_::kCtrlModWheel),
-        RESONATOR_MOD_WHEEL_CONTROLLER,
+        RESONATOR_PRESSURE_CONTROLLER,
     ),
     MidiControllerRoute::new(
         controller_number(ControllerNumbers_::kCtrlFilterResonance),

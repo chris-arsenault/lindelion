@@ -6,6 +6,8 @@ pub mod cenedril_vizia;
 pub mod editor_surface;
 pub mod glirdir_vizia;
 pub mod lamath_cymbal_vizia;
+pub mod lamath_stringed_vizia;
+pub mod lamath_tube_vizia;
 pub mod linnod_vizia;
 pub mod lumedir_vizia;
 pub mod resonator_vizia;
@@ -18,6 +20,8 @@ pub mod vizia_window;
 #[cfg(target_os = "windows")]
 pub mod vizia_meter;
 
+#[cfg(target_os = "macos")]
+pub mod vizia_audio_file_drop;
 #[cfg(target_os = "macos")]
 mod vizia_clipboard;
 #[cfg(any(target_os = "macos", target_os = "windows"))]

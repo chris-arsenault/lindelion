@@ -227,24 +227,12 @@ fn vst_legacy_midi_uses_shared_normalizer_routes_and_pitch_range() {
 }
 
 #[test]
-fn waveguide_style_parameters_format_as_labels() {
-    assert_eq!(format_parameter_plain_value(35, 0.0), "String");
-    assert_eq!(format_parameter_plain_value(35, 1.0), "Tube");
-    assert_eq!(format_parameter_plain_value(55, 1.0), "Tube");
-}
-
-#[test]
-fn modulation_parameters_format_as_labels() {
+fn retained_parameters_format_as_labels() {
     assert_eq!(format_parameter_plain_value(100, 2.0), "MIDI + Audio");
     assert_eq!(format_parameter_plain_value(101, 1.0), "On");
     assert_eq!(format_parameter_plain_value(120, 3.0), "Cont + Latch");
-    assert_eq!(format_parameter_plain_value(81, 2.0), "Velocity");
-    assert_eq!(format_parameter_plain_value(81, 3.0), "Pressure");
-    assert_eq!(format_parameter_plain_value(81, 4.0), "Mod Wheel");
-    assert_eq!(format_parameter_plain_value(81, 5.0), "Brightness");
-    assert_eq!(format_parameter_plain_value(82, 0.0), "Filter Cutoff");
-    assert_eq!(format_parameter_plain_value(82, 4.0), "Res B Position");
-    assert_eq!(format_parameter_plain_value(86, 6.0), "LFO Rate");
+    assert_eq!(format_parameter_plain_value(10, 2.0), "Body Color");
+    assert_eq!(format_parameter_plain_value(21, 2.0), "Bell");
 }
 
 include!("tests/message_tests.rs");

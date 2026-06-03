@@ -20,7 +20,7 @@ pub(crate) enum RenderSelection {
     All,
     Group(String),
     Case(String),
-    /// All cases carrying the given tag (e.g. `mesh`, `tube`, `scale`).
+    /// All cases carrying the given tag (e.g. `modal`, `baseline`, `bright`).
     Tag(String),
 }
 
@@ -143,8 +143,8 @@ mod tests {
             Command::Render(RenderSelection::Case("baseline_modal_c4_v100".to_string()))
         );
         assert_eq!(
-            parse(&["--tag", "mesh"]).unwrap().command,
-            Command::Render(RenderSelection::Tag("mesh".to_string()))
+            parse(&["--tag", "modal"]).unwrap().command,
+            Command::Render(RenderSelection::Tag("modal".to_string()))
         );
     }
 

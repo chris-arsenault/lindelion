@@ -4,6 +4,7 @@ members = [
     "crates/lindelion-dsp-utils",
     "crates/lindelion-effect",
     "crates/lindelion-fidelity",
+    "crates/lindelion-idiophone",
     "crates/lindelion-test-allocator",
     "crates/lindelion-capture",
     "crates/lindelion-audio-expression",
@@ -15,13 +16,17 @@ members = [
     "crates/lindelion-plugin-metadata",
     "crates/lindelion-plugin-shell",
     "crates/lindelion-sample-library",
+    "crates/lindelion-string",
     "crates/lindelion-ui",
+    "crates/lindelion-wind",
     "galad",
     "plugins/caloma",
     "plugins/cenedril",
     "plugins/glirdir",
     "plugins/lamath",
     "plugins/lamath-cymbal",
+    "plugins/lamath-stringed",
+    "plugins/lamath-tube",
     "plugins/linnod",
     "plugins/lumedir",
     "speech/air-exciter",
@@ -59,6 +64,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 lindelion-dsp-utils = { path = "crates/lindelion-dsp-utils" }
 lindelion-effect = { path = "crates/lindelion-effect" }
 lindelion-fidelity = { path = "crates/lindelion-fidelity" }
+lindelion-idiophone = { path = "crates/lindelion-idiophone" }
 lindelion-speech-signals = { path = "speech/signals" }
 lindelion-speech-air-exciter = { path = "speech/air-exciter" }
 lindelion-speech-bass-enhancer = { path = "speech/bass-enhancer" }
@@ -91,7 +97,9 @@ lindelion-pitch-shift = { path = "crates/lindelion-pitch-shift" }
 lindelion-plugin-metadata = { path = "crates/lindelion-plugin-metadata" }
 lindelion-plugin-shell = { path = "crates/lindelion-plugin-shell" }
 lindelion-sample-library = { path = "crates/lindelion-sample-library", default-features = false }
+lindelion-string = { path = "crates/lindelion-string" }
 lindelion-ui = { path = "crates/lindelion-ui" }
+lindelion-wind = { path = "crates/lindelion-wind" }
 midly = "0.5.3"
 rand = "0.8"
 rand_pcg = "0.3"

@@ -3,11 +3,6 @@ use lindelion_dsp_utils::analysis::{
     harmonic_decay_profile, rms, rms_difference, sampled_high_frequency_ratio,
 };
 
-use super::{
-    modal::{ModalBank, ModalBankParams},
-    waveguide::{WaveguideParams, WaveguideResonator},
-};
-
 const EARLY_METRIC_START: usize = 512;
 const EARLY_METRIC_END: usize = 2_560;
 const LATE_METRIC_START: usize = 12_000;
@@ -68,38 +63,6 @@ pub(crate) fn render_response(
     }
 
     output
-}
-
-pub(crate) fn render_modal_response(
-    sample_rate: f32,
-    params: ModalBankParams,
-    sample_count: usize,
-    excitation: RenderExcitation,
-) -> Vec<f32> {
-    let mut bank = ModalBank::new(sample_rate, params);
-    render_response(
-        sample_rate,
-        params.fundamental_hz,
-        sample_count,
-        excitation,
-        |sample| bank.process_sample(sample),
-    )
-}
-
-pub(crate) fn render_waveguide_response(
-    sample_rate: f32,
-    params: WaveguideParams,
-    sample_count: usize,
-    excitation: RenderExcitation,
-) -> Vec<f32> {
-    let mut waveguide = WaveguideResonator::new(sample_rate, 20.0);
-    render_response(
-        sample_rate,
-        params.frequency_hz,
-        sample_count,
-        excitation,
-        |sample| waveguide.process_sample(sample, params),
-    )
 }
 
 pub(crate) fn render_metric_profile(

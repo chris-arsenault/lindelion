@@ -1,6 +1,4 @@
-mod modulation_state;
 mod output_stage;
-mod oversampler;
 mod resonator_stack;
 mod surrounding;
 
@@ -8,39 +6,35 @@ mod surrounding;
 mod tests;
 
 use lindelion_dsp_utils::{
+    energy::EnergyFollower,
     equal_power_pan,
     math::{midi_note_to_hz, semitones_to_ratio},
+    smoothing::{SmoothedParam, SmoothedParamSpec},
 };
 use lindelion_plugin_shell::ExpressionStream;
 
-use self::modulation_state::{ModulationSources, ModulationState, sanitize_pitch_bend};
 pub(crate) use self::output_stage::OutputStage;
 pub(crate) use self::surrounding::SurroundingStage;
 use super::excitation::{LiveExcitationLatchCapture, SelectedExcitations, VoiceExcitation};
 use crate::{
-    ModulationConfig, ModulationDestination, OutputConfig, ResonatorRouting, ResonatorSynthPatch,
-    dsp::constants::DSP_FALLBACK_SAMPLE_RATE,
+    OutputConfig, ResonatorRouting, ResonatorSynthPatch, dsp::constants::DSP_FALLBACK_SAMPLE_RATE,
 };
 
-const PARAMETER_SMOOTH_MS: f32 = 20.0;
-const PARAMETER_EPSILON: f32 = 0.000_001;
 const STRUCTURAL_RAMP_MS: f32 = 1.0;
+const PITCH_BEND_SMOOTH_MS: f32 = 8.0;
+const PITCH_BEND_EPSILON: f32 = 0.000_1;
 
-pub use oversampler::Oversampler2x;
 pub(crate) use resonator_stack::ResonatorStack;
 
-/// Fixed plugin latency the 2x oversampled waveguide/mesh path adds, in host
-/// samples (ADR-0016). Surfaced for the VST3 processor to report so hosts
-/// compensate; modal-only voices add none, so this is the maximum.
-pub(crate) const RESONATOR_OVERSAMPLING_LATENCY_SAMPLES: u32 =
-    oversampler::Oversampler2x::LATENCY_SAMPLES;
+/// Modal-only Lamath does not run an oversampled resonator path, so the reported
+/// processing latency is zero.
+pub(crate) const RESONATOR_OVERSAMPLING_LATENCY_SAMPLES: u32 = 0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct VoiceTrigger<'a, 'p> {
     pub channel: u8,
     pub midi_note: u8,
     pub expression: VoiceExpression,
-    pub modulation: ModulationConfig,
     pub excitations: SelectedExcitations<'a>,
     pub live_latch: Option<LiveExcitationLatchCapture<'p>>,
     pub patch: &'p ResonatorSynthPatch,
@@ -111,7 +105,6 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
             channel: 0,
             midi_note,
             expression: VoiceExpression::note_on(velocity),
-            modulation: patch.modulation,
             excitations: SelectedExcitations::from_single(
                 excitation_samples,
                 excitation_sample_rate,
@@ -131,7 +124,6 @@ impl<'a, 'p> VoiceTrigger<'a, 'p> {
             channel: 0,
             midi_note,
             expression: VoiceExpression::note_on(velocity),
-            modulation: patch.modulation,
             excitations,
             live_latch: None,
             patch,
@@ -146,15 +138,14 @@ pub struct Voice<'a> {
     live_latch: super::excitation::VoiceLiveExcitationLatch,
     excitation_gain: f32,
     midi_note: u8,
+    expression: VoiceExpression,
+    pitch_bend_semitones: SmoothedParam,
+    applied_pitch_bend_semitones: f32,
     resonators: ResonatorStack,
-    modulation: ModulationState,
     surrounding: SurroundingStage,
     output: OutputStage,
-    /// Running peak `|x|` at each stage of the per-sample signal path
-    /// `[excitation, resonator output, surrounding output, final output]`,
-    /// for the M11 gain-staging measurement battery (P1/P9). Test-only.
-    #[cfg(test)]
-    stage_peaks: [f32; 4],
+    energy_follower: EnergyFollower,
+    energy: f32,
 }
 
 impl<'a> Voice<'a> {
@@ -172,12 +163,14 @@ impl<'a> Voice<'a> {
             ),
             excitation_gain: 0.0,
             midi_note: 60,
+            expression: VoiceExpression::default(),
+            pitch_bend_semitones: pitch_bend_param(sample_rate, 0.0),
+            applied_pitch_bend_semitones: 0.0,
             resonators: ResonatorStack::new(sample_rate),
-            modulation: ModulationState::new(sample_rate),
             surrounding: SurroundingStage::new(sample_rate),
             output: OutputStage::new(sample_rate),
-            #[cfg(test)]
-            stage_peaks: [0.0; 4],
+            energy_follower: EnergyFollower::new(sample_rate),
+            energy: 0.0,
         }
     }
 
@@ -197,38 +190,27 @@ impl<'a> Voice<'a> {
         } else {
             self.live_latch.clear();
         }
-        self.excitation_gain = velocity_to_gain(
-            expression.stream.velocity,
-            trigger.modulation.velocity_to_excitation_depth,
-        );
+
+        self.excitation_gain = velocity_to_gain(expression.stream.velocity, 1.0);
         self.midi_note = trigger.midi_note;
-        self.modulation.trigger(
-            trigger.midi_note,
-            expression,
-            trigger.modulation,
-            trigger_pitch_bend,
-        );
+        self.expression = expression;
+        self.pitch_bend_semitones.reset(trigger_pitch_bend);
+        self.applied_pitch_bend_semitones = trigger_pitch_bend;
+        self.energy_follower.reset();
+        self.energy = 0.0;
+
         self.resonators
             .set_base_configs(trigger.patch.resonator_a, trigger.patch.resonator_b);
-        self.resonators
-            .set_drivers(trigger.patch.driver, trigger.patch.driver_b);
-        self.resonators.set_contact(trigger.patch.contact);
-        self.surrounding.set_config(trigger.patch.surrounding);
-        self.surrounding.trigger();
-
-        let static_sources = self.modulation.static_sources();
-        self.resonators.configure_modulated(
-            trigger.modulation,
-            static_sources,
+        self.resonators.configure(
             self.base_frequency(),
             trigger.patch.retrigger_resonators,
             true,
         );
         self.resonators.reset_routing(trigger.patch.routing);
-        self.output.reset(trigger.patch.output);
-        self.modulation
-            .reset_waveguide_loop_gain(self.resonators.current_loop_gain());
         self.resonators.reset_series_conditioner(self.sample_rate);
+        self.surrounding.set_config(trigger.patch.surrounding);
+        self.surrounding.trigger();
+        self.output.reset(trigger.patch.output);
     }
 
     #[cfg(test)]
@@ -251,32 +233,22 @@ impl<'a> Voice<'a> {
     }
 
     pub fn is_excitation_finished(&self) -> bool {
-        self.excitation.is_finished()
-            && self.live_latch.is_finished()
-            && self.modulation.is_amp_idle()
+        self.excitation.is_finished() && self.live_latch.is_finished()
     }
 
     pub fn continue_live_latch_capture(&mut self, sidechain: &[f32]) {
         self.live_latch.continue_capture(sidechain);
     }
 
-    #[cfg(test)]
-    pub fn set_pitch_bend(&mut self, pitch_bend_semitones: f32) {
-        self.modulation.set_pitch_bend(pitch_bend_semitones);
-    }
-
     pub fn set_expression(&mut self, expression: VoiceExpression) {
-        self.modulation.set_expression(expression);
+        let expression = expression.sanitized();
+        self.pitch_bend_semitones
+            .set_target(sanitize_pitch_bend(expression.stream.pitch_bend));
+        self.expression = expression;
     }
 
     pub fn set_output_config(&mut self, output: OutputConfig) {
         self.output.set_config(output);
-    }
-
-    #[cfg(test)]
-    pub fn set_waveguide_loop_gain(&mut self, loop_gain: f32) {
-        self.resonators.set_base_waveguide_loop_gain(loop_gain);
-        self.modulation.set_waveguide_loop_gain(loop_gain);
     }
 
     pub fn set_routing(&mut self, routing: ResonatorRouting) {
@@ -285,89 +257,33 @@ impl<'a> Voice<'a> {
 
     pub fn clear(&mut self) {
         self.excitation.clear();
+        self.live_latch.clear();
         self.excitation_gain = 0.0;
+        self.expression = VoiceExpression::default();
+        self.pitch_bend_semitones.reset(0.0);
+        self.applied_pitch_bend_semitones = 0.0;
         self.resonators.clear(self.sample_rate);
-        self.modulation.clear(self.resonators.current_loop_gain());
         self.surrounding.reset();
         self.output.clear();
-        #[cfg(test)]
-        {
-            self.stage_peaks = [0.0; 4];
-        }
-    }
-
-    #[cfg(test)]
-    pub fn process_sample(&mut self) -> f32 {
-        self.process_sample_with_live_excitation(0.0)
+        self.energy_follower.reset();
+        self.energy = 0.0;
     }
 
     fn process_sample_with_live_excitation(&mut self, live_excitation: f32) -> f32 {
         let structural_gain = self.apply_structural_transitions();
-        self.apply_smoothed_modulation_targets();
+        self.apply_smoothed_expression_targets();
 
-        let sources = self.modulation.next_sources(self.sample_rate);
-        self.apply_live_resonator_modulation(sources);
-        let excitation_mod = self
-            .modulation
-            .modulation_sum(ModulationDestination::ExcitationGain, sources);
         let excitation =
             (self.excitation.next_sample() + self.live_latch.next_sample() + live_excitation)
-                * self.excitation_gain
-                * (1.0 + excitation_mod).clamp(0.0, 2.0);
-
-        let resonator_output = self.resonators.process_sample(
-            excitation,
-            sources.energy,
-            sources.effort,
-            sources.drive_gate,
-        );
-        self.modulation.observe_energy(resonator_output);
-
-        // M11 P9: the audio path uses the per-resonator-made-up mix (level-matched across
-        // families, lifted to a healthy level), while the energy bus above stays the raw
-        // physical-vibration level the dynamic effects key off.
+                * self.excitation_gain;
+        let resonator_output = self.resonators.process_sample(excitation);
+        self.energy = self.energy_follower.observe(resonator_output);
         let staged_output = self.resonators.staged_output();
-
-        // Effort/energy-scaled surrounding effects (M10) sit between the resonator and
-        // the output stage, reading the same M2 bus the resonator did this sample.
         let surrounded = self
             .surrounding
-            .process(staged_output, sources.effort, sources.energy);
-
-        let cutoff_mod = self
-            .modulation
-            .modulation_sum(ModulationDestination::FilterCutoff, sources);
-        let output = self.output.process_sample(
-            surrounded,
-            self.sample_rate,
-            cutoff_mod,
-            sources.amp_envelope,
-            structural_gain,
-        );
-
-        #[cfg(test)]
-        {
-            self.stage_peaks[0] = self.stage_peaks[0].max(excitation.abs());
-            self.stage_peaks[1] = self.stage_peaks[1].max(resonator_output.abs());
-            self.stage_peaks[2] = self.stage_peaks[2].max(surrounded.abs());
-            self.stage_peaks[3] = self.stage_peaks[3].max(output.abs());
-        }
-
-        output
-    }
-
-    /// Current measured-energy bus value (followed resonator-output RMS), for the
-    /// M11 P8 energy-reference calibration battery.
-    #[cfg(test)]
-    pub(crate) fn measured_energy(&self) -> f32 {
-        self.modulation.measured_energy()
-    }
-
-    /// M11 gain-staging taps: running peak `|x|` at each stage of the signal path
-    /// `[excitation, resonator output, surrounding output, final output]`.
-    #[cfg(test)]
-    pub(crate) fn stage_peaks(&self) -> [f32; 4] {
-        self.stage_peaks
+            .process(staged_output, self.effort(), self.energy);
+        self.output
+            .process_sample(surrounded, self.sample_rate, 0.0, 1.0, structural_gain)
     }
 
     fn apply_structural_transitions(&mut self) -> f32 {
@@ -376,37 +292,35 @@ impl<'a> Voice<'a> {
             .min(self.output.apply_structural_transitions())
     }
 
-    fn apply_smoothed_modulation_targets(&mut self) {
-        if let Some(pitch_bend) = self.modulation.next_pitch_bend_change() {
-            self.resonators
-                .retune(midi_note_to_hz(self.midi_note as f32 + pitch_bend));
-        }
-
-        if let Some(loop_gain) = self.modulation.next_waveguide_loop_gain_change() {
-            self.resonators.set_waveguide_loop_gain(loop_gain);
-        }
-    }
-
-    fn apply_live_resonator_modulation(&mut self, sources: ModulationSources) {
-        if self.modulation.resonator_modulation_active() {
-            self.resonators.configure_modulated(
-                self.modulation.config(),
-                sources,
-                self.base_frequency(),
-                false,
-                false,
-            );
+    fn apply_smoothed_expression_targets(&mut self) {
+        let pitch_bend = self.pitch_bend_semitones.next_sample();
+        if (pitch_bend - self.applied_pitch_bend_semitones).abs() > PITCH_BEND_EPSILON {
+            self.applied_pitch_bend_semitones = pitch_bend;
+            self.resonators.retune(self.base_frequency());
         }
     }
 
     fn base_frequency(&self) -> f32 {
-        midi_note_to_hz(self.midi_note as f32 + self.modulation.applied_pitch_bend_semitones())
+        midi_note_to_hz(self.midi_note as f32 + self.applied_pitch_bend_semitones)
+    }
+
+    fn effort(&self) -> f32 {
+        let stream = self.expression.stream.sanitized();
+        sanitize_unit(stream.velocity.max(stream.pressure))
     }
 }
 
 fn sanitize_unit(value: f32) -> f32 {
     if value.is_finite() {
         value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn sanitize_pitch_bend(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(-96.0, 96.0)
     } else {
         0.0
     }
@@ -427,4 +341,12 @@ pub(super) fn structural_ramp_samples(sample_rate: f32) -> usize {
     (sample_rate * STRUCTURAL_RAMP_MS * 0.001)
         .round()
         .clamp(8.0, 256.0) as usize
+}
+
+fn pitch_bend_spec() -> SmoothedParamSpec {
+    SmoothedParamSpec::new(-96.0, 96.0, 0.0, PITCH_BEND_SMOOTH_MS, PITCH_BEND_EPSILON)
+}
+
+fn pitch_bend_param(sample_rate: f32, semitones: f32) -> SmoothedParam {
+    SmoothedParam::with_initial(pitch_bend_spec(), sample_rate, semitones)
 }

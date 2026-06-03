@@ -60,23 +60,6 @@ impl<'a> ResonatorProcessor<'a> {
             .saturating_add(sidechain.len());
     }
 
-    #[cfg(test)]
-    pub(super) fn handle_audio_note_event(&mut self, event: AudioNoteEvent) {
-        let live_policy = self.live_excitation_policy();
-        Self::handle_audio_note_event_in_runtime(
-            event,
-            &self.runtime_patch,
-            &mut self.selector,
-            &mut self.engine,
-            &mut self.expression_source,
-            &mut self.audio_expression_source,
-            &mut self.audio_note_state,
-            &self.live_latch_state,
-            &[],
-            live_policy,
-        );
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_audio_note_event_in_runtime(
         event: AudioNoteEvent,

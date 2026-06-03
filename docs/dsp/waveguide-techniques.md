@@ -1,7 +1,7 @@
 # Waveguide Resonator Techniques
 
-Catalog of the digital-waveguide techniques behind Lamath's waveguide resonator family
-(`plugins/lamath/src/dsp/waveguide/`) and its 2D-mesh resonator model. The module overview is in
+Catalog of the digital-waveguide techniques behind the extracted string and wind resonator crates
+(`crates/lindelion-string/src/`, `crates/lindelion-wind/src/`) and the 2D-mesh resonator model. The module overview is in
 [waveguide.md](waveguide.md); the tuning-correction and 2D-mesh decision rationale is in
 [ADR-0011](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md).
 

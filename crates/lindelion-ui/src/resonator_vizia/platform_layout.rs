@@ -11,7 +11,7 @@ fn build_editor(cx: &mut Context, signals: EditorSignals) {
             .horizontal_gap(Pixels(10.0));
             HStack::new(cx, move |cx| {
                 resonator_library_section(cx, signals);
-                resonator_modulation_section(cx, signals);
+                resonator_sidechain_section(cx, signals);
             })
             .height(Pixels(264.0))
             .horizontal_gap(Pixels(10.0));
@@ -120,7 +120,7 @@ fn resonator_stack_section(cx: &mut Context, signals: EditorSignals) {
         crate::vizia_controls::static_section_header(
             cx,
             "Resonator Stack",
-            "dual modal and waveguide lanes",
+            "dual modal lanes",
             crate::vizia_controls::Accent::Tone,
         );
         ResonatorScope::new(cx, signals.left_rms, signals.right_rms, signals.active_voices)
@@ -148,27 +148,6 @@ fn resonator_stack_section(cx: &mut Context, signals: EditorSignals) {
         })
         .height(Pixels(36.0))
         .horizontal_gap(Pixels(10.0));
-        // Shared-body idiophone mode (ADR-0031, M7): the body toggle and the key-switch
-        // damp range, alongside the Retrigger toggle as another resonator-behaviour control.
-        HStack::new(cx, move |cx| {
-            resonator_parameter_control(
-                cx,
-                signals.parameter(ResonatorEditorSurfaceSlot::SharedBodyEnabled),
-                crate::vizia_controls::Accent::Tone,
-            );
-            resonator_parameter_control(
-                cx,
-                signals.parameter(ResonatorEditorSurfaceSlot::SharedBodyDampKeyLow),
-                crate::vizia_controls::Accent::Tone,
-            );
-            resonator_parameter_control(
-                cx,
-                signals.parameter(ResonatorEditorSurfaceSlot::SharedBodyDampKeyHigh),
-                crate::vizia_controls::Accent::Tone,
-            );
-        })
-        .height(Pixels(36.0))
-        .horizontal_gap(Pixels(10.0));
     })
     .class("panel")
     .class("ll-panel")
@@ -182,19 +161,10 @@ fn resonator_lane_a(cx: &mut Context, signals: EditorSignals) {
     resonator_lane(
         cx,
         "A",
-        ResonatorEditorSurfaceSlot::ResonatorAModel,
-        ResonatorEditorSurfaceSlot::ResonatorAWaveguideStyle,
         [
             ResonatorEditorSurfaceSlot::ResonatorAPreset,
             ResonatorEditorSurfaceSlot::ResonatorABrightness,
             ResonatorEditorSurfaceSlot::ResonatorADecay,
-        ],
-        [
-            ResonatorEditorSurfaceSlot::ResonatorALoopFilter,
-            ResonatorEditorSurfaceSlot::ResonatorALoopGain,
-            ResonatorEditorSurfaceSlot::ResonatorANonlinearity,
-            ResonatorEditorSurfaceSlot::ResonatorABoundaryReflection,
-            ResonatorEditorSurfaceSlot::ResonatorADispersion,
         ],
         signals,
     );
@@ -204,19 +174,10 @@ fn resonator_lane_b(cx: &mut Context, signals: EditorSignals) {
     resonator_lane(
         cx,
         "B",
-        ResonatorEditorSurfaceSlot::ResonatorBModel,
-        ResonatorEditorSurfaceSlot::ResonatorBWaveguideStyle,
         [
             ResonatorEditorSurfaceSlot::ResonatorBPreset,
             ResonatorEditorSurfaceSlot::ResonatorBBrightness,
             ResonatorEditorSurfaceSlot::ResonatorBDecay,
-        ],
-        [
-            ResonatorEditorSurfaceSlot::ResonatorBLoopFilter,
-            ResonatorEditorSurfaceSlot::ResonatorBLoopGain,
-            ResonatorEditorSurfaceSlot::ResonatorBNonlinearity,
-            ResonatorEditorSurfaceSlot::ResonatorBBoundaryReflection,
-            ResonatorEditorSurfaceSlot::ResonatorBDispersion,
         ],
         signals,
     );
@@ -236,24 +197,13 @@ fn resonator_mix_column(cx: &mut Context, signals: EditorSignals) {
 fn resonator_lane(
     cx: &mut Context,
     title: &'static str,
-    model_slot: ResonatorEditorSurfaceSlot,
-    waveguide_style_slot: ResonatorEditorSurfaceSlot,
     modal_slots: [ResonatorEditorSurfaceSlot; 3],
-    waveguide_slots: [ResonatorEditorSurfaceSlot; 5],
     signals: EditorSignals,
 ) {
-    let model_signal = signals.parameter(model_slot).signal;
     VStack::new(cx, move |cx| {
         HStack::new(cx, move |cx| {
             Label::new(cx, title).class("section-title").width(Pixels(22.0));
-            resonator_compact_binary_control(cx, signals.parameter(model_slot));
-            HStack::new(cx, move |cx| {
-                resonator_compact_binary_control(cx, signals.parameter(waveguide_style_slot));
-            })
-            .display(resonator_model_display(
-                model_signal,
-                ResonatorLaneModel::Waveguide,
-            ));
+            Label::new(cx, "Modal").class("muted");
         })
         .height(Pixels(44.0))
         .alignment(Alignment::Center)
@@ -267,24 +217,6 @@ fn resonator_lane(
                 );
             }
         })
-        .display(resonator_model_display(
-            model_signal,
-            ResonatorLaneModel::Modal,
-        ))
-        .horizontal_gap(Pixels(4.0));
-        HStack::new(cx, move |cx| {
-            for slot in waveguide_slots {
-                resonator_parameter_control(
-                    cx,
-                    signals.parameter(slot),
-                    crate::vizia_controls::Accent::Tone,
-                );
-            }
-        })
-        .display(resonator_model_display(
-            model_signal,
-            ResonatorLaneModel::Waveguide,
-        ))
         .horizontal_gap(Pixels(4.0));
     })
     .class("strip")
@@ -292,30 +224,6 @@ fn resonator_lane(
     .width(Stretch(1.0))
     .height(Stretch(1.0))
     .vertical_gap(Pixels(6.0));
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ResonatorLaneModel {
-    Modal,
-    Waveguide,
-}
-
-fn resonator_model_display(
-    model_signal: Signal<f32>,
-    model: ResonatorLaneModel,
-) -> impl Res<Display> + Clone {
-    model_signal.map(move |value| {
-        let active_model = if *value >= 0.5 {
-            ResonatorLaneModel::Waveguide
-        } else {
-            ResonatorLaneModel::Modal
-        };
-        if active_model == model {
-            Display::Flex
-        } else {
-            Display::None
-        }
-    })
 }
 
 fn resonator_output_section(cx: &mut Context, signals: EditorSignals) {
@@ -498,18 +406,18 @@ fn selected_sample_matches(selected: f32, index: usize) -> bool {
     selected.is_finite() && selected >= 0.0 && selected.round() as usize == index
 }
 
-fn resonator_modulation_section(cx: &mut Context, signals: EditorSignals) {
+fn resonator_sidechain_section(cx: &mut Context, signals: EditorSignals) {
     HStack::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
             crate::vizia_controls::static_section_header(
                 cx,
-                "Envelope",
-                "amp shape",
+                "Live Excitation",
+                "sidechain latch",
                 crate::vizia_controls::Accent::Tone,
             );
             HStack::new(cx, move |cx| {
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AmpAttack), crate::vizia_controls::Accent::Tone);
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AmpRelease), crate::vizia_controls::Accent::Tone);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::LiveExcitationGain), crate::vizia_controls::Accent::Audio);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::LiveExcitationLatchFade), crate::vizia_controls::Accent::Audio);
             })
             .horizontal_gap(Pixels(4.0));
         })
@@ -521,20 +429,19 @@ fn resonator_modulation_section(cx: &mut Context, signals: EditorSignals) {
         VStack::new(cx, move |cx| {
             crate::vizia_controls::static_section_header(
                 cx,
-                "Modulation",
-                "lfo and first slot",
+                "Audio Notes",
+                "sidechain tracking",
                 crate::vizia_controls::Accent::Mod,
             );
             HStack::new(cx, move |cx| {
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::LfoRate), crate::vizia_controls::Accent::Mod);
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::LfoShape), crate::vizia_controls::Accent::Mod);
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::Mod1Enabled), crate::vizia_controls::Accent::Mod);
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::Mod1Amount), crate::vizia_controls::Accent::Mod);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AudioNoteReleaseFloor), crate::vizia_controls::Accent::Mod);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AudioNotePitchConfidence), crate::vizia_controls::Accent::Mod);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AudioNoteVelocityAmount), crate::vizia_controls::Accent::Mod);
             })
             .horizontal_gap(Pixels(4.0));
             HStack::new(cx, move |cx| {
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::Mod1Source), crate::vizia_controls::Accent::Mod);
-                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::Mod1Destination), crate::vizia_controls::Accent::Mod);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AudioExpressionPressureFloor), crate::vizia_controls::Accent::Mod);
+                resonator_parameter_control(cx, signals.parameter(ResonatorEditorSurfaceSlot::AudioExpressionPressureCeiling), crate::vizia_controls::Accent::Mod);
             })
             .height(Pixels(34.0))
             .horizontal_gap(Pixels(8.0));

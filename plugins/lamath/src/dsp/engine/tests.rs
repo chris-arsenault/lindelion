@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    ModalConfig, ModalPreset, OutputConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch,
-    WaveguideConfig, assert_no_allocations,
+    ModalConfig, ModalPreset, OutputConfig, ResonatorRouting, ResonatorSynthPatch,
+    assert_no_allocations,
 };
 use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms};
 use lindelion_plugin_shell::VoiceSlotState;
@@ -52,23 +52,6 @@ fn released_voice_is_stolen_before_active_voice() {
     assert_eq!(engine.slot_note(0), Some(67));
     assert_eq!(engine.slot_note(1), Some(64));
     assert_eq!(engine.slot_state(0), Some(VoiceSlotState::Active));
-}
-
-#[test]
-fn released_same_note_voice_is_reused_when_retrigger_is_off() {
-    let sample_rate = 48_000.0;
-    let mut patch = test_patch();
-    patch.retrigger_resonators = false;
-    let excitation = impulse();
-    let mut engine = SynthEngine::new(sample_rate, 3);
-
-    engine.note_on(trigger(60, &excitation, sample_rate, &patch));
-    engine.note_off(60);
-    let reused = engine.note_on(trigger(60, &excitation, sample_rate, &patch));
-
-    assert_eq!(reused, 0);
-    assert_eq!(engine.slot_state(0), Some(VoiceSlotState::Active));
-    assert_eq!(engine.active_voice_count(), 1);
 }
 
 #[test]
@@ -123,50 +106,6 @@ fn render_replace_outputs_finite_polyphonic_audio() {
     assert!(rms(&right) > 0.000_1);
     assert!(stereo_peak(&left, &right) < 4.0);
     assert!(engine.slot_last_level(0).unwrap() > 0.0);
-}
-
-#[cfg_attr(
-    not(feature = "integration-tests"),
-    ignore = "see make test-integration"
-)]
-#[test]
-fn aggressive_series_dense_chord_stays_finite_and_bounded() {
-    let sample_rate = 48_000.0;
-    let mut patch = test_patch();
-    patch.polyphony = 8;
-    patch.resonator_a = ResonatorConfig::Waveguide(WaveguideConfig {
-        loop_gain: 0.995,
-        loop_filter_cutoff: 18_000.0,
-        loop_filter_resonance: 0.85,
-        loop_nonlinearity: 0.4,
-        ..WaveguideConfig::default()
-    });
-    patch.resonator_b = ResonatorConfig::Waveguide(WaveguideConfig {
-        loop_gain: 0.995,
-        loop_filter_cutoff: 18_000.0,
-        loop_filter_resonance: 0.95,
-        loop_nonlinearity: 0.5,
-        ..WaveguideConfig::default()
-    });
-    patch.routing = ResonatorRouting::Series {
-        mix_a: 1.0,
-        mix_b: 1.0,
-    };
-    patch.output.master_gain_db = -9.0;
-    let excitation = impulse();
-    let mut engine = SynthEngine::new(sample_rate, 8);
-    let mut left = vec![0.0; 32_768];
-    let mut right = vec![0.0; 32_768];
-
-    for note in [36, 40, 43, 47, 50, 55, 59, 64] {
-        engine.note_on(trigger(note, &excitation, sample_rate, &patch));
-    }
-    engine.render_replace(&mut left, &mut right);
-
-    assert_all_finite(&left);
-    assert_all_finite(&right);
-    assert!(stereo_peak(&left, &right) < 8.0);
-    assert!(rms(&left) > 0.000_001);
 }
 
 #[test]
@@ -229,91 +168,19 @@ fn all_notes_off_routes_gate_to_every_active_voice_slot() {
 }
 
 #[test]
-fn poly_pressure_updates_only_matching_voice_slot() {
-    let sample_rate = 48_000.0;
-    let patch = test_patch();
-    let excitation = impulse();
-    let mut engine = SynthEngine::new(sample_rate, 3);
-    let slot_a = engine.note_on(channel_trigger(0, 60, &excitation, sample_rate, &patch));
-    let slot_b = engine.note_on(channel_trigger(1, 64, &excitation, sample_rate, &patch));
-
-    engine.set_expression_controls(0.0, 0.2, 0.0, 0.0);
-    engine.set_poly_pressure(1, 64, 0.9);
-
-    assert_eq!(engine.slot_expression(slot_a).unwrap().stream.pressure, 0.2);
-    assert_eq!(engine.slot_expression(slot_b).unwrap().stream.pressure, 0.9);
-
-    engine.set_expression_controls(0.0, 0.4, 0.0, 0.0);
-    assert_eq!(engine.slot_expression(slot_a).unwrap().stream.pressure, 0.4);
-    assert_eq!(engine.slot_expression(slot_b).unwrap().stream.pressure, 0.9);
-
-    engine.set_poly_pressure(0, 64, 0.1);
-    assert_eq!(engine.slot_expression(slot_b).unwrap().stream.pressure, 0.9);
-}
-
-#[test]
-fn channel_expression_controls_update_only_owned_voice_slots() {
-    let sample_rate = 48_000.0;
-    let patch = test_patch();
-    let excitation = impulse();
-    let mut engine = SynthEngine::new(sample_rate, 3);
-    let slot_a = engine.note_on(channel_trigger(1, 60, &excitation, sample_rate, &patch));
-    let slot_b = engine.note_on(channel_trigger(2, 64, &excitation, sample_rate, &patch));
-
-    engine.set_expression_controls_for_channel(2, 1.25, 0.5, 0.6, 0.7);
-
-    assert_expression_controls(engine.slot_expression(slot_a).unwrap(), 0.0, 0.0, 0.0, 0.0);
-    assert_expression_controls(engine.slot_expression(slot_b).unwrap(), 1.25, 0.5, 0.6, 0.7);
-
-    engine.set_expression_controls(0.25, 0.2, 0.3, 0.4);
-
-    assert_expression_controls(engine.slot_expression(slot_a).unwrap(), 0.25, 0.2, 0.3, 0.4);
-    assert_expression_controls(engine.slot_expression(slot_b).unwrap(), 0.25, 0.2, 0.3, 0.4);
-}
-
-#[test]
-fn released_quiet_voice_eventually_becomes_idle() {
-    let sample_rate = 48_000.0;
-    let mut patch = test_patch();
-    patch.resonator_a = ResonatorConfig::Waveguide(WaveguideConfig {
-        loop_gain: 0.1,
-        ..WaveguideConfig::default()
-    });
-    patch.resonator_b = ResonatorConfig::Waveguide(WaveguideConfig {
-        loop_gain: 0.0,
-        ..WaveguideConfig::default()
-    });
-    patch.routing = ResonatorRouting::Parallel {
-        mix_a: 1.0,
-        mix_b: 0.0,
-    };
-    let excitation = impulse();
-    let mut engine = SynthEngine::new(sample_rate, 1);
-    let mut left = vec![0.0; 16_384];
-    let mut right = vec![0.0; 16_384];
-
-    engine.note_on(trigger(60, &excitation, sample_rate, &patch));
-    engine.note_off(60);
-    engine.render_replace(&mut left, &mut right);
-    engine.render_replace(&mut left, &mut right);
-
-    assert_eq!(engine.slot_state(0), Some(VoiceSlotState::Idle));
-}
-
-#[test]
 fn note_on_and_render_do_not_allocate() {
     let sample_rate = 48_000.0;
     let mut patch = test_patch();
-    patch.resonator_a = ResonatorConfig::Modal(ModalConfig {
+    patch.resonator_a = ModalConfig {
         mode_count: 256,
         preset: ModalPreset::Bell,
         ..ModalConfig::default()
-    });
-    patch.resonator_b = ResonatorConfig::Modal(ModalConfig {
+    };
+    patch.resonator_b = ModalConfig {
         mode_count: 256,
         preset: ModalPreset::GlassBowl,
         ..ModalConfig::default()
-    });
+    };
     let excitation = impulse();
     let mut engine = SynthEngine::new(sample_rate, 8);
     let mut left = vec![0.0; 512];
@@ -327,12 +194,6 @@ fn note_on_and_render_do_not_allocate() {
 
     assert_no_allocations("render_replace", || {
         engine.render_replace(&mut left, &mut right);
-    });
-
-    assert_no_allocations("voice_stealing_note_on", || {
-        for note in 68..80 {
-            engine.note_on(trigger(note, &excitation, sample_rate, &patch));
-        }
     });
 }
 
@@ -357,19 +218,6 @@ fn channel_trigger<'a>(
     trigger
 }
 
-fn assert_expression_controls(
-    expression: VoiceExpression,
-    pitch_bend: f32,
-    pressure: f32,
-    brightness: f32,
-    mod_wheel: f32,
-) {
-    assert_eq!(expression.stream.pitch_bend, pitch_bend);
-    assert_eq!(expression.stream.pressure, pressure);
-    assert_eq!(expression.stream.brightness, brightness);
-    assert_eq!(expression.mod_wheel, mod_wheel);
-}
-
 fn assert_slot_gate(engine: &SynthEngine<'_>, slot: usize, state: VoiceSlotState, gate: bool) {
     assert_eq!(engine.slot_state(slot), Some(state));
     assert_eq!(engine.slot_expression(slot).unwrap().stream.gate, gate);
@@ -383,16 +231,18 @@ fn impulse() -> Vec<f32> {
 
 fn test_patch() -> ResonatorSynthPatch {
     ResonatorSynthPatch {
-        resonator_a: ResonatorConfig::Modal(ModalConfig {
+        resonator_a: ModalConfig {
             mode_count: 16,
             preset: ModalPreset::GenericStrike,
-            decay_global: 0.4,
+            decay_global: 0.6,
             ..ModalConfig::default()
-        }),
-        resonator_b: ResonatorConfig::Waveguide(WaveguideConfig {
-            loop_gain: 0.9,
-            ..WaveguideConfig::default()
-        }),
+        },
+        resonator_b: ModalConfig {
+            mode_count: 32,
+            preset: ModalPreset::Bell,
+            decay_global: 1.0,
+            ..ModalConfig::default()
+        },
         routing: ResonatorRouting::Parallel {
             mix_a: 0.8,
             mix_b: 0.2,

@@ -19,14 +19,13 @@ use lindelion_plugin_shell::{ExpressionSource, ExpressionStream};
 
 use crate::{
     AudioInputMode, AudioNoteEvent, ExcitationSlot, LiveExcitationConfig, LiveExcitationMode,
-    RESONATOR_BRIGHTNESS_CONTROLLER, RESONATOR_MOD_WHEEL_CONTROLLER,
+    RESONATOR_BRIGHTNESS_CONTROLLER, RESONATOR_PRESSURE_CONTROLLER,
     RealtimeStreamingAudioAnalysisExpressionSource, RealtimeStreamingAudioAnalysisNoteDetector,
     ResonatorSynthPatch,
     dsp::{
-        BodyStrike, ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture,
-        LiveExcitationPreRoll, MAX_EXCITATION_LAYERS, MasterStage, RuntimeExcitationSlot,
-        SelectedExcitations, SharedBody, SympatheticChamber, SynthEngine, VoiceExpression,
-        VoiceTrigger, velocity_to_gain,
+        ExcitationSelector, LiveExcitationBlock, LiveExcitationLatchCapture, LiveExcitationPreRoll,
+        MAX_EXCITATION_LAYERS, MasterStage, RuntimeExcitationSlot, SelectedExcitations,
+        SympatheticChamber, SynthEngine, VoiceExpression, VoiceTrigger,
     },
     realtime_audio_analysis_expression_source, realtime_audio_analysis_note_detector,
 };
@@ -37,7 +36,7 @@ const GLOBAL_EXPRESSION_CHANNEL: u8 = 0;
 const AUDIO_NOTE_CHANNEL: u8 = GLOBAL_EXPRESSION_CHANNEL;
 const RESONATOR_EXPRESSION_CONTROL_ROUTES: &[MidiExpressionControlRoute] = &[
     MidiExpressionControlRoute::new(
-        RESONATOR_MOD_WHEEL_CONTROLLER,
+        RESONATOR_PRESSURE_CONTROLLER,
         MidiExpressionControl::ModWheel,
     ),
     MidiExpressionControlRoute::new(
@@ -78,7 +77,7 @@ pub(crate) struct RuntimePatch<'a> {
 
 impl RuntimePatch<'static> {
     pub(crate) fn with_builtin_excitation(mut patch: ResonatorSynthPatch) -> Self {
-        patch.normalize_routing_for_resonator_models();
+        patch.normalize_routing();
         let slot_config = patch.excitation_slots.first().cloned().unwrap_or_default();
         Self {
             patch,
@@ -101,7 +100,7 @@ impl<'a> RuntimePatch<'a> {
         mut patch: ResonatorSynthPatch,
         slots: [Option<RuntimeExcitationSlot<'a>>; MAX_EXCITATION_LAYERS],
     ) -> Self {
-        patch.normalize_routing_for_resonator_models();
+        patch.normalize_routing();
         Self { patch, slots }
     }
 }
@@ -114,11 +113,6 @@ pub(crate) struct ResonatorProcessor<'a> {
     // the voice mix, owned here at the orchestration layer — the engine knows nothing
     // about it. Tuned each block to the sounding voices' pitches.
     sympathetic: SympatheticChamber,
-    // Shared-body idiophone mode (M1, ADR-0031): a single runtime-owned persistent
-    // resonant body that idiophone note-ons re-strike (M2+). Owned here at the
-    // orchestration layer like the sympathetic chamber — the engine knows nothing about
-    // it. Summed into the mix behind the `shared_body` toggle; silent and inert in M1.
-    shared_body: SharedBody<'a>,
     // M11 P9: master output safety soft clipper on the final mix (after the sympathetic
     // chamber) — bounds dense-polyphony peaks below −1 dBFS without touching the level
     // of a single note (identity below the −6 dBFS knee).
@@ -182,7 +176,6 @@ impl<'a> ResonatorProcessor<'a> {
         );
         let live_latch_state =
             LiveExcitationLatchRuntimeState::new(sample_rate, runtime_patch.patch.live_excitation);
-        let shared_body = SharedBody::new(sample_rate, &runtime_patch.patch);
         Self {
             runtime_patch,
             engine: SynthEngine::with_live_latch_capacity(
@@ -191,7 +184,6 @@ impl<'a> ResonatorProcessor<'a> {
                 live_latch_state.capacity_samples(),
             ),
             sympathetic: SympatheticChamber::new(sample_rate),
-            shared_body,
             master: MasterStage::new(),
             selector: ExcitationSelector::default(),
             expression_source: MidiExpressionSource::default(),
@@ -240,9 +232,6 @@ impl<'a> ResonatorProcessor<'a> {
         self.sync_runtime_expression_source();
         self.engine
             .render_add_with_live_excitation(left, right, live_excitation);
-        self.shared_body
-            .set_enabled(self.runtime_patch.patch.shared_body.enabled);
-        self.shared_body.render_add(left, right);
         self.run_sympathetic_chamber(left, right);
         self.master.process_block(left, right);
         self.live_latch_state.push_sidechain_block(input.sidechain);
@@ -297,19 +286,16 @@ impl<'a> ResonatorProcessor<'a> {
     }
 
     pub(crate) fn replace_patch_config(&mut self, mut patch: ResonatorSynthPatch) {
-        patch.normalize_routing_for_resonator_models();
+        patch.normalize_routing();
         self.release_active_audio_note();
         // Clear any sympathetic tail on a patch change (the resonant set may differ).
         self.sympathetic.silence();
-        // Clear the shared body's ring and re-mirror its base configs to the new patch.
-        self.shared_body.silence();
         let live_latch_state =
             LiveExcitationLatchRuntimeState::new(self.sample_rate, patch.live_excitation);
         let rebuild_engine = live_latch_state.capacity_samples()
             != self.live_latch_state.capacity_samples()
             || patch.polyphony.clamp(1, 16) as usize != self.engine.polyphony();
         self.runtime_patch.patch = patch;
-        self.shared_body.set_patch(&self.runtime_patch.patch);
         self.live_latch_state = live_latch_state;
         if rebuild_engine {
             self.engine = SynthEngine::with_live_latch_capacity(

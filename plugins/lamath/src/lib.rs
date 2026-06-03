@@ -8,7 +8,6 @@ mod plugin;
 mod runtime;
 mod vst3_entry;
 
-pub use dsp::WaveguideStyle;
 pub use lindelion_audio_expression::{
     AudioAnalysisExpressionSource, AudioExpressionFeatures, AudioExpressionFrame,
     AudioExpressionFrameSource, AudioExpressionMapping, AudioExpressionSource,
@@ -27,14 +26,10 @@ pub use lindelion_audio_expression::{
     streaming_audio_analysis_note_detector,
 };
 pub use parameters::PARAMETERS;
-pub(crate) use patch::normalize_routing_for_resonator_models;
 pub use patch::{
-    AudioExpressionConfig, AudioInputConfig, AudioInputMode, BowConfig, ContactConfig,
-    DriverConfig, EnvelopeConfig, ExcitationSlot, FilterMode, LfoConfig, LfoShape,
-    LiveExcitationConfig, LiveExcitationMode, MeshConfig, ModalConfig, ModalPreset,
-    ModulationConfig, ModulationDestination, ModulationSlot, ModulationSource, OutputConfig,
-    PickConfig, ReedConfig, ResonatorConfig, ResonatorRouting, ResonatorSynthPatch,
-    SharedBodyConfig, SurroundingConfig, WaveguideConfig,
+    AudioExpressionConfig, AudioInputConfig, AudioInputMode, ExcitationSlot, FilterMode,
+    LiveExcitationConfig, LiveExcitationMode, ModalConfig, ModalPreset, OutputConfig,
+    ResonatorRouting, ResonatorSynthPatch, SurroundingConfig,
 };
 pub use plugin::{
     LoadedExcitationBuffer, ResonatorSidechainTelemetry, ResonatorSynth, ResonatorTelemetry,
@@ -43,13 +38,9 @@ pub use plugin::{
 
 #[doc(hidden)]
 pub use dsp::{
-    Oversampler2x as BenchOversampler2x, SelectedExcitations as BenchSelectedExcitations,
-    SynthEngine as BenchSynthEngine, VoiceTrigger as BenchVoiceTrigger,
+    SelectedExcitations as BenchSelectedExcitations, SynthEngine as BenchSynthEngine,
+    VoiceTrigger as BenchVoiceTrigger,
     modal::{ModalBank as BenchModalBank, ModalBankParams as BenchModalBankParams},
-    waveguide::{
-        MeshResonator as BenchMeshResonator, MeshVoiceParams as BenchMeshVoiceParams,
-        WaveguideParams as BenchWaveguideParams, WaveguideResonator as BenchWaveguideResonator,
-    },
 };
 
 #[cfg(test)]
@@ -60,12 +51,6 @@ lindelion_test_allocator::install_test_allocator!();
 
 use lindelion_plugin_shell::PluginDescriptor;
 
-#[cfg(test)]
-pub(crate) use parameters::ParameterCodec;
-#[cfg(test)]
-pub(crate) use parameters::RESONATOR_MIX_PARAMETER_ID;
-#[cfg(test)]
-pub(crate) use parameters::patch_parameter_plain_value;
 pub(crate) use parameters::{
     FILTER_CUTOFF_PARAMETER_ID, FILTER_RESONANCE_PARAMETER_ID, MASTER_GAIN_PARAMETER_ID,
     MASTER_PAN_PARAMETER_ID, PARALLEL_MIX_A_PARAMETER_ID, PARALLEL_MIX_B_PARAMETER_ID,
@@ -75,16 +60,13 @@ pub(crate) use parameters::{
     smoothed_runtime_parameter,
 };
 #[cfg(test)]
-pub(crate) use parameters::{ParameterApplyKind, apply_parameter_plain};
-
-#[cfg(test)]
 mod test_support;
 
 pub const DESCRIPTOR: PluginDescriptor =
     PluginDescriptor::instrument("Lamath", *b"lamath_resonator");
 pub use lindelion_plugin_metadata::LAMATH_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;
 
-pub(crate) const RESONATOR_MOD_WHEEL_CONTROLLER: u8 = 1;
+pub(crate) const RESONATOR_PRESSURE_CONTROLLER: u8 = 1;
 pub(crate) const RESONATOR_BRIGHTNESS_CONTROLLER: u8 = 74;
 
 #[cfg(test)]

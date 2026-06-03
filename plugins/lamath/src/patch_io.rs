@@ -46,48 +46,14 @@ pub fn load_library_patch(path: impl AsRef<Path>) -> Result<ResonatorSynthPatch,
 }
 
 fn normalized_patch(mut patch: ResonatorSynthPatch) -> ResonatorSynthPatch {
-    patch.normalize_routing_for_resonator_models();
-    patch.normalize_drivers_for_resonator_models();
+    patch.normalize_routing();
     patch
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AudioInputMode, FilterMode, LiveExcitationMode, ModalConfig, OutputConfig, ResonatorConfig,
-        ResonatorRouting,
-    };
-
-    #[test]
-    fn tube_patch_normalizes_to_reed_driver_on_load() {
-        // ADR-0032: loading a legacy/struck Tube patch (Tube + Sample driver) must normalize to
-        // the reed wind driver, so a saved patch or preset can never load as a silent tube.
-        // Both decode paths (TOML and plugin-state) route through `normalized_patch`.
-        use crate::{DriverConfig, WaveguideConfig, WaveguideStyle};
-        let patch = ResonatorSynthPatch {
-            resonator_a: ResonatorConfig::Waveguide(WaveguideConfig {
-                style: WaveguideStyle::Tube,
-                ..WaveguideConfig::default()
-            }),
-            driver: DriverConfig::Sample,
-            ..ResonatorSynthPatch::default()
-        };
-
-        let from_toml = from_toml_str(&to_toml_string(&patch).unwrap()).unwrap();
-        assert!(
-            matches!(from_toml.driver, DriverConfig::Reed(_)),
-            "Tube+Sample TOML should load reed-driven, got {:?}",
-            from_toml.driver
-        );
-
-        let from_state = from_plugin_state(to_plugin_state(&patch).unwrap()).unwrap();
-        assert!(
-            matches!(from_state.driver, DriverConfig::Reed(_)),
-            "Tube+Sample plugin-state should load reed-driven, got {:?}",
-            from_state.driver
-        );
-    }
+    use crate::{AudioInputMode, FilterMode, LiveExcitationMode, OutputConfig, ResonatorRouting};
 
     #[test]
     fn patch_toml_roundtrips_v2_surface() {
@@ -155,9 +121,8 @@ mod tests {
     }
 
     #[test]
-    fn patch_io_canonicalizes_modal_modal_series_to_body_color() {
-        let mut patch = ResonatorSynthPatch {
-            resonator_b: ResonatorConfig::Modal(ModalConfig::default()),
+    fn patch_io_preserves_modal_routing_modes() {
+        let patch = ResonatorSynthPatch {
             routing: ResonatorRouting::Series {
                 mix_a: 0.7,
                 mix_b: 0.3,
@@ -167,14 +132,10 @@ mod tests {
 
         let encoded = to_toml_string(&patch).unwrap();
         let decoded = from_toml_str(&encoded).unwrap();
-        assert_body_color_mix(decoded.routing, 0.7, 0.3);
+        assert_series_mix(decoded.routing, 0.7, 0.3);
 
         let restored = from_plugin_state(to_plugin_state(&patch).unwrap()).unwrap();
-        assert_body_color_mix(restored.routing, 0.7, 0.3);
-
-        patch.resonator_a = ResonatorConfig::Waveguide(Default::default());
-        let mixed = from_toml_str(&to_toml_string(&patch).unwrap()).unwrap();
-        assert!(matches!(mixed.routing, ResonatorRouting::Series { .. }));
+        assert_series_mix(restored.routing, 0.7, 0.3);
     }
 
     #[test]
@@ -256,9 +217,9 @@ mod tests {
         assert!((patch.live_excitation.latch_fade_ms - 10.0).abs() < 0.001);
     }
 
-    fn assert_body_color_mix(routing: ResonatorRouting, expected_a: f32, expected_b: f32) {
-        let ResonatorRouting::BodyColor { mix_a, mix_b } = routing else {
-            panic!("expected body-color routing, got {routing:?}");
+    fn assert_series_mix(routing: ResonatorRouting, expected_a: f32, expected_b: f32) {
+        let ResonatorRouting::Series { mix_a, mix_b } = routing else {
+            panic!("expected series routing, got {routing:?}");
         };
         assert!((mix_a - expected_a).abs() < 0.001, "mix_a={mix_a}");
         assert!((mix_b - expected_b).abs() < 0.001, "mix_b={mix_b}");
