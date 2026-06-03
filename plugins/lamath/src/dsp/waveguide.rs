@@ -129,6 +129,13 @@ impl WaveguideResonator {
         self.string.set_balance_drive(drive);
         self.tube.set_steepening_drive(drive);
     }
+
+    /// Effort-referenced Tube bore brightness (ADR-0032 item B): the reed wind path drives the
+    /// bore steepening from blowing pressure (player effort), overriding the amplitude-saturated
+    /// measured-energy drive set by `set_energy_drive`. No-op for the String style.
+    pub fn set_tube_brightness_effort(&mut self, effort: f32) {
+        self.tube.set_brightness_effort(effort);
+    }
 }
 
 #[cfg(test)]

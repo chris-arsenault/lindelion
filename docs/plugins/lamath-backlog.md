@@ -106,9 +106,10 @@ and a placeholder excitation. These make those constraints explicit, playable, a
 - Ship a **better default reed excitation layer** than the generic builtin impulse: a tuned breath/
   tongue onset sample (or shaped noise burst) so a fresh Tube patch has a musical chiff out of the
   box rather than the shared struck-instrument builtin.
-- Strengthen **brassiness-with-effort**: today the velocity dynamic is largely timbral via the
-  pressure window and the energy-driven bore steepening does not reliably brighten a loud note. Give
-  the Tube a clear cuivré bloom (a brighter, edgier fortissimo) as a guarded A/B axis.
+- ~~Strengthen **brassiness-with-effort**.~~ **Done (item B, 2026-06-03):** the bore steepening /
+  bell radiation are now driven by blowing pressure (effort), so a louder note blooms into the cuivré
+  (centroid ≈2460→3900 Hz at C4 mf→ff) and odd-harmonic richness rises ff>mf register-wide; guarded by
+  `driven_tube_brightens_with_effort`. See the [ADR-0032 item-B update](../adr/0032-lamath-tube-driven-wind-voice.md#update--item-b-dynamics-and-brightness-with-effort-2026-06-03).
 - Give the Tube a more **formant-shaped, clarinet-like spectrum** rather than the current odd-harmonic
   square — bore resonances coloring the output into formants, so register and termination read as
   bigger timbral changes — if downstream filtering proves insufficient.

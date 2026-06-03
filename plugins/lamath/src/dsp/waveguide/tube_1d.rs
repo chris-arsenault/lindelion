@@ -136,6 +136,19 @@ impl Tube1d {
         self.steepening_drive = math::finite_or(drive, 0.0).max(0.0);
     }
 
+    /// Effort-referenced bore brightness (ADR-0032 item B). A real bore brightens with **blowing
+    /// pressure**; the reed-driven Tube therefore drives the finite-amplitude bore steepening from
+    /// the player effort, not the measured-energy bus. Measurement showed the energy proxy is
+    /// nearly blowing-pressure-invariant (the beating-reed limit-cycle amplitude saturates ~5 dB),
+    /// so energy-gated steepening could not produce brightness-with-effort. Mapping effort through
+    /// the energy reference (`drive = REF·effort`) makes `steepening_energy == effort²` — soft
+    /// playing stays mellow, hard blowing blooms into the cuivré, reusing the existing physical
+    /// steepening + bell-radiation machinery. Set once per host sample by the reed wind path.
+    pub(super) fn set_brightness_effort(&mut self, effort: f32) {
+        let effort = math::finite_clamp(effort, 0.0, 1.0, 0.0);
+        self.steepening_drive = STEEPEN_ENERGY_REF * effort;
+    }
+
     pub(super) fn reset(&mut self) {
         self.waves.clear();
         self.boundary_filters.reset();

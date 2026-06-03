@@ -8,15 +8,24 @@ use boundary::{BoundaryLowpass, boundary_lowpass_step};
 pub use runtime::{MeshResonator, MeshVoiceParams};
 
 const MIN_MESH_SIZE: usize = 3;
-const MAX_MESH_SIZE: usize = 48;
+/// Maximum active grid the mesh can be configured to. Buffers are allocated once at
+/// this size; `size`/`tension` select a smaller active sub-region (no reallocation).
+/// Grid cell count is the timbral density lever in a unit-delay waveguide mesh — a
+/// large grid carries a dense, inharmonic, cymbal-like spectrum, a small one a sparse,
+/// near-pitched triangle. CPU is `O(width·height)` per sample; ample for a single
+/// idiophone voice.
+const MAX_MESH_WIDTH: usize = 64;
+const MAX_MESH_HEIGHT: usize = 48;
+const MAX_MESH_CELLS: usize = MAX_MESH_WIDTH * MAX_MESH_HEIGHT;
 
 /// Measured-energy (RMS) at which the geometric (von Kármán) coupling reaches its
 /// target depth; the squared, normalized drive `(energy/REF)^2` keeps soft strikes
-/// linear and concentrates the bloom on hard ones. M11 P8: calibrated to the measured
-/// per-voice energy bus — a full-velocity Mesh strike peaks near RMS 0.011, so this REF
-/// puts a hard strike at ≈0.7 drive (the upward modal bloom a hard gong/cymbal makes);
-/// the old 0.15 left a hard strike at ≈0.5% drive (a purely linear, lifeless mesh).
-const GEOMETRIC_ENERGY_REF: f32 = 0.013;
+/// linear and concentrates the bloom on hard ones. Calibrated to the measured per-voice
+/// energy bus so a full-velocity Mesh strike sits near ≈0.7 drive (the upward modal
+/// bloom a hard gong/cymbal makes). The larger active grid spreads the strike energy
+/// over more cells, lowering the measured RMS, so this REF was dropped from the old
+/// 14×10-grid value (0.013) to keep the bloom engaging at musical strike levels.
+const GEOMETRIC_ENERGY_REF: f32 = 0.003;
 /// Clamp on the normalized squared energy term (the coupling depth at peak energy).
 const GEOMETRIC_MAX_DRIVE: f32 = 1.0;
 /// Maximum rotation `sin` factor at full coupling: the fraction of the low mode's
@@ -177,8 +186,8 @@ struct RectangularMesh2dConfig {
 impl RectangularMesh2dConfig {
     fn sanitized(self) -> Self {
         Self {
-            width: self.width.clamp(MIN_MESH_SIZE, MAX_MESH_SIZE),
-            height: self.height.clamp(MIN_MESH_SIZE, MAX_MESH_SIZE),
+            width: self.width.clamp(MIN_MESH_SIZE, MAX_MESH_WIDTH),
+            height: self.height.clamp(MIN_MESH_SIZE, MAX_MESH_HEIGHT),
             sample_rate: core::sanitize_sample_rate(self.sample_rate),
             wave_speed_mps: math::finite_clamp(self.wave_speed_mps, 1.0, 4_000.0, 220.0),
             physical_width_m: math::finite_clamp(self.physical_width_m, 0.01, 10.0, 0.7),
@@ -231,9 +240,10 @@ struct SpatialWeights {
 
 impl SpatialWeights {
     fn new(point: MeshPoint, width: usize, height: usize, width_fraction: f32) -> Self {
-        // Capacity is the full grid, so later in-place recomputes never reallocate.
+        // Capacity is the MAXIMUM grid, so an in-place recompute onto a larger active
+        // sub-region (via `reconfigure`) never reallocates on the audio thread.
         let mut weights = Self {
-            weights: Vec::with_capacity(width * height),
+            weights: Vec::with_capacity(MAX_MESH_CELLS),
         };
         weights.recompute(point, width, height, width_fraction);
         weights
@@ -366,16 +376,30 @@ struct RectangularMesh2d {
     // Measured resonator energy (M2 bus) driving the geometric (von Kármán)
     // coupling; set per host sample, constant across the 2x sub-samples. 0.0 => inert.
     geometric_drive: f32,
+    // Output level compensation for the active grid: a fixed strike spreads its energy
+    // over the grid, so the pickup amplitude falls ~`1/cells`. Scaling the output by
+    // `cells / REF` flattens the level across the `size`/`tension` timbre sweep, so the
+    // downstream per-family makeup is one constant again (not a function of grid size).
+    level_compensation: f32,
+}
+
+/// Reference active-cell count the output level is normalized to (≈ the default grid).
+const MESH_LEVEL_REF_CELLS: f32 = 1024.0;
+
+fn mesh_level_compensation(width: usize, height: usize) -> f32 {
+    (width * height) as f32 / MESH_LEVEL_REF_CELLS
 }
 
 impl RectangularMesh2d {
     fn new(config: RectangularMesh2dConfig) -> Self {
         let config = config.sanitized();
-        let len = config.width * config.height;
+        // Buffers and boundary/spatial-weight storage are allocated once at the maximum
+        // grid; `config.width/height` is the active sub-region (stride = active width),
+        // so `reconfigure` can resize the live grid without allocating (ADR-0001).
         Self {
             config,
-            current: DirectionalWaves::new(len),
-            next: DirectionalWaves::new(len),
+            current: DirectionalWaves::new(MAX_MESH_CELLS),
+            next: DirectionalWaves::new(MAX_MESH_CELLS),
             source_weights: SpatialWeights::new(
                 config.strike_position,
                 config.width,
@@ -388,8 +412,13 @@ impl RectangularMesh2d {
                 config.height,
                 config.pickup_width,
             ),
-            boundary_lowpass: BoundaryLowpass::new(config.width, config.height, config.sample_rate),
+            boundary_lowpass: BoundaryLowpass::new(
+                MAX_MESH_WIDTH,
+                MAX_MESH_HEIGHT,
+                config.sample_rate,
+            ),
             geometric_drive: 0.0,
+            level_compensation: mesh_level_compensation(config.width, config.height),
         }
     }
 
@@ -404,13 +433,11 @@ impl RectangularMesh2d {
     /// all buffers) is fixed at construction, so only the non-grid fields and the
     /// in-place spatial weights change. Allocation-free for live re-tuning.
     fn reconfigure(&mut self, config: RectangularMesh2dConfig) {
-        let config = RectangularMesh2dConfig {
-            width: self.config.width,
-            height: self.config.height,
-            ..config
-        }
-        .sanitized();
+        // The active grid (`width`/`height`) may change here — buffers are already
+        // allocated at the maximum, so re-tuning the live grid stays allocation-free.
+        let config = config.sanitized();
         self.config = config;
+        self.level_compensation = mesh_level_compensation(config.width, config.height);
         self.boundary_lowpass.set_sample_rate(config.sample_rate);
         self.source_weights.recompute(
             config.strike_position,
@@ -429,7 +456,7 @@ impl RectangularMesh2d {
     fn process_sample(&mut self, excitation: f32) -> f32 {
         self.source_weights
             .inject_pressure(&mut self.current, excitation);
-        let output = self.pickup_weights.pressure(&self.current);
+        let output = self.pickup_weights.pressure(&self.current) * self.level_compensation;
         self.scatter_and_propagate();
         math::snap_to_zero(output)
     }

@@ -503,6 +503,12 @@ impl ResonatorEngine {
                 // shaping (the reed is the source, not a strike). Struck/pick/bow inject at
                 // the strike position through the contact stage as before.
                 let terminates_boundary = driver.terminates_boundary();
+                // Effort-referenced bore brightness (ADR-0032 item B): drive the bore steepening /
+                // bell radiation from blowing pressure (effort), not the pressure-invariant energy
+                // bus, so a wind note brightens (cuivré) when blown harder. Once per host sample.
+                if terminates_boundary {
+                    waveguide.set_tube_brightness_effort(effort);
+                }
                 self.oversampler.process(input, |sample| {
                     // Read the resonator's input-end returning wave (mouth/bridge)
                     // from the previous sub-sample as the driver's coupled feedback,

@@ -4,6 +4,7 @@ mod articulation;
 mod chords;
 mod dynamic_response;
 mod edges;
+mod mesh_timbre;
 mod surrounding;
 
 const SINGLE_NOTE_DURATION_SECONDS: f32 = 2.5;
@@ -329,6 +330,7 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(chords::CHORD_CASES.iter().cloned())
         .chain(edges::EDGE_CASES.iter().cloned())
         .chain(articulation::ARTICULATION_CASES.iter().cloned())
+        .chain(mesh_timbre::MESH_TIMBRE_CASES.iter().cloned())
         .collect()
 }
 

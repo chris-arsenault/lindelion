@@ -9,6 +9,7 @@ use vst3::ComPtr;
 use vst3::Steinberg::Vst::{IComponent, IHostApplication};
 
 use super::chain::PoolSlot;
+use super::editor_controller::EditorController;
 use super::instance::{HostError, PluginInstance};
 use super::module::load_module;
 use super::state::{capture_state, restore_state};
@@ -65,9 +66,13 @@ pub fn restore_pool(
         if let Some(blob) = &slot.state {
             restore_state(instance.component(), &blob.payload);
         }
+        let controller = EditorController::new(module.factory(), &instance, host)
+            .ok()
+            .map(Arc::new);
         pool.push(PoolSlot {
-            module,
+            module: Arc::new(module),
             instance: Arc::new(instance),
+            controller,
         });
     }
     Ok(pool)

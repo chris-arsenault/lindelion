@@ -34,6 +34,10 @@ pub(super) enum FixtureBehavior {
     ProcessError,
     /// `process` writes non-finite samples (NaN) into the output.
     NaNOutput,
+    /// `process` rejects calls that omit declared audio busses.
+    RequiresDeclaredAudioBuses,
+    /// `process` rejects calls without a valid playing process context.
+    RequiresProcessContext,
 }
 
 /// Bus-shape variations used to exercise host negotiation against common real-world VST3 patterns.
@@ -296,6 +300,31 @@ impl IAudioProcessorTrait for FixtureProcessor {
             return kResultFalse;
         }
         let data = &mut *data;
+        if self.behavior == FixtureBehavior::RequiresDeclaredAudioBuses
+            && (data.numInputs
+                != self.getBusCount(
+                    MediaTypes_::kAudio as MediaType,
+                    BusDirections_::kInput as BusDirection,
+                )
+                || data.numOutputs
+                    != self.getBusCount(
+                        MediaTypes_::kAudio as MediaType,
+                        BusDirections_::kOutput as BusDirection,
+                    ))
+        {
+            return kResultFalse;
+        }
+        if self.behavior == FixtureBehavior::RequiresProcessContext {
+            if data.processContext.is_null() {
+                return kResultFalse;
+            }
+            let context = &*data.processContext;
+            if context.sampleRate <= 0.0
+                || context.state & ProcessContext_::StatesAndFlags_::kPlaying as u32 == 0
+            {
+                return kResultFalse;
+            }
+        }
         if data.symbolicSampleSize != SymbolicSampleSizes_::kSample32 as i32 || data.numSamples <= 0
         {
             return kResultOk;
@@ -994,6 +1023,19 @@ pub(super) fn sidechain_fixture_factory() -> ComPtr<IPluginFactory> {
         FixtureBehavior::Passthrough,
         FixtureBusShape::StereoWithExtraInput,
     )
+}
+
+pub(super) fn strict_sidechain_fixture_factory() -> ComPtr<IPluginFactory> {
+    shaped_fixture_factory(
+        1.0,
+        0,
+        FixtureBehavior::RequiresDeclaredAudioBuses,
+        FixtureBusShape::StereoWithExtraInput,
+    )
+}
+
+pub(super) fn context_fixture_factory() -> ComPtr<IPluginFactory> {
+    behaving_fixture_factory(1.0, 0, FixtureBehavior::RequiresProcessContext)
 }
 
 pub(super) fn fixed_stereo_rejects_arrangement_factory() -> ComPtr<IPluginFactory> {

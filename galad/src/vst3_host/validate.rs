@@ -14,10 +14,11 @@ use vst3::Steinberg::{
 };
 use vst3::Steinberg::{kResultOk, kResultTrue};
 
+use super::editor_controller::EditorController;
 use super::host_context::HostContext;
 use super::instance::{HostError, PluginInstance};
 use super::module::load_module;
-use super::processing::{ProcessDriver, drive_process};
+use super::processing::{ProcessBusScratch, ProcessDriver};
 
 /// Probe block geometry — one short silent block is enough to exercise instantiate→setup→process.
 const VALIDATE_SAMPLE_RATE: f64 = 48_000.0;
@@ -115,14 +116,22 @@ fn validate_factory(
     host: &ComPtr<IHostApplication>,
 ) -> Result<(), HostError> {
     let instance = PluginInstance::from_factory(factory, host)?;
+    let _controller = EditorController::new(factory, &instance, host).ok();
     let driver = ProcessDriver::new(VALIDATE_SAMPLE_RATE, VALIDATE_BLOCK);
     driver.prepare(&instance)?;
 
     let silent = vec![0.0f32; VALIDATE_BLOCK];
     let mut out_left = vec![0.0f32; VALIDATE_BLOCK];
     let mut out_right = vec![0.0f32; VALIDATE_BLOCK];
+    let mut buses = ProcessBusScratch::from_component(
+        instance.debug_name(),
+        instance.component(),
+        instance.processor(),
+        VALIDATE_BLOCK,
+        VALIDATE_SAMPLE_RATE,
+    )?;
     let result = unsafe {
-        drive_process(
+        buses.drive_stereo(
             instance.processor(),
             [&silent, &silent],
             [&mut out_left, &mut out_right],
@@ -163,8 +172,8 @@ fn wide_array_string(buf: &[u16]) -> Option<String> {
 mod tests {
     use super::*;
     use crate::vst3_host::fixture::{
-        gain_fixture_factory, no_audio_class_factory, process_error_factory,
-        single_component_fixture_factory,
+        context_fixture_factory, gain_fixture_factory, no_audio_class_factory,
+        process_error_factory, single_component_fixture_factory, strict_sidechain_fixture_factory,
     };
     use std::ffi::c_void;
     use std::ptr;
@@ -185,6 +194,16 @@ mod tests {
     #[test]
     fn single_component_plugin_validates() {
         assert!(validate_factory(&single_component_fixture_factory(), &host()).is_ok());
+    }
+
+    #[test]
+    fn plugin_with_declared_sidechain_validates() {
+        assert!(validate_factory(&strict_sidechain_fixture_factory(), &host()).is_ok());
+    }
+
+    #[test]
+    fn plugin_requiring_process_context_validates() {
+        assert!(validate_factory(&context_fixture_factory(), &host()).is_ok());
     }
 
     #[test]

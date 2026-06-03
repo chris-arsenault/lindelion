@@ -16,7 +16,11 @@ use crate::{DriverConfig, ResonatorConfig, WaveguideStyle};
 const MODAL_OUTPUT_MAKEUP: f32 = 0.6;
 const STRING_OUTPUT_MAKEUP: f32 = 32.0;
 const TUBE_OUTPUT_MAKEUP: f32 = 12.0;
-const MESH_OUTPUT_MAKEUP: f32 = 49.0;
+// The mesh emerges far quieter than the old 14×10 grid once the grid grew (energy spreads
+// over many more cells); the mesh now applies a `cells/REF` level compensation internally so
+// this makeup is grid-independent again, raised so a default-grid full-velocity strike lands
+// near the ~−15 dBFS the other families hit.
+const MESH_OUTPUT_MAKEUP: f32 = 300.0;
 
 pub(super) fn family_output_makeup(config: ResonatorConfig) -> f32 {
     match config {

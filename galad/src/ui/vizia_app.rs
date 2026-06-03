@@ -17,11 +17,10 @@
 //! parameters and transient DSP state survive; session save/load round-trip the opaque state (M4).
 
 use std::collections::BTreeMap;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -46,8 +45,9 @@ use crate::ui::state::{
     CatalogProbe, Dir, HostUiState, MASTER_GAIN_MAX_DB, MASTER_GAIN_MIN_DB, PluginCatalog,
 };
 use crate::vst3_host::{
-    ChainProcessor, EditorHost, HostContext, HostError, PluginInstance, PoolSlot, ProcessDriver,
-    SessionSlot, capture_session, load_module, probe_plugin, restore_pool, validate_plugin,
+    ChainProcessor, EditorController, EditorHost, HostContext, HostError, PluginInstance, PoolSlot,
+    ProcessDriver, SessionSlot, capture_session, load_module, probe_plugin, restore_pool,
+    validate_plugin,
 };
 
 const STYLE: &str = r#"
@@ -561,8 +561,8 @@ const STYLE: &str = r#"
 /// rate via [`chain_sample_rate`].
 const CHAIN_SAMPLE_RATE_FALLBACK: f64 = 48_000.0;
 const CHAIN_MAX_FRAMES: usize = 4096;
-const GALAD_WINDOW_TAG: &str = "cenedril-spectimer-20260603-1";
-const GALAD_WINDOW_TITLE: &str = "Galad [cenedril-spectimer-20260603-1]";
+const GALAD_WINDOW_TAG: &str = "editorclose-20260603-1";
+const GALAD_WINDOW_TITLE: &str = "Galad [editorclose-20260603-1]";
 
 /// The sample rate to prepare the chain at — the selected input device's actual rate, which is the
 /// rate the engine runs the stream at. Declared to plugins via `setupProcessing`; the host never
@@ -700,13 +700,6 @@ pub enum AppEvent {
     Tick,
 }
 
-/// Result notifications from detached plugin-editor windows.
-enum EditorEvent {
-    Opened(PathBuf),
-    Failed(PathBuf, HostError),
-    Closed(PathBuf),
-}
-
 /// The controller: the live host runtime the Model drives. Owns the engine and a **persistent pool of
 /// prepared plugin instances** (index-aligned with `HostUiState.chain`). The
 /// instances live for the life of their slot; chain edits rebuild only the *ordering* over them
@@ -715,6 +708,7 @@ struct Runtime {
     host: ComPtr<IHostApplication>,
     engine: Option<AudioEngine>,
     pool: Vec<PoolSlot>,
+    editors: EditorHost,
 }
 
 impl Runtime {
@@ -725,6 +719,7 @@ impl Runtime {
                 .expect("host exposes IHostApplication"),
             engine: None,
             pool: Vec::new(),
+            editors: EditorHost::new(),
         }
     }
 
@@ -738,7 +733,12 @@ impl Runtime {
     fn build_chain(&self, state: &HostUiState) -> Box<ChainProcessor> {
         let instances = self.pool.iter().map(|slot| slot.instance.clone()).collect();
         let bypass: Vec<bool> = state.chain.iter().map(|slot| slot.bypassed).collect();
-        Box::new(ChainProcessor::new(instances, bypass, CHAIN_MAX_FRAMES))
+        Box::new(ChainProcessor::new(
+            instances,
+            bypass,
+            CHAIN_MAX_FRAMES,
+            chain_sample_rate(state),
+        ))
     }
 
     /// Prepare (set up + activate) every pooled instance at `sample_rate`. Safe to re-run (it
@@ -760,8 +760,6 @@ pub struct AppData {
     pub signals: Signals,
     runtime: Runtime,
     catalog_scan: Option<Receiver<PluginCatalog>>,
-    editor_event_tx: Sender<EditorEvent>,
-    editor_event_rx: Receiver<EditorEvent>,
     first_tick_logged: bool,
     /// Meter ticks since launch; drives the low-frequency session autosave safety net.
     tick_count: u64,
@@ -775,14 +773,11 @@ impl AppData {
             state.outputs.len(),
             state.catalog.entries.len()
         ));
-        let (editor_event_tx, editor_event_rx) = channel();
         let mut model = AppData {
             state,
             signals,
             runtime: Runtime::new(),
             catalog_scan: None,
-            editor_event_tx,
-            editor_event_rx,
             first_tick_logged: false,
             tick_count: 0,
         };
@@ -950,15 +945,28 @@ impl AppData {
     /// running rate so it can be republished live. (Stopped: `Start` prepares the whole pool.)
     fn load_into_pool(&mut self, path: &Path) -> Result<(), HostError> {
         let module = load_module(path)?;
-        let instance = Arc::new(PluginInstance::from_factory(
-            module.factory(),
-            &self.runtime.host,
-        )?);
+        let instance = PluginInstance::from_factory(module.factory(), &self.runtime.host)?;
+        let controller =
+            match EditorController::new(module.factory(), &instance, &self.runtime.host) {
+                Ok(controller) => Some(Arc::new(controller)),
+                Err(error) => {
+                    diagnostics::log(format!(
+                        "ui: live controller unavailable path={} error={error:?}",
+                        path.display()
+                    ));
+                    None
+                }
+            };
+        let instance = Arc::new(instance);
         if self.runtime.is_running() {
             ProcessDriver::new(chain_sample_rate(&self.state), CHAIN_MAX_FRAMES)
                 .prepare(&instance)?;
         }
-        self.runtime.pool.push(PoolSlot { module, instance });
+        self.runtime.pool.push(PoolSlot {
+            module: Arc::new(module),
+            instance,
+            controller,
+        });
         Ok(())
     }
 
@@ -1146,46 +1154,47 @@ impl AppData {
         };
         let path = slot.path.clone();
         diagnostics::log(format!(
-            "ui: open_editor spawn index={index} path={}",
+            "ui: open_editor live index={index} path={}",
             path.display()
         ));
         self.state
             .set_notice(format!("opening {} editor...", plugin_display_name(&path)));
-        if let Err(error) = spawn_editor_window(path.clone(), self.editor_event_tx.clone()) {
-            diagnostics::log(format!(
-                "ui: open editor spawn failed {}: {error:?}",
-                path.display()
-            ));
+        let Some(pool_slot) = self.runtime.pool.get(index) else {
             self.fail(format!(
-                "could not open {} editor",
+                "could not open {} editor: missing live plugin instance",
                 plugin_display_name(&path)
             ));
-        }
-    }
-
-    fn poll_editor_events(&mut self) {
-        loop {
-            match self.editor_event_rx.try_recv() {
-                Ok(EditorEvent::Opened(path)) => {
-                    diagnostics::log(format!("ui: editor opened {}", path.display()));
-                    self.state.clear_notice();
-                }
-                Ok(EditorEvent::Failed(path, error)) => {
-                    diagnostics::log(format!("ui: open editor {}: {error:?}", path.display()));
-                    self.fail(format!(
-                        "could not open {} editor: {}",
-                        plugin_display_name(&path),
-                        host_error_label(&error)
-                    ));
-                }
-                Ok(EditorEvent::Closed(path)) => {
-                    diagnostics::log(format!("ui: editor closed {}", path.display()));
-                }
-                Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => {
-                    diagnostics::log("ui: editor event channel disconnected");
-                    return;
-                }
+            return;
+        };
+        let Some(controller) = pool_slot.controller.clone() else {
+            self.fail(format!(
+                "could not open {} editor: no live edit controller",
+                plugin_display_name(&path)
+            ));
+            return;
+        };
+        let instance = pool_slot.instance.clone();
+        let module = pool_slot.module.clone();
+        match self.runtime.editors.open_instance(
+            controller,
+            instance,
+            module,
+            &path.display().to_string(),
+        ) {
+            Ok(()) => {
+                diagnostics::log(format!("ui: editor opened live {}", path.display()));
+                self.state.clear_notice();
+            }
+            Err(error) => {
+                diagnostics::log(format!(
+                    "ui: open live editor {}: {error:?}",
+                    path.display()
+                ));
+                self.fail(format!(
+                    "could not open {} editor: {}",
+                    plugin_display_name(&path),
+                    host_error_label(&error)
+                ));
             }
         }
     }
@@ -1320,7 +1329,7 @@ impl AppData {
             self.autosave_session();
         }
         self.poll_catalog_scan();
-        self.poll_editor_events();
+        self.runtime.editors.apply_resizes();
         let Some(engine) = &self.runtime.engine else {
             return;
         };
@@ -1334,69 +1343,6 @@ impl AppData {
             self.runtime.engine = None;
         }
     }
-}
-
-fn spawn_editor_window(path: PathBuf, event_tx: Sender<EditorEvent>) -> std::io::Result<()> {
-    thread::Builder::new()
-        .name("galad-plugin-editor".to_string())
-        .spawn(move || {
-            diagnostics::log(format!("editor-thread: start path={}", path.display()));
-            let result = catch_unwind(AssertUnwindSafe(|| run_editor_window(&path, &event_tx)));
-            match result {
-                Ok(Ok(())) => {
-                    diagnostics::log(format!("editor-thread: closed path={}", path.display()));
-                    let _ = event_tx.send(EditorEvent::Closed(path));
-                }
-                Ok(Err(error)) => {
-                    diagnostics::log(format!(
-                        "editor-thread: failed path={} error={error:?}",
-                        path.display()
-                    ));
-                    let _ = event_tx.send(EditorEvent::Failed(path, error));
-                }
-                Err(payload) => {
-                    let panic = if let Some(message) = payload.downcast_ref::<&str>() {
-                        (*message).to_string()
-                    } else if let Some(message) = payload.downcast_ref::<String>() {
-                        message.clone()
-                    } else {
-                        "unknown panic".to_string()
-                    };
-                    diagnostics::log(format!(
-                        "editor-thread: panic path={} panic={panic}",
-                        path.display()
-                    ));
-                    let _ = event_tx.send(EditorEvent::Failed(
-                        path,
-                        HostError::EditorWindow(format!("editor thread panic: {panic}")),
-                    ));
-                }
-            }
-            diagnostics::log("editor-thread: exit");
-        })
-        .map(|_| ())
-}
-
-fn run_editor_window(path: &Path, event_tx: &Sender<EditorEvent>) -> Result<(), HostError> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MSG, TranslateMessage,
-    };
-
-    let mut host = EditorHost::with_quit_on_last_close();
-    host.open(path)?;
-    let _ = event_tx.send(EditorEvent::Opened(path.to_path_buf()));
-
-    diagnostics::log("editor-thread: message loop begin");
-    unsafe {
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-            host.apply_resizes();
-        }
-    }
-    diagnostics::log("editor-thread: message loop end");
-    Ok(())
 }
 
 impl Model for AppData {

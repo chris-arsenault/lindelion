@@ -53,6 +53,30 @@ pub(crate) enum PatchRecipe {
         polyphony: u8,
         retrigger: bool,
     },
+    /// Struck Mesh playing a multi-note phrase, exposing the same articulation knobs the schedule
+    /// can't express: `polyphony` (1 = single voice-stealing body; >1 = independent struck voices
+    /// per note) and `retrigger` (re-strike the body per same-note hit vs preserve its ring).
+    MeshPhrase {
+        polyphony: u8,
+        retrigger: bool,
+    },
+    /// A single struck-Mesh voicing exercising the timbre controls (grid density via `size`/
+    /// `tension`, decay via `damping`, edge/strike character via `material`/strike position).
+    MeshVoicing(MeshVoicing),
+}
+
+/// Named Mesh timbre points: character presets (triangle → ride → crash) plus single-axis
+/// sweeps so each control can be heard in isolation. The Mesh is a fixed-pitch struck
+/// idiophone, so these are auditioned by ear — grid cell count is the density/timbre lever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MeshVoicing {
+    Triangle,
+    Ride,
+    Crash,
+    DensitySparse,
+    DensityDense,
+    DecayShort,
+    DecayLong,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +160,7 @@ pub(crate) enum CatalogError {
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 9] = [
+const GROUPS: [CatalogGroup; 10] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -190,6 +214,12 @@ const GROUPS: [CatalogGroup; 9] = [
         directory: "09_articulation",
         title: "Articulation",
         question: "Does the driven wind voice phrase a scale — tongued, legato, slurred — with audibly distinct articulation?",
+    },
+    CatalogGroup {
+        id: "mesh_timbre",
+        directory: "10_mesh_timbre",
+        title: "Mesh Timbre",
+        question: "Does the Mesh span distinct decay/harmonic/tone characters (triangle → ride → crash) as size, density, and damping change?",
     },
 ];
 

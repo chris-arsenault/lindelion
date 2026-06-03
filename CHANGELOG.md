@@ -2,6 +2,13 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.15.0 - 2026-06-03
+
+### Lamath
+
+- Gave the Lamath **Tube** wind voice a real playing dynamic. Measurement found the reed's timbre was nearly invariant to blowing pressure — playing harder changed neither loudness nor brightness — so the voice sounded the same at every velocity. The bore steepening and bell radiation are now driven by the **player's effort (blowing pressure)**, the physical drive, instead of an amplitude-saturated energy measurement, so a louder note blooms from a mellow piano into the brassy **cuivré** at fortissimo (spectral centroid ≈2460→3900 Hz at C4 from mf to ff, with odd-harmonic richness rising register-wide). The reed's usable pressure window is also widened for a real ~10 dB level dynamic. This is the brightness-with-effort left to the backlog by [ADR-0032](docs/adr/0032-lamath-tube-driven-wind-voice.md).
+- The Tube's top octave now **overblows / squeaks** when blown hard at fortissimo, like a real reed — a kept, physically-accurate behaviour. (The previously-believed "overblow" across the *whole* range was a pitch-measurement artifact, not real; the reed in fact holds its fundamental cleanly across the low/mid register at any blowing pressure.)
+
 ## v0.14.1 - 2026-06-03
 
 ### Lamath

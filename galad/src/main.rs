@@ -277,6 +277,7 @@ fn run_chain_command(args: Vec<String>) {
         instances.iter().cloned().collect(),
         bypass.clone(),
         4096,
+        sample_rate,
     ));
 
     match AudioEngine::start_with_chain(input.clone(), output.clone(), chain) {
@@ -380,6 +381,7 @@ fn run_session_command(file: Option<String>) {
         pool.iter().map(|slot| slot.instance.clone()).collect(),
         bypass,
         4096,
+        sample_rate,
     );
 
     match AudioEngine::start_with_chain(input, output, Box::new(chain)) {

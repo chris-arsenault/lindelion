@@ -34,6 +34,7 @@ pub enum HostError {
 /// plugin's lifetime. Torn down (deactivate + terminate) on drop.
 pub struct PluginInstance {
     class_id: TUID,
+    debug_name: String,
     component: ComPtr<IComponent>,
     processor: ComPtr<IAudioProcessor>,
     _host: ComPtr<IHostApplication>,
@@ -46,25 +47,45 @@ impl PluginInstance {
         host: &ComPtr<IHostApplication>,
     ) -> Result<Self, HostError> {
         unsafe {
-            let cid = find_audio_class_cid(factory).ok_or(HostError::NoAudioClass)?;
+            let class = find_audio_class(factory).ok_or(HostError::NoAudioClass)?;
+            crate::diagnostics::log(format!(
+                "vst3-instance: create begin class={} cid={}",
+                class.name,
+                tuid_hex(&class.cid)
+            ));
 
             let mut obj: *mut c_void = ptr::null_mut();
-            let result =
-                factory.createInstance(cid.as_ptr(), IComponent::IID.as_ptr().cast(), &mut obj);
+            let result = factory.createInstance(
+                class.cid.as_ptr(),
+                IComponent::IID.as_ptr().cast(),
+                &mut obj,
+            );
+            crate::diagnostics::log(format!(
+                "vst3-instance: createInstance result={result} null={}",
+                obj.is_null()
+            ));
             if result != kResultOk || obj.is_null() {
                 return Err(HostError::CreateInstanceFailed(result));
             }
             let component = ComPtr::from_raw(obj.cast::<IComponent>())
                 .ok_or(HostError::CreateInstanceFailed(result))?;
 
-            component.initialize(host.as_ptr() as *mut FUnknown);
+            let initialize = component.initialize(host.as_ptr() as *mut FUnknown);
+            crate::diagnostics::log(format!(
+                "vst3-instance: component.initialize result={initialize}"
+            ));
 
             let processor = component
                 .cast::<IAudioProcessor>()
                 .ok_or(HostError::MissingAudioProcessor)?;
+            crate::diagnostics::log(format!(
+                "vst3-instance: processor cast ok class={}",
+                class.name
+            ));
 
             Ok(PluginInstance {
-                class_id: cid,
+                class_id: class.cid,
+                debug_name: class.name,
                 component,
                 processor,
                 _host: host.clone(),
@@ -75,6 +96,11 @@ impl PluginInstance {
     /// The factory class id used to instantiate this plugin's audio component.
     pub fn class_id(&self) -> TUID {
         self.class_id
+    }
+
+    /// Human-readable class name used in diagnostics.
+    pub fn debug_name(&self) -> &str {
+        &self.debug_name
     }
 
     /// The plugin's audio processor.
@@ -104,7 +130,7 @@ impl Drop for PluginInstance {
 }
 
 /// Find the cid of the first class whose category is `"Audio Module Class"`.
-unsafe fn find_audio_class_cid(factory: &ComPtr<IPluginFactory>) -> Option<TUID> {
+unsafe fn find_audio_class(factory: &ComPtr<IPluginFactory>) -> Option<AudioClassInfo> {
     let count = factory.countClasses();
     for index in 0..count {
         let mut info = std::mem::zeroed::<PClassInfo>();
@@ -112,16 +138,38 @@ unsafe fn find_audio_class_cid(factory: &ComPtr<IPluginFactory>) -> Option<TUID>
             continue;
         }
         if c_array_eq(&info.category, "Audio Module Class") {
-            return Some(info.cid);
+            let name = c_array_string(&info.name).unwrap_or_else(|| "<unnamed>".to_string());
+            return Some(AudioClassInfo {
+                cid: info.cid,
+                name,
+            });
         }
     }
     None
+}
+
+struct AudioClassInfo {
+    cid: TUID,
+    name: String,
 }
 
 /// Compare a NUL-terminated C-string field to an expected `&str`.
 fn c_array_eq(buf: &[c_char], expected: &str) -> bool {
     let bytes = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
     bytes == expected.as_bytes()
+}
+
+fn c_array_string(buf: &[c_char]) -> Option<String> {
+    let bytes = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    let text = String::from_utf8_lossy(bytes).trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn tuid_hex(tuid: &TUID) -> String {
+    tuid.iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[cfg(test)]

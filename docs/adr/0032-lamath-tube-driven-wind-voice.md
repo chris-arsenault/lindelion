@@ -105,9 +105,41 @@ instrument does not ship configurations that produce no sound.**
   spectrum is voiced via `loop_filter_cutoff`.
 - **Accepted divergences / deferred:** the termination range is *physically* self-narrowing (an open
   bell radiates too much for the reed to sustain, so only the closed-bell band oscillates) rather than
-  param-clamped; brassiness-with-effort is weak (the velocity dynamic is largely timbral via the
-  pressure window, not a strong cuivré brightening) and is left to the backlog; the top octave reads a
-  few cents flat. The output is an odd-harmonic square rather than a fully formant-shaped clarinet —
-  usable, with brightness filterable downstream.
+  param-clamped; the top octave reads a few cents flat. The output is an odd-harmonic square rather
+  than a fully formant-shaped clarinet — usable, with brightness filterable downstream.
 - Scoped to the Tube. Modal/String/Mesh are unchanged; the broken Bow driver and the broader
   perceptual-test-layer overhaul are tracked separately.
+
+## Update — item B: dynamics and brightness-with-effort (2026-06-03)
+
+The originally-deferred weak brassiness-with-effort was investigated by measurement (a γ-sweep
+characterising the reed map through the full synth). Findings:
+
+- **The reed's timbre is nearly blowing-pressure-invariant.** The beating-reed limit-cycle
+  amplitude saturates (~5 dB across the usable γ range) and its harmonic content (h3≈0.42, h5≈0.16)
+  is essentially flat with γ — so playing harder changed neither level nor brightness. This is why
+  the velocity dynamic was inaudible: the energy-gated bore steepening was referenced to a measured
+  energy that itself barely moved.
+- **The "overblow above CEIL" that justified the narrow pressure window was an autocorrelation octave
+  artifact**, not a real instability: an odd-harmonic tone is anti-periodic at T/2, so the
+  autocorrelation pitch estimator picks the 2T lag and reports f/2. A direct DFT confirms the reed
+  holds the true fundamental across the whole low/mid register at any blowing pressure.
+
+The fix (the chosen "effort-referenced physical steepening" direction): the reed wind path drives the
+existing finite-amplitude bore steepening and bell radiation from the **player effort (blowing
+pressure)** — the physical drive — instead of the amplitude-saturated measured-energy bus
+(`set_brightness_effort`, `steepening_energy == effort²`). Soft playing stays mellow; hard blowing
+blooms into the cuivré. The reed pressure window is also widened modestly (now that the false overblow
+constraint is gone) for a real ~10 dB level dynamic. Net: brightness now climbs with effort
+(centroid ≈2460→3900 Hz at C4 mf→ff) and odd-harmonic richness rises ff>mf register-wide — the
+dominant perceptual dynamic of a wind voice.
+
+- **Altissimo squeak is kept on purpose.** The top octave genuinely period-doubles when overblown at
+  fortissimo (a *real* DFT subharmonic, not the artifact). This is physically accurate reed behaviour
+  and is a desired degeneracy — not clamped away. The pitch guards assert a clean fundamental only in
+  the low/mid register; the altissimo is guarded for audibility and boundedness, not pitch.
+- **Pitch metric corrected.** The autocorrelation-based tube pitch tests are replaced with a DFT
+  f/2-subharmonic check that does not octave-error on the odd-harmonic spectrum (the same T1 trap that
+  let the original silence ship).
+- **Still deferred:** a fully formant-shaped (vs odd-harmonic-square) spectrum; the few-cents
+  high-register flatness; the modest (physically-correct) level dynamic is intentional, not a defect.

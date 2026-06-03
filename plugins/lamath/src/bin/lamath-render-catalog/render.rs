@@ -1,6 +1,6 @@
 use crate::catalog::{
     CATALOG_BLOCK_SIZE, CATALOG_SAMPLE_RATE, CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe,
-    PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe,
+    MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe,
 };
 use lamath::{
     BowConfig, ContactConfig, DriverConfig, MeshConfig, ModalConfig, ModalPreset, PickConfig,
@@ -159,7 +159,45 @@ fn patch_for_recipe(recipe: PatchRecipe) -> ResonatorSynthPatch {
             patch.retrigger_resonators = retrigger;
             patch
         }
+        PatchRecipe::MeshPhrase {
+            polyphony,
+            retrigger,
+        } => {
+            let mut patch = single_family_patch(ResonatorFamily::Mesh);
+            patch.polyphony = polyphony;
+            patch.retrigger_resonators = retrigger;
+            patch
+        }
+        PatchRecipe::MeshVoicing(voicing) => mesh_voicing_patch(voicing),
     }
+}
+
+/// Build a single-strike Mesh patch for a named timbre voicing. `size`/`tension` set the
+/// grid cell count (mode density: sparse near-pitched triangle → dense inharmonic cymbal),
+/// `damping` the decay time, `material` the edge condition (free↔fixed), and the strike
+/// position which mode mix is excited. Character presets plus single-axis sweeps.
+fn mesh_voicing_patch(voicing: MeshVoicing) -> ResonatorSynthPatch {
+    // (size, tension, damping, material, strike position)
+    let (size, tension, damping, material, strike) = match voicing {
+        MeshVoicing::Triangle => (0.12, 0.12, 0.18, 0.70, 0.5),
+        MeshVoicing::Ride => (0.5, 0.45, 0.35, 0.6, 0.72),
+        MeshVoicing::Crash => (0.95, 0.88, 0.10, 0.40, 0.9),
+        MeshVoicing::DensitySparse => (0.08, 0.08, 0.30, 0.5, 0.5),
+        MeshVoicing::DensityDense => (0.97, 0.92, 0.30, 0.5, 0.5),
+        MeshVoicing::DecayShort => (0.5, 0.5, 0.85, 0.5, 0.5),
+        MeshVoicing::DecayLong => (0.5, 0.5, 0.05, 0.5, 0.5),
+    };
+    let mut patch = single_family_patch(ResonatorFamily::Mesh);
+    patch.polyphony = 1;
+    patch.resonator_a = ResonatorConfig::Mesh(MeshConfig {
+        size,
+        tension,
+        damping,
+        material,
+        position_of_strike: strike,
+        ..MeshConfig::default()
+    });
+    patch
 }
 
 fn single_family_patch(family: ResonatorFamily) -> ResonatorSynthPatch {

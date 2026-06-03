@@ -1,11 +1,10 @@
 //! The level/LUFS + analysis-signal panel (Windows Vizia): labelled [`meter_row`]s bound to
-//! [`MeterSignals`], refreshed from the plugin's [`MeterSource`] each tick (off the audio thread).
+//! [`MeterPanelState`], refreshed by Cenedril's single editor timer (off the audio thread).
 
 use std::sync::Arc;
 
 use vizia::prelude::*;
 
-use super::REFRESH;
 use crate::cenedril_vizia::MeterSource;
 use crate::cenedril_vizia::meters::{
     MeterReading, crest_reading, flux_reading, hnr_reading, level_reading, lufs_reading,
@@ -35,7 +34,7 @@ impl Row {
 }
 
 /// The reactive state behind every meter/analysis row. Created in the editor build (so the `Signal`s
-/// live in the reactive context); the rows bind to them and [`MeterPanel`] sets them each tick.
+/// live in the reactive context); the rows bind to them and [`MeterPanelState`] sets them each tick.
 #[derive(Clone, Copy)]
 struct MeterSignals {
     peak: Row,
@@ -90,16 +89,36 @@ impl MeterSignals {
     }
 }
 
+/// Meter panel state updated by the editor's shared refresh timer.
+#[derive(Clone)]
+pub(super) struct MeterPanelState {
+    signals: MeterSignals,
+    source: Arc<dyn MeterSource>,
+}
+
+impl MeterPanelState {
+    pub(super) fn new(source: Arc<dyn MeterSource>) -> Self {
+        let state = Self {
+            signals: MeterSignals::new(),
+            source,
+        };
+        state.update();
+        state
+    }
+
+    pub(super) fn update(&self) {
+        self.signals.update(self.source.as_ref());
+    }
+}
+
 /// Build the level/LUFS + analysis-signal panel as ordinary layout, not a custom [`View`].
 ///
 /// Cenedril's custom spectrogram needs a bespoke draw implementation, but the meter panel is just
-/// shared rows plus a timer. Keeping it as plain layout matches Lúmedir and avoids nested custom
-/// view construction during `IPlugView::attached`.
-pub(super) fn meter_panel(cx: &mut Context, source: Arc<dyn MeterSource>) -> Handle<'_, VStack> {
+/// shared rows. Keeping it as plain layout matches Lúmedir and avoids nested custom view
+/// construction during `IPlugView::attached`.
+pub(super) fn meter_panel(cx: &mut Context, state: MeterPanelState) -> Handle<'_, VStack> {
     crate::vizia_window::debug_log("cenedril-vizia: meter panel begin");
-    let signals = MeterSignals::new();
-    signals.update(source.as_ref());
-    let timer_source = source.clone();
+    let signals = state.signals;
     VStack::new(cx, move |cx| {
         crate::vizia_window::debug_log("cenedril-vizia: meter panel layout begin");
         Label::new(cx, "Levels").class("cenedril-section");
@@ -196,12 +215,6 @@ pub(super) fn meter_panel(cx: &mut Context, source: Arc<dyn MeterSource>) -> Han
         );
         crate::vizia_window::debug_log("cenedril-vizia: meter row pitch done");
 
-        let timer = cx.add_timer(REFRESH, None, move |_cx, action| {
-            if matches!(action, TimerAction::Tick(_)) {
-                signals.update(timer_source.as_ref());
-            }
-        });
-        cx.start_timer(timer);
         crate::vizia_window::debug_log("cenedril-vizia: meter panel layout done");
     })
 }

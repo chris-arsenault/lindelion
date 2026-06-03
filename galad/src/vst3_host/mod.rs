@@ -33,6 +33,7 @@ mod editor_window;
 mod fixture;
 mod handoff;
 mod host_context;
+mod host_objects;
 mod instance;
 mod module;
 mod processing;

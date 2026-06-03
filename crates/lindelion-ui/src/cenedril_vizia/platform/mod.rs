@@ -16,8 +16,8 @@ use crate::vizia_window::ViziaWindowEditor;
 mod meter_panel;
 mod spectrogram_view;
 
-use meter_panel::meter_panel;
-use spectrogram_view::{SpectrogramView, start_spectrogram_refresh};
+use meter_panel::{MeterPanelState, meter_panel};
+use spectrogram_view::{SpectrogramView, emit_spectrogram_refresh};
 
 /// Spectrogram render resolution (rows = log-frequency bands, columns = time history). Upsampled to
 /// the view bounds with Skia bilinear sampling for a smooth, high-fidelity image.
@@ -25,8 +25,8 @@ pub(super) const SPECTROGRAM_ROWS: usize = 320;
 pub(super) const SPECTROGRAM_COLUMNS: usize = 512;
 /// Editor refresh cadence (≈15 fps), matching the other Lindelion editors.
 pub(super) const REFRESH: std::time::Duration = std::time::Duration::from_millis(66);
-const CENEDRIL_EDITOR_TAG: &str = "spectimer-20260603-1";
-const CENEDRIL_EDITOR_TITLE: &str = "Cenedril [spectimer-20260603-1]";
+const CENEDRIL_EDITOR_TAG: &str = "onetimer-20260603-1";
+const CENEDRIL_EDITOR_TITLE: &str = "Cenedril [onetimer-20260603-1]";
 
 #[derive(Clone, Copy)]
 struct CenedrilLayout {
@@ -69,6 +69,19 @@ fn cenedril_layout(size: CenedrilEditorSize) -> CenedrilLayout {
         controls_height: 30.0,
         panel_width: 248.0,
     }
+}
+
+fn start_cenedril_refresh(cx: &mut Context, meters: MeterPanelState, spectrogram: Entity) {
+    crate::vizia_window::debug_log("cenedril-vizia: shared timer begin");
+    let timer = cx.add_timer(REFRESH, None, move |cx, action| {
+        if matches!(action, TimerAction::Tick(_)) {
+            meters.update();
+            emit_spectrogram_refresh(cx, spectrogram);
+        }
+    });
+    crate::vizia_window::debug_log("cenedril-vizia: shared timer add done");
+    cx.start_timer(timer);
+    crate::vizia_window::debug_log("cenedril-vizia: shared timer start done");
 }
 
 /// Which time-frequency view the editor draws. Both models are kept alive so switching is instant.
@@ -378,8 +391,9 @@ fn build_cenedril_application(
             crate::vizia_window::debug_log("cenedril-vizia: controls done");
             crate::vizia_window::debug_log("cenedril-vizia: body begin");
             HStack::new(cx, |cx| {
+                let meter_state = MeterPanelState::new(host.meters.clone());
                 crate::vizia_window::debug_log("cenedril-vizia: meter panel begin");
-                meter_panel(cx, host.meters.clone())
+                meter_panel(cx, meter_state.clone())
                     .class("cenedril-panels")
                     .width(Pixels(layout.panel_width))
                     .height(Pixels(layout.body_height()));
@@ -399,7 +413,7 @@ fn build_cenedril_application(
                 .width(Pixels(layout.spectrogram_width()))
                 .height(Pixels(layout.body_height()))
                 .entity();
-                start_spectrogram_refresh(cx, spectrogram);
+                start_cenedril_refresh(cx, meter_state, spectrogram);
                 crate::vizia_window::debug_log("cenedril-vizia: spectrogram view done");
             })
             .class("cenedril-body")

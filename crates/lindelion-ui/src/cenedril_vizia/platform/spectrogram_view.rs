@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use vizia::{prelude::*, vg};
 
-use super::{REFRESH, SPECTROGRAM_COLUMNS, SPECTROGRAM_ROWS, ViewMode};
+use super::{SPECTROGRAM_COLUMNS, SPECTROGRAM_ROWS, ViewMode};
 use crate::cenedril_vizia::reassigned::ReassignedSpectrogram;
 use crate::cenedril_vizia::spectrogram::{ColorMap, FreqScale, Spectrogram, colormap_for};
 use crate::cenedril_vizia::{ReassignedSource, SpectrogramSource};
@@ -15,21 +15,9 @@ enum SpectrogramTick {
     Tick,
 }
 
-/// Start the live spectrogram refresh from the parent layout after the custom view has been built.
-///
-/// Starting the timer from inside the custom view's own build closure can block Cenedril's VST3
-/// `attached` call under Galad before the window reaches its message loop. The timer still targets
-/// the spectrogram entity directly, but the parent owns the timer hookup.
-pub(super) fn start_spectrogram_refresh(cx: &mut Context, target: Entity) {
-    crate::vizia_window::debug_log("cenedril-vizia: spectrogram timer begin");
-    let timer = cx.add_timer(REFRESH, None, move |cx, action| {
-        if matches!(action, TimerAction::Tick(_)) {
-            cx.emit_to(target, SpectrogramTick::Tick);
-        }
-    });
-    crate::vizia_window::debug_log("cenedril-vizia: spectrogram timer add done");
-    cx.start_timer(timer);
-    crate::vizia_window::debug_log("cenedril-vizia: spectrogram timer start done");
+/// Emit one live spectrogram refresh event from Cenedril's shared editor timer.
+pub(super) fn emit_spectrogram_refresh(cx: &mut EventContext, target: Entity) {
+    cx.emit_to(target, SpectrogramTick::Tick);
 }
 
 /// A custom Vizia view that drains the plugin's frame sources into either the magnitude

@@ -5,14 +5,14 @@ use std::cell::Cell;
 use std::ffi::c_void;
 
 use vst3::Steinberg::*;
-use vst3::{ComPtr, ComRef, ComWrapper};
+use vst3::{ComPtr, ComWrapper};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRect, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
-    GetClientRect, GetWindowLongPtrW, PostQuitMessage, RegisterClassW, SW_SHOW, SWP_NOMOVE,
-    SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CLOSE,
-    WM_DESTROY, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    GetClientRect, GetWindowLongPtrW, IsWindow, PostQuitMessage, RegisterClassW, SW_SHOW,
+    SWP_NOMOVE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE,
+    WM_CLOSE, WM_DESTROY, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -32,8 +32,37 @@ const CLASS_NAME: PCWSTR = w!("GaladEditorWindow");
 /// A top-level host window hosting a plugin's `IPlugView`.
 pub struct EditorWindow {
     hwnd: HWND,
+    state: Box<WindowState>,
+}
+
+struct WindowState {
     view: ComPtr<IPlugView>,
     frame: ComWrapper<HostPlugFrame>,
+    destroyed: Cell<bool>,
+    detached: Cell<bool>,
+}
+
+impl WindowState {
+    fn new(view: ComPtr<IPlugView>, frame: ComWrapper<HostPlugFrame>) -> Self {
+        Self {
+            view,
+            frame,
+            destroyed: Cell::new(false),
+            detached: Cell::new(false),
+        }
+    }
+
+    fn detach_view(&self, reason: &str) {
+        if self.detached.replace(true) {
+            crate::diagnostics::log(format!("editor-window: view.removed skip reason={reason}"));
+            return;
+        }
+        crate::diagnostics::log(format!("editor-window: view.removed begin reason={reason}"));
+        let result = unsafe { self.view.removed() };
+        crate::diagnostics::log(format!(
+            "editor-window: view.removed done reason={reason} result={result}"
+        ));
+    }
 }
 
 impl EditorWindow {
@@ -105,6 +134,7 @@ impl EditorWindow {
                 "editor-window: CreateWindowExW done hwnd=0x{:x}",
                 hwnd.0 as isize
             ));
+            let state = Box::new(WindowState::new(view, frame));
 
             // Realize the wrapper before `IPlugView::attached`. Some plugin UI toolkits create
             // GPU-backed child windows during attach and expect the parent HWND to be visible.
@@ -114,7 +144,11 @@ impl EditorWindow {
             crate::diagnostics::spawn_window_probe("editor-attach");
 
             crate::diagnostics::log("editor-window: view.attached begin");
-            if view.attached(hwnd.0 as *mut c_void, kPlatformTypeHWND) != kResultOk {
+            if state
+                .view
+                .attached(hwnd.0 as *mut c_void, kPlatformTypeHWND)
+                != kResultOk
+            {
                 crate::diagnostics::log("editor-window: view.attached failed");
                 let _ = DestroyWindow(hwnd);
                 return Err(HostError::EditorUnsupported);
@@ -123,20 +157,32 @@ impl EditorWindow {
             // Stash the view pointer after attach, then push the current client size once. This
             // avoids sending `onSize` to an unattached view if showing the wrapper produces a
             // synchronous `WM_SIZE`.
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, view.as_ptr() as isize);
-            forward_current_size(hwnd, &view);
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                state.as_ref() as *const WindowState as isize,
+            );
+            forward_current_size(hwnd, &state.view);
             crate::diagnostics::log("editor-window: ShowWindow begin");
             let _ = ShowWindow(hwnd, SW_SHOW);
             OPEN_WINDOWS.with(|count| count.set(count.get().saturating_add(1)));
             crate::diagnostics::log("editor-window: ShowWindow done");
 
-            Ok(EditorWindow { hwnd, view, frame })
+            Ok(EditorWindow { hwnd, state })
         }
+    }
+
+    /// Whether the native wrapper HWND is still alive.
+    pub fn is_open(&self) -> bool {
+        !self.state.destroyed.get() && unsafe { IsWindow(Some(self.hwnd)).as_bool() }
     }
 
     /// Apply any pending plugin-requested resize (`IPlugFrame::resizeView`) to the window.
     pub fn apply_pending_resize(&self) {
-        if let Some((w, h)) = self.frame.take_requested_size() {
+        if !self.is_open() {
+            return;
+        }
+        if let Some((w, h)) = self.state.frame.take_requested_size() {
             unsafe {
                 let mut rc = RECT {
                     left: 0,
@@ -160,7 +206,7 @@ impl EditorWindow {
                     right: w,
                     bottom: h,
                 };
-                let _ = self.view.onSize(&mut view_rect);
+                let _ = self.state.view.onSize(&mut view_rect);
             }
         }
     }
@@ -169,9 +215,19 @@ impl EditorWindow {
 impl Drop for EditorWindow {
     fn drop(&mut self) {
         unsafe {
-            SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
-            let _ = self.view.removed();
-            let _ = DestroyWindow(self.hwnd);
+            crate::diagnostics::log(format!(
+                "editor-window: drop begin hwnd=0x{:x} open={}",
+                self.hwnd.0 as isize,
+                self.is_open()
+            ));
+            self.state.detach_view("drop");
+            if self.is_open() {
+                SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
+                let _ = DestroyWindow(self.hwnd);
+            } else {
+                crate::diagnostics::log("editor-window: drop skip DestroyWindow; already closed");
+            }
+            crate::diagnostics::log("editor-window: drop end");
         }
     }
 }
@@ -190,12 +246,16 @@ fn forward_current_size(hwnd: HWND, view: &ComPtr<IPlugView>) {
     }
 }
 
+unsafe fn window_state(hwnd: HWND) -> Option<&'static WindowState> {
+    let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WindowState;
+    state_ptr.as_ref()
+}
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         match msg {
             WM_SIZE => {
-                let view_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut IPlugView;
-                if let Some(view) = ComRef::from_raw(view_ptr) {
+                if let Some(state) = window_state(hwnd) {
                     let mut rc = RECT::default();
                     let _ = GetClientRect(hwnd, &mut rc);
                     let mut view_rect = ViewRect {
@@ -204,15 +264,28 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         right: rc.right,
                         bottom: rc.bottom,
                     };
-                    let _ = view.onSize(&mut view_rect);
+                    let _ = state.view.onSize(&mut view_rect);
                 }
                 LRESULT(0)
             }
             WM_CLOSE => {
+                crate::diagnostics::log(format!(
+                    "editor-window: WM_CLOSE hwnd=0x{:x}",
+                    hwnd.0 as isize
+                ));
+                if let Some(state) = window_state(hwnd) {
+                    state.detach_view("WM_CLOSE");
+                }
+                crate::diagnostics::log("editor-window: WM_CLOSE DestroyWindow begin");
                 let _ = DestroyWindow(hwnd);
+                crate::diagnostics::log("editor-window: WM_CLOSE DestroyWindow done");
                 LRESULT(0)
             }
             WM_DESTROY => {
+                if let Some(state) = window_state(hwnd) {
+                    state.destroyed.set(true);
+                    state.detach_view("WM_DESTROY");
+                }
                 OPEN_WINDOWS.with(|count| {
                     let current = count.get();
                     let remaining = current.saturating_sub(1);

@@ -1,8 +1,12 @@
-//! Editor host — open and manage plugin editor windows (multiple at once). Each open editor keeps its
-//! module, instance, controller, and window alive together, torn down in the right order on drop.
+//! Editor host — open and manage plugin editor windows (multiple at once).
+//!
+//! Galad's live UI opens editors against the already-pooled plugin instance so single-component
+//! plugins (Cenedril, Lúmedir, Calóma) expose the processor state the audio thread is actually
+//! driving. The path-loading helper remains for the standalone `galad editor` diagnostic command.
 //! Windows-only; cross-compile-verified.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use vst3::ComPtr;
 use vst3::Steinberg::Vst::IHostApplication;
@@ -13,12 +17,19 @@ use super::host_context::HostContext;
 use super::instance::{HostError, PluginInstance};
 use super::module::{LoadedModule, load_module};
 
-/// A single open editor. Field order is the teardown order: window → controller → instance → module.
-struct OpenEditor {
-    window: EditorWindow,
-    _controller: EditorController,
+/// Ownership kept only for editors opened by path (the live UI keeps instances/modules in the pool).
+struct OwnedEditorPlugin {
     _instance: PluginInstance,
     _module: LoadedModule,
+}
+
+/// A single open editor. Field order is the teardown order: window → controller → owned plugin.
+struct OpenEditor {
+    window: EditorWindow,
+    _controller: Arc<EditorController>,
+    _live_instance: Option<Arc<PluginInstance>>,
+    _live_module: Option<Arc<LoadedModule>>,
+    _owned: Option<OwnedEditorPlugin>,
 }
 
 /// Hosts one or more plugin editor windows.
@@ -58,7 +69,11 @@ impl EditorHost {
         let instance = PluginInstance::from_factory(module.factory(), &self.host)?;
         crate::diagnostics::log("editor-host: PluginInstance::from_factory done");
         crate::diagnostics::log("editor-host: EditorController::new begin");
-        let controller = EditorController::new(module.factory(), &instance, &self.host)?;
+        let controller = Arc::new(EditorController::new(
+            module.factory(),
+            &instance,
+            &self.host,
+        )?);
         crate::diagnostics::log("editor-host: EditorController::new done");
         crate::diagnostics::log("editor-host: create_view begin");
         let view = controller.create_view().ok_or(HostError::NoController)?;
@@ -70,11 +85,44 @@ impl EditorHost {
         self.editors.push(OpenEditor {
             window,
             _controller: controller,
-            _instance: instance,
-            _module: module,
+            _live_instance: None,
+            _live_module: None,
+            _owned: Some(OwnedEditorPlugin {
+                _instance: instance,
+                _module: module,
+            }),
         });
         crate::diagnostics::log(format!(
             "editor-host: open done editors={}",
+            self.editors.len()
+        ));
+        Ok(())
+    }
+
+    /// Open an editor window for an already-live plugin instance.
+    pub fn open_instance(
+        &mut self,
+        controller: Arc<EditorController>,
+        instance: Arc<PluginInstance>,
+        module: Arc<LoadedModule>,
+        title: &str,
+    ) -> Result<(), HostError> {
+        crate::diagnostics::log(format!("editor-host: open_instance begin title={title:?}"));
+        crate::diagnostics::log("editor-host: create_view begin");
+        let view = controller.create_view().ok_or(HostError::NoController)?;
+        crate::diagnostics::log("editor-host: create_view done");
+        crate::diagnostics::log("editor-host: EditorWindow::open begin");
+        let window = EditorWindow::open(view, title, self.quit_on_last_close)?;
+        crate::diagnostics::log("editor-host: EditorWindow::open done");
+        self.editors.push(OpenEditor {
+            window,
+            _controller: controller,
+            _live_instance: Some(instance),
+            _live_module: Some(module),
+            _owned: None,
+        });
+        crate::diagnostics::log(format!(
+            "editor-host: open_instance done editors={}",
             self.editors.len()
         ));
         Ok(())
@@ -86,9 +134,21 @@ impl EditorHost {
     }
 
     /// Apply any pending plugin-requested resizes across all open editors.
-    pub fn apply_resizes(&self) {
+    pub fn apply_resizes(&mut self) {
+        self.prune_closed();
         for editor in &self.editors {
             editor.window.apply_pending_resize();
+        }
+    }
+
+    fn prune_closed(&mut self) {
+        let before = self.editors.len();
+        self.editors.retain(|editor| editor.window.is_open());
+        let after = self.editors.len();
+        if after != before {
+            crate::diagnostics::log(format!(
+                "editor-host: pruned closed editors before={before} after={after}"
+            ));
         }
     }
 }

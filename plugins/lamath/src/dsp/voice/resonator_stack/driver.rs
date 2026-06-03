@@ -35,11 +35,21 @@ const PICK_MAX_CUTOFF_HZ: f32 = 12_000.0;
 // and self-limits the bore oscillation at its tuned fundamental.
 
 /// The reed's usable mouth-pressure window at the nominal pressure depth: from just above the
-/// oscillation threshold (`FLOOR`, softest playing) to just below the over-blowing /
-/// period-doubling onset (`CEIL`, full effort). Mapping the whole velocity range into this
-/// narrow window keeps every dynamic on the fundamental — a real reed has a narrow usable
-/// pressure band and the player stays inside it; pushing past `CEIL` is where it overblows.
-const REED_PRESSURE_FLOOR: f32 = 0.63;
+/// oscillation threshold (`FLOOR`, softest playing) to a hard fortissimo blow (`CEIL`, full
+/// effort), in units where the reed beats fully shut at the closing pressure (default 1.2).
+/// ADR-0032 item B: measurement showed the bore holds its fundamental across the low/mid
+/// register at any blowing pressure — the earlier "overblow above CEIL" was an autocorrelation
+/// octave artifact on the odd-harmonic spectrum, not a real instability. Soft → γ≈0.5 (quiet,
+/// mellow), loud → γ≈0.63 (louder), well below the closing pressure so the reed never chokes.
+/// The dynamic range itself stays modest (the beating-reed limit-cycle amplitude saturates ~10
+/// dB, which is physically correct for a wind voice); the *primary* dynamic — brightness with
+/// effort (the cuivré) — rides on top via the effort-referenced bore steepening, since the
+/// reed's own spectrum is nearly blowing-pressure-invariant. A wider ceiling (tested to γ≈0.71)
+/// bought only ~2 dB more level at the cost of a brightness droop at the top of the mid register
+/// and a louder portamento transient, so the window stays narrow. The top octave genuinely
+/// period-doubles (squeaks) when overblown at fortissimo — real reed behaviour, kept on purpose,
+/// not clamped away (the player blows the altissimo gently).
+const REED_PRESSURE_FLOOR: f32 = 0.60;
 const REED_PRESSURE_CEIL: f32 = 0.76;
 /// Effort below this leaves the reed below its oscillation pressure (breathy near-silence);
 /// the audible velocity range lives above it, mapped into the stable window above.

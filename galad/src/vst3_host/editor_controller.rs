@@ -6,8 +6,9 @@ use std::ffi::c_void;
 use std::ptr;
 
 use vst3::Steinberg::Vst::{
-    IComponent, IComponentTrait, IConnectionPoint, IConnectionPointTrait, IEditController,
-    IEditControllerTrait, IHostApplication, ViewType,
+    IComponent, IComponentHandler, IComponentTrait, IConnectionPoint, IConnectionPointTrait,
+    IDataExchangeReceiver, IEditController, IEditController2, IEditControllerTrait,
+    IHostApplication, ViewType,
 };
 use vst3::Steinberg::{
     FUnknown, IPlugView, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, TUID, kResultOk,
@@ -49,6 +50,9 @@ impl EditorController {
                     return Err(HostError::NoController);
                 };
                 crate::diagnostics::log("editor-controller: direct IEditController cast done");
+                log_component_interfaces(component);
+                log_controller_interfaces(&controller);
+                install_component_handler(&controller, host);
                 return Ok(EditorController {
                     controller,
                     terminate_on_drop: false,
@@ -72,10 +76,15 @@ impl EditorController {
             let controller =
                 ComPtr::from_raw(obj.cast::<IEditController>()).ok_or(HostError::NoController)?;
             crate::diagnostics::log("editor-controller: create separate controller done");
+            log_component_interfaces(component);
+            log_controller_interfaces(&controller);
 
             crate::diagnostics::log("editor-controller: initialize begin");
-            controller.initialize(host.as_ptr() as *mut FUnknown);
-            crate::diagnostics::log("editor-controller: initialize done");
+            let initialize = controller.initialize(host.as_ptr() as *mut FUnknown);
+            crate::diagnostics::log(format!(
+                "editor-controller: initialize done result={initialize}"
+            ));
+            install_component_handler(&controller, host);
 
             // Best-effort component↔controller connection (so editor edits reach the processor).
             if let (Some(component_cp), Some(controller_cp)) = (
@@ -83,9 +92,15 @@ impl EditorController {
                 controller.cast::<IConnectionPoint>(),
             ) {
                 crate::diagnostics::log("editor-controller: connect begin");
-                component_cp.connect(controller_cp.as_ptr());
-                controller_cp.connect(component_cp.as_ptr());
-                crate::diagnostics::log("editor-controller: connect done");
+                let component_connect = component_cp.connect(controller_cp.as_ptr());
+                let controller_connect = controller_cp.connect(component_cp.as_ptr());
+                crate::diagnostics::log(format!(
+                    "editor-controller: connect done component_result={component_connect} controller_result={controller_connect}"
+                ));
+            } else {
+                crate::diagnostics::log(
+                    "editor-controller: connect skipped missing IConnectionPoint",
+                );
             }
 
             // Sync the controller to the component's current state.
@@ -99,8 +114,10 @@ impl EditorController {
                 let stream = ComWrapper::new(MemoryStream::from_bytes(state));
                 if let Some(iface) = stream.to_com_ptr::<vst3::Steinberg::IBStream>() {
                     crate::diagnostics::log("editor-controller: setComponentState begin");
-                    controller.setComponentState(iface.as_ptr());
-                    crate::diagnostics::log("editor-controller: setComponentState done");
+                    let set_state = controller.setComponentState(iface.as_ptr());
+                    crate::diagnostics::log(format!(
+                        "editor-controller: setComponentState done result={set_state}"
+                    ));
                 }
             }
 
@@ -123,6 +140,42 @@ impl EditorController {
             ));
             view
         }
+    }
+}
+
+fn log_component_interfaces(component: &ComPtr<IComponent>) {
+    crate::diagnostics::log(format!(
+        "editor-controller: component interfaces connection_point={} audio_presentation_latency={}",
+        component.cast::<IConnectionPoint>().is_some(),
+        component
+            .cast::<vst3::Steinberg::Vst::IAudioPresentationLatency>()
+            .is_some()
+    ));
+}
+
+fn log_controller_interfaces(controller: &ComPtr<IEditController>) {
+    crate::diagnostics::log(format!(
+        "editor-controller: controller interfaces connection_point={} edit_controller2={} data_exchange_receiver={}",
+        controller.cast::<IConnectionPoint>().is_some(),
+        controller.cast::<IEditController2>().is_some(),
+        controller.cast::<IDataExchangeReceiver>().is_some()
+    ));
+}
+
+fn install_component_handler(
+    controller: &ComPtr<IEditController>,
+    host: &ComPtr<IHostApplication>,
+) {
+    unsafe {
+        crate::diagnostics::log("editor-controller: setComponentHandler begin");
+        let Some(handler) = host.cast::<IComponentHandler>() else {
+            crate::diagnostics::log("editor-controller: setComponentHandler no host handler");
+            return;
+        };
+        let result = controller.setComponentHandler(handler.as_ptr());
+        crate::diagnostics::log(format!(
+            "editor-controller: setComponentHandler done result={result}"
+        ));
     }
 }
 
