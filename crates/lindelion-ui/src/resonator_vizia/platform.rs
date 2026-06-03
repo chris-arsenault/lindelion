@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use rfd::FileDialog;
 use vizia::{
     ParentWindow, WindowHandle, WindowScalePolicy,
     icons::{
@@ -28,13 +27,29 @@ use super::{
 use crate::{
     EditorCommandBus, PadId, UiCommand, command_label,
     vizia_file_dialogs::{
-        patch_export_directory_dialog, patch_load_file_dialog, patch_save_file_dialog,
+        FileDialog, patch_export_directory_dialog, patch_load_file_dialog, patch_save_file_dialog,
         wav_audio_dialog,
     },
 };
 
+#[cfg(target_os = "macos")]
 #[path = "platform_drop.rs"]
 mod platform_drop;
+
+#[cfg(target_os = "windows")]
+mod platform_drop {
+    use vizia::WindowHandle;
+
+    use crate::resonator_vizia::ResonatorEditorHost;
+
+    pub(super) struct NativeLayerDropTargets;
+
+    impl NativeLayerDropTargets {
+        pub(super) fn install(_window: &WindowHandle, _host: ResonatorEditorHost) -> Option<Self> {
+            None
+        }
+    }
+}
 
 include!("platform_style.rs");
 include!("platform_state.rs");

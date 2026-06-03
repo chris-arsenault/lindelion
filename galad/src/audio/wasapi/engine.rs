@@ -25,8 +25,11 @@ use crate::audio::meter::{
     MeterPublisher, MeterReader, MeterSnapshot, meter_channel, stereo_levels,
 };
 use crate::audio::transport::Transport;
+use crate::midi::{MAX_BLOCK_MIDI_EVENTS, MidiEventQueue, MidiMessage};
 use crate::session::DeviceRef;
 use crate::vst3_host::{ChainProcessor, Handoff};
+
+use super::midi_input::MidiInputs;
 
 /// 100-ns units per millisecond.
 const HNS_PER_MS: f64 = 10_000.0;
@@ -276,6 +279,9 @@ struct RunningState {
     capture: WasapiStream,
     render: WasapiStream,
     transport: Transport,
+    midi_inputs: MidiInputs,
+    midi_queue: Arc<MidiEventQueue>,
+    midi_scratch: [MidiMessage; MAX_BLOCK_MIDI_EVENTS],
     capture_scratch: Vec<f32>,
     render_scratch: Vec<f32>,
     meter_publisher: MeterPublisher,
@@ -304,6 +310,9 @@ fn setup_streams(
     let render_scratch = vec![0.0f32; max_frames * out_fmt.channels.max(1) as usize];
 
     let latency = measure_latency(&capture, &render);
+    let midi_queue = Arc::new(MidiEventQueue::new());
+    let midi_inputs = MidiInputs::open_all(midi_queue.clone());
+    crate::diagnostics::log(format!("midi: engine input count={}", midi_inputs.len()));
 
     unsafe {
         capture.client().Start()?;
@@ -314,6 +323,9 @@ fn setup_streams(
         capture,
         render,
         transport,
+        midi_inputs,
+        midi_queue,
+        midi_scratch: [MidiMessage::default(); MAX_BLOCK_MIDI_EVENTS],
         capture_scratch,
         render_scratch,
         meter_publisher,
@@ -349,11 +361,13 @@ fn run_loop(
                 }
                 current = next;
             }
+            let midi_count = state.midi_queue.drain(&mut state.midi_scratch);
             let result = pump_render(
                 &state.render,
                 &mut state.transport,
                 &mut state.render_scratch,
                 current,
+                &state.midi_scratch[..midi_count],
                 &mut state.meter,
                 &state.master,
             );
@@ -427,6 +441,7 @@ fn pump_render(
     transport: &mut Transport,
     scratch: &mut [f32],
     chain: *mut ChainProcessor,
+    midi: &[MidiMessage],
     meter: &mut MeterSnapshot,
     master: &MasterControl,
 ) -> Result<(), AudioError> {
@@ -442,7 +457,7 @@ fn pump_render(
         let samples = available as usize * format.channels.max(1) as usize;
         transport.render_through(&mut scratch[..samples], |stereo| {
             if !chain.is_null() {
-                (*chain).process_in_place(stereo)
+                (*chain).process_in_place_with_midi(stereo, midi)
             }
             apply_master(stereo, master.gain_linear());
             meter.set_output_stereo(stereo_levels(stereo));

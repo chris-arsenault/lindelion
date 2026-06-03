@@ -29,6 +29,7 @@ mod editor_frame;
 mod editor_view;
 #[cfg(windows)]
 mod editor_window;
+mod events;
 #[cfg(test)]
 mod fixture;
 mod handoff;
@@ -36,6 +37,7 @@ mod host_context;
 mod host_objects;
 mod instance;
 mod module;
+mod parameters;
 mod processing;
 mod session_runtime;
 mod spike;

@@ -153,10 +153,15 @@ fn patch_for_recipe(recipe: PatchRecipe) -> ResonatorSynthPatch {
         PatchRecipe::TubePhrase {
             polyphony,
             retrigger,
+            bell,
         } => {
             let mut patch = single_family_patch(ResonatorFamily::Tube);
             patch.polyphony = polyphony;
             patch.retrigger_resonators = retrigger;
+            // Audition A/B for the bell HF-radiation tap (ADR-0032 item-B follow-up).
+            if let ResonatorConfig::Waveguide(ref mut waveguide) = patch.resonator_a {
+                waveguide.bell_radiation = if bell { 1.0 } else { 0.0 };
+            }
             patch
         }
         PatchRecipe::MeshPhrase {

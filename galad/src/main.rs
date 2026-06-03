@@ -9,6 +9,7 @@
 
 mod audio;
 mod diagnostics;
+mod midi;
 mod session;
 mod ui;
 mod vst3_host;

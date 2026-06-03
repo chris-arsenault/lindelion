@@ -17,9 +17,12 @@ use std::sync::Arc;
 
 use vst3::Steinberg::Vst::IAudioProcessorTrait;
 
+use crate::midi::MidiMessage;
+
 use super::editor_controller::EditorController;
 use super::instance::PluginInstance;
 use super::module::LoadedModule;
+use super::parameters::{MAX_BLOCK_PARAMETER_EDITS, ParameterEdit};
 use super::processing::ProcessBusScratch;
 
 /// One live, prepared plugin the controller keeps alive for the life of its chain slot: the shared
@@ -36,6 +39,7 @@ pub struct ChainSlot {
     instance: Arc<PluginInstance>,
     bypassed: bool,
     process_buses: ProcessBusScratch,
+    parameter_edits: [ParameterEdit; MAX_BLOCK_PARAMETER_EDITS],
 }
 
 /// An ordered serial stereo chain, allocation-free per block.
@@ -77,6 +81,7 @@ impl ChainProcessor {
                 .expect("prepared plugin exposes process buses"),
                 instance,
                 bypassed: bypass.next().unwrap_or(false),
+                parameter_edits: [ParameterEdit::default(); MAX_BLOCK_PARAMETER_EDITS],
             })
             .collect();
         Self {
@@ -90,6 +95,11 @@ impl ChainProcessor {
 
     /// Process an interleaved stereo block in place through the (non-bypassed) chain.
     pub fn process_in_place(&mut self, stereo: &mut [f32]) {
+        self.process_in_place_with_midi(stereo, &[]);
+    }
+
+    /// Process an interleaved stereo block in place, passing live MIDI events to every active slot.
+    pub fn process_in_place_with_midi(&mut self, stereo: &mut [f32], midi: &[MidiMessage]) {
         let frames = (stereo.len() / 2).min(self.a_left.len());
 
         for (frame, pair) in stereo.chunks_exact(2).take(frames).enumerate() {
@@ -102,11 +112,17 @@ impl ChainProcessor {
             if slot.bypassed {
                 continue;
             }
+            let parameter_count = slot
+                .instance
+                .parameter_edits()
+                .drain(&mut slot.parameter_edits);
             unsafe {
-                slot.process_buses.drive_stereo(
+                slot.process_buses.drive_stereo_with_events(
                     slot.instance.processor(),
                     [&self.a_left[..frames], &self.a_right[..frames]],
                     [&mut self.b_left[..frames], &mut self.b_right[..frames]],
+                    midi,
+                    &slot.parameter_edits[..parameter_count],
                 );
             }
             std::mem::swap(&mut self.a_left, &mut self.b_left);
@@ -140,9 +156,10 @@ fn finite_or_zero(sample: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::midi::MidiMessage;
     use crate::vst3_host::fixture::{
-        context_fixture_factory, gain_fixture_factory, nan_fixture_factory,
-        strict_sidechain_fixture_factory,
+        context_fixture_factory, gain_fixture_factory, midi_note_fixture_factory,
+        nan_fixture_factory, parameter_fixture_factory, strict_sidechain_fixture_factory,
     };
     use crate::vst3_host::{HostContext, ProcessDriver};
     use vst3::ComPtr;
@@ -249,6 +266,43 @@ mod tests {
     }
 
     #[test]
+    fn midi_events_are_delivered_to_live_chain_plugins() {
+        let mut chain = ChainProcessor::new(
+            vec![prepared_from_factory(midi_note_fixture_factory())],
+            vec![false],
+            512,
+            TEST_SAMPLE_RATE,
+        );
+        let mut stereo = vec![0.0f32; 4];
+
+        chain.process_in_place(&mut stereo);
+        assert_eq!(stereo, vec![0.0, 0.0, 0.0, 0.0]);
+
+        stereo.fill(0.0);
+        chain.process_in_place_with_midi(&mut stereo, &[MidiMessage::from_bytes(0x90, 60, 100)]);
+        assert_eq!(stereo, vec![0.25, 0.25, 0.25, 0.25]);
+    }
+
+    #[test]
+    fn parameter_edits_are_delivered_to_live_chain_plugins() {
+        let instance = prepared_from_factory(parameter_fixture_factory());
+        let mut chain =
+            ChainProcessor::new(vec![instance.clone()], vec![false], 512, TEST_SAMPLE_RATE);
+        let mut stereo = vec![0.0f32; 4];
+
+        chain.process_in_place(&mut stereo);
+        assert_eq!(stereo, vec![0.0, 0.0, 0.0, 0.0]);
+
+        assert!(
+            instance
+                .parameter_edits()
+                .push(ParameterEdit::new(1, 0.625))
+        );
+        chain.process_in_place(&mut stereo);
+        assert_eq!(stereo, vec![0.625, 0.625, 0.625, 0.625]);
+    }
+
+    #[test]
     fn reordering_reuses_instances_and_preserves_them() {
         // The pool owns the instances; chains hold shared clones. Rebuilding in a new order must not
         // recreate or drop them — the pool's `Arc`s keep them alive across the rebuild.
@@ -305,6 +359,39 @@ mod tests {
         lindelion_test_allocator::assert_no_allocations("chain process", || {
             chain.process_in_place(&mut stereo);
         });
+    }
+
+    #[test]
+    fn process_in_place_with_midi_is_allocation_free() {
+        let mut chain = ChainProcessor::new(
+            vec![prepared_from_factory(midi_note_fixture_factory())],
+            vec![false],
+            512,
+            TEST_SAMPLE_RATE,
+        );
+        let midi = [MidiMessage::from_bytes(0x90, 60, 100)];
+        let mut stereo = vec![0.0f32; 256];
+        lindelion_test_allocator::assert_no_allocations("chain process with midi", || {
+            chain.process_in_place_with_midi(&mut stereo, &midi);
+        });
+        assert!(stereo.iter().all(|&sample| sample == 0.25));
+    }
+
+    #[test]
+    fn process_in_place_with_parameter_edits_is_allocation_free() {
+        let instance = prepared_from_factory(parameter_fixture_factory());
+        let mut chain =
+            ChainProcessor::new(vec![instance.clone()], vec![false], 512, TEST_SAMPLE_RATE);
+        let mut stereo = vec![0.0f32; 256];
+        assert!(instance.parameter_edits().push(ParameterEdit::new(1, 0.5)));
+
+        lindelion_test_allocator::assert_no_allocations(
+            "chain process with parameter edit",
+            || {
+                chain.process_in_place(&mut stereo);
+            },
+        );
+        assert!(stereo.iter().all(|&sample| sample == 0.5));
     }
 
     #[test]

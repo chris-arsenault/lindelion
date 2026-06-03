@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
 #![allow(unsafe_op_in_unsafe_fn)]
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#![cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 
 mod controller;
 mod editor;
@@ -23,9 +23,9 @@ const PITCH_BEND_PARAMETER_INDEX: usize = PARAMETER_BINDING_COUNT;
 const VST3_PARAMETER_COUNT: usize = PARAMETER_BINDING_COUNT + 1;
 const DEFAULT_LIBRARY_DIR: &str = "Ahara";
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
 use controller::{EditorPatchSummary, parameter_index};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use controller::{
     EditorSampleSummary, EditorSlotSummary, EditorTelemetry, EditorWaveformPoint,
     default_library_paths,

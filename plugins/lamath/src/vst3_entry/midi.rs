@@ -5,14 +5,24 @@ use crate::{RESONATOR_BRIGHTNESS_CONTROLLER, RESONATOR_MOD_WHEEL_CONTROLLER};
 
 pub(super) const RESONATOR_MIDI_CONTROLLER_ROUTES: &[MidiControllerRoute] = &[
     MidiControllerRoute::new(
-        ControllerNumbers_::kCtrlModWheel,
+        controller_number(ControllerNumbers_::kCtrlModWheel),
         RESONATOR_MOD_WHEEL_CONTROLLER,
     ),
     MidiControllerRoute::new(
-        ControllerNumbers_::kCtrlFilterResonance,
+        controller_number(ControllerNumbers_::kCtrlFilterResonance),
         RESONATOR_BRIGHTNESS_CONTROLLER,
     ),
 ];
+
+#[cfg(windows)]
+const fn controller_number(value: i32) -> u32 {
+    value as u32
+}
+
+#[cfg(not(windows))]
+const fn controller_number(value: u32) -> u32 {
+    value
+}
 
 pub(super) const fn empty_midi_event() -> MidiEvent {
     MidiEvent::Control(ControlEvent::ContinuousController {

@@ -168,17 +168,17 @@ fn catalog_selection_handles_articulation_group() {
     validate_catalog(&cases).unwrap();
 
     let selected = select_group(&cases, "articulation");
-    assert_eq!(selected.len(), 7);
+    assert_eq!(selected.len(), 10);
     assert_all_paths_safe(&selected);
     assert_eq!(selected.first().unwrap().id, "tube_scale_tongued_c4_c5");
-    assert_eq!(selected.last().unwrap().id, "mesh_chord_monophonic");
+    assert_eq!(selected.last().unwrap().id, "mesh_expressive_16");
 }
 
 #[test]
 fn catalog_selection_handles_edges_group() {
     let cases = catalog_cases();
     validate_catalog(&cases).unwrap();
-    assert_eq!(cases.len(), 77);
+    assert_eq!(cases.len(), 86);
 
     let selected = select_group(&cases, "edges");
     assert_eq!(selected.len(), 8);
@@ -206,6 +206,24 @@ fn catalog_selection_handles_edges_group() {
 }
 
 #[test]
+fn catalog_selection_handles_tube_dynamics_group() {
+    let cases = catalog_cases();
+    validate_catalog(&cases).unwrap();
+
+    let selected = select_group(&cases, "tube_dynamics");
+    assert_eq!(selected.len(), 6);
+    assert_all_paths_safe(&selected);
+    assert_eq!(selected.first().unwrap().id, "tube_dyn_scale_v020_bell_on");
+    assert_eq!(selected.last().unwrap().id, "tube_dyn_scale_v127_bell_off");
+    assert_eq!(
+        select_case(&cases, "tube_dyn_scale_v100_bell_off")
+            .single()
+            .id,
+        "tube_dyn_scale_v100_bell_off"
+    );
+}
+
+#[test]
 fn catalog_selection_rejects_unknown_group_or_case() {
     let cases = catalog_cases();
     assert_eq!(
@@ -215,6 +233,25 @@ fn catalog_selection_rejects_unknown_group_or_case() {
     assert_eq!(
         selected_cases(&cases, &RenderSelection::Case("missing".to_string())).unwrap_err(),
         CatalogError::UnknownCase("missing".to_string())
+    );
+}
+
+#[test]
+fn catalog_selection_by_tag_collects_all_tagged_cases() {
+    let cases = catalog_cases();
+    // Every Mesh case across all groups carries the "mesh" tag, so one `--tag mesh` selects
+    // them all (baseline + register + articulation + timbre + the edge case).
+    let mesh = selected_cases(&cases, &RenderSelection::Tag("mesh".to_string())).unwrap();
+    assert!(
+        mesh.len() >= 19,
+        "expected all mesh cases, got {}",
+        mesh.len()
+    );
+    assert!(mesh.iter().all(|case| case.tags.contains(&"mesh")));
+    assert_all_paths_safe(&mesh);
+    assert_eq!(
+        selected_cases(&cases, &RenderSelection::Tag("nonexistent".to_string())).unwrap_err(),
+        CatalogError::UnknownTag("nonexistent".to_string())
     );
 }
 

@@ -261,6 +261,10 @@ pub struct WaveguideConfig {
     /// warm, loud→bright per M11 P8). String only; defaults 0.5 (P10), alive out of the box.
     #[serde(default = "default_source_body_balance")]
     pub source_body_balance: f32,
+    /// Tube bell-radiation tap scale `0..1` (`1.0` = current, `0.0` = off); diagnostic handle
+    /// pending the bell+bore redesign (ADR-0032). String ignores it.
+    #[serde(default = "default_bell_radiation")]
+    pub bell_radiation: f32,
 }
 
 impl Default for WaveguideConfig {
@@ -277,6 +281,7 @@ impl Default for WaveguideConfig {
             position_of_strike: STRIKE_POSITION.default,
             boundary_reflection: default_boundary_reflection(),
             source_body_balance: default_source_body_balance(),
+            bell_radiation: default_bell_radiation(),
         }
     }
 }
@@ -326,6 +331,10 @@ pub(crate) const fn default_boundary_reflection() -> f32 {
 /// M11 P10 factory source↔body balance depth — non-zero so a default String is alive.
 pub(crate) const fn default_source_body_balance() -> f32 {
     0.5
+}
+
+pub(crate) const fn default_bell_radiation() -> f32 {
+    1.0
 }
 
 // Physical driver / contact configs (M8/M9) live in a separate file to keep this one

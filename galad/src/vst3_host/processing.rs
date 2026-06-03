@@ -10,7 +10,11 @@ use std::{mem, ptr};
 
 use vst3::{ComPtr, Steinberg::Vst::*, Steinberg::*};
 
+use crate::midi::MidiMessage;
+
+use super::events::HostEventList;
 use super::instance::{HostError, PluginInstance};
+use super::parameters::{HostParameterChanges, ParameterEdit};
 
 const MAIN_BUS_INDEX: i32 = 0;
 const ALL_CHANNELS_SILENT: u64 = u64::MAX;
@@ -85,6 +89,10 @@ pub(super) struct ProcessBusScratch {
     silence: Vec<f32>,
     sink: Vec<f32>,
     context: ProcessContext,
+    input_events: vst3::ComWrapper<HostEventList>,
+    input_events_ptr: ComPtr<IEventList>,
+    input_parameter_changes: vst3::ComWrapper<HostParameterChanges>,
+    input_parameter_changes_ptr: ComPtr<IParameterChanges>,
     sample_rate: f64,
     project_time_samples: i64,
     debug: ProcessDebugState,
@@ -132,6 +140,14 @@ impl ProcessBusScratch {
             .iter()
             .map(|bus| vec![ptr::null_mut(); bus.numChannels.max(0) as usize])
             .collect();
+        let input_events = HostEventList::new();
+        let input_events_ptr = input_events
+            .to_com_ptr::<IEventList>()
+            .expect("HostEventList exposes IEventList");
+        let input_parameter_changes = HostParameterChanges::new();
+        let input_parameter_changes_ptr = input_parameter_changes
+            .to_com_ptr::<IParameterChanges>()
+            .expect("HostParameterChanges exposes IParameterChanges");
         crate::diagnostics::log(format!(
             "vst3-process: scratch label={label} max_frames={} sample_rate={} inputs={} outputs={} input_buses={} output_buses={}",
             max_frames,
@@ -150,6 +166,10 @@ impl ProcessBusScratch {
             silence: vec![0.0; max_frames.max(1)],
             sink: vec![0.0; max_frames.max(1)],
             context: unsafe { mem::zeroed() },
+            input_events,
+            input_events_ptr,
+            input_parameter_changes,
+            input_parameter_changes_ptr,
             sample_rate: sample_rate.max(1.0),
             project_time_samples: 0,
             debug: ProcessDebugState::default(),
@@ -161,6 +181,27 @@ impl ProcessBusScratch {
         processor: &ComPtr<IAudioProcessor>,
         input: [&[f32]; 2],
         output: [&mut [f32]; 2],
+    ) -> tresult {
+        self.drive_stereo_with_midi(processor, input, output, &[])
+    }
+
+    pub(super) unsafe fn drive_stereo_with_midi(
+        &mut self,
+        processor: &ComPtr<IAudioProcessor>,
+        input: [&[f32]; 2],
+        output: [&mut [f32]; 2],
+        midi: &[MidiMessage],
+    ) -> tresult {
+        self.drive_stereo_with_events(processor, input, output, midi, &[])
+    }
+
+    pub(super) unsafe fn drive_stereo_with_events(
+        &mut self,
+        processor: &ComPtr<IAudioProcessor>,
+        input: [&[f32]; 2],
+        output: [&mut [f32]; 2],
+        midi: &[MidiMessage],
+        parameters: &[ParameterEdit],
     ) -> tresult {
         let frames = output[0]
             .len()
@@ -177,6 +218,10 @@ impl ProcessBusScratch {
         self.map_main_output_channel(0, out_left.as_mut_ptr());
         self.map_main_output_channel(1, out_right.as_mut_ptr());
         self.update_process_context(frames);
+        let midi_event_count = self
+            .input_events
+            .set_midi_messages(midi, self.context.projectTimeMusic);
+        let parameter_edit_count = self.input_parameter_changes.set_parameter_edits(parameters);
 
         let mut data = ProcessData {
             processMode: ProcessModes_::kRealtime as i32,
@@ -186,16 +231,25 @@ impl ProcessBusScratch {
             numOutputs: self.output_buses.len() as i32,
             inputs: self.input_buses.as_mut_ptr(),
             outputs: self.output_buses.as_mut_ptr(),
-            inputParameterChanges: ptr::null_mut(),
+            inputParameterChanges: self.input_parameter_changes_ptr.as_ptr(),
             outputParameterChanges: ptr::null_mut(),
-            inputEvents: ptr::null_mut(),
+            inputEvents: self.input_events_ptr.as_ptr(),
             outputEvents: ptr::null_mut(),
             processContext: &mut self.context,
         };
 
         let result = processor.process(&mut data);
+        #[cfg(test)]
+        let _ = (midi_event_count, parameter_edit_count);
         #[cfg(not(test))]
-        self.maybe_log_process_result(result, input, [&*out_left, &*out_right], frames);
+        self.maybe_log_process_result(
+            result,
+            input,
+            [&*out_left, &*out_right],
+            frames,
+            midi_event_count,
+            parameter_edit_count,
+        );
         self.project_time_samples = self.project_time_samples.saturating_add(frames as i64);
         result
     }
@@ -286,6 +340,8 @@ impl ProcessBusScratch {
         input: [&[f32]; 2],
         output: [&[f32]; 2],
         frames: usize,
+        midi_event_count: usize,
+        parameter_edit_count: usize,
     ) {
         let failed = !vst_ok(result);
         let first_block = self.debug.first_blocks_logged < 2;
@@ -318,7 +374,7 @@ impl ProcessBusScratch {
         }
 
         crate::diagnostics::log(format!(
-            "vst3-process: label={} block={} frames={} result={} in_peak={:.7} in_rms={:.7} out_peak={:.7} out_rms={:.7} ctx_state=0x{:x} project_samples={} sample_rate={} buses_in={} buses_out={}",
+            "vst3-process: label={} block={} frames={} result={} in_peak={:.7} in_rms={:.7} out_peak={:.7} out_rms={:.7} midi_events={} parameter_edits={} ctx_state=0x{:x} project_samples={} sample_rate={} buses_in={} buses_out={}",
             self.label,
             self.debug.total_blocks,
             frames,
@@ -327,6 +383,8 @@ impl ProcessBusScratch {
             input_stats.rms,
             output_stats.peak,
             output_stats.rms,
+            midi_event_count,
+            parameter_edit_count,
             self.context.state,
             self.context.projectTimeSamples,
             self.context.sampleRate,
@@ -444,6 +502,8 @@ impl ProcessDriver {
                 audio,
                 BusDirections_::kOutput as BusDirection,
             )?;
+            activate_event_buses(label, component, BusDirections_::kInput as BusDirection)?;
+            activate_event_buses(label, component, BusDirections_::kOutput as BusDirection)?;
             if let Some(requirements) = processor.cast::<IProcessContextRequirements>() {
                 let flags = requirements.getProcessContextRequirements();
                 crate::diagnostics::log(format!(
@@ -627,6 +687,26 @@ unsafe fn reported_bus_arrangement(
         2 => Some(SpeakerArr::kStereo),
         _ => None,
     }
+}
+
+unsafe fn activate_event_buses(
+    label: &str,
+    component: &ComPtr<IComponent>,
+    direction: BusDirection,
+) -> Result<(), HostError> {
+    let event = MediaTypes_::kEvent as MediaType;
+    let count = component.getBusCount(event, direction).max(0) as usize;
+    for index in 0..count {
+        let result = component.activateBus(event, direction, index as i32, 1);
+        crate::diagnostics::log(format!(
+            "vst3-prepare: label={label} activateBus media=event dir={} index={index} active=1 result={result}",
+            bus_direction_label(direction)
+        ));
+        if !vst_ok(result) {
+            return Err(HostError::SetupFailed("activate event bus"));
+        }
+    }
+    Ok(())
 }
 
 unsafe fn activate_main_bus_only(

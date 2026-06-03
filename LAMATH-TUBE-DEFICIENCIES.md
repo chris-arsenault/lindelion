@@ -133,13 +133,67 @@ User auditioned the re-rendered articulation cases (tongued + slur, C4→C5 scal
 Net: the changes landed but were not 100% successful — the *dynamic* improved; the *timbre* (body)
 and *onset* (chiff) are the gap.
 
+## Audition outcome (2026-06-04) — item B's brightness is perceptually inaudible
+
+User re-auditioned the **baseline-dynamics** velocity cases (tube C4 at v20/100/127): **no audible
+tone difference — only quiet/loud.** So the measured centroid rise (2460→3900) does *not* translate
+to a perceived brightness change. Combined with the code review of the bell tap, the conclusion is
+that item B's brightness mechanism is a non-functional band-aid:
+
+- **The bell HF-radiation tap is not physically sound** (`tube_1d.rs`): it (a) **double-counts
+  energy** — `boundary.right` is both reflected back into the loop (`end_reflection`) *and*
+  re-emitted to the output (`radiated`), instead of a real open end *splitting* incident into
+  reflected (low-pass) + radiated (complementary high-pass); (b) uses an **unphysical gain**
+  (`RADIATION_GAIN = 2.5`, >1 — emits more than arrives); (c) **gates radiation by effort²**, but a
+  bell's radiation *efficiency* is fixed — what should rise with blowing is the *harmonic content
+  the reed generates*, and the reed spectrum is blowing-pressure-invariant (measured), so the tap
+  exists to fake brightness onto a fixed square. That's why it reads "digital" and barely moves.
+- `effort = max(velocity, aftertouch)` (`modulation_state.rs`), so effort ≈ velocity; the tap *is*
+  wired velocity²-dependent, but the contribution is too weak/synthetic to hear as timbre.
+
+**New backlog item (part of step #1 / A1): redesign the bell model + its contribution together with
+the bore model** — an energy-conserving frequency-dependent open end (reflected = low-pass, radiated
+= complementary high-pass, unity gain) and brightness generated *at the source* (reed duty cycle
+shifting with blowing pressure), so the body (A1) has a coherent signal to color instead of a hot
+square + non-conservative HF boost to fight. A `bell_radiation` patch scale (0..1, default 1.0) now
+exists as the audition/diagnostic A/B handle for the current tap.
+
+## Audition outcome (2026-06-04b) — bell on/off A/B: the tap SQUARES the tone (my metrics were wrong)
+
+User auditioned the new `tube_dynamics` bell on/off A/B. **My centroid/DFT read was wrong** — the bell
+is not a near-inaudible band-aid, it is *dominant and harmful*:
+
+- **v20:** bell on/off makes no audible difference (the tap is effort²-gated → ~off at low effort).
+- **v100:** **bell ON = a square wave; bell OFF = a (digital) clarinet** — an *exceptional* difference,
+  and peak/RMS differ wildly too. The bell tap is what was making the voice sound like a square; the
+  clarinet was underneath it the whole time.
+
+Corrected conclusions:
+
+1. **The radiation tap (output-side `RADIATION_GAIN·highpass·effort²`) is the tone-wrecker**, not a weak
+   add. At higher effort it dumps a huge HF layer that squares the tone and inflates the level. The
+   in-loop steepening (still on with bell off) is *not* the culprit — bell-off already sounds clarinet.
+2. **Bell OFF is the better base** ("digital clarinet"). The shipped default should not be the square.
+3. **Item B's brightness direction is wrong**: it makes loud notes brighter by turning this tap *up*,
+   i.e. by squaring them — the opposite of a musical cuivré. Brightness-with-effort must come from the
+   source/formant, not the HF tap.
+4. **Do not trust centroid/DFT for tube tone** — they did not distinguish square from clarinet here.
+   Audition is the arbiter (the standing T1 lesson, reinforced).
+
+Immediate options: (a) drop the default `bell_radiation` to ~0 (ship the clarinet) as a one-line stopgap
+ahead of the full redesign; (b) go straight to the energy-conserving bell+bore redesign under A1.
+
 ## How I'd prioritize (post-audition)
 
-1. **A1 — resonant body / formant-shaped spectrum (headline tone fix).** The voice is still an
-   odd-harmonic square with digital highs; it needs bore-resonance/formant coloration and a
-   resonant body so it reads warm. This is also what makes item B's brightness sound *musical*
-   rather than digital. Biggest perceptual payoff. (Likely leverages the existing `WaveguideBody`
-   / body-coloration path plus formant shaping of the bore output.)
+1. **A1 — resonant body / formant-shaped spectrum + bell/bore redesign (headline tone fix).** The
+   voice is still an odd-harmonic square with digital highs; it needs bore-resonance/formant
+   coloration and a resonant body so it reads warm. **As part of this, redesign the bell model and
+   its contribution together with the bore** (energy-conserving open end: reflected low-pass +
+   complementary radiated high-pass, unity gain; brightness generated at the source via the reed
+   duty cycle, not a post-EQ tap). This is what makes item B's brightness *musical* rather than
+   digital and gives the body a coherent signal to color (it has historically been overwhelmed when
+   fed a hot square + non-conservative HF boost, partly with now-outdated params). Biggest
+   perceptual payoff. (Leverages the existing `WaveguideBody` / body-coloration path.)
 2. **F12 + item 14 — breath/onset texture (the agile tongue + real air).** Two coupled fixes to the
    reed excitation/breath layer: (a) replace the generic struck-instrument builtin impulse with a
    tuned breath/tongue chiff so tongued attacks are crisp and agile, not a "fat tongue"; (b) shape

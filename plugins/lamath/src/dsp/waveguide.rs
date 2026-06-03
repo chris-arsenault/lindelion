@@ -49,6 +49,8 @@ pub struct WaveguideParams {
     /// measured energy and the direct pickup at high energy. Used at the String output
     /// only — String keeps it out of the cache key; Tube/Mesh/Modal ignore it.
     pub source_body_balance: f32,
+    /// Tube bell-radiation tap scale `0..1` (1.0 = current, 0.0 = off); scales radiated HF only, excluded from the cache key. Tube only.
+    pub bell_radiation: f32,
 }
 
 fn default_pickup_position() -> f32 {
@@ -70,6 +72,7 @@ impl Default for WaveguideParams {
             boundary_reflection: crate::dsp::constants::TUBE_BOUNDARY.reflection.default,
             excitation_spread: 0.0,
             source_body_balance: 0.0,
+            bell_radiation: 1.0,
         }
     }
 }
@@ -557,6 +560,7 @@ mod tests {
                 boundary_reflection: -1.0 + t * 2.0,
                 excitation_spread: 0.0,
                 source_body_balance: 0.0,
+                bell_radiation: 1.0,
             };
             output.push(waveguide.process_sample(if index == 0 { 1.0 } else { 0.0 }, params));
         }

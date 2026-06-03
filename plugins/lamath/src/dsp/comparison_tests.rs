@@ -77,6 +77,7 @@ fn ab_render_cases() -> [AbRenderCase; 3] {
                 boundary_reflection: 0.65,
                 excitation_spread: 0.0,
                 source_body_balance: 0.0,
+                bell_radiation: 1.0,
             },
             modal: ModalBankParams {
                 fundamental_hz: 220.0,
@@ -106,6 +107,7 @@ fn ab_render_cases() -> [AbRenderCase; 3] {
                 boundary_reflection: 0.82,
                 excitation_spread: 0.0,
                 source_body_balance: 0.0,
+                bell_radiation: 1.0,
             },
             modal: ModalBankParams {
                 fundamental_hz: 196.0,
@@ -135,6 +137,7 @@ fn ab_render_cases() -> [AbRenderCase; 3] {
                 boundary_reflection: 0.65,
                 excitation_spread: 0.0,
                 source_body_balance: 0.0,
+                bell_radiation: 1.0,
             },
             modal: ModalBankParams {
                 fundamental_hz: 147.0,

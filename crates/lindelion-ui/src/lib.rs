@@ -18,9 +18,9 @@ pub mod vizia_meter;
 
 #[cfg(target_os = "macos")]
 mod vizia_clipboard;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod vizia_controls;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod vizia_file_dialogs;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

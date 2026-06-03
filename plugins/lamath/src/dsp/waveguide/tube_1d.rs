@@ -179,6 +179,7 @@ impl Tube1d {
         let prepared = self.prepared_model(WaveguideParams {
             excitation_spread: 0.0,
             source_body_balance: 0.0,
+            bell_radiation: 1.0,
             ..params
         });
         let profile = prepared.profile;
@@ -222,7 +223,8 @@ impl Tube1d {
         // energy-gated so a soft bore is unchanged and a loud bore turns brassy.
         let radiated = self.radiation_highpass.process(boundary.right)
             * RADIATION_GAIN
-            * steepening_energy(self.steepening_drive);
+            * steepening_energy(self.steepening_drive)
+            * params.bell_radiation;
 
         math::snap_to_zero(body + radiated)
     }
@@ -243,6 +245,7 @@ impl Tube1d {
         let prepared = self.prepared_model(WaveguideParams {
             excitation_spread: 0.0,
             source_body_balance: 0.0,
+            bell_radiation: 1.0,
             ..params
         });
         let profile = prepared.profile;
@@ -276,7 +279,8 @@ impl Tube1d {
             .process_sample(profile.pickup_sample(pickup), params);
         let radiated = self.radiation_highpass.process(boundary.right)
             * RADIATION_GAIN
-            * steepening_energy(self.steepening_drive);
+            * steepening_energy(self.steepening_drive)
+            * params.bell_radiation;
 
         math::snap_to_zero(body + radiated)
     }

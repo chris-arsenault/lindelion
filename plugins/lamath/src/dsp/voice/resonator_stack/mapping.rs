@@ -95,6 +95,7 @@ pub(super) fn waveguide_params_from_config(
         // pre-M9 narrow default.
         excitation_spread: 0.0,
         source_body_balance: finite_clamp(config.source_body_balance, 0.0, 1.0, 0.0),
+        bell_radiation: finite_clamp(config.bell_radiation, 0.0, 1.0, 1.0),
     }
 }
 

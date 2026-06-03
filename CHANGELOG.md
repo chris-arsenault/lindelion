@@ -2,11 +2,31 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.15.2 - 2026-06-04
+
+### Lamath
+
+- Turned the Lamath **Mesh** resonator from a single fixed "triangle" tone into a controllable metallic-idiophone timbre space. A WAV audition found every Mesh config sounded the same and the played note did nothing — because a unit-delay waveguide mesh's pitch and modal structure are fixed by the **grid cell count**, while the patch's `size`/`tension`/pitch fed only an unused wave-speed/physical-dimension calculation the running mesh never reads. `size` and `tension` now drive the **active grid cell count** (mode density: a small grid is a sparse, near-pitched triangle; a large grid a dense, inharmonic, cymbal-like wash) on a much larger maximum grid — so the controls sweep a real triangle→ride→crash range. Buffers are allocated once at the maximum grid and `size`/`tension` select an active sub-region, so live re-tuning stays allocation-free.
+- The played **note now moves the Mesh strike position** across the plate (it is a struck idiophone, not a tuned voice, so the note shapes timbre/intonation, not pitch). The effect is real but intentionally narrow — a struck plate's dominant low modes have few nodal regions, so the strike toggles only a handful of timbral zones.
+- **Mesh output level** is now compensated for the grid (a fixed strike spreads its energy over more cells as the grid grows, so the pickup level fell ~`1/cells`) and the family makeup was raised, so every Mesh voicing sits at the family-matched level (~−14 dBFS for a full-velocity strike) instead of the −30 to −40 dBFS it had drifted to. Decay (`damping`) stays constant across grid sizes because it targets a physics-derived ring time.
+- Added Mesh audition cases: a `10_mesh_timbre` group (triangle/ride/crash character presets plus density and decay single-axis sweeps) and Mesh entries in `09_articulation` (scale, overlap, rapid restrike, polyphonic-vs-monophonic chord, a slow C2→C6 climb, a scrambled 16-note series, and a 16-note phrase varying timing/velocity/pitch).
+
+### Tooling
+
+- The render catalog gained a `--tag <tag>` selector (e.g. `--tag mesh` renders every Mesh case in one pass), and `make render-lamath-audio` now builds in **release** routed to the separate `target-release/` dir — the render is an offline generator whose dense-mesh DSP is far too slow unoptimized, and release artifacts must stay out of the shared `./target` dev cache. Build-hygiene rule added to AGENTS.md.
+
+## v0.15.1 - 2026-06-04
+
+### Lamath
+
+- Added a `bell_radiation` Tube control (`0..1`, default `1.0`) that scales the bell HF-radiation tap, and a `tube_dynamics` render-catalog group (C4–C5 scale at velocity 20/100/127, each with the bell on and off) to audition it.
+- **Correction to v0.15.0:** WAV audition found the v0.15.0 effort-referenced brightness does **not** produce a cuivré — across velocity the Tube reads as louder, not brighter, and the bell tap actually **squares** the tone when driven (bell off reveals a cleaner clarinet underneath). The offline centroid/DFT metrics did not distinguish a square from a clarinet and were misleading. The bell tap is non-energy-conserving (it reflects the bell-incident wave into the loop *and* re-emits a high-pass of it at gain > 1), so brightness-with-effort needs a bell+bore+reed redesign (energy-conserving open end + brightness generated at the reed source), not the current output tap. Tracked in `LAMATH-TUBE-DEFICIENCIES.md`; see the [ADR-0032 audition correction](docs/adr/0032-lamath-tube-driven-wind-voice.md).
+
 ## v0.15.0 - 2026-06-03
 
 ### Lamath
 
-- Gave the Lamath **Tube** wind voice a real playing dynamic. Measurement found the reed's timbre was nearly invariant to blowing pressure — playing harder changed neither loudness nor brightness — so the voice sounded the same at every velocity. The bore steepening and bell radiation are now driven by the **player's effort (blowing pressure)**, the physical drive, instead of an amplitude-saturated energy measurement, so a louder note blooms from a mellow piano into the brassy **cuivré** at fortissimo (spectral centroid ≈2460→3900 Hz at C4 from mf to ff, with odd-harmonic richness rising register-wide). The reed's usable pressure window is also widened for a real ~10 dB level dynamic. This is the brightness-with-effort left to the backlog by [ADR-0032](docs/adr/0032-lamath-tube-driven-wind-voice.md).
+- Reworked the Lamath **Tube** wind voice's velocity response: the bore steepening and bell radiation are driven by the **player's effort (blowing pressure)** instead of an amplitude-saturated energy measurement, and the reed's usable pressure window is widened for a ~10 dB level dynamic. (Intended as a brightness-with-effort cuivré; a later audition found it squares rather than brightens the tone — see v0.15.1.)
 - The Tube's top octave now **overblows / squeaks** when blown hard at fortissimo, like a real reed — a kept, physically-accurate behaviour. (The previously-believed "overblow" across the *whole* range was a pitch-measurement artifact, not real; the reed in fact holds its fundamental cleanly across the low/mid register at any blowing pressure.)
 
 ## v0.14.1 - 2026-06-03

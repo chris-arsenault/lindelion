@@ -434,11 +434,10 @@ impl ResonatorEditorHost {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use platform::{ResonatorEditorSize, ResonatorViziaEditor, build_resonator_application};
 
-#[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[path = "resonator_vizia/platform.rs"]
 mod platform;
 

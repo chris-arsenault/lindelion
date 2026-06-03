@@ -17,11 +17,13 @@ use vst3::{ComPtr, ComWrapper, Interface};
 
 use super::bstream::MemoryStream;
 use super::instance::{HostError, PluginInstance};
+use super::parameters::HostComponentHandler;
 use super::state::capture_state;
 
 /// A plugin's edit controller, connected to its component and ready to vend an editor view.
 pub struct EditorController {
     controller: ComPtr<IEditController>,
+    _handler: Option<ComPtr<IComponentHandler>>,
     terminate_on_drop: bool,
 }
 
@@ -52,9 +54,10 @@ impl EditorController {
                 crate::diagnostics::log("editor-controller: direct IEditController cast done");
                 log_component_interfaces(component);
                 log_controller_interfaces(&controller);
-                install_component_handler(&controller, host);
+                let handler = install_component_handler(&controller, instance);
                 return Ok(EditorController {
                     controller,
+                    _handler: handler,
                     terminate_on_drop: false,
                 });
             }
@@ -84,7 +87,7 @@ impl EditorController {
             crate::diagnostics::log(format!(
                 "editor-controller: initialize done result={initialize}"
             ));
-            install_component_handler(&controller, host);
+            let handler = install_component_handler(&controller, instance);
 
             // Best-effort component↔controller connection (so editor edits reach the processor).
             if let (Some(component_cp), Some(controller_cp)) = (
@@ -123,6 +126,7 @@ impl EditorController {
 
             Ok(EditorController {
                 controller,
+                _handler: handler,
                 terminate_on_drop: true,
             })
         }
@@ -164,18 +168,18 @@ fn log_controller_interfaces(controller: &ComPtr<IEditController>) {
 
 fn install_component_handler(
     controller: &ComPtr<IEditController>,
-    host: &ComPtr<IHostApplication>,
-) {
+    instance: &PluginInstance,
+) -> Option<ComPtr<IComponentHandler>> {
     unsafe {
         crate::diagnostics::log("editor-controller: setComponentHandler begin");
-        let Some(handler) = host.cast::<IComponentHandler>() else {
-            crate::diagnostics::log("editor-controller: setComponentHandler no host handler");
-            return;
-        };
+        let handler = ComWrapper::new(HostComponentHandler::new(instance.parameter_edits_arc()))
+            .to_com_ptr::<IComponentHandler>()
+            .expect("HostComponentHandler exposes IComponentHandler");
         let result = controller.setComponentHandler(handler.as_ptr());
         crate::diagnostics::log(format!(
             "editor-controller: setComponentHandler done result={result}"
         ));
+        Some(handler)
     }
 }
 

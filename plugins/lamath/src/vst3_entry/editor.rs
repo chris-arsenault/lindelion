@@ -4,7 +4,7 @@
 
 use std::ffi::c_void;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::cell::RefCell;
 
 use lindelion_plugin_shell::vst3::{
@@ -28,7 +28,7 @@ pub(super) fn create_editor_view(controller: &ResonatorVst3Controller) -> *mut I
 
 struct ResonatorEditorView {
     controller: *const ResonatorVst3Controller,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     editor: RefCell<Option<lindelion_ui::resonator_vizia::ResonatorViziaEditor>>,
 }
 
@@ -36,7 +36,7 @@ impl ResonatorEditorView {
     fn new(controller: &ResonatorVst3Controller) -> Self {
         Self {
             controller,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             editor: RefCell::new(None),
         }
     }
@@ -44,11 +44,16 @@ impl ResonatorEditorView {
 
 impl FixedSizePlugViewDelegate for ResonatorEditorView {
     unsafe fn attached(&self, parent: *mut c_void, size: ViewRect) -> tresult {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
+            #[cfg(target_os = "windows")]
+            lindelion_ui::vizia_window::debug_log(format!(
+                "lamath-editor: attached begin parent=0x{:x} rect=({}, {}, {}, {})",
+                parent as usize, size.left, size.top, size.right, size.bottom
+            ));
             let mut editor = self.editor.borrow_mut();
             *editor = None;
-            let host = macos::resonator_editor_host(self.controller);
+            let host = platform::resonator_editor_host(self.controller);
             *editor = Some(lindelion_ui::resonator_vizia::ResonatorViziaEditor::attach(
                 parent,
                 host,
@@ -57,10 +62,12 @@ impl FixedSizePlugViewDelegate for ResonatorEditorView {
                     height: size.bottom - size.top,
                 },
             ));
+            #[cfg(target_os = "windows")]
+            lindelion_ui::vizia_window::debug_log("lamath-editor: attached done");
             kResultOk
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = parent;
             let _ = size;
@@ -69,7 +76,7 @@ impl FixedSizePlugViewDelegate for ResonatorEditorView {
     }
 
     unsafe fn removed(&self) -> tresult {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.editor.borrow_mut().take();
         }
@@ -77,8 +84,8 @@ impl FixedSizePlugViewDelegate for ResonatorEditorView {
     }
 }
 
-#[cfg(target_os = "macos")]
-mod macos {
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod platform {
     use std::path::Path;
 
     use lindelion_sample_library::SampleReference;

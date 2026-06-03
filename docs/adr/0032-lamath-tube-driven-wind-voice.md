@@ -125,14 +125,13 @@ characterising the reed map through the full synth). Findings:
   autocorrelation pitch estimator picks the 2T lag and reports f/2. A direct DFT confirms the reed
   holds the true fundamental across the whole low/mid register at any blowing pressure.
 
-The fix (the chosen "effort-referenced physical steepening" direction): the reed wind path drives the
-existing finite-amplitude bore steepening and bell radiation from the **player effort (blowing
-pressure)** — the physical drive — instead of the amplitude-saturated measured-energy bus
-(`set_brightness_effort`, `steepening_energy == effort²`). Soft playing stays mellow; hard blowing
-blooms into the cuivré. The reed pressure window is also widened modestly (now that the false overblow
-constraint is gone) for a real ~10 dB level dynamic. Net: brightness now climbs with effort
-(centroid ≈2460→3900 Hz at C4 mf→ff) and odd-harmonic richness rises ff>mf register-wide — the
-dominant perceptual dynamic of a wind voice.
+The attempted fix (the chosen "effort-referenced physical steepening" direction): the reed wind path
+drives the existing finite-amplitude bore steepening and bell radiation from the **player effort
+(blowing pressure)** — the physical drive — instead of the amplitude-saturated measured-energy bus
+(`set_brightness_effort`, `steepening_energy == effort²`). The reed pressure window is also widened
+modestly (now that the false overblow constraint is gone) for a ~10 dB level dynamic. By the offline
+metrics this looked like success (centroid ≈2460→3900 Hz at C4 mf→ff). **Audition says otherwise — see
+the correction below.**
 
 - **Altissimo squeak is kept on purpose.** The top octave genuinely period-doubles when overblown at
   fortissimo (a *real* DFT subharmonic, not the artifact). This is physically accurate reed behaviour
@@ -141,5 +140,28 @@ dominant perceptual dynamic of a wind voice.
 - **Pitch metric corrected.** The autocorrelation-based tube pitch tests are replaced with a DFT
   f/2-subharmonic check that does not octave-error on the odd-harmonic spectrum (the same T1 trap that
   let the original silence ship).
+
+### Correction (audition) — the effort-brightness direction is wrong; bell+bore redesign pending
+
+WAV audition of the velocity ladder and a bell on/off A/B (`tube_dynamics` render group) overturned the
+metric-based success above. The offline centroid/DFT measures **did not distinguish a square from a
+clarinet** and are not to be trusted for this — audition is the arbiter (the standing T1 lesson).
+
+- Across velocity the voice reads as **louder, not brighter** — no musical cuivré.
+- The **bell HF-radiation tap is the dominant tone problem**: bell **on** = a square wave, bell **off**
+  = a (digital) clarinet — an exceptional difference, with peak/RMS wildly different too. The tap is
+  not energy-conserving (it reflects the bell-incident wave into the loop *and* re-emits a high-pass of
+  it at gain > 1, gated by effort²), so at effort it builds the loop into a square. Item B therefore
+  brightens loud notes *by squaring them* — the opposite of a cuivré.
+- The reed's own spectrum is blowing-pressure-invariant, so an effort-gated output EQ can never be a
+  real cuivré; brightness must come from the **source** (the reed beating duty cycle shifting with
+  blowing pressure).
+
+**Real fix (planned, not yet done):** redesign the bell + bore termination together — an
+energy-conserving open end (reflected = low-pass kept in the loop, radiated = the *complementary*
+high-pass to the output, unity gain) plus brightness generated at the reed source — then formant/body
+coloration so the result reads warm. A `bell_radiation` patch scale (`0..1`, default `1.0`) was added as
+the audition/diagnostic A/B handle for the current tap. Tracked in `LAMATH-TUBE-DEFICIENCIES.md`.
+
 - **Still deferred:** a fully formant-shaped (vs odd-harmonic-square) spectrum; the few-cents
-  high-register flatness; the modest (physically-correct) level dynamic is intentional, not a defect.
+  high-register flatness; an agile reed onset chiff and shaped (vs white-noise) breath.

@@ -20,6 +20,8 @@ pub(crate) enum RenderSelection {
     All,
     Group(String),
     Case(String),
+    /// All cases carrying the given tag (e.g. `mesh`, `tube`, `scale`).
+    Tag(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +58,11 @@ fn parse_strings(args: Vec<String>, env_out: Option<PathBuf>) -> Result<CliOptio
                 let case = value_after(&args, index, "--case")?;
                 index += 1;
                 set_command(&mut command, Command::Render(RenderSelection::Case(case)))?;
+            }
+            "--tag" => {
+                let tag = value_after(&args, index, "--tag")?;
+                index += 1;
+                set_command(&mut command, Command::Render(RenderSelection::Tag(tag)))?;
             }
             "--out" => {
                 out_dir = PathBuf::from(value_after(&args, index, "--out")?);
@@ -96,7 +103,7 @@ impl fmt::Display for CliError {
             Self::MissingValue(flag) => write!(formatter, "{flag} requires a value"),
             Self::MultipleSelections => write!(
                 formatter,
-                "choose only one of --list, --all, --group, or --case"
+                "choose only one of --list, --all, --group, --tag, or --case"
             ),
             Self::UnknownArgument(argument) => write!(formatter, "unknown argument: {argument}"),
         }
@@ -109,6 +116,7 @@ impl fmt::Display for RenderSelection {
             Self::All => write!(formatter, "all"),
             Self::Group(group) => write!(formatter, "group {group}"),
             Self::Case(case) => write!(formatter, "case {case}"),
+            Self::Tag(tag) => write!(formatter, "tag {tag}"),
         }
     }
 }
@@ -133,6 +141,10 @@ mod tests {
                 .unwrap()
                 .command,
             Command::Render(RenderSelection::Case("baseline_modal_c4_v100".to_string()))
+        );
+        assert_eq!(
+            parse(&["--tag", "mesh"]).unwrap().command,
+            Command::Render(RenderSelection::Tag("mesh".to_string()))
         );
     }
 

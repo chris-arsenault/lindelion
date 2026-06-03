@@ -4,8 +4,42 @@ use std::{
     task::Poll,
 };
 
-use dispatch2::DispatchQueue;
-use rfd::FileDialog;
+#[cfg(target_os = "macos")]
+use {dispatch2::DispatchQueue, rfd::FileDialog};
+
+#[cfg(target_os = "windows")]
+pub(crate) struct FileDialog;
+
+#[cfg(target_os = "windows")]
+impl FileDialog {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+
+    pub(crate) fn add_filter(self, _name: impl Into<String>, _extensions: &[&str]) -> Self {
+        self
+    }
+
+    pub(crate) fn set_directory(self, _directory: &Path) -> Self {
+        self
+    }
+
+    pub(crate) fn set_file_name(self, _file_name: impl Into<String>) -> Self {
+        self
+    }
+
+    fn pick_file(self) -> Option<PathBuf> {
+        None
+    }
+
+    fn pick_folder(self) -> Option<PathBuf> {
+        None
+    }
+
+    fn save_file(self) -> Option<PathBuf> {
+        None
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct DialogParent;
@@ -46,7 +80,21 @@ impl PendingFileDialog {
     fn spawn(dialog: FileDialog, action: FileDialogAction) -> Self {
         let selection = Arc::new(Mutex::new(None));
         let selection_target = Arc::clone(&selection);
-        DispatchQueue::main().exec_async(move || {
+        #[cfg(target_os = "macos")]
+        {
+            DispatchQueue::main().exec_async(move || {
+                let path = match action {
+                    FileDialogAction::PickFile => dialog.pick_file(),
+                    FileDialogAction::PickFolder => dialog.pick_folder(),
+                    FileDialogAction::SaveFile => dialog.save_file(),
+                };
+                if let Ok(mut selection) = selection_target.lock() {
+                    *selection = Some(path);
+                }
+            });
+        }
+        #[cfg(target_os = "windows")]
+        {
             let path = match action {
                 FileDialogAction::PickFile => dialog.pick_file(),
                 FileDialogAction::PickFolder => dialog.pick_folder(),
@@ -55,7 +103,7 @@ impl PendingFileDialog {
             if let Ok(mut selection) = selection_target.lock() {
                 *selection = Some(path);
             }
-        });
+        }
         Self { selection }
     }
 }

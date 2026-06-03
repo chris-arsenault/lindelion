@@ -46,5 +46,6 @@ fn print_help() {
     println!("  lamath-render-catalog --list");
     println!("  lamath-render-catalog --all [--out <dir>]");
     println!("  lamath-render-catalog --group <group-id> [--out <dir>]");
+    println!("  lamath-render-catalog --tag <tag> [--out <dir>]");
     println!("  lamath-render-catalog --case <case-id> [--out <dir>]");
 }

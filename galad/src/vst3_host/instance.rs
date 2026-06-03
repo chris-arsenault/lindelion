@@ -4,8 +4,11 @@
 
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
+use std::sync::Arc;
 
 use vst3::{ComPtr, Interface, Steinberg::Vst::*, Steinberg::*};
+
+use super::parameters::ParameterEditQueue;
 
 /// Errors raised while loading/driving a plugin host-side.
 #[derive(Debug)]
@@ -37,6 +40,7 @@ pub struct PluginInstance {
     debug_name: String,
     component: ComPtr<IComponent>,
     processor: ComPtr<IAudioProcessor>,
+    parameter_edits: Arc<ParameterEditQueue>,
     _host: ComPtr<IHostApplication>,
 }
 
@@ -83,11 +87,13 @@ impl PluginInstance {
                 class.name
             ));
 
+            let parameter_edits = Arc::new(ParameterEditQueue::new());
             Ok(PluginInstance {
                 class_id: class.cid,
                 debug_name: class.name,
                 component,
                 processor,
+                parameter_edits,
                 _host: host.clone(),
             })
         }
@@ -111,6 +117,14 @@ impl PluginInstance {
     /// The plugin's component.
     pub fn component(&self) -> &ComPtr<IComponent> {
         &self.component
+    }
+
+    pub(super) fn parameter_edits(&self) -> &ParameterEditQueue {
+        &self.parameter_edits
+    }
+
+    pub(super) fn parameter_edits_arc(&self) -> Arc<ParameterEditQueue> {
+        Arc::clone(&self.parameter_edits)
     }
 }
 

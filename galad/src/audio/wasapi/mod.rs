@@ -14,6 +14,7 @@
 
 mod devices;
 mod engine;
+mod midi_input;
 mod stream;
 
 pub use devices::{AudioDirection, AudioError, default_device, enumerate};

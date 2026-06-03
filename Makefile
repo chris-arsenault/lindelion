@@ -4,7 +4,7 @@ MACOS_TARGET ?= aarch64-apple-darwin
 # Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
 # Kept separate from the macOS PLUGINS list above.
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
-WINDOWS_PLUGINS ?= cenedril caloma lumedir
+WINDOWS_PLUGINS ?= cenedril caloma lumedir lamath
 # `make build [PLUGIN=x]` and `make build-windows [PLUGIN=x]` build a single plugin when PLUGIN is
 # set on the command line, else the full macOS / Windows plugin lists respectively.
 ifeq ($(origin PLUGIN), undefined)
@@ -82,8 +82,15 @@ test-models:
 tune-defaults:
 	cargo test --release -p caloma --test tune_defaults -- --include-ignored --nocapture
 
+# Audition render. Like tune-defaults this is an offline generator whose DSP (the dense mesh
+# especially) is far too slow unoptimized, so it builds in **release**, routed to the separate
+# LINDELION_RELEASE_TARGET_DIR so it never pollutes the debug dev/CI cache (./target) or clashes
+# with concurrent debug builds. Select cases with LAMATH_RENDER_ARGS, e.g.
+# `--case <id>`, `--tag mesh` (all Mesh cases), `--group <id>`, or `--all` (default).
 render-lamath-audio:
-	cargo run -p lamath --bin lamath-render-catalog -- --out "$(LAMATH_REVIEW_DIR)" $(LAMATH_RENDER_ARGS)
+	CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
+		cargo run -q --release -p lamath --bin lamath-render-catalog -- \
+		--out "$(LAMATH_REVIEW_DIR)" $(LAMATH_RENDER_ARGS)
 
 compress-review-audio:
 	cargo run -p xtask -- compress-review-audio --source "$(REVIEW_AUDIO_SOURCE_DIR)" --out "$(REVIEW_AUDIO_PREVIEW_DIR)" --encoder "$(REVIEW_AUDIO_ENCODER)" --bitrate "$(REVIEW_AUDIO_BITRATE)" $(REVIEW_AUDIO_ARGS)
@@ -285,7 +292,7 @@ release:
 	@if [ "$$(uname -s)" = "Darwin" ]; then $(MAKE) release-macos; else $(MAKE) release-windows; fi
 
 # Windows release: galad.exe (via host-windows-release) + the Windows VST3 plugin bundles
-# ($(WINDOWS_PLUGINS): cenedril, caloma, lumedir), cross-compiled into target-release.
+# ($(WINDOWS_PLUGINS)), cross-compiled into target-release.
 release-windows: host-windows-release
 	@for plugin in $(WINDOWS_PLUGINS); do \
 		bundle_name="$$(CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" cargo run -q -p xtask -- plugin-info "$$plugin" --field bundle-file)"; \

@@ -38,6 +38,10 @@ pub(super) enum FixtureBehavior {
     RequiresDeclaredAudioBuses,
     /// `process` rejects calls without a valid playing process context.
     RequiresProcessContext,
+    /// `process` emits a signal only when a live note-on event is present.
+    MidiNoteTriggersOutput,
+    /// `process` emits the latest normalized value of parameter id 1.
+    ParameterControlsOutput,
 }
 
 /// Bus-shape variations used to exercise host negotiation against common real-world VST3 patterns.
@@ -112,8 +116,16 @@ impl IComponentTrait for FixtureProcessor {
     }
 
     unsafe fn getBusCount(&self, media_type: MediaType, dir: BusDirection) -> i32 {
-        let is_audio = media_type == MediaTypes_::kAudio as MediaType;
-        if !is_audio {
+        if media_type == MediaTypes_::kEvent as MediaType {
+            return if dir == BusDirections_::kInput as BusDirection
+                && self.behavior == FixtureBehavior::MidiNoteTriggersOutput
+            {
+                1
+            } else {
+                0
+            };
+        }
+        if media_type != MediaTypes_::kAudio as MediaType {
             return 0;
         }
         if dir == BusDirections_::kInput as BusDirection {
@@ -135,7 +147,7 @@ impl IComponentTrait for FixtureProcessor {
         index: i32,
         bus: *mut BusInfo,
     ) -> tresult {
-        if bus.is_null() || media_type != MediaTypes_::kAudio as MediaType {
+        if bus.is_null() {
             return kInvalidArgument;
         }
         let count = self.getBusCount(media_type, dir);
@@ -143,6 +155,18 @@ impl IComponentTrait for FixtureProcessor {
             return kInvalidArgument;
         }
         let bus = &mut *bus;
+        if media_type == MediaTypes_::kEvent as MediaType {
+            bus.mediaType = MediaTypes_::kEvent as MediaType;
+            bus.direction = dir;
+            bus.channelCount = 1;
+            fill_utf16(&mut bus.name, "MIDI Input");
+            bus.busType = BusTypes_::kMain as BusType;
+            bus.flags = BusInfo_::BusFlags_::kDefaultActive as u32;
+            return kResultOk;
+        }
+        if media_type != MediaTypes_::kAudio as MediaType {
+            return kInvalidArgument;
+        }
         bus.mediaType = MediaTypes_::kAudio as MediaType;
         bus.direction = dir;
         bus.channelCount = 2;
@@ -329,6 +353,21 @@ impl IAudioProcessorTrait for FixtureProcessor {
         {
             return kResultOk;
         }
+        if self.behavior == FixtureBehavior::MidiNoteTriggersOutput {
+            if has_note_on(data.inputEvents) {
+                fill_output(data, 0.25);
+            } else {
+                fill_output(data, 0.0);
+            }
+            return kResultOk;
+        }
+        if self.behavior == FixtureBehavior::ParameterControlsOutput {
+            fill_output(
+                data,
+                parameter_value(data.inputParameterChanges, 1).unwrap_or(0.0) as f32,
+            );
+            return kResultOk;
+        }
         match self.behavior {
             FixtureBehavior::NaNOutput => fill_output(data, f32::NAN),
             _ => apply_gain(data, self.gain),
@@ -339,6 +378,47 @@ impl IAudioProcessorTrait for FixtureProcessor {
     unsafe fn getTailSamples(&self) -> u32 {
         0
     }
+}
+
+unsafe fn has_note_on(input_events: *mut IEventList) -> bool {
+    let Some(events) = ComRef::from_raw(input_events) else {
+        return false;
+    };
+    let count = events.getEventCount().max(0);
+    for index in 0..count {
+        let mut event = std::mem::zeroed::<Event>();
+        if events.getEvent(index, &mut event) == kResultOk
+            && event.r#type == Event_::EventTypes_::kNoteOnEvent as u16
+        {
+            return true;
+        }
+    }
+    false
+}
+
+unsafe fn parameter_value(
+    input_changes: *mut IParameterChanges,
+    id: ParamID,
+) -> Option<ParamValue> {
+    let changes = ComRef::from_raw(input_changes)?;
+    for index in 0..changes.getParameterCount() {
+        let Some(queue) = ComRef::from_raw(changes.getParameterData(index)) else {
+            continue;
+        };
+        if queue.getParameterId() != id {
+            continue;
+        }
+        let point_count = queue.getPointCount();
+        if point_count <= 0 {
+            continue;
+        }
+        let mut sample_offset = 0;
+        let mut value = 0.0;
+        if queue.getPoint(point_count - 1, &mut sample_offset, &mut value) == kResultTrue {
+            return Some(value);
+        }
+    }
+    None
 }
 
 /// Copy the first input bus into the first output bus, per channel, scaled by `gain` (1.0 = verbatim
@@ -1036,6 +1116,14 @@ pub(super) fn strict_sidechain_fixture_factory() -> ComPtr<IPluginFactory> {
 
 pub(super) fn context_fixture_factory() -> ComPtr<IPluginFactory> {
     behaving_fixture_factory(1.0, 0, FixtureBehavior::RequiresProcessContext)
+}
+
+pub(super) fn midi_note_fixture_factory() -> ComPtr<IPluginFactory> {
+    behaving_fixture_factory(1.0, 0, FixtureBehavior::MidiNoteTriggersOutput)
+}
+
+pub(super) fn parameter_fixture_factory() -> ComPtr<IPluginFactory> {
+    behaving_fixture_factory(1.0, 0, FixtureBehavior::ParameterControlsOutput)
 }
 
 pub(super) fn fixed_stereo_rejects_arrangement_factory() -> ComPtr<IPluginFactory> {

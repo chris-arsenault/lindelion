@@ -52,6 +52,9 @@ pub(crate) enum PatchRecipe {
     TubePhrase {
         polyphony: u8,
         retrigger: bool,
+        /// Bell HF-radiation tap: `true` = current model, `false` = bell off (the audition
+        /// A/B for the radiation tap; ADR-0032 item-B follow-up).
+        bell: bool,
     },
     /// Struck Mesh playing a multi-note phrase, exposing the same articulation knobs the schedule
     /// can't express: `polyphony` (1 = single voice-stealing body; >1 = independent struck voices
@@ -157,10 +160,11 @@ pub(crate) enum CatalogError {
     DuplicateOutputPath(String),
     UnknownCase(String),
     UnknownGroup(String),
+    UnknownTag(String),
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 10] = [
+const GROUPS: [CatalogGroup; 11] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -221,6 +225,12 @@ const GROUPS: [CatalogGroup; 10] = [
         title: "Mesh Timbre",
         question: "Does the Mesh span distinct decay/harmonic/tone characters (triangle → ride → crash) as size, density, and damping change?",
     },
+    CatalogGroup {
+        id: "tube_dynamics",
+        directory: "11_tube_dynamics",
+        title: "Tube Dynamics & Bell",
+        question: "Does the wind Tube brighten with velocity (cuivré, not just louder) across a C4-C5 scale, and what does the bell HF-radiation tap contribute (on vs off)?",
+    },
 ];
 
 pub(crate) fn catalog_groups() -> &'static [CatalogGroup] {
@@ -255,6 +265,7 @@ pub(crate) fn selected_cases(
         RenderSelection::All => Ok(cases.to_vec()),
         RenderSelection::Group(group_id) => selected_group(cases, group_id),
         RenderSelection::Case(case_id) => selected_case(cases, case_id),
+        RenderSelection::Tag(tag) => selected_tag(cases, tag),
     }
 }
 
@@ -309,6 +320,19 @@ fn selected_case(cases: &[CatalogCase], case_id: &str) -> Result<Vec<CatalogCase
         .ok_or_else(|| CatalogError::UnknownCase(case_id.to_string()))
 }
 
+/// All cases carrying `tag` (e.g. `--tag mesh` renders every Mesh case in one pass).
+fn selected_tag(cases: &[CatalogCase], tag: &str) -> Result<Vec<CatalogCase>, CatalogError> {
+    let selected: Vec<_> = cases
+        .iter()
+        .filter(|case| case.tags.contains(&tag))
+        .cloned()
+        .collect();
+    if selected.is_empty() {
+        return Err(CatalogError::UnknownTag(tag.to_string()));
+    }
+    Ok(selected)
+}
+
 fn safe_relative_wav(path: &str) -> bool {
     let path = Path::new(path);
     path.extension().is_some_and(|extension| extension == "wav")
@@ -347,6 +371,7 @@ impl fmt::Display for CatalogError {
             Self::DuplicateOutputPath(path) => write!(formatter, "duplicate output path: {path}"),
             Self::UnknownCase(id) => write!(formatter, "unknown case: {id}"),
             Self::UnknownGroup(id) => write!(formatter, "unknown group: {id}"),
+            Self::UnknownTag(tag) => write!(formatter, "no cases with tag: {tag}"),
             Self::UnsafeOutputPath(path) => write!(formatter, "unsafe output path: {path}"),
         }
     }
