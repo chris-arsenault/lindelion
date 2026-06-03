@@ -4,9 +4,9 @@
 //! high plate modes die first (metallic shimmer) while the low modes are reflected
 //! essentially losslessly and the base `damping` stays the decay control.
 
-use lindelion_dsp_utils::math;
+use crate::math;
 
-use super::super::core;
+use super::super::sanitize_sample_rate;
 
 /// Crossover of the per-edge boundary loss: the one-pole lowpass that separates
 /// the long-ringing low modes from the high modes that should die first. Content
@@ -47,7 +47,7 @@ impl BoundaryLowpass {
     /// One-pole coefficient for `BOUNDARY_LOSS_CUTOFF_HZ` at the mesh rate. Clamped
     /// to `(0, 1]`.
     fn coeff_for(sample_rate: f32) -> f32 {
-        let sample_rate = core::sanitize_sample_rate(sample_rate);
+        let sample_rate = sanitize_sample_rate(sample_rate);
         let omega = std::f32::consts::TAU * BOUNDARY_LOSS_CUTOFF_HZ / sample_rate;
         math::finite_clamp(1.0 - (-omega).exp(), 0.05, 1.0, 1.0)
     }

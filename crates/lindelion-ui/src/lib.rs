@@ -1,9 +1,11 @@
 use std::path::Path;
 
+pub mod audio_file_slot;
 pub mod caloma_vizia;
 pub mod cenedril_vizia;
 pub mod editor_surface;
 pub mod glirdir_vizia;
+pub mod lamath_cymbal_vizia;
 pub mod linnod_vizia;
 pub mod lumedir_vizia;
 pub mod resonator_vizia;

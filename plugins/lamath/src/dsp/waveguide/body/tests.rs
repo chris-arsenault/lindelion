@@ -1,49 +1,5 @@
 use super::*;
-use lindelion_dsp_utils::analysis::{
-    assert_all_finite, audio_window_metrics, dft_magnitude_at, rms_difference,
-};
-
-#[cfg_attr(
-    not(feature = "integration-tests"),
-    ignore = "see make test-integration"
-)]
-#[test]
-fn output_body_emphasizes_its_formant_frequencies() {
-    // M11 P4 step 2: the one-way modal body colors a flat input toward its formant
-    // frequencies — the spectrum peaks at each configured mode, above an off-mode
-    // reference — and stays bounded.
-    let sample_rate = 48_000.0;
-    let modes = [
-        BodyMode {
-            frequency_hz: 400.0,
-            q: 6.0,
-            gain: 3.0,
-        },
-        BodyMode {
-            frequency_hz: 2_500.0,
-            q: 4.0,
-            gain: 2.0,
-        },
-    ];
-    let mut body = OutputBody::new(sample_rate, &modes, 1.0);
-    // White-ish drive: an impulse excites all frequencies flat.
-    let output: Vec<f32> = (0..8_192)
-        .map(|index| body.process_sample((index == 0) as u8 as f32))
-        .collect();
-
-    assert_all_finite(&output);
-    assert!(audio_window_metrics(&output, sample_rate).peak_abs < 8.0);
-    // Each formant stands above an off-mode reference (1 kHz, between the modes).
-    let reference = dft_magnitude_at(&output, sample_rate, 1_000.0);
-    for mode in modes {
-        let at_mode = dft_magnitude_at(&output, sample_rate, mode.frequency_hz);
-        assert!(
-            at_mode > reference * 1.5,
-            "formant at {} Hz should be emphasized: at_mode={at_mode}, reference={reference}",
-            mode.frequency_hz
-        );
-    }
-}
+use lindelion_dsp_utils::analysis::{assert_all_finite, audio_window_metrics, rms_difference};
 
 #[test]
 fn body_renders_finite_decaying_impulse() {

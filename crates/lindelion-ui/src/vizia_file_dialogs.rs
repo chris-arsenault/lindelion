@@ -5,69 +5,36 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-use {dispatch2::DispatchQueue, rfd::FileDialog};
-
-#[cfg(target_os = "windows")]
-pub(crate) struct FileDialog;
-
-#[cfg(target_os = "windows")]
-impl FileDialog {
-    pub(crate) fn new() -> Self {
-        Self
-    }
-
-    pub(crate) fn add_filter(self, _name: impl Into<String>, _extensions: &[&str]) -> Self {
-        self
-    }
-
-    pub(crate) fn set_directory(self, _directory: &Path) -> Self {
-        self
-    }
-
-    pub(crate) fn set_file_name(self, _file_name: impl Into<String>) -> Self {
-        self
-    }
-
-    fn pick_file(self) -> Option<PathBuf> {
-        None
-    }
-
-    fn pick_folder(self) -> Option<PathBuf> {
-        None
-    }
-
-    fn save_file(self) -> Option<PathBuf> {
-        None
-    }
-}
+use dispatch2::DispatchQueue;
+use rfd::FileDialog;
 
 #[derive(Clone, Copy)]
-pub(crate) struct DialogParent;
+pub struct DialogParent;
 
 impl DialogParent {
-    pub(crate) fn from_ns_view(ns_view: usize) -> Option<Self> {
+    pub fn from_ns_view(ns_view: usize) -> Option<Self> {
         (ns_view != 0).then_some(Self)
     }
 }
 
-pub(crate) struct PendingFileDialog {
+pub struct PendingFileDialog {
     selection: Arc<Mutex<Option<Option<PathBuf>>>>,
 }
 
 impl PendingFileDialog {
-    pub(crate) fn pick_file(dialog: FileDialog) -> Self {
+    pub fn pick_file(dialog: FileDialog) -> Self {
         Self::spawn(dialog, FileDialogAction::PickFile)
     }
 
-    pub(crate) fn pick_folder(dialog: FileDialog) -> Self {
+    pub fn pick_folder(dialog: FileDialog) -> Self {
         Self::spawn(dialog, FileDialogAction::PickFolder)
     }
 
-    pub(crate) fn save_file(dialog: FileDialog) -> Self {
+    pub fn save_file(dialog: FileDialog) -> Self {
         Self::spawn(dialog, FileDialogAction::SaveFile)
     }
 
-    pub(crate) fn poll_path(&mut self) -> Poll<Option<PathBuf>> {
+    pub fn poll_path(&mut self) -> Poll<Option<PathBuf>> {
         let Ok(mut selection) = self.selection.lock() else {
             return Poll::Ready(None);
         };
@@ -115,7 +82,7 @@ enum FileDialogAction {
     SaveFile,
 }
 
-pub(crate) fn wav_audio_dialog(directory: &Path, parent: Option<DialogParent>) -> FileDialog {
+pub fn wav_audio_dialog(directory: &Path, parent: Option<DialogParent>) -> FileDialog {
     with_parent(
         FileDialog::new()
             .add_filter("WAV audio", &["wav", "wave"])
@@ -124,7 +91,7 @@ pub(crate) fn wav_audio_dialog(directory: &Path, parent: Option<DialogParent>) -
     )
 }
 
-pub(crate) fn patch_save_file_dialog(
+pub fn patch_save_file_dialog(
     product_name: &'static str,
     directory: &Path,
     file_name: impl Into<String>,
@@ -139,7 +106,7 @@ pub(crate) fn patch_save_file_dialog(
     )
 }
 
-pub(crate) fn patch_load_file_dialog(
+pub fn patch_load_file_dialog(
     product_name: &'static str,
     directory: &Path,
     parent: Option<DialogParent>,
@@ -152,14 +119,11 @@ pub(crate) fn patch_load_file_dialog(
     )
 }
 
-pub(crate) fn patch_export_directory_dialog(
-    directory: &Path,
-    parent: Option<DialogParent>,
-) -> FileDialog {
+pub fn patch_export_directory_dialog(directory: &Path, parent: Option<DialogParent>) -> FileDialog {
     with_parent(FileDialog::new().set_directory(directory), parent)
 }
 
-pub(crate) fn midi_save_file_dialog(
+pub fn midi_save_file_dialog(
     file_name: impl Into<String>,
     parent: Option<DialogParent>,
 ) -> FileDialog {

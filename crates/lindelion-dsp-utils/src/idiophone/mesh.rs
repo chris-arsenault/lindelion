@@ -1,8 +1,10 @@
-use lindelion_dsp_utils::math;
+use crate::math;
 
-use super::core;
+use super::sanitize_sample_rate;
 
+#[path = "boundary.rs"]
 mod boundary;
+#[path = "runtime.rs"]
 mod runtime;
 use boundary::{BoundaryLowpass, boundary_lowpass_step};
 pub use runtime::{MeshResonator, MeshVoiceParams};
@@ -156,16 +158,6 @@ impl MeshBoundaryConfig {
             bottom: MeshBoundaryEdge::free(damping),
         }
     }
-
-    #[cfg(test)]
-    fn fixed_edges(left: f32, right: f32, top: f32, bottom: f32) -> Self {
-        Self {
-            left: MeshBoundaryEdge::fixed(left),
-            right: MeshBoundaryEdge::fixed(right),
-            top: MeshBoundaryEdge::fixed(top),
-            bottom: MeshBoundaryEdge::fixed(bottom),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -188,7 +180,7 @@ impl RectangularMesh2dConfig {
         Self {
             width: self.width.clamp(MIN_MESH_SIZE, MAX_MESH_WIDTH),
             height: self.height.clamp(MIN_MESH_SIZE, MAX_MESH_HEIGHT),
-            sample_rate: core::sanitize_sample_rate(self.sample_rate),
+            sample_rate: sanitize_sample_rate(self.sample_rate),
             wave_speed_mps: math::finite_clamp(self.wave_speed_mps, 1.0, 4_000.0, 220.0),
             physical_width_m: math::finite_clamp(self.physical_width_m, 0.01, 10.0, 0.7),
             physical_height_m: math::finite_clamp(self.physical_height_m, 0.01, 10.0, 0.45),
@@ -198,14 +190,6 @@ impl RectangularMesh2dConfig {
             excitation_width: math::finite_clamp(self.excitation_width, 0.005, 0.4, 0.06),
             pickup_width: math::finite_clamp(self.pickup_width, 0.005, 0.4, 0.025),
         }
-    }
-
-    #[cfg(test)]
-    fn mode_frequency_hz(self, mode_x: usize, mode_y: usize) -> f32 {
-        let config = self.sanitized();
-        let kx = mode_x as f32 / config.physical_width_m;
-        let ky = mode_y as f32 / config.physical_height_m;
-        config.wave_speed_mps * 0.5 * (kx * kx + ky * ky).sqrt()
     }
 }
 
@@ -350,17 +334,6 @@ impl DirectionalWaves {
         self.from_top[index] = math::snap_to_zero(self.from_top[index] + component);
         self.from_bottom[index] = math::snap_to_zero(self.from_bottom[index] + component);
     }
-
-    #[cfg(test)]
-    fn energy(&self) -> f32 {
-        self.from_left
-            .iter()
-            .chain(self.from_right.iter())
-            .chain(self.from_top.iter())
-            .chain(self.from_bottom.iter())
-            .map(|sample| sample * sample)
-            .sum()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -468,16 +441,6 @@ impl RectangularMesh2d {
         self.geometric_drive = 0.0;
     }
 
-    #[cfg(test)]
-    fn total_energy(&self) -> f32 {
-        self.current.energy()
-    }
-
-    #[cfg(test)]
-    fn mode_frequency_hz(&self, mode_x: usize, mode_y: usize) -> f32 {
-        self.config.mode_frequency_hz(mode_x, mode_y)
-    }
-
     fn scatter_and_propagate(&mut self) {
         self.next.clear();
         for y in 0..self.config.height {
@@ -562,53 +525,3 @@ impl RectangularMesh2d {
         y * self.config.width + x
     }
 }
-
-#[cfg(test)]
-mod promotion_tests;
-
-#[cfg(test)]
-fn render_mesh(
-    config: RectangularMesh2dConfig,
-    sample_count: usize,
-    excitation: crate::dsp::render_metrics::RenderExcitation,
-) -> Vec<f32> {
-    let config = config.sanitized();
-    let mut mesh = RectangularMesh2d::new(config);
-    crate::dsp::render_metrics::render_response(
-        config.sample_rate,
-        mesh.mode_frequency_hz(1, 1),
-        sample_count,
-        excitation,
-        |sample| mesh.process_sample(sample),
-    )
-}
-
-#[cfg(test)]
-fn mode_frequency(config: RectangularMesh2dConfig) -> f32 {
-    config.mode_frequency_hz(1, 1)
-}
-
-#[cfg(test)]
-fn render_mesh_with_drive(
-    config: RectangularMesh2dConfig,
-    sample_count: usize,
-    drive: impl Fn(usize) -> f32,
-) -> Vec<f32> {
-    let config = config.sanitized();
-    let mut mesh = RectangularMesh2d::new(config);
-    let mut index = 0usize;
-    crate::dsp::render_metrics::render_response(
-        config.sample_rate,
-        mesh.mode_frequency_hz(1, 1),
-        sample_count,
-        crate::dsp::render_metrics::RenderExcitation::ShapedPluck,
-        |sample| {
-            mesh.set_geometric_drive(drive(index));
-            index += 1;
-            mesh.process_sample(sample)
-        },
-    )
-}
-
-#[cfg(test)]
-mod tests;

@@ -23,9 +23,9 @@
 //! `staged_output`, and effort/drive-gate stay zero (idiophone has no bow/reed). The
 //! amp-envelope bypass + static post-body coloration (M6) lands later.
 
-use crate::dsp::energy_follower::EnergyFollower;
 use crate::dsp::{OutputStage, ResonatorStack, SurroundingStage};
 use crate::{ResonatorRouting, ResonatorSynthPatch, SurroundingConfig};
+use lindelion_dsp_utils::idiophone::EnergyFollower;
 
 use super::excitation::{SelectedExcitations, VoiceExcitation};
 

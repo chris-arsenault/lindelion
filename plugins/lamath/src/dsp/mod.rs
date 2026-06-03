@@ -1,5 +1,4 @@
 pub(crate) mod constants;
-pub(crate) mod energy_follower;
 pub(crate) mod engine;
 mod excitation;
 pub(crate) mod master_stage;

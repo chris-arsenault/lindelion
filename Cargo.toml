@@ -21,6 +21,7 @@ members = [
     "plugins/cenedril",
     "plugins/glirdir",
     "plugins/lamath",
+    "plugins/lamath-cymbal",
     "plugins/linnod",
     "plugins/lumedir",
     "speech/air-exciter",

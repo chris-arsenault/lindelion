@@ -21,10 +21,9 @@
 use lindelion_dsp_utils::{
     delay::DelayLine,
     filters::OnePoleLowpass,
+    idiophone::EnergyFollower,
     math::{self, midi_note_to_hz},
 };
-
-use crate::dsp::energy_follower::EnergyFollower;
 
 /// Number of sympathetic strings — the polyphony of distinct resonant pitches.
 const SYMPATHETIC_STRING_COUNT: usize = 16;

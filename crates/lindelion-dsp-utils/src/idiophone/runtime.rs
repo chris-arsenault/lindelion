@@ -3,13 +3,16 @@
 //! every [`MeshResonator::configure`] re-tunes the active grid (and its `size`/
 //! `tension`-driven cell count) in place without allocating.
 
-use lindelion_dsp_utils::math::finite_clamp;
+use crate::{
+    filters::{Biquad, BiquadCoefficients},
+    math::{self, finite_clamp},
+};
 
-use super::super::body::{OutputBody, mesh_output_body};
 use super::{
     MAX_MESH_HEIGHT, MAX_MESH_WIDTH, MeshBoundaryConfig, MeshPoint, RectangularMesh2d,
     RectangularMesh2dConfig,
 };
+use crate::idiophone::sanitize_sample_rate;
 
 /// Active grid the mesh is born with, before the first `configure` sets it from
 /// `size`/`tension`. Just a sane pre-roll default; buffers allocate at the maximum.
@@ -58,7 +61,7 @@ pub struct MeshResonator {
 
 impl MeshResonator {
     pub fn new(sample_rate: f32) -> Self {
-        let sample_rate = crate::dsp::waveguide::core::sanitize_sample_rate(sample_rate);
+        let sample_rate = sanitize_sample_rate(sample_rate);
         let mesh = RectangularMesh2d::new(RectangularMesh2dConfig {
             width: RUNTIME_MESH_WIDTH,
             height: RUNTIME_MESH_HEIGHT,
@@ -213,12 +216,82 @@ fn clamp01(value: f32) -> f32 {
     finite_clamp(value, 0.0, 1.0, 0.0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BodyMode {
+    frequency_hz: f32,
+    q: f32,
+    gain: f32,
+}
+
+/// One-way modal coloration body for the mesh's radiated output. It never feeds
+/// back into the mesh, so it cannot alter ring-out stability.
+#[derive(Debug, Clone, PartialEq)]
+struct OutputBody {
+    filters: Vec<Biquad>,
+    gains: Vec<f32>,
+    dry_gain: f32,
+}
+
+impl OutputBody {
+    fn new(sample_rate: f32, modes: &[BodyMode], dry_gain: f32) -> Self {
+        let sample_rate = sanitize_sample_rate(sample_rate);
+        let filters = modes
+            .iter()
+            .map(|mode| {
+                let frequency_hz =
+                    math::finite_clamp(mode.frequency_hz, 1.0, sample_rate * 0.45, 100.0);
+                let q = math::finite_clamp(mode.q, 0.5, 200.0, 10.0);
+                Biquad::new(BiquadCoefficients::bandpass(sample_rate, frequency_hz, q))
+            })
+            .collect();
+        let gains = modes
+            .iter()
+            .map(|mode| math::finite_clamp(mode.gain, 0.0, 8.0, 0.0))
+            .collect();
+        Self {
+            filters,
+            gains,
+            dry_gain: math::finite_clamp(dry_gain, 0.0, 2.0, 1.0),
+        }
+    }
+
+    fn process_sample(&mut self, input: f32) -> f32 {
+        let input = math::snap_to_zero(input);
+        let mut wet = 0.0;
+        for (filter, &gain) in self.filters.iter_mut().zip(&self.gains) {
+            wet += gain * filter.process(input);
+        }
+        math::snap_to_zero(self.dry_gain * input + wet)
+    }
+
+    fn reset(&mut self) {
+        for filter in &mut self.filters {
+            filter.reset();
+        }
+    }
+}
+
+const MESH_BODY_MODES: [BodyMode; 2] = [
+    BodyMode {
+        frequency_hz: 420.0,
+        q: 5.0,
+        gain: 0.35,
+    },
+    BodyMode {
+        frequency_hz: 3_400.0,
+        q: 2.5,
+        gain: 0.5,
+    },
+];
+
+fn mesh_output_body(sample_rate: f32) -> OutputBody {
+    OutputBody::new(sample_rate, &MESH_BODY_MODES, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lindelion_dsp_utils::analysis::{
-        assert_all_finite, peak_abs, rms, spectral_centroid_trajectory,
-    };
+    use crate::analysis::{assert_all_finite, peak_abs, rms, spectral_centroid_trajectory};
 
     /// Closed-form −60 dB ring time the `damping` control resolves to (at the default
     /// grid), inverting `boundary_damping_loss`: `T60 = K / −ln(1 − loss)`.
@@ -312,7 +385,7 @@ mod tests {
     )]
     #[test]
     fn mesh_shell_body_colors_the_radiated_output() {
-        use lindelion_dsp_utils::analysis::dft_magnitude_at;
+        use crate::analysis::dft_magnitude_at;
 
         let sample_rate = 48_000.0;
         let render = |bare: bool| {

@@ -8,12 +8,11 @@ use super::constants::{
 mod body;
 mod core;
 mod dispersion;
-mod mesh_2d;
 mod string_1d;
 mod traveling;
 mod tube_1d;
 
-pub use mesh_2d::{MeshResonator, MeshVoiceParams};
+pub use lindelion_dsp_utils::idiophone::{MeshResonator, MeshVoiceParams};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WaveguideStyle {

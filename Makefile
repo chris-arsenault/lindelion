@@ -1,10 +1,10 @@
 DEFAULT_PLUGIN ?= lamath
-PLUGINS ?= lamath glirdir linnod
+PLUGINS ?= lamath lamath-cymbal glirdir linnod
 MACOS_TARGET ?= aarch64-apple-darwin
 # Windows-only new VSTs (ADR-0023): cross-built from Linux with cargo-xwin (MSVC ABI).
 # Kept separate from the macOS PLUGINS list above.
 WINDOWS_TARGET ?= x86_64-pc-windows-msvc
-WINDOWS_PLUGINS ?= cenedril caloma lumedir lamath
+WINDOWS_PLUGINS ?= cenedril caloma lumedir lamath lamath-cymbal
 # `make build [PLUGIN=x]` and `make build-windows [PLUGIN=x]` build a single plugin when PLUGIN is
 # set on the command line, else the full macOS / Windows plugin lists respectively.
 ifeq ($(origin PLUGIN), undefined)

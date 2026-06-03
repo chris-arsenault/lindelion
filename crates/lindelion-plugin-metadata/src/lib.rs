@@ -15,6 +15,21 @@ pub const LAMATH_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     single_component: false,
 };
 
+pub const LAMATH_CYMBAL_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
+    package: "lamath-cymbal",
+    bundle_name: "Lamath Cymbal",
+    executable_name: "LamathCymbal",
+    bundle_identifier: "com.ahara.lamathcymbal",
+    library_stem: "lamath_cymbal",
+    windows_runtime_dlls: &[],
+    vst3_sub_categories: "Instrument|Synth",
+    module_sub_categories: &["Instrument", "Synth"],
+    processor_cid: [0x1A4C7C01, 0xC9B54F62, 0xA13E7462, 0x91D7C402],
+    controller_cid: [0x1A4C7C02, 0xD6A94831, 0x8C40E7B3, 0x5E230CB4],
+    controller_name: "Lamath Cymbal Controller",
+    single_component: true,
+};
+
 pub const GLIRDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata {
     package: "glirdir",
     bundle_name: "Glirdir",
@@ -93,6 +108,7 @@ pub const LUMEDIR_VST3_BUNDLE_METADATA: Vst3BundleMetadata = Vst3BundleMetadata 
 pub fn metadata_for_package(package: &str) -> Option<Vst3BundleMetadata> {
     match package {
         "lamath" => Some(LAMATH_VST3_BUNDLE_METADATA),
+        "lamath-cymbal" => Some(LAMATH_CYMBAL_VST3_BUNDLE_METADATA),
         "glirdir" => Some(GLIRDIR_VST3_BUNDLE_METADATA),
         "linnod" => Some(LINNOD_VST3_BUNDLE_METADATA),
         "cenedril" => Some(CENEDRIL_VST3_BUNDLE_METADATA),
@@ -111,6 +127,10 @@ mod tests {
         assert_eq!(
             metadata_for_package("lamath").unwrap(),
             LAMATH_VST3_BUNDLE_METADATA
+        );
+        assert_eq!(
+            metadata_for_package("lamath-cymbal").unwrap(),
+            LAMATH_CYMBAL_VST3_BUNDLE_METADATA
         );
         assert_eq!(
             metadata_for_package("glirdir").unwrap(),
@@ -147,6 +167,7 @@ mod tests {
     fn every_plugin_cid_is_distinct() {
         let metadata = [
             LAMATH_VST3_BUNDLE_METADATA,
+            LAMATH_CYMBAL_VST3_BUNDLE_METADATA,
             GLIRDIR_VST3_BUNDLE_METADATA,
             LINNOD_VST3_BUNDLE_METADATA,
             CENEDRIL_VST3_BUNDLE_METADATA,
