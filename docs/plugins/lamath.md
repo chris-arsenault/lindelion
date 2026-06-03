@@ -64,7 +64,7 @@ flowchart LR
     MIX --> OUT[Stereo Out]
 ```
 
-Each voice owns independent excitation playback cursors, resonator state, modulation state, filter state, and output state. Voice allocation and ownership live above the voice DSP so MIDI-created and audio-created voices use the same runtime path. In shared-body idiophone mode the idiophone resonator is instead promoted to a single runtime-owned body that note-ons re-strike rather than per-note voices (§4.4).
+Each voice owns independent excitation playback cursors, resonator state, modulation state, filter state, and output state. Voice allocation and ownership live above the voice DSP so MIDI-created and audio-created voices use the same runtime path. In shared-body idiophone mode the idiophone resonator is instead promoted to a single runtime-owned body that note-ons re-strike rather than per-note voices (§4.5).
 
 ---
 
@@ -144,7 +144,18 @@ The waveguide is a Karplus-Strong-derived single-delay-line model for plucked-st
 
 The string style uses ordinary same-polarity feedback. The **tube style is a driven wind voice**, not a struck one: a tube bore is a wind resonator and only sounds when continuously reed-driven, so selecting `Tube` always engages the reed/breath driver and the strike/pick/bow drivers are not valid for it (a patch naming one normalizes to the reed on load — the instrument never holds a silent tube). The reed is a physical beating-reed valve (the opening closes to zero at a closing pressure, orifice/Bernoulli flow) that **terminates the bore mouth** — its scattered wave replaces the passive mouth reflection, solving the reed↔bore scattering junction each sample — so the bore self-oscillates on its tuned fundamental across the register. Playing effort maps into the reed's usable pressure window (soft below it is breathy near-silence); `loop_filter_cutoff` is the brightness control and `boundary_reflection` voices the bell within its usable closed-bell band. Effort drives a ~10 dB level dynamic. A true **brightness-with-effort (cuivré)** is **not yet achieved**: the current bell HF-radiation tap is non-energy-conserving and squares the tone when driven (turning it down, via the `bell_radiation` control, reveals a cleaner clarinet underneath), and the reed's own spectrum is nearly blowing-pressure-invariant — so a musical cuivré awaits a bell+bore+reed redesign (see [ADR-0032](../adr/0032-lamath-tube-driven-wind-voice.md) audition correction). The tone today is an odd-harmonic clarinet without a strongly resonant body. The top octave genuinely overblows / squeaks when blown hard at fortissimo, like a real reed — a kept, physically-accurate behaviour, not a defect. The Tube is **monophonic** (a patch with a Tube forces `polyphony = 1`), so articulation is how the one voice changes notes: a **tongued** note is separated and re-onsets with the excitation kick, a **slurred** note overlaps so the reed keeps blowing while the bore frequency glides (an 8 ms portamento); a breath-onset ramp keeps onsets click-free. See [ADR-0032](../adr/0032-lamath-tube-driven-wind-voice.md).
 
-### 4.3 Routing
+### 4.3 2D Waveguide Mesh
+
+The 2D mesh is a rectangular digital-waveguide mesh — a grid of lossless scattering junctions joined by unit delays — modelling a struck plate, a metallic idiophone. Because the junctions propagate one cell per sample the mesh's wave speed is structurally fixed, so its modal frequencies are set by the **grid cell count**, not by the played pitch: the mesh is a fixed-pitch struck body, not a tuned voice. Controls:
+
+- `size` / `tension` — the active grid's width and height in cells. A large maximum grid is allocated once and these select an active sub-region, so re-tuning is allocation-free. Cell count is the timbre/density lever: a small grid is sparse and near-pitched (triangle-like), a large grid dense and inharmonic (ride/crash-like).
+- `damping` — decay time. The control maps geometrically over a musical −60 dB ring band inverted from the boundary-reflection physics, so the whole `0..1` range rings (no dead zone) and the ring length is sample-rate- and grid-independent.
+- `material` — free↔fixed boundary condition (membrane↔plate) plus the strike coupling width.
+- `position_of_strike` / `pickup_spread` — where the plate is struck and the pickup integration width, i.e. which modes are excited and heard.
+
+The played **note moves the strike position** across the plate, so different notes excite different mode mixes — a timbral/intonation variation, not a tuned pitch. Because the dominant low modes have few nodal regions, this spans only a handful of distinct timbral zones (a logged characteristic, not a defect). Output is level-compensated for the grid (a fixed strike's pickup level falls ~`1/cells` as the grid grows) so every voicing sits at a consistent, family-matched level.
+
+### 4.4 Routing
 
 Three routing modes are implemented:
 
@@ -156,7 +167,7 @@ Series routing includes a high-pass and transient-bias gate before B to keep ste
 Body Color is intended for stable commuted/body-response sounds: A imprints early resonator color onto B without feeding A's long ringing tail into B continuously.
 When both resonator slots are modal banks, selecting `Series` is canonicalized to `Body Color` while preserving the routing mix values. Mixed modal/waveguide pairs keep all three routing modes available.
 
-### 4.4 Shared-Body Idiophone Mode
+### 4.5 Shared-Body Idiophone Mode
 
 An opt-in per-patch mode (`shared_body`, default off) promotes an idiophone patch's resonator to a single runtime-owned, persistent body that note-ons re-strike instead of allocating a per-note voice. Off is bit-identical to the per-voice behavior and the two coexist; the body is owned by the runtime alongside the sympathetic chamber, and the voice engine is unaware of it. Decisions and rejected alternatives live in [ADR-0031](../adr/0031-shared-body-idiophone-mode.md).
 
@@ -195,7 +206,7 @@ The output path is intentionally compact. Resonators supply most of the timbral 
 - Voice stealing order is oldest released, then quietest released, then oldest active.
 - Note-on resets excitation cursors and envelopes. Resonator retrigger is patch-configurable and defaults to ringing carryover.
 - All voice state is allocated up front.
-- In shared-body idiophone mode, idiophone note-ons re-strike the runtime-owned body instead of allocating voices, bypassing voice allocation and polyphony entirely (§4.4).
+- In shared-body idiophone mode, idiophone note-ons re-strike the runtime-owned body instead of allocating voices, bypassing voice allocation and polyphony entirely (§4.5).
 
 Lamath uses a per-voice expression stream:
 
@@ -419,4 +430,4 @@ Implemented:
 - **Position of strike:** where excitation is applied to the resonating object.
 - **Expression stream:** Lamath's per-voice continuous-control contract for pitch bend, pressure, brightness, velocity, and gate.
 - **Idiophone:** a body that sounds by vibrating as a whole (cymbal, gong, bell); here the modal and mesh resonator families. Modeled by the modal bank and the 2D mesh, which are linear-superposable physical models.
-- **Shared body:** in shared-body mode, the single runtime-owned persistent resonator that idiophone note-ons re-strike, in place of per-note voices (§4.4).
+- **Shared body:** in shared-body mode, the single runtime-owned persistent resonator that idiophone note-ons re-strike, in place of per-note voices (§4.5).
