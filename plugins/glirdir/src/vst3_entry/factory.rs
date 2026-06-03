@@ -62,6 +62,7 @@ mod tests {
         assert_eq!(processor.cid, GlirdirVst3Processor::CID);
         assert_eq!(c_string(&processor.name), DESCRIPTOR.name);
         assert_eq!(c_string(&processor.subCategories), SUBCATEGORY);
+        assert_factory_reports_vendor(&factory);
 
         let mut controller = unsafe { std::mem::zeroed::<PClassInfo>() };
         assert_eq!(
@@ -70,6 +71,22 @@ mod tests {
         );
         assert_eq!(controller.cid, GlirdirVst3Controller::CID);
         assert_eq!(c_string(&controller.name), CONTROLLER_NAME);
+    }
+
+    fn assert_factory_reports_vendor(factory: &Vst3PluginFactory) {
+        let mut processor = unsafe { std::mem::zeroed::<PClassInfo2>() };
+        assert_eq!(
+            unsafe { factory.getClassInfo2(0, &mut processor) },
+            kResultOk
+        );
+        assert_eq!(c_string(&processor.vendor), DESCRIPTOR.vendor);
+
+        let mut factory_info = unsafe { std::mem::zeroed::<PFactoryInfo>() };
+        assert_eq!(
+            unsafe { factory.getFactoryInfo(&mut factory_info) },
+            kResultOk
+        );
+        assert_eq!(c_string(&factory_info.vendor), DESCRIPTOR.vendor);
     }
 
     fn c_string(buffer: &[c_char]) -> String {

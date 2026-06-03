@@ -47,27 +47,38 @@ impl UiSlot {
 pub struct CatalogEntry {
     pub path: PathBuf,
     pub name: String,
+    /// Vendor reported by the VST3 factory/class metadata, if present.
+    pub vendor: Option<String>,
     /// Whether the plugin passed the load-time validation probe (M7 Step 3).
     pub compatible: bool,
     /// Why it failed validation, if incompatible.
     pub reason: Option<String>,
 }
 
-/// The result of scanning folders for plugins: each discovered `.vst3` plus its validation status.
-/// On-demand and transient — not cached or persisted (only the scanned *folders* persist).
+/// One path probe returned by the VST3 scanner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogProbe {
+    pub path: PathBuf,
+    pub vendor: Option<String>,
+    pub result: Result<(), String>,
+}
+
+/// The result of scanning folders for plugins: each discovered `.vst3`, its vendor metadata, and
+/// validation status. The latest scan is cached in settings so startup can show the previous catalog
+/// before loading any plugin DLLs.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PluginCatalog {
     pub entries: Vec<CatalogEntry>,
 }
 
 impl PluginCatalog {
-    /// Assemble a catalog from `(path, validation-result)` pairs — `Ok(())` = compatible, `Err(reason)`
-    /// = incompatible with a reason — sorted by path. Pure: the fs scan and probing happen in the
-    /// caller (the probe via M7 Step 3's `validate_plugin`).
-    pub fn from_probes(probes: Vec<(PathBuf, Result<(), String>)>) -> Self {
+    /// Assemble a catalog from probe records — `Ok(())` = compatible, `Err(reason)` = incompatible
+    /// with a reason — sorted by path. Pure: the fs scan and probing happen in the caller.
+    pub fn from_probes(probes: Vec<CatalogProbe>) -> Self {
         let mut entries: Vec<CatalogEntry> = probes
             .into_iter()
-            .map(|(path, result)| {
+            .map(|probe| {
+                let path = probe.path;
                 let name = path
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -76,8 +87,9 @@ impl PluginCatalog {
                 CatalogEntry {
                     path,
                     name,
-                    compatible: result.is_ok(),
-                    reason: result.err(),
+                    vendor: probe.vendor.and_then(non_empty_string),
+                    compatible: probe.result.is_ok(),
+                    reason: probe.result.err(),
                 }
             })
             .collect();
@@ -105,6 +117,7 @@ impl PluginCatalog {
                     CatalogEntry {
                         path: entry.path.clone(),
                         name,
+                        vendor: entry.vendor.clone().and_then(non_empty_string),
                         compatible: entry.compatible,
                         reason: entry.reason.clone(),
                     }
@@ -119,6 +132,7 @@ impl PluginCatalog {
             .iter()
             .map(|entry| CachedPluginEntry {
                 path: entry.path.clone(),
+                vendor: entry.vendor.clone(),
                 compatible: entry.compatible,
                 reason: entry.reason.clone(),
             })
@@ -343,6 +357,17 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
+fn non_empty_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else if trimmed.len() == value.len() {
+        Some(value)
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn scan_dir_into(dir: &Path, found: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -501,9 +526,21 @@ mod tests {
     #[test]
     fn catalog_partitions_compatible_from_incompatible() {
         let catalog = PluginCatalog::from_probes(vec![
-            (PathBuf::from("/p/C.vst3"), Ok(())),
-            (PathBuf::from("/p/A.vst3"), Err("NoAudioClass".to_string())),
-            (PathBuf::from("/p/B.vst3"), Ok(())),
+            CatalogProbe {
+                path: PathBuf::from("/p/C.vst3"),
+                vendor: Some("Vendor C".to_string()),
+                result: Ok(()),
+            },
+            CatalogProbe {
+                path: PathBuf::from("/p/A.vst3"),
+                vendor: Some("Vendor A".to_string()),
+                result: Err("NoAudioClass".to_string()),
+            },
+            CatalogProbe {
+                path: PathBuf::from("/p/B.vst3"),
+                vendor: Some("Vendor B".to_string()),
+                result: Ok(()),
+            },
         ]);
 
         // Sorted by path.
@@ -516,9 +553,24 @@ mod tests {
 
         // A is incompatible with its reason; B and C are offered for adding.
         assert!(!catalog.entries[0].compatible);
+        assert_eq!(catalog.entries[0].vendor.as_deref(), Some("Vendor A"));
         assert_eq!(catalog.entries[0].reason.as_deref(), Some("NoAudioClass"));
         let compatible: Vec<String> = catalog.compatible().map(|e| e.name.clone()).collect();
         assert_eq!(compatible, ["B", "C"]);
+    }
+
+    #[test]
+    fn catalog_cache_preserves_vendor_metadata() {
+        let catalog = PluginCatalog::from_probes(vec![CatalogProbe {
+            path: PathBuf::from("/p/Caloma.vst3"),
+            vendor: Some("Ahara".to_string()),
+            result: Ok(()),
+        }]);
+
+        let cached = catalog.to_cached();
+        let restored = PluginCatalog::from_cached(&cached);
+
+        assert_eq!(restored.entries[0].vendor.as_deref(), Some("Ahara"));
     }
 
     #[cfg_attr(

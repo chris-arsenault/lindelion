@@ -2,6 +2,8 @@ use std::ffi::c_void;
 
 #[cfg(target_os = "windows")]
 use std::cell::RefCell;
+#[cfg(target_os = "windows")]
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use lindelion_plugin_shell::vst3::{
     FixedSizePlugView, FixedSizePlugViewDelegate, FixedSizePlugViewSize,
@@ -45,40 +47,75 @@ impl FixedSizePlugViewDelegate for CenedrilEditorView {
     unsafe fn attached(&self, parent: *mut c_void, size: ViewRect) -> tresult {
         #[cfg(target_os = "windows")]
         {
-            let mut editor = self.editor.borrow_mut();
-            *editor = None;
-            let component = unsafe { &*self.controller };
-            // One concrete source drains the shared ring; hand the editor both trait views of it
-            // (magnitude + reassigned), so switching the view never double-drains.
-            let frame_source = std::sync::Arc::new(crate::analysis::CenedrilFrameSource::new(
-                component.frame_ring(),
-                component.meter(),
-                component.analysis(),
-                component.settings(),
-                component.sample_rate(),
+            lindelion_ui::vizia_window::debug_log(format!(
+                "cenedril-editor: attached begin parent=0x{:x} rect=({}, {}, {}, {})",
+                parent as usize, size.left, size.top, size.right, size.bottom
             ));
-            let source: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SpectrogramSource> =
-                frame_source.clone();
-            let reassigned: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::ReassignedSource> =
-                frame_source.clone();
-            let meters: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::MeterSource> =
-                frame_source.clone();
-            let settings: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SettingsStore> =
-                frame_source;
-            let host = lindelion_ui::cenedril_vizia::CenedrilEditorHost::new(
-                source, reassigned, meters, settings,
-            );
-            *editor = Some(unsafe {
-                lindelion_ui::cenedril_vizia::CenedrilViziaEditor::attach(
-                    parent,
-                    host,
-                    lindelion_ui::cenedril_vizia::CenedrilEditorSize {
-                        width: size.right - size.left,
-                        height: size.bottom - size.top,
-                    },
-                )
-            });
-            kResultOk
+            let mut editor = self.editor.borrow_mut();
+            lindelion_ui::vizia_window::debug_log("cenedril-editor: editor borrow acquired");
+            *editor = None;
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: component borrow begin");
+                let component = unsafe { &*self.controller };
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: component borrow done");
+                // One concrete source drains the shared ring; hand the editor both trait views of it
+                // (magnitude + reassigned), so switching the view never double-drains.
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: frame source begin");
+                let frame_source = std::sync::Arc::new(crate::analysis::CenedrilFrameSource::new(
+                    component.frame_ring(),
+                    component.meter(),
+                    component.analysis(),
+                    component.settings(),
+                    component.sample_rate(),
+                ));
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: frame source done");
+                let source: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SpectrogramSource> =
+                    frame_source.clone();
+                let reassigned: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::ReassignedSource> =
+                    frame_source.clone();
+                let meters: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::MeterSource> =
+                    frame_source.clone();
+                let settings: std::sync::Arc<dyn lindelion_ui::cenedril_vizia::SettingsStore> =
+                    frame_source;
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: trait arcs done");
+                let host = lindelion_ui::cenedril_vizia::CenedrilEditorHost::new(
+                    source, reassigned, meters, settings,
+                );
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: host done");
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: vizia attach begin");
+                *editor = Some(unsafe {
+                    lindelion_ui::cenedril_vizia::CenedrilViziaEditor::attach(
+                        parent,
+                        host,
+                        lindelion_ui::cenedril_vizia::CenedrilEditorSize {
+                            width: size.right - size.left,
+                            height: size.bottom - size.top,
+                        },
+                    )
+                });
+                lindelion_ui::vizia_window::debug_log("cenedril-editor: vizia attach done");
+            }));
+            match result {
+                Ok(()) => {
+                    lindelion_ui::vizia_window::debug_log("cenedril-editor: attached done");
+                    kResultOk
+                }
+                Err(payload) => {
+                    *editor = None;
+                    let panic = if let Some(message) = payload.downcast_ref::<&str>() {
+                        *message
+                    } else if let Some(message) = payload.downcast_ref::<String>() {
+                        message.as_str()
+                    } else {
+                        "unknown panic"
+                    };
+                    lindelion_ui::vizia_window::debug_log(format!(
+                        "cenedril-editor: editor attach panic: {panic}"
+                    ));
+                    eprintln!("cenedril: editor attach panic: {panic}");
+                    kResultFalse
+                }
+            }
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -92,7 +129,9 @@ impl FixedSizePlugViewDelegate for CenedrilEditorView {
     unsafe fn removed(&self) -> tresult {
         #[cfg(target_os = "windows")]
         {
+            lindelion_ui::vizia_window::debug_log("cenedril-editor: removed begin");
             self.editor.borrow_mut().take();
+            lindelion_ui::vizia_window::debug_log("cenedril-editor: removed done");
         }
         kResultOk
     }

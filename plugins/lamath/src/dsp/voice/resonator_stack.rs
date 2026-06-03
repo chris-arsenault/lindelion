@@ -49,7 +49,8 @@ pub(crate) struct ResonatorStack {
     pub(super) parallel_mix_b: SmoothedAtomicParam,
     pub(super) series_conditioner: SeriesConditioner,
     body_color_exciter: BodyColorExciter,
-    driver_config: DriverConfig,
+    driver_config_a: DriverConfig,
+    driver_config_b: DriverConfig,
     contact_config: ContactConfig,
     /// M11 P9 per-resonator-made-up mix from the last `process_sample` (audio path).
     staged_output: f32,
@@ -79,7 +80,8 @@ impl ResonatorStack {
             parallel_mix_b: parallel_mix_b_param(sample_rate, parallel_mix_b(routing)),
             series_conditioner: SeriesConditioner::new(sample_rate),
             body_color_exciter: BodyColorExciter::new(sample_rate),
-            driver_config: DriverConfig::default(),
+            driver_config_a: DriverConfig::default(),
+            driver_config_b: DriverConfig::default(),
             contact_config: ContactConfig::default(),
             staged_output: 0.0,
         }
@@ -101,14 +103,17 @@ impl ResonatorStack {
         self.base_resonator_b_config = resonator_b;
     }
 
-    /// Select the physical driver (M8) for both waveguide engines. Only rebuilds when
-    /// the driver config changes, so steady playback never re-allocates or clicks;
-    /// the driver applies only on the waveguide path (Modal/Mesh ignore it).
-    pub(super) fn set_driver(&mut self, config: DriverConfig) {
-        if config != self.driver_config {
-            self.driver_config = config;
-            self.resonator_a.set_driver(config);
-            self.resonator_b.set_driver(config);
+    /// Select the physical driver (M8) per waveguide engine. Only rebuilds the engine whose
+    /// driver config changed, so steady playback never re-allocates or clicks; the driver
+    /// applies only on the waveguide path (Modal/Mesh ignore it).
+    pub(super) fn set_drivers(&mut self, driver_a: DriverConfig, driver_b: DriverConfig) {
+        if driver_a != self.driver_config_a {
+            self.driver_config_a = driver_a;
+            self.resonator_a.set_driver(driver_a);
+        }
+        if driver_b != self.driver_config_b {
+            self.driver_config_b = driver_b;
+            self.resonator_b.set_driver(driver_b);
         }
     }
 
@@ -224,8 +229,10 @@ impl ResonatorStack {
         let excitation = snap_to_zero(excitation);
         let mix_a = self.parallel_mix_a.next_sample();
         let mix_b = self.parallel_mix_b.next_sample();
-        let makeup_a = makeup::resonator_output_makeup(self.resonator_a_config, self.driver_config);
-        let makeup_b = makeup::resonator_output_makeup(self.resonator_b_config, self.driver_config);
+        let makeup_a =
+            makeup::resonator_output_makeup(self.resonator_a_config, self.driver_config_a);
+        let makeup_b =
+            makeup::resonator_output_makeup(self.resonator_b_config, self.driver_config_b);
         // (raw, staged): the raw A/B mix feeds the energy tap (P8's physical bus); the
         // staged mix applies each slot's output makeup before the mix (P9 audio path).
         let (raw, staged) = match self.routing.current() {
@@ -491,6 +498,11 @@ impl ResonatorEngine {
                 // the host sample's sub-samples (effort is per host sample), so write
                 // it onto the params once; the contact-time shaping runs per sub-sample.
                 params.excitation_spread = contact.effective_spread(effort);
+                // A wind driver (reed) terminates the bore mouth: its output is the
+                // mouth-scattered wave, routed through the boundary path with no contact
+                // shaping (the reed is the source, not a strike). Struck/pick/bow inject at
+                // the strike position through the contact stage as before.
+                let terminates_boundary = driver.terminates_boundary();
                 self.oversampler.process(input, |sample| {
                     // Read the resonator's input-end returning wave (mouth/bridge)
                     // from the previous sub-sample as the driver's coupled feedback,
@@ -498,8 +510,12 @@ impl ResonatorEngine {
                     // shaping), then the waveguide with the spread set on the params.
                     let feedback = waveguide.driven_feedback(params);
                     let driven = driver.process(sample, effort, feedback, drive_gate);
-                    let shaped = contact.shape(driven);
-                    waveguide.process_sample(shaped, params)
+                    if terminates_boundary {
+                        waveguide.process_sample_wind(driven, params)
+                    } else {
+                        let shaped = contact.shape(driven);
+                        waveguide.process_sample(shaped, params)
+                    }
                 })
             }
             ResonatorKind::Mesh => {

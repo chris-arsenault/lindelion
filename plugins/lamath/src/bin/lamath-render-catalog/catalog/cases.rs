@@ -1,5 +1,6 @@
 use super::{CatalogCase, PatchRecipe, RenderSchedule, ResonatorFamily, ScheduledNote};
 
+mod articulation;
 mod chords;
 mod dynamic_response;
 mod edges;
@@ -327,6 +328,7 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(surrounding::SURROUNDING_CASES.iter().cloned())
         .chain(chords::CHORD_CASES.iter().cloned())
         .chain(edges::EDGE_CASES.iter().cloned())
+        .chain(articulation::ARTICULATION_CASES.iter().cloned())
         .collect()
 }
 

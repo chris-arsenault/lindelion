@@ -71,6 +71,11 @@ pub(super) struct Tube1d {
     loop_filter_cutoff: core::ScalarSmoother,
     loop_filter_resonance: core::ScalarSmoother,
     boundary_reflection: core::ScalarSmoother,
+    // Reed-driven bore: glide the played frequency so a note change slides the delay length
+    // (a wind portamento) instead of snapping it, which clicks. Snaps on the first note (the
+    // smoother initializes to its first target), so a tongued note after a gap gets at most a
+    // brief attack scoop while a slurred note glides cleanly.
+    frequency: core::ScalarSmoother,
     // Measured resonator energy (M2 bus) driving finite-amplitude bore steepening;
     // set per host sample, constant across the 2x oversampled sub-samples. 0.0 => inert.
     steepening_drive: f32,
@@ -103,6 +108,7 @@ impl Tube1d {
             loop_filter_cutoff: core::ScalarSmoother::new(sample_rate),
             loop_filter_resonance: core::ScalarSmoother::new(sample_rate),
             boundary_reflection: core::ScalarSmoother::new(sample_rate),
+            frequency: core::ScalarSmoother::new(sample_rate),
             steepening_drive: 0.0,
             steepening_allpass: FirstOrderAllpass::default(),
             radiation_highpass: Biquad::new(BiquadCoefficients::highpass(
@@ -139,6 +145,7 @@ impl Tube1d {
         self.loop_filter_cutoff.reset();
         self.loop_filter_resonance.reset();
         self.boundary_reflection.reset();
+        self.frequency.reset();
         self.steepening_drive = 0.0;
         self.steepening_allpass.reset();
         self.radiation_highpass.reset();
@@ -207,6 +214,60 @@ impl Tube1d {
         math::snap_to_zero(body + radiated)
     }
 
+    /// Wind-driven bore: a reed (or lip) valve **terminates the mouth**. `mouth_wave` is
+    /// the reed's scattered outgoing wave (computed from this bore's `driven_feedback`),
+    /// so it replaces the bore's passive mouth reflection entirely — the reed *is* the
+    /// boundary. The mouth loss filter stays in the loop (the delay tuning compensates its
+    /// phase) and the energy-driven steepening still brightens loud playing, but the fixed
+    /// `−0.36` reflection and the strike-position injection are gone: one consistent mouth
+    /// junction, so the loop locks to the bore's tuned fundamental instead of fighting two
+    /// terminations (ADR-0032).
+    pub(super) fn process_sample_wind(&mut self, mouth_wave: f32, params: WaveguideParams) -> f32 {
+        let params = self.smoothed_params(WaveguideParams {
+            style: WaveguideStyle::Tube,
+            ..params
+        });
+        let prepared = self.prepared_model(WaveguideParams {
+            excitation_spread: 0.0,
+            source_body_balance: 0.0,
+            ..params
+        });
+        let profile = prepared.profile;
+        let one_way_delay = prepared.one_way_delay;
+
+        let boundary = self.waves.boundary_samples(one_way_delay);
+        // Expose the bore's returning wave at the mouth for the reed's next-sample junction.
+        self.mouth_incident = boundary.left;
+        let pickup = self
+            .waves
+            .pickup_samples(one_way_delay, prepared.geometry.pickup_position);
+
+        // The reed's scattered wave is the outgoing mouth wave: filter it through the mouth
+        // loss (kept in the loop so the tuning holds) and the energy-driven brassy steepening,
+        // but apply *no* passive reflection (the reed already reflected the bore's returning
+        // wave) and *no* static saturation — the reed is the loop nonlinearity, and stacking
+        // the static `loop_nonlinearity` saturation on top destabilises it into period-doubling.
+        // Brassiness on loud playing comes from the energy-driven steepening (the cuivré bloom).
+        let filtered = self
+            .boundary_filters
+            .process(BoundarySide::Left, mouth_wave);
+        let mouth_reflection = math::snap_to_zero(self.apply_steepening(filtered));
+        let end_reflection =
+            self.reflected_sample(BoundarySide::Right, boundary.right, profile, params);
+
+        // No strike-position excitation: the reed is the mouth source.
+        self.waves.push(end_reflection, mouth_reflection);
+
+        let body = self
+            .body
+            .process_sample(profile.pickup_sample(pickup), params);
+        let radiated = self.radiation_highpass.process(boundary.right)
+            * RADIATION_GAIN
+            * steepening_energy(self.steepening_drive);
+
+        math::snap_to_zero(body + radiated)
+    }
+
     /// Smooth the continuous physical inputs toward their targets, leaving
     /// frequency and the strike/pickup positions untouched so tuning and
     /// excitation timing track the requested values exactly.
@@ -218,6 +279,7 @@ impl Tube1d {
                 .loop_filter_resonance
                 .next(params.loop_filter_resonance),
             boundary_reflection: self.boundary_reflection.next(params.boundary_reflection),
+            frequency_hz: self.frequency.next(params.frequency_hz),
             ..params
         }
     }
@@ -339,6 +401,13 @@ impl TubeBoreProfile {
         let endpoint_loss = core::endpoint_reflection_gain(loop_gain);
         let end_reflection = bore_end_reflection(params.boundary_reflection) * endpoint_loss;
         let openness = (1.0 - TUBE_BOUNDARY.reflection(params.boundary_reflection)) * 0.5;
+        // The bore's wall/radiation losses roll off the high (odd) harmonics each round trip —
+        // the difference between a warm, hollow wind tone and a bright buzzy square. The
+        // reed-driven bore re-injects a harmonically rich pulse every cycle, so without strong
+        // loop damping the high harmonics sit at full level (h3 ≈ h1) and it reads as a raw
+        // square synth. This brings the effective mouth cutoff well down (the shipped 8 kHz
+        // brightness control lands near ~2 kHz), giving the clarinet-like rolloff; the control
+        // still sweeps relative brightness on top.
         let mouth_cutoff = math::finite_clamp(
             params.loop_filter_cutoff * (0.75 + 0.35 * openness),
             160.0,

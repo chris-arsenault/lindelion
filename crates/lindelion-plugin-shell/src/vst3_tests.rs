@@ -368,6 +368,25 @@ fn factory_enumerates_registered_classes_through_ipluginfactory() {
 }
 
 #[test]
+fn factory_reports_descriptor_vendor_metadata() {
+    let factory = test_vst3_factory();
+
+    let mut factory_info = unsafe { std::mem::zeroed::<PFactoryInfo>() };
+    assert_eq!(
+        unsafe { factory.getFactoryInfo(&mut factory_info) },
+        kResultOk
+    );
+    assert_eq!(c_string(&factory_info.vendor), TEST_DESCRIPTOR.vendor);
+
+    let mut processor = unsafe { std::mem::zeroed::<PClassInfo2>() };
+    assert_eq!(
+        unsafe { factory.getClassInfo2(0, &mut processor) },
+        kResultOk
+    );
+    assert_eq!(c_string(&processor.vendor), TEST_DESCRIPTOR.vendor);
+}
+
+#[test]
 fn factory_dispatches_class_creation_by_cid() {
     let factory = test_vst3_factory();
     let mut obj = ptr::null_mut::<c_void>();

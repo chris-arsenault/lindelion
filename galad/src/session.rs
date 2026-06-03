@@ -95,6 +95,8 @@ pub struct AppSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedPluginEntry {
     pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<String>,
     pub compatible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -359,6 +361,7 @@ mod tests {
                 plugin_scan_dirs: vec![PathBuf::from("/plugins"), PathBuf::from("/more/plugins")],
                 plugin_catalog: vec![CachedPluginEntry {
                     path: PathBuf::from("/plugins/Caloma.vst3"),
+                    vendor: Some("Ahara".to_string()),
                     compatible: true,
                     reason: None,
                 }],

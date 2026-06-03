@@ -27,28 +27,57 @@ const PICK_MIN_CUTOFF_HZ: f32 = 300.0;
 /// Pick contact low-pass bandwidth at the hardest setting / full effort.
 const PICK_MAX_CUTOFF_HZ: f32 = 12_000.0;
 
-/// Mouth pressure at full effort and full pressure depth (normalized wave units).
-const REED_MAX_PRESSURE: f32 = 1.2;
-/// Reed-table slope at the default stiffness (the `-0.8` MSW/STK reed slope); the
-/// stiffness control scales it so a stiffer reed has a steeper table (brighter).
-const REED_BASE_SLOPE: f32 = -0.8;
-/// Reed-table offset at the default embouchure; the embouchure control biases it.
-const REED_BASE_OFFSET: f32 = 0.6;
-/// Gain applied to the resonator's coupled-back wave before the reed reads it as
-/// bore pressure, compensating the radiated-output level so the bore→reed→bore loop
-/// can self-oscillate. Negative: the open bore end inverts the returning wave.
-const REED_FEEDBACK_GAIN: f32 = -0.95;
+// Beating single-reed valve (Schumacher / Smith PASP). The reed is a pressure-driven
+// valve whose *opening* shrinks to zero as the blowing pressure difference rises to a
+// closing pressure (the reed beats shut), and the air *flow* through that opening
+// follows the orifice (Bernoulli) square-root law. The product — opening (falling) times
+// √Δp (rising) — is the hump-shaped flow characteristic whose falling side both sustains
+// and self-limits the bore oscillation at its tuned fundamental.
+
+/// The reed's usable mouth-pressure window at the nominal pressure depth: from just above the
+/// oscillation threshold (`FLOOR`, softest playing) to just below the over-blowing /
+/// period-doubling onset (`CEIL`, full effort). Mapping the whole velocity range into this
+/// narrow window keeps every dynamic on the fundamental — a real reed has a narrow usable
+/// pressure band and the player stays inside it; pushing past `CEIL` is where it overblows.
+const REED_PRESSURE_FLOOR: f32 = 0.63;
+const REED_PRESSURE_CEIL: f32 = 0.76;
+/// Effort below this leaves the reed below its oscillation pressure (breathy near-silence);
+/// the audible velocity range lives above it, mapped into the stable window above.
+const REED_EFFORT_THRESHOLD: f32 = 0.1;
+/// Mouth pressure at the top of the sub-threshold ramp — kept below the oscillation point so
+/// very soft playing stays silent, then the window jumps in above the threshold.
+const REED_SUBTHRESHOLD_PRESSURE: f32 = 0.45;
+/// Blowing pressure difference at which the reed beats fully shut at the default
+/// embouchure/stiffness. Stiffness raises it (a stiffer reed needs more blow to close,
+/// so it stays open and bright longer); embouchure lowers the rest opening.
+const REED_CLOSING_PRESSURE: f32 = 1.2;
+/// Reed channel rest opening (fully open = 1) at the default embouchure.
+const REED_REST_OPENING: f32 = 1.0;
+/// How far the reed can be pushed *open* on negative Δp (suction) past its rest opening.
+const REED_MAX_OPENING: f32 = 1.5;
+/// Bore characteristic-impedance scaling of the reed flow into the outgoing bore wave.
+/// Near unity: the reed is a flow source feeding the (normalized) bore, no brute-force
+/// injection gain — the hump's falling side, not a clamp, bounds the limit cycle.
+const REED_FLOW_GAIN: f32 = 1.0;
+/// Coupling of the bore's returning wave into the mouthpiece pressure the reed senses.
+const REED_FEEDBACK_COUPLING: f32 = 1.0;
 /// How strongly the incoming sample/sidechain excitation perturbs the breath (lets a
 /// note-on transient kick-start the oscillation; the sustained drive is the breath).
 const REED_EXCITATION_COUPLING: f32 = 0.5;
-/// Hard safety clamp on the reed output so the active element can never run away.
-const REED_OUTPUT_LIMIT: f32 = 4.0;
-/// Injection gain into the bore. The Tube's mouth is a lossy reflection (~0.36), so
-/// the bore round-trip loses most of its energy; the reed must supply enough
-/// small-signal gain to push the bore→reed→bore loop above unity and self-oscillate.
-/// The reed-table nonlinearity then bounds the amplitude (clamped reflection), so a
-/// higher injection gain raises the oscillation level, not a runaway.
-const REED_INJECTION_GAIN: f32 = 4.0;
+/// Hard safety clamp on the reed output — a backstop only; the reed flow bounds itself.
+const REED_OUTPUT_LIMIT: f32 = 1.5;
+/// Damped fixed-point iterations that solve the implicit reed scattering junction each
+/// sample so the reed feels the mouthpiece pressure it creates (a consistent junction,
+/// no extra loop delay). A handful converges for the bounded hump flow.
+const REED_JUNCTION_ITERATIONS: usize = 8;
+/// Breath turbulence: a little flow-noise on the mouth pressure (scaled by it, so it grows
+/// with blowing). Physically real (the breath sound) and it dithers the drive just enough to
+/// break the exact period-2 sub-harmonic lock a hard-blown reed can fall into — a musically
+/// sound small imperfection rather than a sterile lock.
+const REED_BREATH_NOISE: f32 = 0.02;
+/// Breath-onset ramp time: the mouth pressure rises to its target over this long on a note
+/// onset, so the reed speaks without a click (and a slurred note change glides in level).
+const REED_BREATH_RAMP_SECONDS: f32 = 0.004;
 
 /// Bow friction characteristic (exponential stick-slip): the static (stick) and
 /// dynamic (slip) friction coefficients. The curve `μ_d + (μ_s−μ_d)·e^(−|Δv|/v0)`
@@ -99,7 +128,7 @@ impl Driver {
         match config {
             DriverConfig::Sample => Self::PassThrough,
             DriverConfig::Pick(pick) => Self::Pick(PickDriver::new(pick, sample_rate)),
-            DriverConfig::Reed(reed) => Self::Reed(ReedDriver::new(reed)),
+            DriverConfig::Reed(reed) => Self::Reed(ReedDriver::new(reed, sample_rate)),
             DriverConfig::Bow(bow) => Self::Bow(BowDriver::new(bow)),
         }
     }
@@ -132,6 +161,14 @@ impl Driver {
             Self::Reed(reed) => reed.reset(),
             Self::Bow(bow) => bow.reset(),
         }
+    }
+
+    /// A self-oscillating *wind* driver (the reed) **terminates the bore mouth**: its output
+    /// is the mouth-scattered wave that replaces the bore's passive mouth reflection, not a
+    /// strike-position excitation. The struck/pick/bow drivers inject at the strike position
+    /// instead, so the bore keeps its own boundary.
+    pub(super) fn terminates_boundary(&self) -> bool {
+        matches!(self, Self::Reed(_))
     }
 }
 
@@ -182,46 +219,110 @@ impl PickDriver {
 #[derive(Debug)]
 pub(super) struct ReedDriver {
     pressure_depth: f32,
-    /// Reed-table slope (from stiffness) — steeper reed closes faster (brighter).
-    slope: f32,
-    /// Reed-table offset (from embouchure) — biases the rest opening.
-    offset: f32,
+    /// Blowing pressure difference at which the reed beats shut (from stiffness).
+    closing_pressure: f32,
+    /// Reed channel rest opening (from embouchure).
+    rest_opening: f32,
+    /// Last solved reed flow — seeds the junction solve for fast convergence.
+    flow: f32,
+    /// Smoothed mouth pressure — a one-pole breath envelope so the breath ramps in over a few
+    /// ms on a note onset (a real reed can't blow instantly) instead of stepping, which would
+    /// click. Also damps any control-rate breath jump.
+    breath: f32,
+    /// One-pole coefficient for the breath ramp (derived from the oversampled rate).
+    breath_coeff: f32,
+    /// Deterministic breath-turbulence PRNG state (xorshift32).
+    noise: u32,
 }
 
 impl ReedDriver {
-    fn new(config: ReedConfig) -> Self {
+    fn new(config: ReedConfig, sample_rate: f32) -> Self {
         let stiffness = math::finite_clamp(config.stiffness, 0.0, 1.0, 0.5);
         let embouchure = math::finite_clamp(config.embouchure, 0.0, 1.0, 0.5);
+        let sample_rate = sample_rate.max(1.0);
         Self {
             pressure_depth: math::finite_clamp(config.pressure_depth, 0.0, 1.0, 0.5),
-            // Stiffer reed -> steeper table (|slope| larger): 0.5x..1.5x the base.
-            slope: REED_BASE_SLOPE * (0.5 + stiffness),
-            // Embouchure biases the table offset around its default.
-            offset: REED_BASE_OFFSET + (embouchure - 0.5) * 0.4,
+            // Stiffer reed closes at a higher blowing pressure (0.5x..1.5x the base), so
+            // it stays open — and bright — over a wider dynamic range before beating shut.
+            closing_pressure: REED_CLOSING_PRESSURE * (0.5 + stiffness),
+            // A tighter embouchure (higher control) narrows the rest opening.
+            rest_opening: REED_REST_OPENING * (1.3 - 0.6 * embouchure),
+            flow: 0.0,
+            breath: 0.0,
+            // ~4 ms one-pole breath ramp at the (oversampled) sample rate.
+            breath_coeff: 1.0 - (-1.0 / (REED_BREATH_RAMP_SECONDS * sample_rate)).exp(),
+            noise: 0x9E37_79B9,
         }
+    }
+
+    /// One deterministic breath-turbulence sample in `[-1, 1]` (xorshift32). Deterministic
+    /// so offline and realtime renders stay bit-identical (the render-stability contract).
+    fn next_noise(&mut self) -> f32 {
+        let mut x = self.noise;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.noise = x;
+        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
 
     fn process(&mut self, excitation: f32, effort: f32, feedback: f32, drive_gate: f32) -> f32 {
         let effort = math::finite_clamp(effort, 0.0, 1.0, 0.0);
         let drive_gate = math::finite_clamp(drive_gate, 0.0, 1.0, 1.0);
-        // Mouth pressure from the player effort (squared so soft playing stays well
-        // below the oscillation threshold and hard playing crosses it), gated by the
-        // note-state drive gate so note-off releases the breath and the bore rings out.
-        let mouth_pressure = self.pressure_depth * effort * effort * REED_MAX_PRESSURE * drive_gate;
-        let breath = mouth_pressure + REED_EXCITATION_COUPLING * math::snap_to_zero(excitation);
-        // Bore pressure: the resonator's returning wave, inverted at the open end.
-        let bore = REED_FEEDBACK_GAIN * math::finite_or(feedback, 0.0);
-        // Pressure across the reed and the nonlinear reed-table reflection (clamped
-        // to a passive [-1, 1], so the reed reflects but never amplifies the wave).
-        let pressure_diff = bore - breath;
-        let reflection =
-            math::finite_clamp(self.offset + self.slope * pressure_diff, -1.0, 1.0, 0.0);
-        let output = REED_INJECTION_GAIN * (breath + pressure_diff * reflection);
+        // Map playing effort to mouth pressure. Below a small threshold the reed stays under
+        // its oscillation pressure — a breathy near-silence (a real reed needs a minimum
+        // blow). Above the threshold the playing range maps into the reed's usable window
+        // (FLOOR → CEIL), which *skips* the near-threshold zone where the bore would
+        // period-double, so the whole audible velocity range stays on the fundamental. Scaled
+        // by the patch pressure depth (0.5 = nominal). Note-off releases the gate to silence.
+        let window = if effort <= REED_EFFORT_THRESHOLD {
+            REED_SUBTHRESHOLD_PRESSURE * (effort / REED_EFFORT_THRESHOLD)
+        } else {
+            let above = (effort - REED_EFFORT_THRESHOLD) / (1.0 - REED_EFFORT_THRESHOLD);
+            REED_PRESSURE_FLOOR + (REED_PRESSURE_CEIL - REED_PRESSURE_FLOOR) * above
+        };
+        let mouth_target = window * (self.pressure_depth * 2.0) * drive_gate;
+        // Ramp the mouth pressure toward its target (a real reed can't blow instantly): this
+        // removes the onset step that clicks, and makes a slurred note glide in level.
+        self.breath += (mouth_target - self.breath) * self.breath_coeff;
+        let mouth = self.breath;
+        // Breath = ramped mouth pressure + the note-on excitation kick + flow turbulence (scaled
+        // by the mouth pressure so it grows with blowing).
+        let turbulence = REED_BREATH_NOISE * mouth * self.next_noise();
+        let breath = mouth + REED_EXCITATION_COUPLING * math::snap_to_zero(excitation) + turbulence;
+        // Incoming bore wave at the mouthpiece (p_minus).
+        let p_minus = REED_FEEDBACK_COUPLING * math::finite_or(feedback, 0.0);
+        // Solve the reed scattering junction (Smith PASP): mouthpiece pressure is
+        // p = p_plus + p_minus = 2·p_minus + Z·u, so the pressure across the reed,
+        // Δp = breath − p, depends on the very flow u it produces — an implicit equation
+        // u = g(breath − 2·p_minus − Z·u). Solve by damped fixed-point so the reed feels
+        // the pressure it creates; without it the junction is ~50% inconsistent, which
+        // detunes the loop and period-doubles. g (`reed_flow`) is the beating-reed flow.
+        let mut flow = self.flow;
+        for _ in 0..REED_JUNCTION_ITERATIONS {
+            let delta_p = breath - 2.0 * p_minus - REED_FLOW_GAIN * flow;
+            flow = 0.5 * flow + 0.5 * self.reed_flow(delta_p);
+        }
+        self.flow = flow;
+        // Outgoing bore wave = incoming wave + characteristic-impedance · reed flow.
+        let output = p_minus + REED_FLOW_GAIN * flow;
         math::finite_clamp(output, -REED_OUTPUT_LIMIT, REED_OUTPUT_LIMIT, 0.0)
     }
 
+    /// Beating-reed volume flow vs the pressure difference across the reed: the opening
+    /// closes linearly to zero as the blowing Δp reaches the closing pressure (and stays
+    /// shut beyond it; suction past the rest opening is bounded), and the air flows through
+    /// that opening by the orifice (Bernoulli) signed-√ law. The product is the hump whose
+    /// falling side both sustains and bounds the oscillation.
+    fn reed_flow(&self, delta_p: f32) -> f32 {
+        let opening =
+            (self.rest_opening - delta_p / self.closing_pressure).clamp(0.0, REED_MAX_OPENING);
+        opening * delta_p.signum() * delta_p.abs().sqrt()
+    }
+
     fn reset(&mut self) {
-        // Stateless across the reset boundary (the bore holds the oscillation state).
+        self.flow = 0.0;
+        self.breath = 0.0;
     }
 }
 
@@ -332,7 +433,7 @@ mod tests {
 
     #[test]
     fn reed_output_is_bounded_across_effort_and_feedback() {
-        let mut reed = ReedDriver::new(ReedConfig::default());
+        let mut reed = ReedDriver::new(ReedConfig::default(), 96_000.0);
         for effort_step in 0..=10 {
             let effort = effort_step as f32 / 10.0;
             for feedback_step in -20..=20 {

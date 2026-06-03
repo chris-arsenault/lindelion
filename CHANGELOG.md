@@ -2,6 +2,19 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.14.1 - 2026-06-03
+
+### Lamath
+
+- Fixed the Lamath **Mesh** resonator's `Damp` control being mostly dead. A WAV-render audition found the default and per-register Mesh cases (`baseline_mesh_*`, `register_mesh_*`) thudded instead of ringing — and the deeper defect was that the *entire top three-quarters* of the damping range (knob ≳ 0.25) collapsed to a ~50 ms transient. The old boundary-loss map ran the control from a near-lossless floor up to a loss of 0.5, an instant-death cliff far below a musical setting. The map is now derived from the mesh physics: a wave crosses the grid one cell per sample losing a factor at each edge reflection, so the slow mode's −60 dB ring time follows in closed form, and the `Damp` knob maps geometrically across a musical T60 band (≈4 s metallic shimmer → ≈0.3 s tight plate). Every value in the range now rings, the decay is sample-rate-independent (the old fixed coefficient drifted with sample rate), and the shipped default (`0.3`) is a ~1.8 s ring. Guarded by a closed-form no-degenerate-region test plus an end-to-end ring check across C2–C6 and at maximum damping.
+
+## v0.14.0 - 2026-06-03
+
+### Lamath
+
+- Turned the Lamath **Tube** resonator into a playable **driven wind voice**. A WAV-render audition found the struck Tube was silent in every shipped configuration — a bore is a wind resonator and only sounds when reed-driven. The Tube is now always reed-driven (struck/pick/bow drivers are not valid for it and normalize to the reed on load), monophonic, and self-oscillates on its tuned fundamental across the C2–C6 register. Under the hood: a physical beating-reed flow (the reed opening closes to zero, orifice/Bernoulli flow) that terminates the bore mouth via the solved scattering junction, velocity mapped into the reed's usable pressure window (soft below it is breathy; the lowest octave overblows an octave at fortissimo, as a real reed does), a per-driver output trim so the reed sits at a matched forte level instead of slamming the master clipper, a breath-onset ramp and an 8 ms bore-frequency glide so tongued onsets and slurred note changes don't click, and `loop_filter_cutoff` voicing the brightness / `boundary_reflection` the bell within its usable band. Articulation is *how the mono voice changes notes* — tongued (separated, re-struck) vs slurred (overlapping, the reed keeps blowing and the pitch glides). Silent Tube render-catalog cases were removed and replaced with driven-Tube and C-major-scale articulation demonstrators. See [ADR-0032](docs/adr/0032-lamath-tube-driven-wind-voice.md) and the [Lamath spec](docs/plugins/lamath.md).
+- Made resonator drivers **per-resonator** (`driver` / `driver_b`) so a Tube in one slot forces its reed without converting a co-resident non-Tube waveguide. Older single-driver patches still load.
+
 ## v0.13.1 - 2026-06-02
 
 ### Lamath

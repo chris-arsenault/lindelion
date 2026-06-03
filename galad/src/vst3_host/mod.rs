@@ -54,4 +54,4 @@ pub use processing::ProcessDriver;
 pub use session_runtime::{SessionSlot, capture_session, restore_pool};
 pub use spike::{SpikeReport, run_spike};
 pub use state::{capture_state, restore_state};
-pub use validate::validate_plugin;
+pub use validate::{PluginProbe, probe_plugin, validate_plugin};

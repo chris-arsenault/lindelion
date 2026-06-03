@@ -33,6 +33,7 @@ pub enum HostError {
 /// A live plugin: its `IComponent` and `IAudioProcessor`, plus the host context kept alive for the
 /// plugin's lifetime. Torn down (deactivate + terminate) on drop.
 pub struct PluginInstance {
+    class_id: TUID,
     component: ComPtr<IComponent>,
     processor: ComPtr<IAudioProcessor>,
     _host: ComPtr<IHostApplication>,
@@ -63,11 +64,17 @@ impl PluginInstance {
                 .ok_or(HostError::MissingAudioProcessor)?;
 
             Ok(PluginInstance {
+                class_id: cid,
                 component,
                 processor,
                 _host: host.clone(),
             })
         }
+    }
+
+    /// The factory class id used to instantiate this plugin's audio component.
+    pub fn class_id(&self) -> TUID {
+        self.class_id
     }
 
     /// The plugin's audio processor.

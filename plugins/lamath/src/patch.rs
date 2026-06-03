@@ -32,8 +32,13 @@ pub struct ResonatorSynthPatch {
     pub note_detection: AudioNoteDetectionConfig,
     #[serde(default)]
     pub live_excitation: LiveExcitationConfig,
+    /// Physical driver for resonator A (the waveguide path; Modal/Mesh ignore it).
     #[serde(default)]
     pub driver: DriverConfig,
+    /// Physical driver for resonator B. Per-resonator so a Tube in one slot can force its
+    /// reed wind driver without converting a co-resident non-Tube waveguide (ADR-0032).
+    #[serde(default)]
+    pub driver_b: DriverConfig,
     #[serde(default)]
     pub contact: ContactConfig,
     #[serde(default)]
@@ -62,6 +67,7 @@ impl Default for ResonatorSynthPatch {
             note_detection: AudioNoteDetectionConfig::default(),
             live_excitation: LiveExcitationConfig::default(),
             driver: DriverConfig::default(),
+            driver_b: DriverConfig::default(),
             contact: ContactConfig::default(),
             surrounding: SurroundingConfig::default(),
             shared_body: SharedBodyConfig::default(),
@@ -76,6 +82,21 @@ impl ResonatorSynthPatch {
             self.resonator_a,
             self.resonator_b,
         );
+    }
+
+    /// A Tube bore is a wind resonator: it sounds only when continuously reed-driven, so a
+    /// struck/impulse driver (Sample/Pick) or the Bow on a Tube renders silence. Force any
+    /// non-reed driver on a Tube resonator to the reed wind driver, per slot, so a co-resident
+    /// non-Tube waveguide keeps its own driver (ADR-0032). Idempotent.
+    pub(crate) fn normalize_drivers_for_resonator_models(&mut self) {
+        self.driver = wind_normalized_driver(self.resonator_a, self.driver);
+        self.driver_b = wind_normalized_driver(self.resonator_b, self.driver_b);
+        // A reed-driven Tube is a monophonic wind voice: a clarinet plays one note at a time, and
+        // articulation is how it *changes* notes (tongue/legato/slur), not overlapping voices. Force
+        // single-voice so note changes steal the one voice instead of stacking (ADR-0032).
+        if resonator_is_tube(self.resonator_a) || resonator_is_tube(self.resonator_b) {
+            self.polyphony = 1;
+        }
     }
 }
 
@@ -281,6 +302,11 @@ impl Default for MeshConfig {
             cent_offset: 0.0,
             material: 0.5,
             size: 0.5,
+            // 0.3 matches the host-parameter default (registry id 132/137). It used
+            // to ship a ~50 ms thud because the boundary-damping *range* was
+            // degenerate over most of the control; the fix is the re-ranged
+            // `boundary_damping_loss` map (`mesh_2d/runtime.rs`), where 0.3 is a
+            // ~1.8 s metallic-shimmer ring (LAMATH-RENDER-FIXES P2).
             damping: 0.3,
             tension: 0.5,
             position_of_strike: STRIKE_POSITION.default,
@@ -365,6 +391,29 @@ pub enum ResonatorRouting {
     Parallel { mix_a: f32, mix_b: f32 },
     Series { mix_a: f32, mix_b: f32 },
     BodyColor { mix_a: f32, mix_b: f32 },
+}
+
+/// Force a non-reed driver on a Tube resonator to the reed wind driver; leave every other
+/// resonator/driver pair untouched (ADR-0032).
+pub(crate) fn wind_normalized_driver(
+    resonator: ResonatorConfig,
+    driver: DriverConfig,
+) -> DriverConfig {
+    if resonator_is_tube(resonator) && !matches!(driver, DriverConfig::Reed(_)) {
+        DriverConfig::Reed(ReedConfig::default())
+    } else {
+        driver
+    }
+}
+
+fn resonator_is_tube(resonator: ResonatorConfig) -> bool {
+    matches!(
+        resonator,
+        ResonatorConfig::Waveguide(WaveguideConfig {
+            style: WaveguideStyle::Tube,
+            ..
+        })
+    )
 }
 
 pub(crate) fn normalize_routing_for_resonator_models(

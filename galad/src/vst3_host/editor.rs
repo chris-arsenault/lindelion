@@ -25,6 +25,7 @@ struct OpenEditor {
 pub struct EditorHost {
     host: ComPtr<IHostApplication>,
     editors: Vec<OpenEditor>,
+    quit_on_last_close: bool,
 }
 
 impl EditorHost {
@@ -35,22 +36,47 @@ impl EditorHost {
                 .to_com_ptr::<IHostApplication>()
                 .expect("host exposes IHostApplication"),
             editors: Vec::new(),
+            quit_on_last_close: false,
+        }
+    }
+
+    /// A new editor host whose message loop exits when its last editor window closes.
+    pub fn with_quit_on_last_close() -> Self {
+        EditorHost {
+            quit_on_last_close: true,
+            ..Self::new()
         }
     }
 
     /// Load the plugin at `path` and open its editor window.
     pub fn open(&mut self, path: &Path) -> Result<(), HostError> {
+        crate::diagnostics::log(format!("editor-host: open begin path={}", path.display()));
+        crate::diagnostics::log("editor-host: load_module begin");
         let module = load_module(path)?;
+        crate::diagnostics::log("editor-host: load_module done");
+        crate::diagnostics::log("editor-host: PluginInstance::from_factory begin");
         let instance = PluginInstance::from_factory(module.factory(), &self.host)?;
-        let controller = EditorController::new(module.factory(), instance.component(), &self.host)?;
+        crate::diagnostics::log("editor-host: PluginInstance::from_factory done");
+        crate::diagnostics::log("editor-host: EditorController::new begin");
+        let controller = EditorController::new(module.factory(), &instance, &self.host)?;
+        crate::diagnostics::log("editor-host: EditorController::new done");
+        crate::diagnostics::log("editor-host: create_view begin");
         let view = controller.create_view().ok_or(HostError::NoController)?;
-        let window = EditorWindow::open(view, &path.display().to_string())?;
+        crate::diagnostics::log("editor-host: create_view done");
+        crate::diagnostics::log("editor-host: EditorWindow::open begin");
+        let window =
+            EditorWindow::open(view, &path.display().to_string(), self.quit_on_last_close)?;
+        crate::diagnostics::log("editor-host: EditorWindow::open done");
         self.editors.push(OpenEditor {
             window,
             _controller: controller,
             _instance: instance,
             _module: module,
         });
+        crate::diagnostics::log(format!(
+            "editor-host: open done editors={}",
+            self.editors.len()
+        ));
         Ok(())
     }
 

@@ -54,7 +54,7 @@ macro_rules! source_body_case_spec {
     };
 }
 
-pub(super) const DRIVER_CASE_SPECS: [CatalogCaseSpec; 8] = [
+pub(super) const DRIVER_CASE_SPECS: [CatalogCaseSpec; 7] = [
     driver_case_spec!(
         "driver_string_sample_c4_v100",
         "Driver String Sample C4 Velocity 100",
@@ -96,14 +96,6 @@ pub(super) const DRIVER_CASE_SPECS: [CatalogCaseSpec; 8] = [
         BowScratch
     ),
     driver_case_spec!(
-        "driver_tube_sample_c4_v100",
-        "Driver Tube Sample C4 Velocity 100",
-        "03_drivers/driver_tube_sample_c4_v100.wav",
-        ["drivers", "tube", "sample", "C4", "velocity-100"],
-        Tube,
-        Sample
-    ),
-    driver_case_spec!(
         "driver_tube_reed_soft_c4_v100",
         "Driver Tube Reed Soft C4 Velocity 100",
         "03_drivers/driver_tube_reed_soft_c4_v100.wav",
@@ -121,7 +113,10 @@ pub(super) const DRIVER_CASE_SPECS: [CatalogCaseSpec; 8] = [
     ),
 ];
 
-pub(super) const CONTACT_CASE_SPECS: [CatalogCaseSpec; 8] = [
+// Contact (strike-onset) shaping applies only to the struck/strike-injected drivers. The Tube
+// is reed-driven and terminates the mouth, so the contact stage is bypassed for it (ADR-0032) —
+// hence the Tube has no contact cases (they would all render identically).
+pub(super) const CONTACT_CASE_SPECS: [CatalogCaseSpec; 4] = [
     contact_case_spec!(
         "contact_string_tight_short_c4_v100",
         "Contact String Tight Short C4 Velocity 100",
@@ -152,38 +147,6 @@ pub(super) const CONTACT_CASE_SPECS: [CatalogCaseSpec; 8] = [
         "04_contact/contact_string_wide_long_c4_v100.wav",
         ["contact", "string", "wide", "long", "C4", "velocity-100"],
         String,
-        WideLong
-    ),
-    contact_case_spec!(
-        "contact_tube_tight_short_c4_v100",
-        "Contact Tube Tight Short C4 Velocity 100",
-        "04_contact/contact_tube_tight_short_c4_v100.wav",
-        ["contact", "tube", "tight", "short", "C4", "velocity-100"],
-        Tube,
-        TightShort
-    ),
-    contact_case_spec!(
-        "contact_tube_tight_long_c4_v100",
-        "Contact Tube Tight Long C4 Velocity 100",
-        "04_contact/contact_tube_tight_long_c4_v100.wav",
-        ["contact", "tube", "tight", "long", "C4", "velocity-100"],
-        Tube,
-        TightLong
-    ),
-    contact_case_spec!(
-        "contact_tube_wide_short_c4_v100",
-        "Contact Tube Wide Short C4 Velocity 100",
-        "04_contact/contact_tube_wide_short_c4_v100.wav",
-        ["contact", "tube", "wide", "short", "C4", "velocity-100"],
-        Tube,
-        WideShort
-    ),
-    contact_case_spec!(
-        "contact_tube_wide_long_c4_v100",
-        "Contact Tube Wide Long C4 Velocity 100",
-        "04_contact/contact_tube_wide_long_c4_v100.wav",
-        ["contact", "tube", "wide", "long", "C4", "velocity-100"],
-        Tube,
         WideLong
     ),
 ];

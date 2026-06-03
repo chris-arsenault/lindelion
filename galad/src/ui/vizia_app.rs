@@ -2,9 +2,9 @@
 //! Steps 6–7). Windows-only. The neutral `HostUiState`/`UiCommand` (Steps 3–4, Linux-tested) are the
 //! source of truth; the `Model` wraps a `HostUiState` and mirrors its bindable parts into reactive
 //! `Signal`s the views read. The **controller** (`Runtime`, folded into the `Model`) owns the live
-//! `AudioEngine` (M2/M3), the `EditorHost` (M5), and the loaded `.vst3` modules, and executes the
-//! effectful commands: start/stop, live chain edits republished through the M3 `Handoff`, plugin
-//! editors, and session save/load (M4). A Vizia timer ticks the meters off the audio thread.
+//! `AudioEngine` (M2/M3) and the loaded `.vst3` modules, and executes the effectful commands:
+//! start/stop, live chain edits republished through the M3 `Handoff`, plugin editors, and session
+//! save/load (M4). A Vizia timer ticks the meters off the audio thread.
 //!
 //! The chain is prepared at the **input device's actual sample rate** (`device_sample_rate`) — the
 //! host declares the true rate to plugins via `setupProcessing` and never resamples; input and output
@@ -17,17 +17,18 @@
 //! parameters and transient DSP state survive; session save/load round-trip the opaque state (M4).
 
 use std::collections::BTreeMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
 
 use vizia::icons::{
-    ICON_ADJUSTMENTS, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_DEVICE_FLOPPY, ICON_FOLDER,
-    ICON_FOLDER_PLUS, ICON_PLAYER_PLAY, ICON_PLAYER_STOP, ICON_PLUS, ICON_POWER, ICON_REFRESH,
-    ICON_TRASH, ICON_VOLUME, ICON_X,
+    ICON_ADJUSTMENTS, ICON_CHEVRON_DOWN, ICON_CHEVRON_RIGHT, ICON_CHEVRON_UP, ICON_DEVICE_FLOPPY,
+    ICON_FOLDER, ICON_FOLDER_PLUS, ICON_PLAYER_PLAY, ICON_PLAYER_STOP, ICON_PLUS, ICON_POWER,
+    ICON_REFRESH, ICON_SETTINGS, ICON_TRASH, ICON_VOLUME, ICON_X,
 };
 use vizia::prelude::*;
 use vst3::ComPtr;
@@ -40,10 +41,13 @@ use crate::audio::{
 use crate::diagnostics;
 use crate::session::{AppSettings, DeviceRef, HostSession};
 use crate::ui::command::{UiCommand, apply};
-use crate::ui::state::{Dir, HostUiState, MASTER_GAIN_MAX_DB, MASTER_GAIN_MIN_DB, PluginCatalog};
+use crate::ui::layout::{ADD_PLUGIN_PANEL, ADD_PLUGIN_TREE};
+use crate::ui::state::{
+    CatalogProbe, Dir, HostUiState, MASTER_GAIN_MAX_DB, MASTER_GAIN_MIN_DB, PluginCatalog,
+};
 use crate::vst3_host::{
     ChainProcessor, EditorHost, HostContext, HostError, PluginInstance, PoolSlot, ProcessDriver,
-    SessionSlot, capture_session, load_module, restore_pool, validate_plugin,
+    SessionSlot, capture_session, load_module, probe_plugin, restore_pool, validate_plugin,
 };
 
 const STYLE: &str = r#"
@@ -78,6 +82,12 @@ const STYLE: &str = r#"
     }
 
     .wordmark { color: #f1f6f2; font-size: 17px; }
+
+    .window-tag {
+        color: #7c8883;
+        font-size: 9px;
+        text-overflow: ellipsis;
+    }
 
     .brand-mark {
         background-color: #59b6d8;
@@ -184,10 +194,10 @@ const STYLE: &str = r#"
         background-color: #181e20;
         border-width: 1px;
         border-color: #36444a;
-        corner-radius: 9px;
+        corner-radius: 6px;
     }
 
-    .modal-title { color: #f1f6f2; font-size: 14px; }
+    .modal-title { color: #f1f6f2; font-size: 12px; }
 
     .overlay-layer { display: none; }
     .overlay-layer.is-open { display: flex; }
@@ -304,23 +314,83 @@ const STYLE: &str = r#"
     .dot.is-ok { background-color: #7ed06d; }
     .dot.is-error { background-color: #ef6f88; }
 
-    .vendor-header {
-        color: #8fb6c9;
-        font-size: 9px;
-        padding-left: 2px;
-        padding-top: 4px;
-    }
-
-    .browse-row {
-        background-color: #1b2225;
+    .plugin-browser-tree {
+        background-color: #101517;
         border-width: 1px;
         border-color: #2a3336;
-        corner-radius: 5px;
-        padding-left: 8px;
-        padding-right: 8px;
     }
 
-    .browse-row.is-compatible:hover { border-color: #59b6d8; }
+    .vendor-header {
+        background-color: #151b1d;
+        border-width: 0px;
+        border-color: #263035;
+        corner-radius: 0px;
+        alignment: left;
+    }
+
+    .vendor-header:hover { background-color: #1b262a; }
+
+    .vendor-header label {
+        color: #a6b2ad;
+        font-size: 10px;
+        text-overflow: ellipsis;
+    }
+
+    .vendor-count {
+        color: #66736e;
+        font-size: 9px;
+        alignment: center;
+    }
+
+    .tree-caret {
+        color: #788680;
+        fill: #788680;
+    }
+
+    .plugin-tree-row {
+        background-color: #101517;
+        border-width: 0px;
+        corner-radius: 0px;
+        alignment: left;
+    }
+
+    .plugin-tree-row:hover { background-color: #1b262a; }
+
+    .plugin-tree-row.is-incompatible {
+        opacity: 0.68;
+    }
+
+    .plugin-tree-name {
+        color: #d7e0db;
+        font-size: 10px;
+        text-overflow: ellipsis;
+    }
+
+    .plugin-tree-row.is-incompatible .plugin-tree-name {
+        color: #9caaa4;
+    }
+
+    .plugin-tree-reason {
+        color: #c9a06a;
+        font-size: 9px;
+        text-overflow: ellipsis;
+    }
+
+    .settings-root {
+        background-color: #111517;
+        padding: 12px;
+    }
+
+    .settings-title {
+        color: #f1f6f2;
+        font-size: 14px;
+    }
+
+    .settings-list {
+        background-color: #101517;
+        border-width: 1px;
+        border-color: #2a3336;
+    }
 
     .folder-row {
         background-color: #1b2225;
@@ -491,6 +561,8 @@ const STYLE: &str = r#"
 /// rate via [`chain_sample_rate`].
 const CHAIN_SAMPLE_RATE_FALLBACK: f64 = 48_000.0;
 const CHAIN_MAX_FRAMES: usize = 4096;
+const GALAD_WINDOW_TAG: &str = "cenedril-spectimer-20260603-1";
+const GALAD_WINDOW_TITLE: &str = "Galad [cenedril-spectimer-20260603-1]";
 
 /// The sample rate to prepare the chain at — the selected input device's actual rate, which is the
 /// rate the engine runs the stream at. Declared to plugins via `setupProcessing`; the host never
@@ -548,6 +620,7 @@ pub struct Signals {
     pub selected_output_index: Signal<Option<usize>>,
     pub chain: Signal<Vec<ChainRow>>,
     pub catalog: Signal<Vec<CatalogRow>>,
+    pub collapsed_catalog_vendors: Signal<Vec<String>>,
     pub scan_folders: Signal<Vec<ScanFolderRow>>,
     pub running: Signal<bool>,
     pub input_left_level: Signal<f32>,
@@ -559,6 +632,8 @@ pub struct Signals {
     pub status: Signal<String>,
     /// Whether the add-plugin browser overlay is open (pure UI state, not part of `HostUiState`).
     pub browser_open: Signal<bool>,
+    /// Whether the separate settings window is open.
+    pub settings_open: Signal<bool>,
 }
 
 impl Signals {
@@ -571,6 +646,7 @@ impl Signals {
             selected_output_index: Signal::new(None),
             chain: Signal::new(Vec::new()),
             catalog: Signal::new(Vec::new()),
+            collapsed_catalog_vendors: Signal::new(Vec::new()),
             scan_folders: Signal::new(Vec::new()),
             running: Signal::new(false),
             input_left_level: Signal::new(0.0),
@@ -581,6 +657,7 @@ impl Signals {
             master_muted: Signal::new(false),
             status: Signal::new("stopped".to_string()),
             browser_open: Signal::new(false),
+            settings_open: Signal::new(false),
         }
     }
 }
@@ -603,6 +680,8 @@ pub enum AppEvent {
     RescanPlugins,
     /// Add a compatible plugin from the scanned catalog by index.
     AddFromCatalog(usize),
+    /// Expand/collapse a vendor group in the add-plugin browser.
+    ToggleCatalogVendor(String),
     SetMasterGain(f32),
     ToggleMasterMute,
     Start,
@@ -613,18 +692,28 @@ pub enum AppEvent {
     OpenBrowser,
     /// Close the add-plugin browser overlay.
     CloseBrowser,
+    /// Open the separate settings window.
+    OpenSettings,
+    /// Mark the separate settings window as closed.
+    CloseSettings,
     /// Meter timer tick — pull the latest snapshot off the audio thread.
     Tick,
 }
 
-/// The controller: the live host runtime the Model drives. Owns the engine, the editor host, and a
-/// **persistent pool of prepared plugin instances** (index-aligned with `HostUiState.chain`). The
+/// Result notifications from detached plugin-editor windows.
+enum EditorEvent {
+    Opened(PathBuf),
+    Failed(PathBuf, HostError),
+    Closed(PathBuf),
+}
+
+/// The controller: the live host runtime the Model drives. Owns the engine and a **persistent pool of
+/// prepared plugin instances** (index-aligned with `HostUiState.chain`). The
 /// instances live for the life of their slot; chain edits rebuild only the *ordering* over them
 /// ([`ChainProcessor`] holds shared `Arc`s), so plugin state is preserved across reorder/bypass.
 struct Runtime {
     host: ComPtr<IHostApplication>,
     engine: Option<AudioEngine>,
-    editor: EditorHost,
     pool: Vec<PoolSlot>,
 }
 
@@ -635,7 +724,6 @@ impl Runtime {
                 .to_com_ptr::<IHostApplication>()
                 .expect("host exposes IHostApplication"),
             engine: None,
-            editor: EditorHost::new(),
             pool: Vec::new(),
         }
     }
@@ -672,6 +760,8 @@ pub struct AppData {
     pub signals: Signals,
     runtime: Runtime,
     catalog_scan: Option<Receiver<PluginCatalog>>,
+    editor_event_tx: Sender<EditorEvent>,
+    editor_event_rx: Receiver<EditorEvent>,
     first_tick_logged: bool,
     /// Meter ticks since launch; drives the low-frequency session autosave safety net.
     tick_count: u64,
@@ -685,11 +775,14 @@ impl AppData {
             state.outputs.len(),
             state.catalog.entries.len()
         ));
+        let (editor_event_tx, editor_event_rx) = channel();
         let mut model = AppData {
             state,
             signals,
             runtime: Runtime::new(),
             catalog_scan: None,
+            editor_event_tx,
+            editor_event_rx,
             first_tick_logged: false,
             tick_count: 0,
         };
@@ -743,7 +836,10 @@ impl AppData {
                 .enumerate()
                 .map(|(index, entry)| CatalogRow {
                     catalog_index: index,
-                    vendor: catalog_vendor(&entry.path, &scan_roots),
+                    vendor: entry
+                        .vendor
+                        .clone()
+                        .unwrap_or_else(|| catalog_vendor(&entry.path, &scan_roots)),
                     name: entry.name.clone(),
                     path: entry.path.display().to_string(),
                     compatible: entry.compatible,
@@ -889,6 +985,17 @@ impl AppData {
         self.refresh_catalog();
     }
 
+    fn toggle_catalog_vendor(&mut self, vendor: &str) {
+        let mut collapsed = self.signals.collapsed_catalog_vendors.get();
+        if let Some(index) = collapsed.iter().position(|name| name == vendor) {
+            collapsed.remove(index);
+        } else {
+            collapsed.push(vendor.to_string());
+            collapsed.sort();
+        }
+        self.signals.collapsed_catalog_vendors.set(collapsed);
+    }
+
     /// Start a background scan of the Windows system VST3 folders plus configured custom folders.
     /// The previous cached catalog remains visible until the scan completes.
     fn refresh_catalog(&mut self) {
@@ -903,8 +1010,24 @@ impl AppData {
                 .into_iter()
                 .map(|path| {
                     diagnostics::log(format!("catalog-scan: validate {}", path.display()));
-                    let result = validate_plugin(&path).map_err(|error| format!("{error:?}"));
-                    (path, result)
+                    let probe = probe_plugin(&path);
+                    diagnostics::log(format!(
+                        "catalog-scan: vendor {}: {}",
+                        path.display(),
+                        probe.vendor.as_deref().unwrap_or("<none>")
+                    ));
+                    let result = probe.validation.map_err(|error| {
+                        diagnostics::log(format!(
+                            "catalog-scan: incompatible {}: {error:?}",
+                            path.display()
+                        ));
+                        host_error_label(&error)
+                    });
+                    CatalogProbe {
+                        path,
+                        vendor: probe.vendor,
+                        result,
+                    }
                 })
                 .collect();
             diagnostics::log("catalog-scan: sending result");
@@ -952,7 +1075,12 @@ impl AppData {
         }
         let path = entry.path.clone();
         if let Err(error) = validate_plugin(&path) {
-            self.fail(format!("rejecting {}: {error:?}", path.display()));
+            diagnostics::log(format!("ui: reject plugin {}: {error:?}", path.display()));
+            self.fail(format!(
+                "could not add {}: {}",
+                plugin_display_name(&path),
+                host_error_label(&error)
+            ));
             return;
         }
         match self.load_into_pool(&path) {
@@ -961,7 +1089,14 @@ impl AppData {
                 self.state.clear_notice();
                 self.republish();
             }
-            Err(error) => self.fail(format!("failed to load {}: {error:?}", path.display())),
+            Err(error) => {
+                diagnostics::log(format!("ui: load plugin {}: {error:?}", path.display()));
+                self.fail(format!(
+                    "could not load {}: {}",
+                    plugin_display_name(&path),
+                    host_error_label(&error)
+                ));
+            }
         }
     }
 
@@ -1010,11 +1145,48 @@ impl AppData {
             return;
         };
         let path = slot.path.clone();
-        if let Err(error) = self.runtime.editor.open(&path) {
-            self.fail(format!(
-                "failed to open editor for {}: {error:?}",
+        diagnostics::log(format!(
+            "ui: open_editor spawn index={index} path={}",
+            path.display()
+        ));
+        self.state
+            .set_notice(format!("opening {} editor...", plugin_display_name(&path)));
+        if let Err(error) = spawn_editor_window(path.clone(), self.editor_event_tx.clone()) {
+            diagnostics::log(format!(
+                "ui: open editor spawn failed {}: {error:?}",
                 path.display()
             ));
+            self.fail(format!(
+                "could not open {} editor",
+                plugin_display_name(&path)
+            ));
+        }
+    }
+
+    fn poll_editor_events(&mut self) {
+        loop {
+            match self.editor_event_rx.try_recv() {
+                Ok(EditorEvent::Opened(path)) => {
+                    diagnostics::log(format!("ui: editor opened {}", path.display()));
+                    self.state.clear_notice();
+                }
+                Ok(EditorEvent::Failed(path, error)) => {
+                    diagnostics::log(format!("ui: open editor {}: {error:?}", path.display()));
+                    self.fail(format!(
+                        "could not open {} editor: {}",
+                        plugin_display_name(&path),
+                        host_error_label(&error)
+                    ));
+                }
+                Ok(EditorEvent::Closed(path)) => {
+                    diagnostics::log(format!("ui: editor closed {}", path.display()));
+                }
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    diagnostics::log("ui: editor event channel disconnected");
+                    return;
+                }
+            }
         }
     }
 
@@ -1148,6 +1320,7 @@ impl AppData {
             self.autosave_session();
         }
         self.poll_catalog_scan();
+        self.poll_editor_events();
         let Some(engine) = &self.runtime.engine else {
             return;
         };
@@ -1161,6 +1334,69 @@ impl AppData {
             self.runtime.engine = None;
         }
     }
+}
+
+fn spawn_editor_window(path: PathBuf, event_tx: Sender<EditorEvent>) -> std::io::Result<()> {
+    thread::Builder::new()
+        .name("galad-plugin-editor".to_string())
+        .spawn(move || {
+            diagnostics::log(format!("editor-thread: start path={}", path.display()));
+            let result = catch_unwind(AssertUnwindSafe(|| run_editor_window(&path, &event_tx)));
+            match result {
+                Ok(Ok(())) => {
+                    diagnostics::log(format!("editor-thread: closed path={}", path.display()));
+                    let _ = event_tx.send(EditorEvent::Closed(path));
+                }
+                Ok(Err(error)) => {
+                    diagnostics::log(format!(
+                        "editor-thread: failed path={} error={error:?}",
+                        path.display()
+                    ));
+                    let _ = event_tx.send(EditorEvent::Failed(path, error));
+                }
+                Err(payload) => {
+                    let panic = if let Some(message) = payload.downcast_ref::<&str>() {
+                        (*message).to_string()
+                    } else if let Some(message) = payload.downcast_ref::<String>() {
+                        message.clone()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    diagnostics::log(format!(
+                        "editor-thread: panic path={} panic={panic}",
+                        path.display()
+                    ));
+                    let _ = event_tx.send(EditorEvent::Failed(
+                        path,
+                        HostError::EditorWindow(format!("editor thread panic: {panic}")),
+                    ));
+                }
+            }
+            diagnostics::log("editor-thread: exit");
+        })
+        .map(|_| ())
+}
+
+fn run_editor_window(path: &Path, event_tx: &Sender<EditorEvent>) -> Result<(), HostError> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, MSG, TranslateMessage,
+    };
+
+    let mut host = EditorHost::with_quit_on_last_close();
+    host.open(path)?;
+    let _ = event_tx.send(EditorEvent::Opened(path.to_path_buf()));
+
+    diagnostics::log("editor-thread: message loop begin");
+    unsafe {
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+            host.apply_resizes();
+        }
+    }
+    diagnostics::log("editor-thread: message loop end");
+    Ok(())
 }
 
 impl Model for AppData {
@@ -1216,6 +1452,7 @@ impl Model for AppData {
                     // Adding from the browser dismisses the overlay.
                     self.signals.browser_open.set(false);
                 }
+                AppEvent::ToggleCatalogVendor(vendor) => self.toggle_catalog_vendor(vendor),
                 AppEvent::SetMasterGain(gain_db) => self.set_master_gain(*gain_db),
                 AppEvent::ToggleMasterMute => self.toggle_master_mute(),
                 AppEvent::Start => self.start_engine(),
@@ -1228,6 +1465,12 @@ impl Model for AppData {
                     self.signals.browser_open.set(true);
                 }
                 AppEvent::CloseBrowser => self.signals.browser_open.set(false),
+                AppEvent::OpenSettings => {
+                    if !self.signals.settings_open.get() {
+                        self.signals.settings_open.set(true);
+                    }
+                }
+                AppEvent::CloseSettings => self.signals.settings_open.set(false),
                 AppEvent::Tick => self.tick(),
             }
             self.sync();
@@ -1333,7 +1576,7 @@ pub fn run() {
             diagnostics::log_window_probe("second-on-idle");
         }
     })
-    .title("Galad")
+    .title(GALAD_WINDOW_TITLE)
     .inner_size((1120u32, 720u32))
     .min_inner_size(Some((900u32, 600u32)));
 
@@ -1359,6 +1602,7 @@ pub fn build_ui(cx: &mut Context, signals: Signals) {
         // (toggled by `browser_open`). Building it conditionally inside a `Binding` collapses it to a
         // zero-size node, so the modal would never appear — hence the always-present layer.
         browser_overlay(cx, signals);
+        settings_window_host(cx, signals);
     })
     .class("root")
     .width(Stretch(1.0))
@@ -1437,6 +1681,7 @@ fn top_strip(cx: &mut Context, signals: Signals) {
     HStack::new(cx, move |cx| {
         Element::new(cx).class("brand-mark");
         Label::new(cx, "Galad").class("wordmark");
+        Label::new(cx, GALAD_WINDOW_TAG).class("window-tag");
         Label::new(
             cx,
             Memo::new(move |_| {
@@ -1475,32 +1720,21 @@ fn top_strip(cx: &mut Context, signals: Signals) {
             .width(Stretch(1.0))
             .min_width(Pixels(0.0));
 
-        Button::new(cx, |cx| {
-            HStack::new(cx, |cx| {
-                Svg::new(cx, ICON_FOLDER).class("btn-icon");
-                Label::new(cx, "Open");
-            })
-            .width(Auto)
-            .alignment(Alignment::Center)
-            .horizontal_gap(Pixels(6.0))
-        })
-        .on_press(|cx| cx.emit(AppEvent::Load))
-        .class("tool-button")
-        .width(Pixels(80.0))
-        .height(Pixels(30.0));
-        Button::new(cx, |cx| {
-            HStack::new(cx, |cx| {
-                Svg::new(cx, ICON_DEVICE_FLOPPY).class("btn-icon");
-                Label::new(cx, "Save");
-            })
-            .width(Auto)
-            .alignment(Alignment::Center)
-            .horizontal_gap(Pixels(6.0))
-        })
-        .on_press(|cx| cx.emit(AppEvent::Save))
-        .class("tool-button")
-        .width(Pixels(80.0))
-        .height(Pixels(30.0));
+        icon_button(cx, ICON_FOLDER)
+            .class("tool-button")
+            .width(Pixels(32.0))
+            .height(Pixels(30.0))
+            .on_press(|cx| cx.emit(AppEvent::Load));
+        icon_button(cx, ICON_DEVICE_FLOPPY)
+            .class("tool-button")
+            .width(Pixels(32.0))
+            .height(Pixels(30.0))
+            .on_press(|cx| cx.emit(AppEvent::Save));
+        icon_button(cx, ICON_SETTINGS)
+            .class("tool-button")
+            .width(Pixels(32.0))
+            .height(Pixels(30.0))
+            .on_press(|cx| cx.emit(AppEvent::OpenSettings));
     })
     .class("top-strip")
     .height(Pixels(46.0))
@@ -1797,8 +2031,7 @@ fn meter(cx: &mut Context, label: &'static str, level: Signal<f32>) {
     .horizontal_gap(Pixels(6.0));
 }
 
-/// The add-plugin browser overlay: a dimmed backdrop (click to dismiss) under a centered modal with
-/// the vendor-grouped catalog and a scan-folders footer.
+/// The add-plugin browser overlay: a dimmed backdrop (click to dismiss) under a compact plugin tree.
 fn browser_overlay(cx: &mut Context, signals: Signals) {
     ZStack::new(cx, move |cx| {
         Button::new(cx, |cx| Element::new(cx))
@@ -1806,17 +2039,17 @@ fn browser_overlay(cx: &mut Context, signals: Signals) {
             .class("backdrop")
             .width(Stretch(1.0))
             .height(Stretch(1.0));
-        modal_panel(cx, signals);
+        add_plugin_window(cx, signals);
     })
     .class("overlay-layer")
     .toggle_class("is-open", signals.browser_open)
     .width(Stretch(1.0))
     .height(Stretch(1.0))
-    .alignment(Alignment::Center);
+    .alignment(Alignment::TopLeft);
 }
 
-/// The centered browser modal.
-fn modal_panel(cx: &mut Context, signals: Signals) {
+/// The compact add-plugin browser.
+fn add_plugin_window(cx: &mut Context, signals: Signals) {
     VStack::new(cx, move |cx| {
         HStack::new(cx, move |cx| {
             Element::new(cx).class("accent-bar").class("accent-tone");
@@ -1830,60 +2063,89 @@ fn modal_panel(cx: &mut Context, signals: Signals) {
             )
             .class("section-sub");
             icon_button(cx, ICON_REFRESH)
-                .width(Pixels(28.0))
-                .height(Pixels(26.0))
+                .width(Pixels(24.0))
+                .height(Pixels(22.0))
                 .on_press(|cx| cx.emit(AppEvent::RescanPlugins));
             icon_button(cx, ICON_X)
-                .width(Pixels(28.0))
-                .height(Pixels(26.0))
+                .width(Pixels(24.0))
+                .height(Pixels(22.0))
                 .on_press(|cx| cx.emit(AppEvent::CloseBrowser));
         })
-        .height(Pixels(30.0))
+        .height(Pixels(ADD_PLUGIN_PANEL.header_height()))
         .width(Stretch(1.0))
         .alignment(Alignment::Center)
-        .horizontal_gap(Pixels(8.0));
+        .horizontal_gap(Pixels(6.0));
 
         divider(cx);
 
         ScrollView::new(cx, move |cx| {
-            let catalog = signals.catalog;
-            Binding::new(cx, catalog, move |cx| {
-                let rows = catalog.get();
-                if rows.is_empty() {
-                    Label::new(
-                        cx,
-                        "No plugins found. Add a scan folder below, then Rescan.",
-                    )
-                    .class("muted");
-                    return;
-                }
-                VStack::new(cx, move |cx| {
-                    for group in catalog_groups(rows) {
-                        Label::new(cx, group.vendor)
-                            .class("vendor-header")
-                            .width(Stretch(1.0))
-                            .min_width(Pixels(0.0));
-                        for row in group.rows {
-                            catalog_row(cx, row);
-                        }
+            Binding::new(cx, signals.catalog, move |cx| {
+                Binding::new(cx, signals.collapsed_catalog_vendors, move |cx| {
+                    let rows = signals.catalog.get();
+                    if rows.is_empty() {
+                        Label::new(
+                            cx,
+                            "No plugins found. Add a scan folder below, then Rescan.",
+                        )
+                        .class("muted");
+                        return;
                     }
-                })
-                .width(Stretch(1.0))
-                .vertical_gap(Pixels(3.0));
+                    let collapsed = signals.collapsed_catalog_vendors.get();
+                    VStack::new(cx, move |cx| {
+                        Element::new(cx)
+                            .width(Stretch(1.0))
+                            .height(Pixels(ADD_PLUGIN_TREE.top_inset()));
+                        for group in catalog_groups(rows) {
+                            let collapsed = collapsed.iter().any(|vendor| vendor == &group.vendor);
+                            catalog_group(cx, group, collapsed);
+                        }
+                    })
+                    .width(Pixels(ADD_PLUGIN_PANEL.row_stack_width()))
+                    .vertical_gap(Pixels(0.0));
+                });
             });
         })
+        .class("plugin-browser-tree")
+        .class("catalog-scroll")
         .class("v-scroll")
         .show_horizontal_scrollbar(false)
         .show_vertical_scrollbar(true)
         .width(Stretch(1.0))
-        .height(Stretch(1.0));
+        .height(Pixels(ADD_PLUGIN_PANEL.viewport_height()));
+    })
+    .class("modal")
+    .position_type(PositionType::Absolute)
+    .left(Pixels(18.0))
+    .top(Pixels(18.0))
+    .width(Pixels(ADD_PLUGIN_PANEL.outer_width()))
+    .height(Pixels(ADD_PLUGIN_PANEL.outer_height()))
+    .padding(Pixels(ADD_PLUGIN_PANEL.frame.padding))
+    .vertical_gap(Pixels(ADD_PLUGIN_PANEL.frame.vertical_gap));
+}
 
-        divider(cx);
+/// Creates the separate settings HWND while `signals.settings_open` is true.
+fn settings_window_host(cx: &mut Context, signals: Signals) {
+    Binding::new(cx, signals.settings_open, move |cx| {
+        if signals.settings_open.get() {
+            Window::new(cx, move |cx| {
+                scan_folder_settings(cx, signals);
+            })
+            .on_close(|cx| cx.emit(AppEvent::CloseSettings))
+            .title("Galad Settings")
+            .inner_size((480, 320))
+            .min_inner_size(Some((420, 280)))
+            .anchor(Anchor::Center);
+        }
+    });
+}
 
+/// General settings content. Currently it only manages VST3 scan folders.
+fn scan_folder_settings(cx: &mut Context, signals: Signals) {
+    VStack::new(cx, move |cx| {
         HStack::new(cx, move |cx| {
             Element::new(cx).class("accent-bar").class("accent-warn");
-            Label::new(cx, "SCAN FOLDERS")
-                .class("section-title")
+            Label::new(cx, "Plugin Folders")
+                .class("settings-title")
                 .width(Stretch(1.0))
                 .min_width(Pixels(0.0));
             Label::new(
@@ -1896,7 +2158,7 @@ fn modal_panel(cx: &mut Context, signals: Signals) {
                 .height(Pixels(26.0))
                 .on_press(|cx| cx.emit(AppEvent::AddScanFolder));
         })
-        .height(Pixels(28.0))
+        .height(Pixels(30.0))
         .width(Stretch(1.0))
         .alignment(Alignment::Center)
         .horizontal_gap(Pixels(8.0));
@@ -1918,21 +2180,68 @@ fn modal_panel(cx: &mut Context, signals: Signals) {
                 .vertical_gap(Pixels(4.0));
             });
         })
+        .class("settings-list")
         .class("v-scroll")
         .show_horizontal_scrollbar(false)
         .show_vertical_scrollbar(true)
         .width(Stretch(1.0))
-        .height(Pixels(110.0));
+        .height(Stretch(1.0));
     })
-    .class("modal")
-    .width(Pixels(560.0))
-    .height(Percentage(82.0))
-    .padding(Pixels(14.0))
+    .class("settings-root")
+    .width(Stretch(1.0))
+    .height(Stretch(1.0))
     .vertical_gap(Pixels(10.0));
 }
 
-/// One scanned plugin: status dot, name, and an Add button — or the failure reason if incompatible.
-/// Dense single-line rows; the file path is intentionally omitted (the vendor group conveys it).
+/// One expandable vendor node in the scanned-plugin tree.
+fn catalog_group(cx: &mut Context, group: CatalogGroup, collapsed: bool) {
+    let CatalogGroup { vendor, rows } = group;
+    let total = rows.len();
+    let compatible = rows.iter().filter(|row| row.compatible).count();
+    let icon = if collapsed {
+        ICON_CHEVRON_RIGHT
+    } else {
+        ICON_CHEVRON_DOWN
+    };
+    let label = vendor.clone();
+    let event_vendor = vendor;
+    Button::new(cx, move |cx| {
+        HStack::new(cx, move |cx| {
+            Element::new(cx)
+                .width(Pixels(ADD_PLUGIN_TREE.row_padding_left))
+                .height(Stretch(1.0));
+            Svg::new(cx, icon)
+                .class("tree-caret")
+                .width(Pixels(ADD_PLUGIN_TREE.caret_size))
+                .height(Pixels(ADD_PLUGIN_TREE.caret_size));
+            Label::new(cx, label.clone())
+                .class("vendor-name")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
+            Label::new(cx, format!("{compatible}/{total}")).class("vendor-count");
+            Element::new(cx)
+                .width(Pixels(ADD_PLUGIN_TREE.row_padding_right))
+                .height(Stretch(1.0));
+        })
+        .width(Stretch(1.0))
+        .height(Stretch(1.0))
+        .alignment(Alignment::Center)
+        .horizontal_gap(Pixels(ADD_PLUGIN_TREE.item_gap))
+    })
+    .class("vendor-header")
+    .height(Pixels(ADD_PLUGIN_TREE.vendor_row_height))
+    .width(Stretch(1.0))
+    .on_press(move |cx| cx.emit(AppEvent::ToggleCatalogVendor(event_vendor.clone())));
+
+    if !collapsed {
+        for row in rows {
+            catalog_row(cx, row);
+        }
+    }
+}
+
+/// One scanned plugin: a full-width tree row. Compatible rows add on click; incompatible rows show
+/// the short failure reason.
 fn catalog_row(cx: &mut Context, row: CatalogRow) {
     let index = row.catalog_index;
     let compatible = row.compatible;
@@ -1944,34 +2253,57 @@ fn catalog_row(cx: &mut Context, row: CatalogRow) {
     } else {
         row.detail
     };
-    HStack::new(cx, move |cx| {
-        Element::new(cx)
-            .class("dot")
-            .toggle_class("is-ok", compatible)
-            .toggle_class("is-error", !compatible);
-        Label::new(cx, name.clone())
-            .class("row-name")
+    if compatible {
+        Button::new(cx, move |cx| {
+            HStack::new(cx, move |cx| {
+                Element::new(cx)
+                    .width(Pixels(ADD_PLUGIN_TREE.row_padding_left))
+                    .height(Stretch(1.0));
+                Element::new(cx)
+                    .width(Pixels(ADD_PLUGIN_TREE.plugin_indent))
+                    .height(Stretch(1.0));
+                Label::new(cx, name.clone())
+                    .class("plugin-tree-name")
+                    .width(Stretch(1.0))
+                    .min_width(Pixels(0.0));
+                Element::new(cx)
+                    .width(Pixels(ADD_PLUGIN_TREE.row_padding_right))
+                    .height(Stretch(1.0));
+            })
             .width(Stretch(1.0))
-            .min_width(Pixels(0.0));
-        if compatible {
-            icon_button(cx, ICON_PLUS)
-                .class("add")
-                .width(Pixels(26.0))
-                .height(Pixels(24.0))
-                .on_press(move |cx| cx.emit(AppEvent::AddFromCatalog(index)));
-        } else {
+            .height(Stretch(1.0))
+            .alignment(Alignment::Center)
+        })
+        .class("plugin-tree-row")
+        .height(Pixels(ADD_PLUGIN_TREE.plugin_row_height))
+        .width(Stretch(1.0))
+        .on_press(move |cx| cx.emit(AppEvent::AddFromCatalog(index)));
+    } else {
+        HStack::new(cx, move |cx| {
+            Element::new(cx)
+                .width(Pixels(ADD_PLUGIN_TREE.row_padding_left))
+                .height(Stretch(1.0));
+            Element::new(cx)
+                .width(Pixels(ADD_PLUGIN_TREE.plugin_indent))
+                .height(Stretch(1.0));
+            Label::new(cx, name.clone())
+                .class("plugin-tree-name")
+                .width(Stretch(1.0))
+                .min_width(Pixels(0.0));
             Label::new(cx, reason.clone())
-                .class("row-reason")
+                .class("plugin-tree-reason")
                 .width(Auto)
                 .min_width(Pixels(0.0));
-        }
-    })
-    .class("browse-row")
-    .toggle_class("is-compatible", compatible)
-    .height(Pixels(28.0))
-    .width(Stretch(1.0))
-    .alignment(Alignment::Center)
-    .horizontal_gap(Pixels(7.0));
+            Element::new(cx)
+                .width(Pixels(ADD_PLUGIN_TREE.row_padding_right))
+                .height(Stretch(1.0));
+        })
+        .class("plugin-tree-row")
+        .class("is-incompatible")
+        .height(Pixels(ADD_PLUGIN_TREE.plugin_row_height))
+        .width(Stretch(1.0))
+        .alignment(Alignment::Center);
+    }
 }
 
 /// One scan-folder row: folder icon, name + path (clipped), a SYS/USR chip, and remove for custom.
@@ -2108,6 +2440,27 @@ fn selected_device_index(devices: &[DeviceRef], selected: &Option<DeviceRef>) ->
     selected
         .as_ref()
         .and_then(|selected| devices.iter().position(|device| device == selected))
+}
+
+fn plugin_display_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plugin")
+        .to_string()
+}
+
+fn host_error_label(error: &HostError) -> String {
+    match error {
+        HostError::NoAudioClass => "no audio processor class".to_string(),
+        HostError::CreateInstanceFailed(_) => "could not create plugin instance".to_string(),
+        HostError::MissingAudioProcessor => "missing audio processor interface".to_string(),
+        HostError::SetupFailed(step) => format!("setup failed at {step}"),
+        HostError::ProcessFailed(_) => "validation process failed".to_string(),
+        HostError::ModuleLoad(_) => "module load failed".to_string(),
+        HostError::NoController => "no editor controller".to_string(),
+        HostError::EditorUnsupported => "editor does not support HWND".to_string(),
+        HostError::EditorWindow(_) => "editor window failed".to_string(),
+    }
 }
 
 // --- Native file dialogs (Windows IFileDialog via rfd) -----------------------------------------

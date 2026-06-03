@@ -7,6 +7,54 @@ fn default_patch_uses_transparent_sample_driver() {
 }
 
 #[test]
+fn tube_resonator_forces_reed_driver_per_slot() {
+    // ADR-0032: a Tube is a wind resonator — a struck/impulse driver (Sample/Pick) or the Bow
+    // on a Tube renders silence, so any non-reed driver on a Tube normalizes to the reed wind
+    // driver. The driver is per-resonator, so a co-resident non-Tube waveguide keeps its own.
+    let tube = ResonatorConfig::Waveguide(WaveguideConfig {
+        style: WaveguideStyle::Tube,
+        ..WaveguideConfig::default()
+    });
+    let string = ResonatorConfig::Waveguide(WaveguideConfig {
+        style: WaveguideStyle::String,
+        ..WaveguideConfig::default()
+    });
+
+    // Every struck driver on a Tube becomes Reed; an existing Reed is left as-is.
+    for struck in [
+        DriverConfig::Sample,
+        DriverConfig::Pick(PickConfig::default()),
+        DriverConfig::Bow(BowConfig::default()),
+    ] {
+        assert!(matches!(
+            wind_normalized_driver(tube, struck),
+            DriverConfig::Reed(_)
+        ));
+    }
+    let reed = DriverConfig::Reed(ReedConfig::default());
+    assert_eq!(wind_normalized_driver(tube, reed), reed);
+
+    // Non-Tube resonators keep their driver untouched.
+    assert_eq!(
+        wind_normalized_driver(string, DriverConfig::Sample),
+        DriverConfig::Sample
+    );
+
+    // Per-slot on a whole patch: Tube in A forces driver A to Reed; co-resident String in B
+    // keeps its Sample driver.
+    let mut patch = ResonatorSynthPatch {
+        resonator_a: tube,
+        resonator_b: string,
+        driver: DriverConfig::Sample,
+        driver_b: DriverConfig::Sample,
+        ..ResonatorSynthPatch::default()
+    };
+    patch.normalize_drivers_for_resonator_models();
+    assert!(matches!(patch.driver, DriverConfig::Reed(_)));
+    assert_eq!(patch.driver_b, DriverConfig::Sample);
+}
+
+#[test]
 fn default_shared_body_is_off_with_bottom_octave_damp_range() {
     // M0: shared-body mode ships defeated; the damp/choke key-switch range defaults
     // to the bottom MIDI octave C-1..B-1 (0..=11), below an 88-key piano.

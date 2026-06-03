@@ -150,6 +150,15 @@ fn patch_for_recipe(recipe: PatchRecipe) -> ResonatorSynthPatch {
             patch
         }
         PatchRecipe::Edge(recipe) => edge_patch(recipe),
+        PatchRecipe::TubePhrase {
+            polyphony,
+            retrigger,
+        } => {
+            let mut patch = single_family_patch(ResonatorFamily::Tube);
+            patch.polyphony = polyphony;
+            patch.retrigger_resonators = retrigger;
+            patch
+        }
     }
 }
 

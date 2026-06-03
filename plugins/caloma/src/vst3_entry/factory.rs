@@ -46,6 +46,14 @@ mod tests {
         assert_eq!(info.cid, CalomaVst3Plugin::CID);
         assert_eq!(c_string(&info.name), DESCRIPTOR.name);
         assert_eq!(c_string(&info.subCategories), SUBCATEGORY);
+        assert_eq!(c_string(&info.vendor), DESCRIPTOR.vendor);
+
+        let mut factory_info = unsafe { std::mem::zeroed::<PFactoryInfo>() };
+        assert_eq!(
+            unsafe { factory.getFactoryInfo(&mut factory_info) },
+            kResultOk
+        );
+        assert_eq!(c_string(&factory_info.vendor), DESCRIPTOR.vendor);
     }
 
     fn c_string(buffer: &[c_char]) -> String {

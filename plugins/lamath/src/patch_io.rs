@@ -47,6 +47,7 @@ pub fn load_library_patch(path: impl AsRef<Path>) -> Result<ResonatorSynthPatch,
 
 fn normalized_patch(mut patch: ResonatorSynthPatch) -> ResonatorSynthPatch {
     patch.normalize_routing_for_resonator_models();
+    patch.normalize_drivers_for_resonator_models();
     patch
 }
 
@@ -57,6 +58,36 @@ mod tests {
         AudioInputMode, FilterMode, LiveExcitationMode, ModalConfig, OutputConfig, ResonatorConfig,
         ResonatorRouting,
     };
+
+    #[test]
+    fn tube_patch_normalizes_to_reed_driver_on_load() {
+        // ADR-0032: loading a legacy/struck Tube patch (Tube + Sample driver) must normalize to
+        // the reed wind driver, so a saved patch or preset can never load as a silent tube.
+        // Both decode paths (TOML and plugin-state) route through `normalized_patch`.
+        use crate::{DriverConfig, WaveguideConfig, WaveguideStyle};
+        let patch = ResonatorSynthPatch {
+            resonator_a: ResonatorConfig::Waveguide(WaveguideConfig {
+                style: WaveguideStyle::Tube,
+                ..WaveguideConfig::default()
+            }),
+            driver: DriverConfig::Sample,
+            ..ResonatorSynthPatch::default()
+        };
+
+        let from_toml = from_toml_str(&to_toml_string(&patch).unwrap()).unwrap();
+        assert!(
+            matches!(from_toml.driver, DriverConfig::Reed(_)),
+            "Tube+Sample TOML should load reed-driven, got {:?}",
+            from_toml.driver
+        );
+
+        let from_state = from_plugin_state(to_plugin_state(&patch).unwrap()).unwrap();
+        assert!(
+            matches!(from_state.driver, DriverConfig::Reed(_)),
+            "Tube+Sample plugin-state should load reed-driven, got {:?}",
+            from_state.driver
+        );
+    }
 
     #[test]
     fn patch_toml_roundtrips_v2_surface() {

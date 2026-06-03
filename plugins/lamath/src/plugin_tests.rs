@@ -24,8 +24,10 @@ use std::{
 };
 
 include!("plugin_tests/render_tests.rs");
+include!("plugin_tests/tube_voice_tests.rs");
 include!("plugin_tests/render_stability_tests.rs");
 include!("plugin_tests/shared_body_sweep_tests.rs");
+include!("plugin_tests/mesh_articulation_tests.rs");
 include!("plugin_tests/parameter_tests.rs");
 include!("plugin_tests/runtime_tests.rs");
 include!("plugin_tests/runtime_sidechain_tests.rs");

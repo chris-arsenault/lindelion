@@ -20,6 +20,9 @@ pub(super) const FIXTURE_CID: TUID = uid(0x5A11D000, 0x11114444, 0x22228888, 0x3
 /// Fixed class id for the fixture edit-controller class.
 pub(super) const FIXTURE_CONTROLLER_CID: TUID = uid(0x5A11D001, 0x55556666, 0x77778888, 0x9999AAAA);
 
+/// Fixed class id for the fixture single-component audio/controller class.
+pub(super) const SINGLE_COMPONENT_CID: TUID = uid(0x5A11D002, 0x22224444, 0x66668888, 0xAAAACCCC);
+
 /// How a [`FixtureProcessor`] behaves in `process`, so tests can model a misbehaving plugin (M7).
 /// A plugin that *panics*/aborts/hangs in foreign code is out of in-process reach (see Step 5); these
 /// are the failure modes the host can actually contain.
@@ -464,6 +467,274 @@ impl IEditControllerTrait for FixtureController {
     }
 }
 
+#[derive(Clone, Copy)]
+enum SingleComponentControllerMode {
+    NoSeparateClass,
+    OwnClassId,
+}
+
+/// A one-class VST3 fixture: the audio component itself also exposes `IEditController`.
+struct SingleComponentFixture {
+    processor: FixtureProcessor,
+    controller: FixtureController,
+    controller_mode: SingleComponentControllerMode,
+}
+
+impl SingleComponentFixture {
+    fn new(controller_mode: SingleComponentControllerMode) -> Self {
+        Self {
+            processor: FixtureProcessor::with_behavior(1.0, 0, FixtureBehavior::Passthrough),
+            controller: FixtureController::new(),
+            controller_mode,
+        }
+    }
+}
+
+impl Class for SingleComponentFixture {
+    type Interfaces = (IComponent, IAudioProcessor, IEditController);
+}
+
+impl IPluginBaseTrait for SingleComponentFixture {
+    unsafe fn initialize(&self, context: *mut FUnknown) -> tresult {
+        self.processor.initialize(context)
+    }
+
+    unsafe fn terminate(&self) -> tresult {
+        self.processor.terminate()
+    }
+}
+
+impl IComponentTrait for SingleComponentFixture {
+    unsafe fn getControllerClassId(&self, class_id: *mut TUID) -> tresult {
+        match self.controller_mode {
+            SingleComponentControllerMode::NoSeparateClass => kNotImplemented,
+            SingleComponentControllerMode::OwnClassId => {
+                if class_id.is_null() {
+                    return kInvalidArgument;
+                }
+                *class_id = SINGLE_COMPONENT_CID;
+                kResultOk
+            }
+        }
+    }
+
+    unsafe fn setIoMode(&self, mode: IoMode) -> tresult {
+        self.processor.setIoMode(mode)
+    }
+
+    unsafe fn getBusCount(&self, media_type: MediaType, dir: BusDirection) -> i32 {
+        self.processor.getBusCount(media_type, dir)
+    }
+
+    unsafe fn getBusInfo(
+        &self,
+        media_type: MediaType,
+        dir: BusDirection,
+        index: i32,
+        bus: *mut BusInfo,
+    ) -> tresult {
+        self.processor.getBusInfo(media_type, dir, index, bus)
+    }
+
+    unsafe fn getRoutingInfo(
+        &self,
+        in_info: *mut RoutingInfo,
+        out_info: *mut RoutingInfo,
+    ) -> tresult {
+        self.processor.getRoutingInfo(in_info, out_info)
+    }
+
+    unsafe fn activateBus(
+        &self,
+        media_type: MediaType,
+        dir: BusDirection,
+        index: i32,
+        state: TBool,
+    ) -> tresult {
+        self.processor.activateBus(media_type, dir, index, state)
+    }
+
+    unsafe fn setActive(&self, state: TBool) -> tresult {
+        self.processor.setActive(state)
+    }
+
+    unsafe fn setState(&self, state: *mut IBStream) -> tresult {
+        self.processor.setState(state)
+    }
+
+    unsafe fn getState(&self, state: *mut IBStream) -> tresult {
+        self.processor.getState(state)
+    }
+}
+
+impl IAudioProcessorTrait for SingleComponentFixture {
+    unsafe fn setBusArrangements(
+        &self,
+        inputs: *mut SpeakerArrangement,
+        num_ins: i32,
+        outputs: *mut SpeakerArrangement,
+        num_outs: i32,
+    ) -> tresult {
+        self.processor
+            .setBusArrangements(inputs, num_ins, outputs, num_outs)
+    }
+
+    unsafe fn getBusArrangement(
+        &self,
+        dir: BusDirection,
+        index: i32,
+        arrangement: *mut SpeakerArrangement,
+    ) -> tresult {
+        self.processor.getBusArrangement(dir, index, arrangement)
+    }
+
+    unsafe fn canProcessSampleSize(&self, symbolic_sample_size: i32) -> tresult {
+        self.processor.canProcessSampleSize(symbolic_sample_size)
+    }
+
+    unsafe fn getLatencySamples(&self) -> u32 {
+        self.processor.getLatencySamples()
+    }
+
+    unsafe fn setupProcessing(&self, setup: *mut ProcessSetup) -> tresult {
+        self.processor.setupProcessing(setup)
+    }
+
+    unsafe fn setProcessing(&self, state: TBool) -> tresult {
+        self.processor.setProcessing(state)
+    }
+
+    unsafe fn process(&self, data: *mut ProcessData) -> tresult {
+        self.processor.process(data)
+    }
+
+    unsafe fn getTailSamples(&self) -> u32 {
+        self.processor.getTailSamples()
+    }
+}
+
+impl IEditControllerTrait for SingleComponentFixture {
+    unsafe fn setComponentState(&self, state: *mut IBStream) -> tresult {
+        self.controller.setComponentState(state)
+    }
+
+    unsafe fn setState(&self, state: *mut IBStream) -> tresult {
+        self.controller.setState(state)
+    }
+
+    unsafe fn getState(&self, state: *mut IBStream) -> tresult {
+        self.controller.getState(state)
+    }
+
+    unsafe fn getParameterCount(&self) -> i32 {
+        self.controller.getParameterCount()
+    }
+
+    unsafe fn getParameterInfo(&self, index: i32, info: *mut ParameterInfo) -> tresult {
+        self.controller.getParameterInfo(index, info)
+    }
+
+    unsafe fn getParamStringByValue(
+        &self,
+        id: ParamID,
+        value: ParamValue,
+        string: *mut String128,
+    ) -> tresult {
+        self.controller.getParamStringByValue(id, value, string)
+    }
+
+    unsafe fn getParamValueByString(
+        &self,
+        id: ParamID,
+        string: *mut TChar,
+        value: *mut ParamValue,
+    ) -> tresult {
+        self.controller.getParamValueByString(id, string, value)
+    }
+
+    unsafe fn normalizedParamToPlain(&self, id: ParamID, value: ParamValue) -> ParamValue {
+        self.controller.normalizedParamToPlain(id, value)
+    }
+
+    unsafe fn plainParamToNormalized(&self, id: ParamID, value: ParamValue) -> ParamValue {
+        self.controller.plainParamToNormalized(id, value)
+    }
+
+    unsafe fn getParamNormalized(&self, id: ParamID) -> ParamValue {
+        self.controller.getParamNormalized(id)
+    }
+
+    unsafe fn setParamNormalized(&self, id: ParamID, value: ParamValue) -> tresult {
+        self.controller.setParamNormalized(id, value)
+    }
+
+    unsafe fn setComponentHandler(&self, handler: *mut IComponentHandler) -> tresult {
+        self.controller.setComponentHandler(handler)
+    }
+
+    unsafe fn createView(&self, name: FIDString) -> *mut IPlugView {
+        self.controller.createView(name)
+    }
+}
+
+struct SingleComponentFixtureFactory {
+    controller_mode: SingleComponentControllerMode,
+}
+
+impl Class for SingleComponentFixtureFactory {
+    type Interfaces = (IPluginFactory,);
+}
+
+impl IPluginFactoryTrait for SingleComponentFixtureFactory {
+    unsafe fn getFactoryInfo(&self, info: *mut PFactoryInfo) -> tresult {
+        if info.is_null() {
+            return kInvalidArgument;
+        }
+        let info = &mut *info;
+        fill_cstr(&mut info.vendor, "Ahara");
+        fill_cstr(&mut info.url, "");
+        fill_cstr(&mut info.email, "");
+        info.flags = 0;
+        kResultOk
+    }
+
+    unsafe fn countClasses(&self) -> i32 {
+        1
+    }
+
+    unsafe fn getClassInfo(&self, index: i32, info: *mut PClassInfo) -> tresult {
+        if info.is_null() || index != 0 {
+            return kInvalidArgument;
+        }
+        let info = &mut *info;
+        info.cid = SINGLE_COMPONENT_CID;
+        info.cardinality = PClassInfo_::ClassCardinality_::kManyInstances as i32;
+        fill_cstr(&mut info.category, "Audio Module Class");
+        fill_cstr(&mut info.name, "Galad Single Component Fixture");
+        kResultOk
+    }
+
+    unsafe fn createInstance(
+        &self,
+        cid: FIDString,
+        iid: FIDString,
+        obj: *mut *mut c_void,
+    ) -> tresult {
+        if cid.is_null() || iid.is_null() || obj.is_null() {
+            return kInvalidArgument;
+        }
+        *obj = ptr::null_mut();
+        if *(cid as *const TUID) != SINGLE_COMPONENT_CID {
+            return kInvalidArgument;
+        }
+        let instance = ComWrapper::new(SingleComponentFixture::new(self.controller_mode))
+            .to_com_ptr::<FUnknown>()
+            .expect("single-component fixture exposes FUnknown");
+        let ptr = instance.as_ptr();
+        ((*(*ptr).vtbl).queryInterface)(ptr, iid as *mut TUID, obj)
+    }
+}
+
 /// A fixture `IPlugView`: supports the `HWND` platform, reports a fixed 320×240 size, and records the
 /// host frame; the rest is benign.
 pub(super) struct FixtureView {
@@ -732,6 +1003,22 @@ pub(super) fn fixed_stereo_rejects_arrangement_factory() -> ComPtr<IPluginFactor
         FixtureBehavior::Passthrough,
         FixtureBusShape::FixedStereoRejectsSet,
     )
+}
+
+pub(super) fn single_component_fixture_factory() -> ComPtr<IPluginFactory> {
+    single_component_factory(SingleComponentControllerMode::NoSeparateClass)
+}
+
+pub(super) fn own_cid_single_component_fixture_factory() -> ComPtr<IPluginFactory> {
+    single_component_factory(SingleComponentControllerMode::OwnClassId)
+}
+
+fn single_component_factory(
+    controller_mode: SingleComponentControllerMode,
+) -> ComPtr<IPluginFactory> {
+    ComWrapper::new(SingleComponentFixtureFactory { controller_mode })
+        .to_com_ptr::<IPluginFactory>()
+        .expect("single-component fixture factory exposes IPluginFactory")
 }
 
 /// A factory exposing only a controller class — no "Audio Module Class" — so the host's instantiate

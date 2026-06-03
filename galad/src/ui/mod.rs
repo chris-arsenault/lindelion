@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 mod command;
+mod layout;
 mod state;
 #[cfg(windows)]
 mod vizia_app;

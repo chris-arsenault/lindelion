@@ -16,8 +16,8 @@ use crate::vizia_window::ViziaWindowEditor;
 mod meter_panel;
 mod spectrogram_view;
 
-use meter_panel::MeterPanel;
-use spectrogram_view::SpectrogramView;
+use meter_panel::meter_panel;
+use spectrogram_view::{SpectrogramView, start_spectrogram_refresh};
 
 /// Spectrogram render resolution (rows = log-frequency bands, columns = time history). Upsampled to
 /// the view bounds with Skia bilinear sampling for a smooth, high-fidelity image.
@@ -25,6 +25,51 @@ pub(super) const SPECTROGRAM_ROWS: usize = 320;
 pub(super) const SPECTROGRAM_COLUMNS: usize = 512;
 /// Editor refresh cadence (≈15 fps), matching the other Lindelion editors.
 pub(super) const REFRESH: std::time::Duration = std::time::Duration::from_millis(66);
+const CENEDRIL_EDITOR_TAG: &str = "spectimer-20260603-1";
+const CENEDRIL_EDITOR_TITLE: &str = "Cenedril [spectimer-20260603-1]";
+
+#[derive(Clone, Copy)]
+struct CenedrilLayout {
+    outer_width: f32,
+    outer_height: f32,
+    padding: f32,
+    row_gap: f32,
+    body_gap: f32,
+    topbar_height: f32,
+    controls_height: f32,
+    panel_width: f32,
+}
+
+impl CenedrilLayout {
+    fn inner_width(self) -> f32 {
+        self.outer_width - (self.padding * 2.0)
+    }
+
+    fn body_height(self) -> f32 {
+        self.outer_height
+            - (self.padding * 2.0)
+            - self.topbar_height
+            - self.controls_height
+            - (self.row_gap * 2.0)
+    }
+
+    fn spectrogram_width(self) -> f32 {
+        self.inner_width() - self.body_gap - self.panel_width
+    }
+}
+
+fn cenedril_layout(size: CenedrilEditorSize) -> CenedrilLayout {
+    CenedrilLayout {
+        outer_width: size.width.max(CENEDRIL_EDITOR_WIDTH) as f32,
+        outer_height: size.height.max(CENEDRIL_EDITOR_HEIGHT) as f32,
+        padding: 12.0,
+        row_gap: 8.0,
+        body_gap: 10.0,
+        topbar_height: 30.0,
+        controls_height: 30.0,
+        panel_width: 248.0,
+    }
+}
 
 /// Which time-frequency view the editor draws. Both models are kept alive so switching is instant.
 #[derive(Clone, Copy, PartialEq)]
@@ -36,22 +81,18 @@ pub(super) enum ViewMode {
 const STYLE: &str = r#"
     .cenedril-root {
         background-color: #0c1013;
-        width: 1s;
-        height: 1s;
-        child-space: 10px;
-        row-between: 8px;
     }
     .cenedril-topbar {
-        width: 1s;
-        height: auto;
-        col-between: 10px;
-        child-top: 1s;
-        child-bottom: 1s;
+        horizontal-gap: 10px;
+        alignment: center;
     }
     .cenedril-title {
         color: #d8e0e4;
         font-size: 18px;
-        width: 1s;
+    }
+    .cenedril-tag {
+        color: #7f8c92;
+        font-size: 10px;
     }
     .cenedril-segmented {
         background-color: #101515;
@@ -81,11 +122,7 @@ const STYLE: &str = r#"
         color: #f0f8f2;
     }
     .cenedril-controls {
-        width: 1s;
-        height: auto;
-        col-between: 10px;
-        child-top: 1s;
-        child-bottom: 1s;
+        horizontal-gap: 10px;
         alignment: center;
     }
     .cenedril-ctl-label {
@@ -114,18 +151,12 @@ const STYLE: &str = r#"
         height: 18px;
     }
     .cenedril-body {
-        width: 1s;
-        height: 1s;
-        col-between: 10px;
+        horizontal-gap: 10px;
     }
     .cenedril-spectrogram {
-        width: 1s;
-        height: 1s;
         border-radius: 4px;
     }
     .cenedril-panels {
-        width: 248px;
-        height: 1s;
         child-space: 10px;
         row-between: 6px;
         background-color: #0e1318;
@@ -245,23 +276,46 @@ fn build_cenedril_application(
     host: CenedrilEditorHost,
     size: CenedrilEditorSize,
 ) -> vizia::Application<impl Fn(&mut Context) + Send + 'static> {
-    let width = size.width.max(CENEDRIL_EDITOR_WIDTH) as u32;
-    let height = size.height.max(CENEDRIL_EDITOR_HEIGHT) as u32;
+    crate::vizia_window::debug_log(format!(
+        "cenedril-vizia: build_application begin size={}x{}",
+        size.width, size.height
+    ));
+    let layout = cenedril_layout(size);
+    let width = layout.outer_width as u32;
+    let height = layout.outer_height as u32;
+    crate::vizia_window::debug_log(format!(
+        "cenedril-vizia: build_application layout outer={}x{} body={} spec_w={} panel_w={}",
+        layout.outer_width,
+        layout.outer_height,
+        layout.body_height(),
+        layout.spectrogram_width(),
+        layout.panel_width
+    ));
     vizia::Application::new(move |cx| {
+        crate::vizia_window::debug_log("cenedril-vizia: app closure begin");
         cx.add_stylesheet(STYLE)
             .expect("failed to add cenedril editor style");
+        crate::vizia_window::debug_log("cenedril-vizia: app style added");
         cx.add_stylesheet(crate::vizia_meter::METER_STYLE)
             .expect("failed to add cenedril meter style");
+        crate::vizia_window::debug_log("cenedril-vizia: meter style added");
         // Initialize each control from the persisted settings (restored on editor open).
         let store = host.settings.clone();
+        crate::vizia_window::debug_log("cenedril-vizia: settings clone done");
         let view_mode = Signal::new(view_mode_from_u32(store.active_view()));
         let scale = Signal::new(freq_scale_from_u32(store.freq_scale()));
         let color_map = Signal::new(color_map_from_u32(store.color_map()));
         let db_floor = Signal::new(store.db_floor());
         let db_ceil = Signal::new(store.db_ceil());
+        crate::vizia_window::debug_log("cenedril-vizia: settings signals done");
         VStack::new(cx, |cx| {
+            crate::vizia_window::debug_log("cenedril-vizia: topbar begin");
             HStack::new(cx, |cx| {
-                Label::new(cx, "Cenedril — Spectrogram").class("cenedril-title");
+                Label::new(cx, "Cenedril — Spectrogram")
+                    .class("cenedril-title")
+                    .width(Stretch(1.0))
+                    .min_width(Pixels(0.0));
+                Label::new(cx, CENEDRIL_EDITOR_TAG).class("cenedril-tag");
                 HStack::new(cx, |cx| {
                     view_mode_button(
                         cx,
@@ -280,7 +334,11 @@ fn build_cenedril_application(
                 })
                 .class("cenedril-segmented");
             })
-            .class("cenedril-topbar");
+            .class("cenedril-topbar")
+            .width(Pixels(layout.inner_width()))
+            .height(Pixels(layout.topbar_height));
+            crate::vizia_window::debug_log("cenedril-vizia: topbar done");
+            crate::vizia_window::debug_log("cenedril-vizia: controls begin");
             HStack::new(cx, |cx| {
                 HStack::new(cx, |cx| {
                     freq_scale_button(cx, "Log", FreqScale::Log, scale, store.clone());
@@ -314,9 +372,20 @@ fn build_cenedril_application(
                     })
                     .class("cenedril-slider");
             })
-            .class("cenedril-controls");
+            .class("cenedril-controls")
+            .width(Pixels(layout.inner_width()))
+            .height(Pixels(layout.controls_height));
+            crate::vizia_window::debug_log("cenedril-vizia: controls done");
+            crate::vizia_window::debug_log("cenedril-vizia: body begin");
             HStack::new(cx, |cx| {
-                SpectrogramView::new(
+                crate::vizia_window::debug_log("cenedril-vizia: meter panel begin");
+                meter_panel(cx, host.meters.clone())
+                    .class("cenedril-panels")
+                    .width(Pixels(layout.panel_width))
+                    .height(Pixels(layout.body_height()));
+                crate::vizia_window::debug_log("cenedril-vizia: meter panel done");
+                crate::vizia_window::debug_log("cenedril-vizia: spectrogram view begin");
+                let spectrogram = SpectrogramView::new(
                     cx,
                     host.source.clone(),
                     host.reassigned.clone(),
@@ -326,15 +395,27 @@ fn build_cenedril_application(
                     db_floor,
                     db_ceil,
                 )
-                .class("cenedril-spectrogram");
-                MeterPanel::new(cx, host.meters.clone()).class("cenedril-panels");
+                .class("cenedril-spectrogram")
+                .width(Pixels(layout.spectrogram_width()))
+                .height(Pixels(layout.body_height()))
+                .entity();
+                start_spectrogram_refresh(cx, spectrogram);
+                crate::vizia_window::debug_log("cenedril-vizia: spectrogram view done");
             })
-            .class("cenedril-body");
+            .class("cenedril-body")
+            .width(Pixels(layout.inner_width()))
+            .height(Pixels(layout.body_height()));
+            crate::vizia_window::debug_log("cenedril-vizia: body done");
         })
-        .class("cenedril-root");
+        .class("cenedril-root")
+        .width(Pixels(layout.outer_width))
+        .height(Pixels(layout.outer_height))
+        .padding(Pixels(layout.padding))
+        .vertical_gap(Pixels(layout.row_gap));
+        crate::vizia_window::debug_log("cenedril-vizia: app closure done");
     })
     .ignore_default_theme()
-    .title("Cenedril")
+    .title(CENEDRIL_EDITOR_TITLE)
     .inner_size((width, height))
     .with_scale_policy(WindowScalePolicy::ScaleFactor(1.0))
 }
@@ -352,7 +433,15 @@ impl CenedrilViziaEditor {
         host: CenedrilEditorHost,
         size: CenedrilEditorSize,
     ) -> Self {
+        crate::vizia_window::debug_log(format!(
+            "cenedril-vizia: attach begin parent=0x{:x} size={}x{}",
+            parent as usize, size.width, size.height
+        ));
         let application = build_cenedril_application(host, size);
-        Self(unsafe { ViziaWindowEditor::attach(parent, application) })
+        crate::vizia_window::debug_log("cenedril-vizia: application built");
+        crate::vizia_window::debug_log("cenedril-vizia: shared attach begin");
+        let editor = Self(unsafe { ViziaWindowEditor::attach(parent, application) });
+        crate::vizia_window::debug_log("cenedril-vizia: shared attach done");
+        editor
     }
 }

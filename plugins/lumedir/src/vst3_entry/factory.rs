@@ -49,6 +49,14 @@ mod tests {
         assert_eq!(component.cid, LumedirVst3Processor::CID);
         assert_eq!(c_string(&component.name), DESCRIPTOR.name);
         assert_eq!(c_string(&component.subCategories), SUBCATEGORY);
+        assert_eq!(c_string(&component.vendor), DESCRIPTOR.vendor);
+
+        let mut factory_info = unsafe { std::mem::zeroed::<PFactoryInfo>() };
+        assert_eq!(
+            unsafe { factory.getFactoryInfo(&mut factory_info) },
+            kResultOk
+        );
+        assert_eq!(c_string(&factory_info.vendor), DESCRIPTOR.vendor);
     }
 
     fn c_string(buffer: &[c_char]) -> String {

@@ -210,7 +210,8 @@ impl<'a> Voice<'a> {
         );
         self.resonators
             .set_base_configs(trigger.patch.resonator_a, trigger.patch.resonator_b);
-        self.resonators.set_driver(trigger.patch.driver);
+        self.resonators
+            .set_drivers(trigger.patch.driver, trigger.patch.driver_b);
         self.resonators.set_contact(trigger.patch.contact);
         self.surrounding.set_config(trigger.patch.surrounding);
         self.surrounding.trigger();

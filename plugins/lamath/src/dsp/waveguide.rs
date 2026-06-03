@@ -100,6 +100,17 @@ impl WaveguideResonator {
         }
     }
 
+    /// Process one sample with a wind driver **terminating the boundary**: `mouth_wave` is
+    /// the driver's scattered wave that replaces the resonator's passive driven-end
+    /// reflection (the Tube mouth). Only the Tube models the wind boundary; the String
+    /// falls back to strike injection (a reed on a String is not a supported voice).
+    pub fn process_sample_wind(&mut self, mouth_wave: f32, params: WaveguideParams) -> f32 {
+        match params.style {
+            WaveguideStyle::Tube => self.tube.process_sample_wind(mouth_wave, params),
+            WaveguideStyle::String => self.string.process(mouth_wave, params),
+        }
+    }
+
     /// The active style's returning wave at the driven termination (mouth for the
     /// Tube, bridge for the String): the input-end feedback an M8 physical driver
     /// couples to. Read before `process_sample`; reflects the previous sample.

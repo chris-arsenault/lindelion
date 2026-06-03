@@ -46,6 +46,13 @@ pub(crate) enum PatchRecipe {
         surrounding: SurroundingRecipe,
     },
     Edge(EdgeRecipe),
+    /// Driven wind Tube playing a multi-note phrase, with the articulation knobs the schedule
+    /// can't express: `polyphony` (1 = mono voice-stealing slur; >1 = poly) and
+    /// `retrigger` (re-strike the bore per note vs let it ring through note changes).
+    TubePhrase {
+        polyphony: u8,
+        retrigger: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +136,7 @@ pub(crate) enum CatalogError {
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 8] = [
+const GROUPS: [CatalogGroup; 9] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -177,6 +184,12 @@ const GROUPS: [CatalogGroup; 8] = [
         directory: "08_edges",
         title: "Edges",
         question: "Do bounded extreme settings expose harshness, weak output, or instability?",
+    },
+    CatalogGroup {
+        id: "articulation",
+        directory: "09_articulation",
+        title: "Articulation",
+        question: "Does the driven wind voice phrase a scale — tongued, legato, slurred — with audibly distinct articulation?",
     },
 ];
 

@@ -101,7 +101,7 @@ fn run_editor_command(args: Vec<String>) {
         std::process::exit(2);
     }
 
-    let mut host = EditorHost::new();
+    let mut host = EditorHost::with_quit_on_last_close();
     for path in &args {
         if let Err(error) = host.open(Path::new(path)) {
             eprintln!("failed to open editor for {path}: {error:?}");

@@ -89,3 +89,26 @@ does not cover.
 
 - Expand user-facing feedback for audio-created notes, sidechain input state, and voice ownership if Ableton validation shows ambiguity during normal use.
 - Revisit realtime pitch tracker quality only if Apple Silicon host validation shows the current shared detector is the quality bottleneck.
+
+## Driven Wind Tube (post-M1)
+
+The driven wind Tube voice ([ADR-0032](../adr/0032-lamath-tube-driven-wind-voice.md)) shipped with
+two constraints applied silently by patch normalization (reed driver forced, polyphony forced to 1)
+and a placeholder excitation. These make those constraints explicit, playable, and better-voiced.
+
+- Surface the Tube's forced settings in the editor instead of silently overriding them: when a slot
+  is a Tube, the polyphony control is **locked to 1 (mono)** and the driver is **locked to the reed**
+  in the UI, with a tooltip explaining why, rather than the patch quietly rewriting the values on
+  load. (Today `normalize_drivers_for_resonator_models` overrides both without user-visible feedback.)
+- Make wind articulation a bound, playable control: a **key-switch range and/or an automatable
+  parameter** selects tongued vs slurred phrasing (and any future articulations) so a player can
+  change articulation live, rather than it being implicit in note timing only.
+- Ship a **better default reed excitation layer** than the generic builtin impulse: a tuned breath/
+  tongue onset sample (or shaped noise burst) so a fresh Tube patch has a musical chiff out of the
+  box rather than the shared struck-instrument builtin.
+- Strengthen **brassiness-with-effort**: today the velocity dynamic is largely timbral via the
+  pressure window and the energy-driven bore steepening does not reliably brighten a loud note. Give
+  the Tube a clear cuivré bloom (a brighter, edgier fortissimo) as a guarded A/B axis.
+- Give the Tube a more **formant-shaped, clarinet-like spectrum** rather than the current odd-harmonic
+  square — bore resonances coloring the output into formants, so register and termination read as
+  bigger timbral changes — if downstream filtering proves insufficient.

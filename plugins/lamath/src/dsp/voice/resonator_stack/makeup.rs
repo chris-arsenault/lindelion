@@ -36,7 +36,12 @@ pub(super) fn family_output_makeup(config: ResonatorConfig) -> f32 {
 fn driver_output_trim(driver: DriverConfig) -> f32 {
     match driver {
         DriverConfig::Bow(_) => 0.2,
-        DriverConfig::Sample | DriverConfig::Pick(_) | DriverConfig::Reed(_) => 1.0,
+        // The reed terminates the mouth and self-oscillates to a far hotter level than the
+        // struck excitation `TUBE_OUTPUT_MAKEUP` (12×) was calibrated for — at unity it ran the
+        // tube ~+15 dB over the other families, slamming the master clipper into a uniform
+        // bit-crushed saw. This trim brings the reed-driven tube back to the matched forte level.
+        DriverConfig::Reed(_) => 0.13,
+        DriverConfig::Sample | DriverConfig::Pick(_) => 1.0,
     }
 }
 

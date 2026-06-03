@@ -31,10 +31,9 @@ impl Default for MeshVoiceParams {
             frequency_hz: 220.0,
             material: 0.5,
             size: 0.5,
-            // Lightly damped by default so the mesh rings with a long metallic
-            // shimmer (M11 P2 step 3); the squared map in `voice_config` puts this
-            // near the ~3 s ring-out region.
-            damping: 0.05,
+            // Matches the shipped `MeshConfig`/host-parameter default; the geometric
+            // `boundary_damping_loss` map puts 0.3 at a ~1.8 s metallic-shimmer T60.
+            damping: 0.3,
             tension: 0.5,
             strike_position: 0.4,
             pickup_spread: 0.3,
@@ -119,13 +118,7 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
     // `material` morphs membrane (free, drum-like) to plate (fixed, stiff) and
     // sets how hard/spread the strike couples in.
     let material = clamp01(params.material);
-    // A waveguide mesh propagates one cell per sample, so its boundaries reflect
-    // ~2000×/s: ringing for seconds needs a near-unity reflection (damping ~1e-3),
-    // while even a few-percent damping dies in ~100 ms. Map the control *cubed*
-    // from a very low floor so the long-ring metallic-shimmer region (the voice
-    // this is built around, M11 P2 step 3) gets the resolution and a moderate
-    // control still damps hard.
-    let damping = lerp(0.000_08, 0.5, clamp01(params.damping).powi(3));
+    let damping = boundary_damping_loss(sample_rate, params.damping);
     let boundary = if material < 0.5 {
         MeshBoundaryConfig::free(damping)
     } else {
@@ -148,6 +141,36 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
     }
 }
 
+/// Longest / shortest ring the `damping` control spans, as a −60 dB decay time. The
+/// control maps geometrically (perceptually uniform in decay ratio) across this band,
+/// so the bottom end is a long metallic shimmer and the top end a tight but still
+/// clearly audible plate — **no value in `0..1` is a dead thud** (the old map let the
+/// top ~¾ of the range collapse to a ~50 ms transient; LAMATH-RENDER-FIXES P2).
+const MESH_T60_MAX_S: f32 = 4.0;
+const MESH_T60_MIN_S: f32 = 0.30;
+
+/// Per-reflection boundary loss for the `damping` control (`0..1`), derived from the
+/// physics rather than hand-tuned. A wave crosses the `W×H` grid one cell per sample
+/// and loses a factor `(1 − loss)` at each edge reflection, so the slow (1,1) mode
+/// decays as `(1 − loss)^(t · fs · (1/W + 1/H))`. Inverting the standard −60 dB ring
+/// time gives `loss = 1 − exp(−3·ln10 / (T60 · fs · (1/W + 1/H)))`. Mapping the control
+/// to a geometric `T60 ∈ [MESH_T60_MIN_S, MESH_T60_MAX_S]` makes every value musical by
+/// construction and makes ring length sample-rate-independent (the old fixed
+/// coefficient drifted with `fs`).
+fn boundary_damping_loss(sample_rate: f32, control: f32) -> f32 {
+    let t60 = MESH_T60_MAX_S * (MESH_T60_MIN_S / MESH_T60_MAX_S).powf(clamp01(control));
+    let loss = 1.0 - (-mesh_decay_k(sample_rate) / t60).exp();
+    finite_clamp(loss, 0.0, 1.0, 0.0)
+}
+
+/// `K = 3·ln10 / (fs · (1/W + 1/H))` — the per-second reflection-decay constant for
+/// this grid, so that `T60 = K / −ln(1 − loss)`.
+fn mesh_decay_k(sample_rate: f32) -> f32 {
+    let reflections_per_s =
+        sample_rate * (1.0 / RUNTIME_MESH_WIDTH as f32 + 1.0 / RUNTIME_MESH_HEIGHT as f32);
+    3.0 * std::f32::consts::LN_10 / reflections_per_s.max(1.0)
+}
+
 fn lerp(low: f32, high: f32, fraction: f32) -> f32 {
     low + (high - low) * fraction
 }
@@ -162,6 +185,52 @@ mod tests {
     use lindelion_dsp_utils::analysis::{
         assert_all_finite, peak_abs, rms, spectral_centroid_trajectory,
     };
+
+    /// Closed-form −60 dB ring time the `damping` control resolves to, inverting
+    /// `boundary_damping_loss`: `T60 = K / −ln(1 − loss)`.
+    fn mesh_t60_seconds(sample_rate: f32, control: f32) -> f32 {
+        let loss = boundary_damping_loss(sample_rate, control);
+        mesh_decay_k(sample_rate) / -(1.0 - loss).ln()
+    }
+
+    /// P2 (LAMATH-RENDER-FIXES) regression guard, proved by math rather than a render
+    /// sweep: the `damping` control must have **no degenerate region**. Across the whole
+    /// `0..1` range the resolved (1,1)-mode T60 stays inside the musical band, is
+    /// monotonic (more damping → shorter ring), and never dips toward the ~60 ms dead
+    /// thud the old `lerp(8e-5, 0.5, p³)` map produced over its top ¾. Pure arithmetic
+    /// on the boundary-loss closed form, so it runs in the fast `make ci` path.
+    #[test]
+    fn mesh_damping_control_has_no_degenerate_region() {
+        for &sample_rate in &[44_100.0_f32, 48_000.0, 96_000.0] {
+            // Endpoints land on the intended band (sample-rate-independent by design).
+            assert!(
+                (mesh_t60_seconds(sample_rate, 0.0) - MESH_T60_MAX_S).abs() < 0.05,
+                "min-damping T60 {} != {MESH_T60_MAX_S}",
+                mesh_t60_seconds(sample_rate, 0.0)
+            );
+            assert!(
+                (mesh_t60_seconds(sample_rate, 1.0) - MESH_T60_MIN_S).abs() < 0.02,
+                "max-damping T60 {} != {MESH_T60_MIN_S}",
+                mesh_t60_seconds(sample_rate, 1.0)
+            );
+            // Every value rings well clear of the dead-thud threshold (~0.06 s) and the
+            // control decreases monotonically.
+            let mut previous = f32::INFINITY;
+            for step in 0..=200 {
+                let control = step as f32 / 200.0;
+                let t60 = mesh_t60_seconds(sample_rate, control);
+                assert!(
+                    t60 >= 0.25,
+                    "damping {control} at {sample_rate} Hz dips to T60 {t60} s (dead-thud region)"
+                );
+                assert!(
+                    t60 <= previous + 1.0e-4,
+                    "damping not monotonic at {control} ({sample_rate} Hz): {t60} > {previous}"
+                );
+                previous = t60;
+            }
+        }
+    }
 
     fn render_default_mesh(sample_rate: f32, seconds: f32) -> Vec<f32> {
         let mut mesh = MeshResonator::new(sample_rate);
@@ -247,7 +316,9 @@ mod tests {
     /// M11 P2 step 3: the default mesh voice rings with a long metallic shimmer
     /// (the old uniform-boundary mesh died to silence in ~100 ms), its high modes
     /// die first via the frequency-shaped boundary (centroid falls), and the long
-    /// near-lossless ring stays bounded and non-growing.
+    /// near-lossless ring stays bounded and non-growing. At the shipped default
+    /// (`damping = 0.3`) the closed-form (1,1) T60 is ~1.8 s, so the isolated-core
+    /// −40 dB ring lands near 1.1 s (~0.6·T60).
     #[cfg_attr(
         not(feature = "integration-tests"),
         ignore = "see make test-integration"
@@ -259,10 +330,12 @@ mod tests {
         assert_all_finite(&output);
         assert!(peak_abs(&output) < 4.0, "peak_abs={}", peak_abs(&output));
 
-        // Ring-out far past the old ~100 ms dead tail (target ~2–4 s shimmer).
+        // Ring-out far past the old ~100 ms dead tail, consistent with the ~1.8 s
+        // default T60 (the exact closed-form map is guarded by
+        // `mesh_damping_control_has_no_degenerate_region`).
         let ring_out = ring_out_seconds(&output, sample_rate, 4_800, -40.0);
         assert!(
-            (1.5..=4.0).contains(&ring_out),
+            (0.9..=1.6).contains(&ring_out),
             "mesh -40 dB ring-out: {ring_out}"
         );
 

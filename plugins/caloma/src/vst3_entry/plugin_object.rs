@@ -27,8 +27,8 @@ pub(super) const CALOMA_BUSES: [Vst3BusInfo; 2] = [
 /// `IAudioProcessor`, `IEditController`, and `IProcessContextRequirements`. The host
 /// `queryInterface`s the controller on this same object, so the Vizia editor and the DSP share one
 /// `Caloma` (and its `SharedControls`) directly — no host-relayed parameter channel (ADR-0023).
-/// `getControllerClassId` returns this object's own CID (the single-component signal); the factory
-/// registers exactly one class.
+/// `getControllerClassId` returns `kNotImplemented` to signal that there is no separate controller
+/// class; the factory registers exactly one class.
 pub(super) struct CalomaVst3Plugin {
     plugin: RefCell<Caloma>,
     setup: Cell<ShellProcessSetup>,
@@ -87,13 +87,10 @@ impl IPluginBaseTrait for CalomaVst3Plugin {
 }
 
 impl IComponentTrait for CalomaVst3Plugin {
-    unsafe fn getControllerClassId(&self, class_id: *mut TUID) -> tresult {
-        if class_id.is_null() {
-            return kInvalidArgument;
-        }
-        // Single-component: the controller IS this object.
-        *class_id = Self::CID;
-        kResultOk
+    unsafe fn getControllerClassId(&self, _class_id: *mut TUID) -> tresult {
+        // Single-component: this object is its own controller, so there is no separate controller
+        // class. Hosts query `IEditController` on the component itself.
+        kNotImplemented
     }
 
     unsafe fn setIoMode(&self, _mode: IoMode) -> tresult {
@@ -388,10 +385,13 @@ mod tests {
     }
 
     #[test]
-    fn controller_class_id_is_this_objects_own_cid() {
+    fn controller_class_id_reports_no_separate_controller_class() {
         let plugin = CalomaVst3Plugin::new();
         let mut cid: TUID = [0; 16];
-        assert_eq!(unsafe { plugin.getControllerClassId(&mut cid) }, kResultOk);
-        assert_eq!(cid, CalomaVst3Plugin::CID);
+        assert_eq!(
+            unsafe { plugin.getControllerClassId(&mut cid) },
+            kNotImplemented
+        );
+        assert_eq!(cid, [0; 16]);
     }
 }

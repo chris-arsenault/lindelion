@@ -90,120 +90,118 @@ impl MeterSignals {
     }
 }
 
-/// Tick event emitted by the meter panel's refresh timer.
-enum MeterTick {
-    Tick,
-}
+/// Build the level/LUFS + analysis-signal panel as ordinary layout, not a custom [`View`].
+///
+/// Cenedril's custom spectrogram needs a bespoke draw implementation, but the meter panel is just
+/// shared rows plus a timer. Keeping it as plain layout matches Lúmedir and avoids nested custom
+/// view construction during `IPlugView::attached`.
+pub(super) fn meter_panel(cx: &mut Context, source: Arc<dyn MeterSource>) -> Handle<'_, VStack> {
+    crate::vizia_window::debug_log("cenedril-vizia: meter panel begin");
+    let signals = MeterSignals::new();
+    signals.update(source.as_ref());
+    let timer_source = source.clone();
+    VStack::new(cx, move |cx| {
+        crate::vizia_window::debug_log("cenedril-vizia: meter panel layout begin");
+        Label::new(cx, "Levels").class("cenedril-section");
+        crate::vizia_window::debug_log("cenedril-vizia: meter section levels done");
+        meter_row(
+            cx,
+            "Peak",
+            signals.peak.fill,
+            signals.peak.text,
+            MeterTone::Level,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row peak done");
+        meter_row(
+            cx,
+            "RMS",
+            signals.rms.fill,
+            signals.rms.text,
+            MeterTone::Level,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row rms done");
+        meter_row(
+            cx,
+            "Crest",
+            signals.crest.fill,
+            signals.crest.text,
+            MeterTone::Info,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row crest done");
+        meter_row(
+            cx,
+            "LUFS-M",
+            signals.lufs_m.fill,
+            signals.lufs_m.text,
+            MeterTone::Level,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row lufs-m done");
+        meter_row(
+            cx,
+            "LUFS-S",
+            signals.lufs_s.fill,
+            signals.lufs_s.text,
+            MeterTone::Level,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row lufs-s done");
+        meter_row(
+            cx,
+            "LUFS-I",
+            signals.lufs_i.fill,
+            signals.lufs_i.text,
+            MeterTone::Level,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row lufs-i done");
 
-/// The level/LUFS + analysis-signal panel.
-pub(super) struct MeterPanel {
-    source: Arc<dyn MeterSource>,
-    signals: MeterSignals,
-}
+        Label::new(cx, "Analysis").class("cenedril-section");
+        crate::vizia_window::debug_log("cenedril-vizia: meter section analysis done");
+        meter_row(
+            cx,
+            "Voicing",
+            signals.voicing.fill,
+            signals.voicing.text,
+            MeterTone::Good,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row voicing done");
+        meter_row(
+            cx,
+            "Speech",
+            signals.speech.fill,
+            signals.speech.text,
+            MeterTone::Good,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row speech done");
+        meter_row(
+            cx,
+            "Flux",
+            signals.flux.fill,
+            signals.flux.text,
+            MeterTone::Warn,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row flux done");
+        meter_row(
+            cx,
+            "HNR",
+            signals.hnr.fill,
+            signals.hnr.text,
+            MeterTone::Info,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row hnr done");
+        meter_row(
+            cx,
+            "Pitch",
+            signals.pitch.fill,
+            signals.pitch.text,
+            MeterTone::Info,
+        );
+        crate::vizia_window::debug_log("cenedril-vizia: meter row pitch done");
 
-impl MeterPanel {
-    pub(super) fn new(cx: &mut Context, source: Arc<dyn MeterSource>) -> Handle<'_, Self> {
-        let signals = MeterSignals::new();
-        Self { source, signals }.build(cx, move |cx| {
-            Label::new(cx, "Levels").class("cenedril-section");
-            meter_row(
-                cx,
-                "Peak",
-                signals.peak.fill,
-                signals.peak.text,
-                MeterTone::Level,
-            );
-            meter_row(
-                cx,
-                "RMS",
-                signals.rms.fill,
-                signals.rms.text,
-                MeterTone::Level,
-            );
-            meter_row(
-                cx,
-                "Crest",
-                signals.crest.fill,
-                signals.crest.text,
-                MeterTone::Info,
-            );
-            meter_row(
-                cx,
-                "LUFS-M",
-                signals.lufs_m.fill,
-                signals.lufs_m.text,
-                MeterTone::Level,
-            );
-            meter_row(
-                cx,
-                "LUFS-S",
-                signals.lufs_s.fill,
-                signals.lufs_s.text,
-                MeterTone::Level,
-            );
-            meter_row(
-                cx,
-                "LUFS-I",
-                signals.lufs_i.fill,
-                signals.lufs_i.text,
-                MeterTone::Level,
-            );
-
-            Label::new(cx, "Analysis").class("cenedril-section");
-            meter_row(
-                cx,
-                "Voicing",
-                signals.voicing.fill,
-                signals.voicing.text,
-                MeterTone::Good,
-            );
-            meter_row(
-                cx,
-                "Speech",
-                signals.speech.fill,
-                signals.speech.text,
-                MeterTone::Good,
-            );
-            meter_row(
-                cx,
-                "Flux",
-                signals.flux.fill,
-                signals.flux.text,
-                MeterTone::Warn,
-            );
-            meter_row(
-                cx,
-                "HNR",
-                signals.hnr.fill,
-                signals.hnr.text,
-                MeterTone::Info,
-            );
-            meter_row(
-                cx,
-                "Pitch",
-                signals.pitch.fill,
-                signals.pitch.text,
-                MeterTone::Info,
-            );
-
-            let timer = cx.add_timer(REFRESH, None, |cx, action| {
-                if matches!(action, TimerAction::Tick(_)) {
-                    cx.emit(MeterTick::Tick);
-                }
-            });
-            cx.start_timer(timer);
-        })
-    }
-}
-
-impl View for MeterPanel {
-    fn element(&self) -> Option<&'static str> {
-        Some("cenedril-panels")
-    }
-
-    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
-        event.map(|tick, _meta| match tick {
-            MeterTick::Tick => self.signals.update(self.source.as_ref()),
+        let timer = cx.add_timer(REFRESH, None, move |_cx, action| {
+            if matches!(action, TimerAction::Tick(_)) {
+                signals.update(timer_source.as_ref());
+            }
         });
-    }
+        cx.start_timer(timer);
+        crate::vizia_window::debug_log("cenedril-vizia: meter panel layout done");
+    })
 }

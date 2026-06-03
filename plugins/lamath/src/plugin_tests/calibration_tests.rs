@@ -85,6 +85,32 @@ fn render_family_clip(
     sample_rate: f32,
     seconds: f32,
 ) -> RenderedClip {
+    render_family_clip_at_note(family, CALIBRATION_NOTE, velocity, sample_rate, seconds)
+}
+
+/// Held-note full-synth render of a family at an arbitrary MIDI note. Lets the
+/// register-coverage guards (T1.6) audition C2–C6, which the battery's fixed
+/// `CALIBRATION_NOTE` (middle C) never reaches.
+fn render_family_clip_at_note(
+    family: ResonatorFamily,
+    note: u8,
+    velocity: u8,
+    sample_rate: f32,
+    seconds: f32,
+) -> RenderedClip {
+    render_patch_held_note(family_patch(family), note, velocity, sample_rate, seconds)
+}
+
+/// Held-note full-synth render of an explicit patch (single note-on, no note-off).
+/// Lets a test sweep a patch field — e.g. the maximally-damped Mesh — through the
+/// integrated voice rather than only the family default.
+fn render_patch_held_note(
+    patch: ResonatorSynthPatch,
+    note: u8,
+    velocity: u8,
+    sample_rate: f32,
+    seconds: f32,
+) -> RenderedClip {
     let block_size = 512;
     let total_blocks = ((sample_rate * seconds).ceil() as usize).div_ceil(block_size);
     let setup = ProcessSetup {
@@ -99,12 +125,12 @@ fn render_family_clip(
     let mut right = Vec::with_capacity(total_blocks * block_size);
 
     synth.reset(setup);
-    synth.set_patch_for_test(family_patch(family));
+    synth.set_patch_for_test(patch);
 
     for block in 0..total_blocks {
         let note_on = [MidiEvent::Note(NoteEvent::On {
             channel: 0,
-            note: CALIBRATION_NOTE,
+            note,
             velocity: f32::from(velocity) / 127.0,
         })];
         let events = if block == 0 { &note_on[..] } else { &[] };
@@ -326,3 +352,63 @@ fn families_are_pairwise_timbrally_distinct_and_modal_unchanged() {
 /// Pinned onset spectral centroid of the default Modal voice (M11 P4 step 5
 /// reference); P4 must not move it.
 const MODAL_REFERENCE_CENTROID_HZ: f32 = 1_856.0;
+
+/// Audible ring-out (s): the time at which the per-window RMS envelope last sits
+/// within `floor_db` of its peak window. A robust ring-length measure for the
+/// mesh's two-rate decay (a linear T60 fit is fooled by the fast high-mode death
+/// over the slow tail). Mirrors `mesh_2d/runtime.rs`'s isolated-core helper, here
+/// applied to the **integrated full-synth** output.
+fn ring_out_seconds(samples: &[f32], sample_rate: f32, window: usize, floor_db: f32) -> f32 {
+    let mut env = Vec::new();
+    let mut start = 0;
+    while start + window <= samples.len() {
+        env.push(rms(&samples[start..start + window]));
+        start += window;
+    }
+    let peak = env.iter().copied().fold(0.0_f32, f32::max).max(1.0e-12);
+    let threshold = peak * 10.0_f32.powf(floor_db / 20.0);
+    let last = env
+        .iter()
+        .rposition(|&level| level > threshold)
+        .unwrap_or(0);
+    (last * window + window / 2) as f32 / sample_rate
+}
+
+/// P2 (LAMATH-RENDER-FIXES) end-to-end: the integrated full-synth Mesh voice must ring
+/// across **the whole `damping` range, not just the default**. The closed-form range is
+/// proven degeneracy-free by `mesh_2d::runtime`'s pure-math guard; this confirms the map
+/// is actually wired into audible output. The shipped default (`damping = 0.3`,
+/// ~1.8 s T60) rings clearly across C2–C6 (the register span — T1.6 — the battery's
+/// single middle-C never reached), and the **most-damped** extreme (`damping = 1.0`,
+/// ~0.3 s T60) still produces an audible plate, not the ~0.05 s thud the old map gave
+/// over its top ¾.
+#[cfg_attr(not(feature = "integration-tests"), ignore = "see make test-integration")]
+#[test]
+fn mesh_damping_range_rings_end_to_end() {
+    let sample_rate = 48_000.0;
+    // C2 (≈65 Hz), C4 (≈262 Hz), C6 (≈1047 Hz) at the shipped default damping.
+    for note in [36_u8, 60, 84] {
+        let clip = render_family_clip_at_note(ResonatorFamily::Mesh, note, 100, sample_rate, 3.0);
+        assert_all_finite(&clip.left);
+        assert!(clip.peak < 8.0, "Mesh note {note} peak unbounded: {}", clip.peak);
+        let ring_out = ring_out_seconds(&clip.left, sample_rate, 4_800, -40.0);
+        assert!(
+            ring_out >= 0.4,
+            "default Mesh note {note} ring-out {ring_out:.3} s < 0.4 s (under-rings)"
+        );
+    }
+
+    // The maximally-damped extreme is the value most at risk of degenerating; it must
+    // still ring audibly above the dead-thud floor.
+    let mut damped = family_patch(ResonatorFamily::Mesh);
+    if let ResonatorConfig::Mesh(config) = &mut damped.resonator_a {
+        config.damping = 1.0;
+    }
+    let clip = render_patch_held_note(damped, 60, 100, sample_rate, 2.0);
+    assert_all_finite(&clip.left);
+    let ring_out = ring_out_seconds(&clip.left, sample_rate, 4_800, -40.0);
+    assert!(
+        ring_out >= 0.15,
+        "max-damping Mesh collapsed to a thud (−40 dB ring-out {ring_out:.3} s < 0.15 s)"
+    );
+}
