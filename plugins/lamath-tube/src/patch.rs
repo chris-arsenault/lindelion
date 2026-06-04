@@ -10,9 +10,11 @@ pub struct TubePatch {
     pub reed_stiffness: f32,
     pub embouchure: f32,
     pub reed_aperture_inertia: f32,
+    pub body_formant: f32,
     pub brightness: f32,
     pub damping: f32,
     pub bell: f32,
+    pub bell_radiation_shape: f32,
     pub output_gain_db: f32,
     pub switches: TubeModelSwitchPatch,
     pub selected_articulation: usize,
@@ -26,9 +28,11 @@ impl Default for TubePatch {
             reed_stiffness: 0.48,
             embouchure: 0.52,
             reed_aperture_inertia: 1.0,
+            body_formant: 1.0,
             brightness: 0.52,
             damping: 0.28,
-            bell: 1.0,
+            bell: 0.5,
+            bell_radiation_shape: 0.0,
             output_gain_db: -8.0,
             switches: TubeModelSwitchPatch::default(),
             selected_articulation: 0,
@@ -45,9 +49,12 @@ impl TubePatch {
         self.embouchure = unit(self.embouchure, fallback.embouchure);
         self.reed_aperture_inertia =
             unit(self.reed_aperture_inertia, fallback.reed_aperture_inertia);
+        self.body_formant = unit(self.body_formant, fallback.body_formant);
         self.brightness = unit(self.brightness, fallback.brightness);
         self.damping = unit(self.damping, fallback.damping);
         self.bell = unit(self.bell, fallback.bell);
+        self.bell_radiation_shape =
+            unit(self.bell_radiation_shape, fallback.bell_radiation_shape);
         self.output_gain_db = if self.output_gain_db.is_finite() {
             self.output_gain_db.clamp(-24.0, 12.0)
         } else {

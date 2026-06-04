@@ -7,8 +7,14 @@ mod edges;
 mod mesh_strikers;
 mod mesh_timbre;
 mod surrounding;
+mod tube_bore_steepening;
+mod tube_body_formant_levels;
+mod tube_body_formant_mix;
 mod tube_dynamics;
+mod tube_output_paths;
+mod tube_radiation_shape;
 mod tube_reed_aperture;
+mod tube_reference_match;
 
 const SINGLE_NOTE_DURATION_SECONDS: f32 = 2.5;
 
@@ -337,6 +343,12 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(tube_dynamics::TUBE_DYNAMICS_CASES.iter().cloned())
         .chain(tube_reed_aperture::TUBE_REED_APERTURE_CASES.iter().cloned())
         .chain(mesh_strikers::MESH_STRIKER_CASES.iter().cloned())
+        .chain(tube_output_paths::TUBE_OUTPUT_PATH_CASES.iter().cloned())
+        .chain(tube_body_formant_levels::TUBE_BODY_FORMANT_LEVEL_CASES.iter().cloned())
+        .chain(tube_body_formant_mix::TUBE_BODY_FORMANT_MIX_CASES.iter().cloned())
+        .chain(tube_radiation_shape::TUBE_RADIATION_SHAPE_CASES.iter().cloned())
+        .chain(tube_bore_steepening::TUBE_BORE_STEEPENING_CASES.iter().cloned())
+        .chain(tube_reference_match::TUBE_REFERENCE_MATCH_CASES.iter().cloned())
         .collect()
 }
 

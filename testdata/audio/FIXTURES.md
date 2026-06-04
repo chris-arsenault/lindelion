@@ -77,6 +77,29 @@ battery and instrument samples cannot.
 | `vocal_sung.wav` | sung voice (sustained, pitched) | 464 Hz · 6.9 · 1655 Hz · mono · 5.97 s |
 | `vocal_spoken.wav` | spoken voice (dynamic, consonant transients) | 118 Hz · 7.1 · 1189 Hz · stereo · 4.30 s |
 
+## Added — pending review (owner clarinet gesture recording)
+
+Recorded by the repository owner / user and contributed as test fixtures (rights held by the
+owner; free to use within this project). Extracted from the uploaded repo-root `clarinet.wav` as
+whole musical gestures, not stable-center snippets: phrase timing, attacks, sustains, releases,
+and time variance are intentionally preserved. Converted to mono 44.1 kHz / 16-bit, with 10 ms
+edge fades and no peak normalization.
+
+Harmonic statistics use per-frame pitch tracking and harmonic sampling against each frame's
+current f0; concert-pitch estimates are reported below. B-flat clarinet written pitch is about a
+whole step above these concert estimates.
+
+| File | Content | source window | f0 / character | h3 · upper odd tail · centroid |
+| --- | --- | --- | --- | --- |
+| `owner_clarinet_written_c_major_scale.wav` | written C-major scale phrase | 2.05-15.65 s | 13.60 s phrase, concert A#3-A#4 path | -8.7 dB · -32.5 dB · 874 Hz |
+| `owner_clarinet_mid_register_phrase.wav` | mid-register phrase | 15.85-19.60 s | concert A#4-C5-A4 phrase | -8.1 dB · -50.0 dB · 633 Hz |
+| `owner_clarinet_low_register_phrase.wav` | low-register phrase | 19.30-22.90 s | concert A#3-C4-A3 phrase | -6.8 dB · -25.4 dB · 627 Hz |
+| `owner_clarinet_low_e_sustain.wav` | low E sustain (written), full bore | 27.60-34.10 s | concert D3, 6.50 s | -4.8 dB · -24.3 dB · 281 Hz |
+| `owner_clarinet_register_key_high_sustain.wav` | same fingering with register key | 34.60-41.25 s | concert A4, 6.65 s | -11.8 dB · -43.5 dB · 524 Hz |
+| `owner_clarinet_low_high_articulation.wav` | repeated articulation: 8 low, 8 high, 8 low, 8 high | 41.60-48.50 s | concert D3/A4 alternation | -10.4 dB · -40.6 dB · 327 Hz |
+| `owner_clarinet_quick_altissimo_phrase.wav` | quick upper-register and altissimo phrase | 48.30-55.40 s | concert D3-A#5 phrase | -6.4 dB · -40.4 dB · 582 Hz |
+| `owner_clarinet_altissimo_sustain.wav` | altissimo sustain with embouchure down-bend tail | 55.55-59.20 s | concert B5, 3.65 s | +0.7 dB · -40.8 dB · 1993 Hz |
+
 ## Added — public-domain spoken word (LibriVox, for the speech-effect port)
 
 Speech fixtures for the `speech/` effects, sourced from **LibriVox** recordings, which are

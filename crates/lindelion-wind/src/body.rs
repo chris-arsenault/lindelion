@@ -7,6 +7,9 @@ use super::{DEFAULT_BIQUAD_Q, TUBE_BOUNDARY, core, tube::ReedTubeParams};
 
 const TUBE_AIR_COLUMN_BODY_HZ: f32 = 280.0;
 const TUBE_CLARINET_RING_HZ: f32 = 1_180.0;
+const TUBE_CLARINET_RING_PARTIAL: f32 = 3.0;
+const TUBE_CLARINET_RING_MIN_HZ: f32 = 760.0;
+const TUBE_CLARINET_RING_MAX_HZ: f32 = 1_650.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TubeBody {
@@ -82,6 +85,7 @@ struct BodyProfile {
 impl BodyProfile {
     fn from_params(sample_rate: f32, params: ReedTubeParams) -> Self {
         let sample_rate = core::sanitize_sample_rate(sample_rate);
+        let formant = unit(params.body_formant);
         let loop_cutoff = math::finite_clamp(
             params.loop_filter_cutoff_hz,
             20.0,
@@ -90,18 +94,42 @@ impl BodyProfile {
         );
         let bore_cutoff =
             core::bore_hf_loss_cutoff_hz(sample_rate, params.frequency_hz, loop_cutoff);
-        let radiation_cutoff =
-            math::finite_clamp(bore_cutoff * 1.55, 1_800.0, sample_rate * 0.45, 3_000.0);
+        let radiation_cutoff = math::finite_clamp(
+            bore_cutoff * (1.55 - 0.50 * formant),
+            1_450.0,
+            sample_rate * 0.45,
+            3_000.0,
+        );
+        let tracked_ring = math::finite_clamp(
+            params.frequency_hz * TUBE_CLARINET_RING_PARTIAL,
+            TUBE_CLARINET_RING_MIN_HZ,
+            TUBE_CLARINET_RING_MAX_HZ,
+            TUBE_CLARINET_RING_HZ,
+        );
+        let ring_hz = lerp(TUBE_CLARINET_RING_HZ, tracked_ring, formant);
+        let ring_q = lerp(2.4, 5.2, formant);
 
         Self {
             highpass: BiquadCoefficients::highpass(sample_rate, 45.0, DEFAULT_BIQUAD_Q),
             lowpass: BiquadCoefficients::lowpass(sample_rate, radiation_cutoff, DEFAULT_BIQUAD_Q),
             low_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_AIR_COLUMN_BODY_HZ, 2.0),
-            high_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_CLARINET_RING_HZ, 2.4),
-            direct_gain: 0.62,
-            low_resonance_gain: 0.14,
-            high_resonance_gain: 0.34,
+            high_resonance: BiquadCoefficients::bandpass(sample_rate, ring_hz, ring_q),
+            direct_gain: lerp(0.62, 0.08, formant),
+            low_resonance_gain: lerp(0.14, 0.20, formant),
+            high_resonance_gain: lerp(0.34, 4.20, formant),
             output_gain: TUBE_BOUNDARY.output_gain(params.boundary_reflection),
         }
     }
+}
+
+fn unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
 }

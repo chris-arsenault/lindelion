@@ -45,6 +45,9 @@ pub(crate) enum PatchRecipe {
         family: ResonatorFamily,
         surrounding: SurroundingRecipe,
     },
+    ReferenceWav {
+        path: &'static str,
+    },
     Edge(EdgeRecipe),
     /// Driven wind Tube playing a multi-note phrase, with the articulation knobs the schedule
     /// can't express: `polyphony` (1 = mono voice-stealing slur; >1 = poly) and
@@ -56,6 +59,30 @@ pub(crate) enum PatchRecipe {
         /// A/B for the radiation tap; ADR-0032 item-B follow-up).
         bell: bool,
         reed_aperture: TubeReedAperture,
+    },
+    TubePathAuditPhrase {
+        bell_enabled: bool,
+        body_enabled: bool,
+    },
+    TubeBodyFormantPhrase {
+        bell_enabled: bool,
+        level: TubeBodyFormantLevel,
+    },
+    TubeBodyFormantMixPhrase {
+        bell: TubeBellLevel,
+        level: TubeBodyFormantLevel,
+    },
+    TubeRadiationShapePhrase {
+        bell: TubeBellLevel,
+        shape: TubeRadiationShape,
+    },
+    TubeBoreSteepeningPhrase {
+        bell: TubeBellLevel,
+        steepening_enabled: bool,
+    },
+    TubeReferenceMatchPhrase {
+        articulation: TubeReferenceArticulation,
+        gain: TubeReferenceMatchGain,
     },
     /// Struck Mesh playing a multi-note phrase, exposing the same articulation knobs the schedule
     /// can't express: `polyphony` (1 = single voice-stealing body; >1 = independent struck voices
@@ -112,6 +139,39 @@ pub(crate) enum DriverRecipe {
 pub(crate) enum TubeReedAperture {
     Instant,
     Inertial,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeBodyFormantLevel {
+    Current,
+    Medium,
+    Strong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeBellLevel {
+    Off,
+    Nominal,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeRadiationShape {
+    Current,
+    Gentle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeReferenceArticulation {
+    Legato,
+    Tongue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeReferenceMatchGain {
+    LowESustain,
+    RegisterKeyHighSustain,
+    LowHighArticulation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +245,7 @@ pub(crate) enum CatalogError {
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 13] = [
+const GROUPS: [CatalogGroup; 19] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -263,6 +323,42 @@ const GROUPS: [CatalogGroup; 13] = [
         directory: "13_mesh_strikers",
         title: "Mesh Sticks & Mallets",
         question: "Do the four Mesh striker impulses stay distinct across single hits, repeated notes, overlap phrases, and ride/crash body settings?",
+    },
+    CatalogGroup {
+        id: "tube_output_paths",
+        directory: "14_tube_output_paths",
+        title: "Tube Output Path Audit",
+        question: "Which existing Tube output path carries the audible square/HF character: body pickup, bell radiation, or dry pickup?",
+    },
+    CatalogGroup {
+        id: "tube_body_formant_levels",
+        directory: "15_tube_body_formant_levels",
+        title: "Tube Body Formant Levels",
+        question: "Does a louder tracked-h3 body path become audible by itself and in the full Tube mix?",
+    },
+    CatalogGroup {
+        id: "tube_body_formant_mix",
+        directory: "16_tube_body_formant_mix",
+        title: "Tube Body Formant Mix",
+        question: "Does a stronger tracked-h3 body path survive the nominal 50% bell mix while full bell remains a useful upper comparison?",
+    },
+    CatalogGroup {
+        id: "tube_radiation_shape",
+        directory: "17_tube_radiation_shape",
+        title: "Tube Radiation Shape A/B",
+        question: "Does gentler first-order bell radiation keep useful brightness while reducing the square-wave edge?",
+    },
+    CatalogGroup {
+        id: "tube_bore_steepening",
+        directory: "18_tube_bore_steepening",
+        title: "Tube Bore Steepening A/B",
+        question: "Is the amplitude-dependent bore steepening in the feedback path the dominant source of square-wave edge?",
+    },
+    CatalogGroup {
+        id: "tube_reference_match",
+        directory: "19_tube_reference_match",
+        title: "Tube Reference Match",
+        question: "How does current Tube compare directly against owner clarinet reference gestures for low sustain, register-key sustain, and articulation?",
     },
 ];
 

@@ -15,6 +15,7 @@ const MIN_LOOP_GAIN: f32 = 0.90;
 const MAX_LOOP_GAIN: f32 = 0.995;
 const MIN_BRIGHTNESS_HZ: f32 = 1_200.0;
 const MAX_BRIGHTNESS_HZ: f32 = 14_000.0;
+const BELL_MIX_EXPONENT: f32 = 1.514_573_2;
 
 const TONGUE: &[f32] = &[
     0.00, 0.46, -0.30, 0.18, -0.12, 0.08, -0.055, 0.038, -0.026, 0.018, -0.012, 0.008, -0.005,
@@ -279,7 +280,9 @@ fn tube_params(patch: &TubePatch, frequency_hz: f32) -> ReedTubeParams {
         loop_nonlinearity: 0.0,
         boundary_reflection: -0.75,
         pickup_position: 0.82,
-        bell_radiation: patch.bell,
+        bell_radiation: bell_radiation_from_mix(patch.bell),
+        bell_radiation_shape: patch.bell_radiation_shape,
+        body_formant: patch.body_formant,
         reed_phase_delay_samples: 0.0,
         switches: ReedTubeSwitches {
             reed_enabled: true,
@@ -307,6 +310,10 @@ fn brightness_hz(brightness: f32) -> f32 {
 fn loop_gain_from_damping(damping: f32) -> f32 {
     let damping = damping.clamp(0.0, 1.0);
     MAX_LOOP_GAIN + (MIN_LOOP_GAIN - MAX_LOOP_GAIN) * damping
+}
+
+fn bell_radiation_from_mix(mix: f32) -> f32 {
+    mix.clamp(0.0, 1.0).powf(BELL_MIX_EXPONENT)
 }
 
 fn keyswitch_slot(note: u8) -> Option<usize> {

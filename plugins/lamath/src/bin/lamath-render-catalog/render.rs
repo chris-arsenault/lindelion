@@ -1,8 +1,10 @@
 use crate::catalog::{
     CATALOG_BLOCK_SIZE, CATALOG_SAMPLE_RATE, CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe,
     MeshStriker, MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth,
-    SurroundingRecipe, TubeReedAperture,
+    SurroundingRecipe, TubeBellLevel, TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture,
+    TubeReferenceArticulation, TubeReferenceMatchGain,
 };
+use lindelion_dsp_utils::resampling::WindowedSincResampler;
 use lamath::{ModalConfig, ModalPreset, ResonatorRouting, ResonatorSynth, ResonatorSynthPatch};
 use lamath_cymbal::{CymbalExcitationSource, CymbalPatch, CymbalProcessor};
 use lamath_stringed::{
@@ -13,9 +15,10 @@ use lindelion_plugin_shell::{
     AudioBuffer, AudioPlugin, MidiEvent, NoteEvent, ProcessContext, ProcessMode, ProcessSetup,
 };
 use lindelion_sample_library::{
-    StereoPcm16WavError, StereoPcm16WavMetrics, validate_wav_stereo_pcm16,
+    SampleDecodeError, StereoPcm16WavError, StereoPcm16WavMetrics, decode_wav_mono,
+    validate_wav_stereo_pcm16,
 };
-use std::fmt;
+use std::{fmt, path::Path};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RenderedCase {
@@ -24,15 +27,19 @@ pub(crate) struct RenderedCase {
     pub(crate) metrics: StereoPcm16WavMetrics,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum RenderError {
+    DecodeReference {
+        path: &'static str,
+        source: SampleDecodeError,
+    },
     Wav(StereoPcm16WavError),
 }
 
 pub(crate) fn render_case(case: &CatalogCase) -> Result<RenderedCase, RenderError> {
     let target_frames = case.target_frames();
     let target = target_for_recipe(case.patch_recipe);
-    let (left, right) = render_target(target, case.schedule.notes, target_frames);
+    let (left, right) = render_target(target, case.schedule.notes, target_frames)?;
     let metrics =
         validate_wav_stereo_pcm16(&left, &right, CATALOG_SAMPLE_RATE).map_err(RenderError::Wav)?;
     Ok(RenderedCase {
@@ -44,6 +51,7 @@ pub(crate) fn render_case(case: &CatalogCase) -> Result<RenderedCase, RenderErro
 
 #[derive(Debug, Clone)]
 enum RenderTarget {
+    ReferenceWav(&'static str),
     Modal(ResonatorSynthPatch),
     Cymbal(CymbalPatch),
     Tube(TubePatch),
@@ -54,13 +62,32 @@ fn render_target(
     target: RenderTarget,
     notes: &[ScheduledNote],
     target_frames: usize,
-) -> (Vec<f32>, Vec<f32>) {
+) -> Result<(Vec<f32>, Vec<f32>), RenderError> {
     match target {
-        RenderTarget::Modal(patch) => render_modal(patch, notes, target_frames),
-        RenderTarget::Cymbal(patch) => render_cymbal(patch, notes, target_frames),
-        RenderTarget::Tube(patch) => render_tube(patch, notes, target_frames),
-        RenderTarget::Stringed(patch) => render_stringed(patch, notes, target_frames),
+        RenderTarget::ReferenceWav(path) => render_reference_wav(path, target_frames),
+        RenderTarget::Modal(patch) => Ok(render_modal(patch, notes, target_frames)),
+        RenderTarget::Cymbal(patch) => Ok(render_cymbal(patch, notes, target_frames)),
+        RenderTarget::Tube(patch) => Ok(render_tube(patch, notes, target_frames)),
+        RenderTarget::Stringed(patch) => Ok(render_stringed(patch, notes, target_frames)),
     }
+}
+
+fn render_reference_wav(
+    path: &'static str,
+    target_frames: usize,
+) -> Result<(Vec<f32>, Vec<f32>), RenderError> {
+    let decoded = decode_wav_mono(&repo_path(path))
+        .map_err(|source| RenderError::DecodeReference { path, source })?;
+    let read_ratio = f64::from(decoded.sample_rate) / f64::from(CATALOG_SAMPLE_RATE);
+    let mut mono = vec![0.0; target_frames];
+    WindowedSincResampler::default().render_to(&decoded.samples, read_ratio, &mut mono);
+    Ok((mono.clone(), mono))
+}
+
+fn repo_path(relative_path: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative_path)
 }
 
 fn render_modal(
@@ -214,6 +241,7 @@ fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             family,
             surrounding,
         } => surrounding_target(family, surrounding),
+        PatchRecipe::ReferenceWav { path } => RenderTarget::ReferenceWav(path),
         PatchRecipe::Edge(recipe) => edge_target(recipe),
         PatchRecipe::TubePhrase {
             retrigger,
@@ -222,11 +250,123 @@ fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             ..
         } => {
             let patch = TubePatch {
-                bell: if bell { 1.0 } else { 0.0 },
+                bell: if bell { TubePatch::default().bell } else { 0.0 },
                 reed_aperture_inertia: reed_aperture_inertia(reed_aperture),
                 selected_articulation: if retrigger { 0 } else { 2 },
                 switches: TubeModelSwitchPatch {
                     bell_enabled: bell,
+                    ..TubeModelSwitchPatch::default()
+                },
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
+        PatchRecipe::TubePathAuditPhrase {
+            bell_enabled,
+            body_enabled,
+        } => {
+            let patch = TubePatch {
+                bell: if bell_enabled {
+                    TubePatch::default().bell
+                } else {
+                    0.0
+                },
+                reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
+                selected_articulation: 2,
+                switches: TubeModelSwitchPatch {
+                    bell_enabled,
+                    body_enabled,
+                    ..TubeModelSwitchPatch::default()
+                },
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
+        PatchRecipe::TubeBodyFormantPhrase {
+            bell_enabled,
+            level,
+        } => {
+            let patch = TubePatch {
+                bell: if bell_enabled {
+                    TubePatch::default().bell
+                } else {
+                    0.0
+                },
+                reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
+                body_formant: tube_body_formant_level(level),
+                selected_articulation: 2,
+                switches: TubeModelSwitchPatch {
+                    bell_enabled,
+                    body_enabled: true,
+                    ..TubeModelSwitchPatch::default()
+                },
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
+        PatchRecipe::TubeBodyFormantMixPhrase { bell, level } => {
+            let (bell_enabled, bell_gain) = tube_bell_level(bell);
+            let patch = TubePatch {
+                bell: bell_gain,
+                reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
+                body_formant: tube_body_formant_level(level),
+                selected_articulation: 2,
+                switches: TubeModelSwitchPatch {
+                    bell_enabled,
+                    body_enabled: true,
+                    ..TubeModelSwitchPatch::default()
+                },
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
+        PatchRecipe::TubeRadiationShapePhrase { bell, shape } => {
+            let (bell_enabled, bell_gain) = tube_bell_level(bell);
+            let patch = TubePatch {
+                bell: bell_gain,
+                bell_radiation_shape: tube_radiation_shape_value(shape),
+                reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
+                body_formant: tube_body_formant_level(TubeBodyFormantLevel::Strong),
+                selected_articulation: 2,
+                switches: TubeModelSwitchPatch {
+                    bell_enabled,
+                    body_enabled: true,
+                    ..TubeModelSwitchPatch::default()
+                },
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
+        PatchRecipe::TubeBoreSteepeningPhrase {
+            bell,
+            steepening_enabled,
+        } => {
+            let (bell_enabled, bell_gain) = tube_bell_level(bell);
+            let patch = TubePatch {
+                bell: bell_gain,
+                reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
+                body_formant: tube_body_formant_level(TubeBodyFormantLevel::Strong),
+                selected_articulation: 2,
+                switches: TubeModelSwitchPatch {
+                    bell_enabled,
+                    body_enabled: true,
+                    bore_steepening_enabled: steepening_enabled,
+                    ..TubeModelSwitchPatch::default()
+                },
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
+        PatchRecipe::TubeReferenceMatchPhrase { articulation, gain } => {
+            let patch = TubePatch {
+                reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
+                body_formant: tube_body_formant_level(TubeBodyFormantLevel::Strong),
+                output_gain_db: TubePatch::default().output_gain_db
+                    + tube_reference_match_gain_db(gain),
+                selected_articulation: tube_reference_articulation_slot(articulation),
+                switches: TubeModelSwitchPatch {
+                    bell_enabled: true,
+                    body_enabled: true,
                     ..TubeModelSwitchPatch::default()
                 },
                 ..TubePatch::default()
@@ -342,6 +482,44 @@ fn reed_aperture_inertia(reed_aperture: TubeReedAperture) -> f32 {
     match reed_aperture {
         TubeReedAperture::Instant => 0.0,
         TubeReedAperture::Inertial => 1.0,
+    }
+}
+
+fn tube_body_formant_level(level: TubeBodyFormantLevel) -> f32 {
+    match level {
+        TubeBodyFormantLevel::Current => 0.0,
+        TubeBodyFormantLevel::Medium => 0.55,
+        TubeBodyFormantLevel::Strong => 1.0,
+    }
+}
+
+fn tube_bell_level(level: TubeBellLevel) -> (bool, f32) {
+    match level {
+        TubeBellLevel::Off => (false, 0.0),
+        TubeBellLevel::Nominal => (true, TubePatch::default().bell),
+        TubeBellLevel::Full => (true, 1.0),
+    }
+}
+
+fn tube_radiation_shape_value(shape: TubeRadiationShape) -> f32 {
+    match shape {
+        TubeRadiationShape::Current => 0.0,
+        TubeRadiationShape::Gentle => 1.0,
+    }
+}
+
+fn tube_reference_articulation_slot(articulation: TubeReferenceArticulation) -> usize {
+    match articulation {
+        TubeReferenceArticulation::Legato => 2,
+        TubeReferenceArticulation::Tongue => 0,
+    }
+}
+
+fn tube_reference_match_gain_db(gain: TubeReferenceMatchGain) -> f32 {
+    match gain {
+        TubeReferenceMatchGain::LowESustain => 4.5,
+        TubeReferenceMatchGain::RegisterKeyHighSustain => 11.6,
+        TubeReferenceMatchGain::LowHighArticulation => 8.35,
     }
 }
 
@@ -587,6 +765,9 @@ fn surrounding_config(recipe: SurroundingRecipe) -> lamath::SurroundingConfig {
 impl fmt::Display for RenderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DecodeReference { path, source } => {
+                write!(formatter, "reference WAV decode failed for {path}: {source}")
+            }
             Self::Wav(error) => write!(formatter, "rendered WAV validation failed: {error:?}"),
         }
     }

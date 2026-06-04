@@ -37,16 +37,43 @@ reed, or register-key work.
 
 ### Next levers, by likely impact (revised after the #1 audition)
 
-2. **Bore HF loss (the "bore" half) — now the lead lever.** The loop (gain ~0.97 + a mild mouth
+**Audition discipline:** a weak/no-effect A/B does **not** invalidate the physical lever by itself.
+First assume the attempted delta may have been too small, mixed too low, or placed where the signal
+path masks it. Before marking a lever low-impact, make a stress render that should be obviously
+audible if the path has leverage, then bracket back toward a nominal setting. Do not infer from
+micro changes like a 1 Hz cutoff move, a same-cutoff order swap, or a low-mix formant tweak.
+
+2. **Bore HF loss (the "bore" half) — still unresolved.** The loop (gain ~0.97 + a mild mouth
    low-pass) sustains a bright/buzzy wave that the pickup merely hides and the bell re-exposes. A real
    bore loses highs fast; make the loop properly lossy at HF so the *sustained wave itself* is a warm
-   clarinet — then pickup and bell are both warm and the "square" goes away at its source. Re-audition
-   bell-off, which should itself get warmer. (`tube.rs` loop damping / mouth cutoff; `loop_gain`.)
-3. **Body/formant warmth (A1)** (`body.rs`): tune `TubeBody` (the ≈280 Hz body + ≈1500 Hz flare pair)
-   into a genuinely resonant body so the tone reads acoustic, not "digital clarinet."
-4. **Radiation shape** (`tube.rs`): the 2nd-order 500 Hz `radiation_highpass` over-emphasizes; a
-   gentler 1st-order differentiator is more physical. Secondary — only worth it once the bore is warm.
-5. **Brightness from the source / cuivré** (`reed.rs`): the beating duty cycle should shift with
+   clarinet — then pickup and bell are both warm and the "square" goes away at its source. Failed
+   audition (2026-06-05): an extra bore-wall high shelf inside both traveling directions produced
+   note-dependent flat/sharp tuning damage and did not materially improve timbre, so it was removed.
+   Next step is contribution audit, not stronger loop-filter tweaking.
+3. **Body/formant warmth (A1) — still unresolved.** `TubeBody` has a fixed ≈280 Hz + ≈1180 Hz pair,
+   but it has not yet been proven to carry enough of the audible signal to fix the missing h3 ring.
+   Failed audition (2026-06-05): tracking the high body resonance to the third partial with more h3
+   gain had no material audible effect at the first levels; that proves level/mix leverage was too
+   low, not that formant body is invalid. `14_tube_output_paths` auditions the existing current/body-
+   only/dry-pickup+bell/dry-pickup paths. Audition update: strong h3 body-only is slightly different
+   and slightly better, but the effect is small and largely masked in the full mix.
+   Decision direction: strong h3 body is useful, and the reduced-bell audition should become nominal
+   50% bell mix per project convention. `16_tube_body_formant_mix` now auditions the body-dominant h3
+   setting with bell off/nominal/full, with nominal as the intended default and full bell as the
+   brighter upper comparison.
+4. **Radiation shape — inconclusive at the first delta (2026-06-05).** Current bell radiation is a 2nd-order
+   500 Hz highpass outside the oscillator loop. With strong h3 body + nominal 50% bell accepted as the
+   current target, full bell remains useful but leans square-wave. `17_tube_radiation_shape` compared
+   the current 2nd-order radiation against a gentler first-order radiation transfer at nominal and
+   full bell, with the body/bell tuning otherwise held fixed. Audition result: barely audible/micro.
+   That does **not** prove radiation shape is invalid; it proves this particular order swap at the
+   same cutoff was not a meaningful enough delta. A real radiation-shape audition needs a wide,
+   intentionally obvious bracket before deciding whether the lever matters.
+5. **Bore steepening — active structural audition (2026-06-05).** The current Tube loop includes an
+   amplitude-dependent allpass steepener inside the mouth/bore feedback path. Unlike bell radiation
+   or body EQ, this can alter the sustained wave itself and is velocity-dependent. `18_tube_bore_steepening`
+   compares current steepening against steepening disabled at nominal and full bell.
+6. **Brightness from the source / cuivré** (`reed.rs`): the beating duty cycle should shift with
    blowing pressure so the bore generates more harmonics when blown harder. Only meaningful once the
    base tone is warm. **Reed-aperture status (updated 2026-06-05): inertia kept, pitch fixed.**
    Finite reed inertia is a real source-side de-harshening (it band-limits the reed's hard gating,
@@ -58,7 +85,7 @@ reed, or register-key work.
    tuning. Only `12_tube_reed_aperture` (instant vs inertial) remains as the A/B for this thread; the
    integrated-boundary and predicted-aperture experiments were both ruled out and removed (including
    `13_tube_aperture_prediction`).
-6. **Shaped breath** (item 14, `reed.rs`): white-noise turbulence → band/formant-shaped air.
+7. **Shaped breath** (item 14, `reed.rs`): white-noise turbulence → band/formant-shaped air.
 
 Plugin layer already addresses **F11/F12** (8 key-switchable articulation excitations replace the
 generic impulse) and gives the `ReedTubeSwitches` A/B toggles used above.

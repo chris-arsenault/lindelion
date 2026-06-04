@@ -1,6 +1,6 @@
 use lindelion_dsp_utils::{
     delay::FirstOrderAllpass,
-    filters::{Biquad, BiquadCoefficients},
+    filters::{Biquad, BiquadCoefficients, OnePoleLowpass},
     math, soft_saturate,
 };
 
@@ -20,6 +20,7 @@ const STEEPEN_MAX_ENERGY: f32 = 1.0;
 const STEEPEN_MAX_COEFF: f32 = 0.9;
 const STEEPEN_AMPLITUDE_SENS: f32 = 10.0;
 const RADIATION_CUTOFF_HZ: f32 = 500.0;
+const GENTLE_RADIATION_CUTOFF_HZ: f32 = 500.0;
 const REED_PHASE_ONE_WAY_FACTOR: f32 = 0.5;
 const WARM_BORE_DELAY_EXTRA_SAMPLES: f32 = 1.7;
 const WARM_BORE_DELAY_FULL_CUTOFF_HZ: f32 = 1_300.0;
@@ -54,6 +55,8 @@ pub struct ReedTubeParams {
     pub boundary_reflection: f32,
     pub pickup_position: f32,
     pub bell_radiation: f32,
+    pub bell_radiation_shape: f32,
+    pub body_formant: f32,
     /// Phase delay (samples) the inertial reed aperture adds to the feedback loop at the
     /// playing frequency, supplied by the driving [`crate::ReedDriver`]. Folded into the
     /// bore-length tuning so the reed's loop phase is compensated like the mouth-loss and
@@ -73,6 +76,8 @@ impl Default for ReedTubeParams {
             boundary_reflection: BOUNDARY_REFLECTION_DEFAULT,
             pickup_position: PICKUP_POSITION_DEFAULT,
             bell_radiation: 1.0,
+            bell_radiation_shape: 0.0,
+            body_formant: 0.0,
             reed_phase_delay_samples: 0.0,
             switches: ReedTubeSwitches::default(),
         }
@@ -111,6 +116,11 @@ impl ReedTubeParams {
                 fallback.pickup_position,
             ),
             bell_radiation: unit(self.bell_radiation, fallback.bell_radiation),
+            bell_radiation_shape: unit(
+                self.bell_radiation_shape,
+                fallback.bell_radiation_shape,
+            ),
+            body_formant: unit(self.body_formant, fallback.body_formant),
             reed_phase_delay_samples: math::finite_clamp(
                 self.reed_phase_delay_samples,
                 0.0,
@@ -147,6 +157,7 @@ pub struct ReedTube {
     steepening_drive: f32,
     steepening_allpass: FirstOrderAllpass,
     radiation_highpass: Biquad,
+    gentle_radiation_lowpass: OnePoleLowpass,
     mouth_incident: f32,
     #[cfg(test)]
     recompute_count: u32,
@@ -177,6 +188,10 @@ impl ReedTube {
                 RADIATION_CUTOFF_HZ,
                 DEFAULT_BIQUAD_Q,
             )),
+            gentle_radiation_lowpass: OnePoleLowpass::new(
+                GENTLE_RADIATION_CUTOFF_HZ,
+                sample_rate,
+            ),
             mouth_incident: 0.0,
             #[cfg(test)]
             recompute_count: 0,
@@ -205,6 +220,7 @@ impl ReedTube {
         self.steepening_drive = 0.0;
         self.steepening_allpass.reset();
         self.radiation_highpass.reset();
+        self.gentle_radiation_lowpass.reset();
         self.mouth_incident = 0.0;
     }
 
@@ -246,6 +262,7 @@ impl ReedTube {
     fn prepared_model(&mut self, params: ReedTubeParams) -> PreparedTubeModel {
         let cache_key = ReedTubeParams {
             bell_radiation: 1.0,
+            bell_radiation_shape: 0.0,
             switches: ReedTubeSwitches::default(),
             ..params
         };
@@ -383,12 +400,17 @@ impl ReedTube {
         // replaces the old `highpass(incident)·2.5·effort²` tap, which re-emitted the highs above
         // unity *on top of* reflecting them and squared the tone; brightness-with-effort must now
         // come from the source (the reed generating more harmonics), not this tap.
-        let radiated = self
-            .radiation_highpass
-            .process(bell_incident + bell_reflected)
+        let radiated = self.radiated_bell_sample(bell_incident + bell_reflected, params)
             * bell_gain;
 
         math::snap_to_zero(body + radiated)
+    }
+
+    fn radiated_bell_sample(&mut self, bell_pressure: f32, params: ReedTubeParams) -> f32 {
+        let current = self.radiation_highpass.process(bell_pressure);
+        let gentle = bell_pressure - self.gentle_radiation_lowpass.process(bell_pressure);
+        let shape = math::finite_clamp(params.bell_radiation_shape, 0.0, 1.0, 0.0);
+        math::snap_to_zero(current + (gentle - current) * shape)
     }
 }
 
