@@ -29,7 +29,7 @@ mapping in `plugins/lamath/src/bin/lamath-render-catalog/` and the DSP defaults 
   [ADR-0032](docs/adr/0032-lamath-tube-driven-wind-voice.md), the [Lamath spec](docs/plugins/lamath.md)
   §4.2, CHANGELOG v0.14.0, and the [Lamath backlog](docs/plugins/lamath-backlog.md) (deferred:
   stronger brassiness, formant spectrum, UI-locked mono/driver, bound articulation, better default
-  excitation). The completed working plan has been removed; this tracker now covers only **P2–P8 + T1**.
+  excitation). The completed working plan has been removed; this tracker now covers only **P3–P8 + T1**.
 
 ## Status legend
 
@@ -43,7 +43,6 @@ mapping in `plugins/lamath/src/bin/lamath-render-catalog/` and the DSP defaults 
 | ID | Problem | Affected samples | Est. root cause (file:line) | Scope | Identified | Red test | Fixed | Human-validated |
 |----|---------|------------------|------------------------------|-------|:----------:|:--------:|:-----:|:---------------:|
 | **P1** | Tube has no audible struck/plucked voice — total silence | `baseline_tube_*` (all vel), `register_tube_*` (all reg), `contact_tube_*` (all), `driver_tube_sample` | Closed-tube waveguide (`boundary_reflection=-0.75`, `constants.rs:154`) given only an impulse strike with no sustained driver; no internal self-excitation path. **No tube test renders the default −0.75/0.97 operating point** — every tube test overrides to +0.8/0.85 & loop_gain 0.985+ (`tube_1d/tests.rs`); calibration battery passes it on `rms>0.0`. | DSP | ✅ | ⬜ | ⬜ | ⬜ |
-| **P2** | Mesh is transient-only, never rings | `baseline_mesh_*` (all vel), `register_mesh_*` (all reg) | **Root cause = degenerate parameter *range*, not the default.** The boundary-loss map (`mesh_2d/runtime.rs`) ran `damping 0..1` up to a loss of 0.5 (instant death), so the top ¾ of the control (≳0.25) collapsed to a ~50 ms thud; the default 0.3 sat in the dead zone. **Fixed by re-ranging from the physics:** the (1,1)-mode decays as `(1−loss)^(t·fs·(1/W+1/H))`, so `loss = 1 − exp(−3ln10 / (T60·fs·(1/W+1/H)))`; the knob now maps geometrically over a musical T60 band (4.0 s → 0.30 s), every value rings, and ring length is sample-rate-independent. Default stays 0.3 (now ~1.8 s T60) — one coherent value across `MeshConfig`/`MeshVoiceParams`/registry. Guards: closed-form `mesh_damping_control_has_no_degenerate_region` (runtime.rs, in `make ci`) + `mesh_damping_range_rings_end_to_end` (calibration_tests, integration). Edge case `edge_mesh_low_damping_high_material` (damping 0.0, liked) unaffected. | param | ✅ | ✅ | ✅ | ⬜ |
 | **P3** | String driver/excitation does not color the sound | `driver_string_pick_soft/hard`, `driver_string_sample` | Pick hardness/contact-time (`render.rs:189–195`) reach the patch but are inaudible — "just slightly louder." Excitation shaping washed out by the dominant Karplus loop; same class as the M11-P8 energy-reference miscalibration (15–60× off). | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
 | **P4** | Contact model inert | `contact_string_tight/wide × short/long` | `ContactConfig` spread/contact-time (`render.rs:220–239`) produce no audible difference. | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
 | **P5** | Source-body balance inert (flagship M9/M11 feature) | `source_body_string_depth000/050/100` (v020 & v127) | `source_body_balance` depth 0.0→1.0 (`render.rs:241–255`, default `0.5` `patch.rs:300`) produces no audible change. **Test gap:** the A/B test (`balance_tests.rs:47`) sweeps *energy* at fixed depth=0.85 via direct `set_balance_drive`, never sweeps *depth* through the energy follower at a played velocity — the catalog's actual axis is untested. | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
@@ -73,16 +72,16 @@ they assert, *where* they sample the parameter space, and *what* they excite.
    `calibration_tests.rs:206` gates audibility on `clip.rms > 0.0`; sub-component
    tests use `> 1.0e-8` / `> 1.0e-9`. A tube that is silent to the ear renders
    ~1e-5 RMS and passes every one of these. The comment says "should render audible
-   output" — the predicate says "not exactly zero." → **Catches P1, P2, P8.**
+   output" — the predicate says "not exactly zero." → **Catches P1, P8.**
    Fix: a real dBFS sustain floor (e.g. post-attack window RMS > −60 dBFS, and a
    *minimum-sustain* gate for struck families).
 
 2. **Decay/ring assertions are `Option`-gated and pass vacuously on failure.**
    `calibration_tests.rs:225`: `t60_seconds.is_none_or(|t| ... t > 0.0)`. When a
-   resonator dies instantly (mesh "transient only"), `partial_t60_seconds` returns
+   resonator dies instantly, `partial_t60_seconds` returns
    `None`, so the one assertion that should catch "doesn't ring" is *skipped*
    exactly in the failure case. Same pattern on `centroid_endpoints` and
-   `attack_sustain_ratio`. → **Catches P2 (and any "no ring").**
+   `attack_sustain_ratio`.
    Fix: for struck/plucked families, T60 MUST be `Some` and inside a target band.
 
 3. **A/B "materially changes" thresholds are "not bit-identical," not "audible."**
@@ -157,7 +156,6 @@ not envelope-shape/timbre quality; **T1.6** register/velocity coverage hole.
 | P | Sample failure | Nominal covering test (file:line) | The assertion that passed | Why it passed the defect | Gap |
 |---|----------------|-----------------------------------|---------------------------|--------------------------|-----|
 | P1 | Tube silent (`baseline/register/contact_tube_*`, `driver_tube_sample`) | `calibration_tests.rs:261` battery (Tube default, held note); tube core suite `tube_1d/tests.rs` | `clip.rms > 0.0` (`:206`); `t60.is_none_or(..)` (`:225`); core tests assert decay but **only at `boundary_reflection`=+0.8/0.85, `loop_gain`≥0.985** | Near-silent tube is nonzero → passes "audible"; dead tail → T60 `None` → vacuous; **no core test ever renders the default −0.75 / 0.97** | T1.1, T1.2, T1.4 |
-| P2 | Mesh transient-only (`baseline/register_mesh_*`) | `mesh_2d/runtime.rs` `default_mesh_rings_metallic` (ring-out 1.5–4.0 s); `calibration_tests.rs:261` battery | ring-out test passes because it builds `MeshVoiceParams::default()` = **damping 0.05** (`runtime.rs:37`) | Shipped patch is `MeshConfig::default()` = **damping 0.3** (`patch.rs:285`), passed straight through (`mapping.rs:106`); the test's "default" ≠ the instrument's default. Calibration: T60 `None` vacuous | T1.4, T1.2 |
 | P3 | String driver inert (`driver_string_pick_soft/hard`, `sample`) | `resonator_stack/tests.rs:~150` pick brightness | `hard_centroid > soft_centroid * 1.1` | Renders the isolated `ResonatorEngine` + impulse; passes in isolation, but the full voice's energy/effort path collapses the difference. No full-synth driver A/B exists | T1.4 |
 | P4 | Contact inert (`contact_string_tight/wide × short/long`) | `resonator_stack/tests.rs:438` `strike_position_spread_changes_timbre…` | gain-invariant centroid shift `> 0.15` (picked 0.0 vs strummed 0.85) | Renders the isolated String core with `excitation_spread` **hard-set on `WaveguideParams`** (`:423`), bypassing `ContactStage`→effort→spread and the integrated voice | T1.4 |
 | P5 | Source-body inert (`source_body_string_depth000/050/100`) | `balance_tests.rs:47` `source_body_balance_shifts_timbre_soft_vs_loud` | `loud_centroid > soft_centroid * 1.15` | Sweeps **energy** at fixed **depth=0.85** via direct `String1d::set_balance_drive`; the catalog sweeps **depth** at fixed velocity through the energy follower — that axis is never tested | T1.4 |
@@ -167,7 +165,7 @@ not envelope-shape/timbre quality; **T1.6** register/velocity coverage hole.
 | P9 | Reed fuzz, not a reed (`driver_tube_reed_soft/hard`) | `resonator_stack/tests.rs:193` reed self-oscillation | `late_blown > late_quiet * 5.0` | Asserts the reed gets *loud when blown* (it oscillates) — fuzz is loud, so it passes. Nothing asserts the **spectral/harmonic quality** of a reed vs broadband distortion. Isolated engine, not full voice | T1.5, T1.4 |
 
 **The one-line story:** every broken sub-feature *has* a passing, rigorous
-perceptual test — but **8 of 9 (all but P8) pass because the strict test runs on an
+perceptual test — but **7 of the remaining 8 (all but P8) pass because the strict test runs on an
 isolated DSP core or a non-shipped operating point, never the integrated full-synth
 voice at the shipped default patch.** The only tests that *do* run the full synth at
 defaults (`calibration_tests.rs`) carry vacuous gates (`rms>0`, `t60.is_none_or`).

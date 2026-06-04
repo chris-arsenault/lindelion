@@ -67,12 +67,7 @@ impl BoundaryLowpass {
 /// Advance the per-cell lowpass and return a gently high-shelved reflection: the
 /// low band passes losslessly, the high band (`sample − lowpass`) is attenuated by
 /// `BOUNDARY_HF_LOSS`. `reflected = sample − ε·(sample − lowpass)`.
-pub(super) fn boundary_lowpass_step(
-    state: &mut f32,
-    coeff: f32,
-    hf_loss: f32,
-    sample: f32,
-) -> f32 {
+pub(super) fn boundary_lowpass_step(state: &mut f32, coeff: f32, hf_loss: f32, sample: f32) -> f32 {
     *state += coeff * (sample - *state);
     let high_band = sample - *state;
     let hf_loss = math::finite_clamp(hf_loss, 0.0, 0.02, DEFAULT_BOUNDARY_HF_LOSS);

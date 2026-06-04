@@ -145,10 +145,6 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
         width,
         height,
         sample_rate,
-        // Unused by the unit-delay update (kept only for the struct / test helper).
-        wave_speed_mps: 220.0,
-        physical_width_m: 0.7,
-        physical_height_m: 0.45,
         boundary,
         strike_position: mesh_note_strike_position(params.strike_position, note_position),
         pickup_position: mesh_note_pickup_position(params.strike_position, note_position),
@@ -284,10 +280,22 @@ fn pickup_position_with_min_separation(strike: MeshPoint, pickup: MeshPoint) -> 
     }
 
     [
-        MeshPoint::new(inset01(strike.x + MESH_MIN_STRIKE_PICKUP_DISTANCE), strike.y),
-        MeshPoint::new(inset01(strike.x - MESH_MIN_STRIKE_PICKUP_DISTANCE), strike.y),
-        MeshPoint::new(strike.x, inset01(strike.y + MESH_MIN_STRIKE_PICKUP_DISTANCE)),
-        MeshPoint::new(strike.x, inset01(strike.y - MESH_MIN_STRIKE_PICKUP_DISTANCE)),
+        MeshPoint::new(
+            inset01(strike.x + MESH_MIN_STRIKE_PICKUP_DISTANCE),
+            strike.y,
+        ),
+        MeshPoint::new(
+            inset01(strike.x - MESH_MIN_STRIKE_PICKUP_DISTANCE),
+            strike.y,
+        ),
+        MeshPoint::new(
+            strike.x,
+            inset01(strike.y + MESH_MIN_STRIKE_PICKUP_DISTANCE),
+        ),
+        MeshPoint::new(
+            strike.x,
+            inset01(strike.y - MESH_MIN_STRIKE_PICKUP_DISTANCE),
+        ),
     ]
     .into_iter()
     .filter(|candidate| {
@@ -314,7 +322,7 @@ fn pickup_alignment(strike: MeshPoint, pickup: MeshPoint, unit_x: f32, unit_y: f
 /// control maps geometrically (perceptually uniform in decay ratio) across this band,
 /// so the bottom end is a long metallic shimmer and the top end a tight but still
 /// clearly audible plate — **no value in `0..1` is a dead thud** (the old map let the
-/// top ~¾ of the range collapse to a ~50 ms transient; LAMATH-RENDER-FIXES P2).
+/// top ~¾ of the range collapse to a ~50 ms transient).
 const MESH_T60_MAX_S: f32 = 4.0;
 const MESH_T60_MIN_S: f32 = 0.30;
 
@@ -483,8 +491,8 @@ mod tests {
         zones.len()
     }
 
-    /// P2 (LAMATH-RENDER-FIXES) regression guard, proved by math rather than a render
-    /// sweep: the `damping` control must have **no degenerate region**. Across the whole
+    /// Regression guard, proved by math rather than a render sweep: the `damping`
+    /// control must have **no degenerate region**. Across the whole
     /// `0..1` range the resolved (1,1)-mode T60 stays inside the musical band, is
     /// monotonic (more damping → shorter ring), and never dips toward the ~60 ms dead
     /// thud the old `lerp(8e-5, 0.5, p³)` map produced over its top ¾. Pure arithmetic
