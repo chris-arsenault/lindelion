@@ -34,7 +34,7 @@ macro_rules! mesh_timbre_case {
     };
 }
 
-pub(super) const MESH_TIMBRE_CASES: [CatalogCase; 7] = [
+pub(super) const MESH_TIMBRE_CASES: [CatalogCase; 9] = [
     mesh_timbre_case!(
         "mesh_timbre_triangle",
         "Mesh Timbre Triangle",
@@ -44,17 +44,31 @@ pub(super) const MESH_TIMBRE_CASES: [CatalogCase; 7] = [
     ),
     mesh_timbre_case!(
         "mesh_timbre_ride",
-        "Mesh Timbre Ride",
+        "Mesh Timbre Ride Gong",
         "10_mesh_timbre/mesh_timbre_ride.wav",
-        ["mesh", "timbre", "ride"],
+        ["mesh", "timbre", "ride", "gong", "ab"],
         MeshVoicing::Ride
     ),
     mesh_timbre_case!(
+        "mesh_timbre_kit_ride",
+        "Mesh Timbre Kit Ride",
+        "10_mesh_timbre/mesh_timbre_kit_ride.wav",
+        ["mesh", "timbre", "ride", "kit", "hard-contact", "ab"],
+        MeshVoicing::KitRide
+    ),
+    mesh_timbre_case!(
         "mesh_timbre_crash",
-        "Mesh Timbre Crash",
+        "Mesh Timbre Crash Gong",
         "10_mesh_timbre/mesh_timbre_crash.wav",
-        ["mesh", "timbre", "crash", "dense"],
+        ["mesh", "timbre", "crash", "dense", "gong", "ab"],
         MeshVoicing::Crash
+    ),
+    mesh_timbre_case!(
+        "mesh_timbre_kit_crash",
+        "Mesh Timbre Kit Crash",
+        "10_mesh_timbre/mesh_timbre_kit_crash.wav",
+        ["mesh", "timbre", "crash", "kit", "hard-contact", "ab"],
+        MeshVoicing::KitCrash
     ),
     mesh_timbre_case!(
         "mesh_timbre_density_sparse",

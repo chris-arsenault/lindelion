@@ -152,7 +152,7 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
         boundary,
         strike_position: mesh_note_strike_position(params.strike_position, note_position),
         pickup_position: mesh_note_pickup_position(params.strike_position, note_position),
-        excitation_width: lerp(0.03, 0.12, material),
+        excitation_width: contact_excitation_width(material),
         // Aperture-integral pickup is a radiation area, not the old normalized
         // averaging window. Keep it narrower so dense plates do not cancel their
         // shimmer before it reaches the output.
@@ -317,6 +317,15 @@ fn pickup_alignment(strike: MeshPoint, pickup: MeshPoint, unit_x: f32, unit_y: f
 /// top ~¾ of the range collapse to a ~50 ms transient; LAMATH-RENDER-FIXES P2).
 const MESH_T60_MAX_S: f32 = 4.0;
 const MESH_T60_MIN_S: f32 = 0.30;
+
+const CONTACT_WIDTH_SOFT: f32 = 0.13;
+const CONTACT_WIDTH_HARD: f32 = 0.018;
+const CONTACT_HARDNESS_CURVE: f32 = 1.4;
+
+fn contact_excitation_width(material: f32) -> f32 {
+    let hardness = clamp01(material).powf(CONTACT_HARDNESS_CURVE);
+    lerp(CONTACT_WIDTH_SOFT, CONTACT_WIDTH_HARD, hardness)
+}
 
 /// Per-reflection boundary loss for the `damping` control (`0..1`), derived from the
 /// physics rather than hand-tuned. A wave crosses the `W×H` grid one cell per sample
@@ -570,6 +579,31 @@ mod tests {
         assert!(
             (0.000_9..=0.001_3).contains(&crash_hf_loss),
             "crash should stay near the low-loss bloom point: {crash_hf_loss}"
+        );
+    }
+
+    #[test]
+    fn hard_material_uses_narrower_contact_aperture() {
+        let soft = voice_config(
+            48_000.0,
+            MeshVoiceParams {
+                material: 0.1,
+                ..MeshVoiceParams::default()
+            },
+        );
+        let hard = voice_config(
+            48_000.0,
+            MeshVoiceParams {
+                material: 0.95,
+                ..MeshVoiceParams::default()
+            },
+        );
+
+        assert!(
+            hard.excitation_width < soft.excitation_width * 0.35,
+            "hard stick contact should be much narrower than soft contact: soft={} hard={}",
+            soft.excitation_width,
+            hard.excitation_width
         );
     }
 

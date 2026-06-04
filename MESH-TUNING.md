@@ -52,6 +52,15 @@ the wave speed is structurally fixed at 1 cell/sample. Pitch and modal structure
   readout. The density-scaled shimmer/curvature radiation tap restores sustained high-band content:
   final crash early centroid ≈2.1 kHz, >3 kHz ratio ≈0.063, and mid/early RMS ≈0.71 (ride ≈0.49).
   Guard: `crash_voicing_keeps_dense_bloom`.
+- **Kit-cymbal hard contact.** The failed surface-disorder scatterer was removed before shipping:
+  it made sour 2-3 kHz sheet-metal clusters instead of broadband cymbal air. The retained fix is
+  physical contact width: high `material` now maps to a hard, narrow stick aperture
+  (`contact_excitation_width`) while low `material` stays soft/wide and gong/body-like. The catalog
+  now has direct `ab` auditions for gong vs kit ride/crash; kit ride is smaller/drier than kit crash
+  so it does not behave like a pitched-down crash tail. Guards:
+  `hard_material_uses_narrower_contact_aperture`,
+  `hard_contact_ab_moves_dense_plate_toward_cymbal_air`, and
+  `kit_ride_tail_decays_faster_than_kit_crash_tail`.
 
 ## Open / identified (priority order)
 

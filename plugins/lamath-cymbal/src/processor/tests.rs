@@ -239,6 +239,115 @@ fn crash_voicing_keeps_dense_bloom() {
     ignore = "see make test-integration"
 )]
 #[test]
+fn hard_contact_ab_moves_dense_plate_toward_cymbal_air() {
+    let soft_contact = render_strikes(
+        CymbalPatch {
+            size: 0.98,
+            tension: 0.98,
+            damping: 0.18,
+            material: 0.25,
+            strike_position: 0.9,
+            pickup_spread: 0.18,
+            output_gain_db: -8.0,
+            ..CymbalPatch::default()
+        },
+        &[(60, 0, 0.9)],
+        24_000,
+    );
+    let hard_contact = render_strikes(
+        CymbalPatch {
+            size: 0.98,
+            tension: 0.98,
+            damping: 0.18,
+            material: 0.95,
+            strike_position: 0.9,
+            pickup_spread: 0.18,
+            output_gain_db: -8.0,
+            ..CymbalPatch::default()
+        },
+        &[(60, 0, 0.9)],
+        24_000,
+    );
+
+    let soft_early = &soft_contact[1_024..5_120];
+    let hard_early = &hard_contact[1_024..5_120];
+    let soft_high = sampled_high_frequency_ratio(soft_early, SAMPLE_RATE, 3_000.0, 500.0);
+    let hard_high = sampled_high_frequency_ratio(hard_early, SAMPLE_RATE, 3_000.0, 500.0);
+    let soft_air = sampled_high_frequency_ratio(soft_early, SAMPLE_RATE, 6_000.0, 500.0);
+    let hard_air = sampled_high_frequency_ratio(hard_early, SAMPLE_RATE, 6_000.0, 500.0);
+
+    assert_all_finite(&soft_contact);
+    assert_all_finite(&hard_contact);
+    assert!(
+        peak_abs(&hard_contact) < 1.0,
+        "peak={}",
+        peak_abs(&hard_contact)
+    );
+    assert!(
+        hard_high > soft_high * 1.25,
+        "hard contact should lift broadband high energy: soft={soft_high} hard={hard_high}"
+    );
+    assert!(
+        hard_air > soft_air * 1.25,
+        "hard contact should lift cymbal air energy: soft={soft_air} hard={hard_air}"
+    );
+}
+
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn kit_ride_tail_decays_faster_than_kit_crash_tail() {
+    let ride = render_strikes(
+        CymbalPatch {
+            size: 0.86,
+            tension: 0.84,
+            damping: 0.56,
+            material: 0.95,
+            strike_position: 0.82,
+            pickup_spread: 0.24,
+            output_gain_db: -5.0,
+            ..CymbalPatch::default()
+        },
+        &[(60, 0, 0.9)],
+        24_000,
+    );
+    let crash = render_strikes(
+        CymbalPatch {
+            size: 0.98,
+            tension: 0.98,
+            damping: 0.14,
+            material: 0.95,
+            strike_position: 0.9,
+            pickup_spread: 0.18,
+            output_gain_db: -8.0,
+            ..CymbalPatch::default()
+        },
+        &[(60, 0, 0.9)],
+        24_000,
+    );
+
+    let ride_tail_ratio = rms(&ride[14_400..24_000]) / rms(&ride[1_024..7_200]).max(1.0e-9);
+    let crash_tail_ratio = rms(&crash[14_400..24_000]) / rms(&crash[1_024..7_200]).max(1.0e-9);
+
+    assert_all_finite(&ride);
+    assert_all_finite(&crash);
+    assert!(
+        ride_tail_ratio < 0.35,
+        "kit ride should not carry a crash-length tail: ratio={ride_tail_ratio}"
+    );
+    assert!(
+        ride_tail_ratio < crash_tail_ratio * 0.55,
+        "kit ride tail should decay much faster than kit crash: ride={ride_tail_ratio} crash={crash_tail_ratio}"
+    );
+}
+
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
 fn full_timbre_sweep_stays_finite_bounded_and_audible() {
     for patch in [
         CymbalPatch {

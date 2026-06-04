@@ -75,7 +75,9 @@ pub(crate) enum PatchRecipe {
 pub(crate) enum MeshVoicing {
     Triangle,
     Ride,
+    KitRide,
     Crash,
+    KitCrash,
     DensitySparse,
     DensityDense,
     DecayShort,

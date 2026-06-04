@@ -431,6 +431,16 @@ fn cymbal_voicing_patch(voicing: MeshVoicing) -> CymbalPatch {
             strike_position: 0.72,
             ..CymbalPatch::default()
         },
+        MeshVoicing::KitRide => CymbalPatch {
+            size: 0.86,
+            tension: 0.84,
+            damping: 0.56,
+            material: 0.95,
+            strike_position: 0.82,
+            pickup_spread: 0.24,
+            output_gain_db: -5.0,
+            ..CymbalPatch::default()
+        },
         MeshVoicing::Crash => CymbalPatch {
             size: 0.95,
             tension: 0.88,
@@ -438,6 +448,16 @@ fn cymbal_voicing_patch(voicing: MeshVoicing) -> CymbalPatch {
             material: 0.40,
             strike_position: 0.9,
             output_gain_db: -5.0,
+            ..CymbalPatch::default()
+        },
+        MeshVoicing::KitCrash => CymbalPatch {
+            size: 0.98,
+            tension: 0.98,
+            damping: 0.14,
+            material: 0.95,
+            strike_position: 0.9,
+            pickup_spread: 0.18,
+            output_gain_db: -8.0,
             ..CymbalPatch::default()
         },
         MeshVoicing::DensitySparse => CymbalPatch {
