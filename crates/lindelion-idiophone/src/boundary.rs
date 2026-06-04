@@ -18,7 +18,7 @@ const BOUNDARY_LOSS_CUTOFF_HZ: f32 = 2_500.0;
 /// Tiny because the mesh reflects ~2000×/s: at ~1e-3 the high modes ring a
 /// metallic shimmer that fades a few seconds before the low modes (highs die
 /// first), while the low modes are reflected essentially losslessly.
-const BOUNDARY_HF_LOSS: f32 = 0.001_2;
+pub(super) const DEFAULT_BOUNDARY_HF_LOSS: f32 = 0.001_2;
 
 /// One-pole lowpass state per boundary cell, used to compute a gentle high-shelf
 /// loss so each reflection is frequency shaped (highs die first) without dumping
@@ -67,8 +67,14 @@ impl BoundaryLowpass {
 /// Advance the per-cell lowpass and return a gently high-shelved reflection: the
 /// low band passes losslessly, the high band (`sample − lowpass`) is attenuated by
 /// `BOUNDARY_HF_LOSS`. `reflected = sample − ε·(sample − lowpass)`.
-pub(super) fn boundary_lowpass_step(state: &mut f32, coeff: f32, sample: f32) -> f32 {
+pub(super) fn boundary_lowpass_step(
+    state: &mut f32,
+    coeff: f32,
+    hf_loss: f32,
+    sample: f32,
+) -> f32 {
     *state += coeff * (sample - *state);
     let high_band = sample - *state;
-    sample - BOUNDARY_HF_LOSS * high_band
+    let hf_loss = math::finite_clamp(hf_loss, 0.0, 0.02, DEFAULT_BOUNDARY_HF_LOSS);
+    sample - hf_loss * high_band
 }

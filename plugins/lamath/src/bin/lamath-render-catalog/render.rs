@@ -228,7 +228,9 @@ fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             };
             RenderTarget::Tube(patch)
         }
-        PatchRecipe::MeshPhrase { .. } => RenderTarget::Cymbal(CymbalPatch::default()),
+        PatchRecipe::MeshPhrase { .. } => {
+            RenderTarget::Cymbal(cymbal_voicing_patch(MeshVoicing::Ride))
+        }
         PatchRecipe::MeshVoicing(voicing) => RenderTarget::Cymbal(cymbal_voicing_patch(voicing)),
     }
 }

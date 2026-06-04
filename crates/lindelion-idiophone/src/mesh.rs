@@ -6,7 +6,7 @@ use super::sanitize_sample_rate;
 mod boundary;
 #[path = "runtime.rs"]
 mod runtime;
-use boundary::{BoundaryLowpass, boundary_lowpass_step};
+use boundary::{BoundaryLowpass, DEFAULT_BOUNDARY_HF_LOSS, boundary_lowpass_step};
 pub use runtime::{MeshResonator, MeshVoiceParams};
 
 const MIN_MESH_SIZE: usize = 3;
@@ -53,6 +53,9 @@ const SHIMMER_RADIATION_GAIN: f32 = 12.0;
 const SHIMMER_RADIATION_DENSITY_EXP: f32 = 1.5;
 const SHIMMER_PICKUP_WIDTH_SCALE: f32 = 0.45;
 const SHIMMER_PICKUP_WIDTH_MIN: f32 = 0.012;
+const STRIKE_CONTACT_MAX_LOSS_FRACTION: f32 = 0.35;
+const STRIKE_CONTACT_MOTION_DAMPING: f32 = 0.62;
+const STRIKE_CONTACT_PRESSURE_DAMPING: f32 = 0.10;
 
 /// Squared, normalized energy term in `[0, GEOMETRIC_MAX_DRIVE]` setting how
 /// strongly the mesh couples at the current playing energy.
@@ -186,6 +189,11 @@ struct RectangularMesh2dConfig {
     pickup_position: MeshPoint,
     excitation_width: f32,
     pickup_width: f32,
+    boundary_hf_loss: f32,
+    /// Per-strike local absorption while the stick/contact excitation is active.
+    /// This models relative-motion contact: a stick hitting a plate that is already
+    /// moving absorbs local energy instead of adding an independent impulse forever.
+    strike_contact_absorption: f32,
 }
 
 impl RectangularMesh2dConfig {
@@ -202,6 +210,18 @@ impl RectangularMesh2dConfig {
             pickup_position: self.pickup_position,
             excitation_width: math::finite_clamp(self.excitation_width, 0.005, 0.4, 0.06),
             pickup_width: math::finite_clamp(self.pickup_width, 0.005, 0.4, 0.025),
+            boundary_hf_loss: math::finite_clamp(
+                self.boundary_hf_loss,
+                0.000_4,
+                0.008,
+                DEFAULT_BOUNDARY_HF_LOSS,
+            ),
+            strike_contact_absorption: math::finite_clamp(
+                self.strike_contact_absorption,
+                0.0,
+                1.0,
+                0.0,
+            ),
         }
     }
 }
@@ -220,6 +240,8 @@ impl Default for RectangularMesh2dConfig {
             pickup_position: MeshPoint::new(0.72, 0.58),
             excitation_width: 0.055,
             pickup_width: 0.025,
+            boundary_hf_loss: DEFAULT_BOUNDARY_HF_LOSS,
+            strike_contact_absorption: 0.0,
         }
     }
 }
@@ -317,6 +339,21 @@ impl SpatialWeights {
         }
     }
 
+    fn absorb_contact_motion(&self, waves: &mut DirectionalWaves, amount: f32) {
+        let amount = math::finite_clamp(amount, 0.0, 0.95, 0.0);
+        if amount <= f32::EPSILON {
+            return;
+        }
+        for spatial_weight in &self.weights {
+            let local_loss = (amount * spatial_weight.weight.abs()).min(0.95);
+            waves.damp_directional_motion(spatial_weight.index, local_loss);
+            waves.damp_pressure(
+                spatial_weight.index,
+                local_loss * STRIKE_CONTACT_PRESSURE_DAMPING,
+            );
+        }
+    }
+
     fn pressure(&self, waves: &DirectionalWaves) -> f32 {
         self.weights
             .iter()
@@ -410,6 +447,36 @@ impl DirectionalWaves {
         self.from_right[index] = math::snap_to_zero(self.from_right[index] + component);
         self.from_top[index] = math::snap_to_zero(self.from_top[index] + component);
         self.from_bottom[index] = math::snap_to_zero(self.from_bottom[index] + component);
+    }
+
+    fn damp_directional_motion(&mut self, index: usize, loss: f32) {
+        let loss = math::finite_clamp(loss, 0.0, 0.95, 0.0);
+        if loss <= f32::EPSILON {
+            return;
+        }
+        let keep = 1.0 - loss;
+        let average = 0.25
+            * (self.from_left[index]
+                + self.from_right[index]
+                + self.from_top[index]
+                + self.from_bottom[index]);
+        self.from_left[index] =
+            math::snap_to_zero(average + (self.from_left[index] - average) * keep);
+        self.from_right[index] =
+            math::snap_to_zero(average + (self.from_right[index] - average) * keep);
+        self.from_top[index] =
+            math::snap_to_zero(average + (self.from_top[index] - average) * keep);
+        self.from_bottom[index] =
+            math::snap_to_zero(average + (self.from_bottom[index] - average) * keep);
+    }
+
+    fn damp_pressure(&mut self, index: usize, loss: f32) {
+        let loss = math::finite_clamp(loss, 0.0, 0.95, 0.0);
+        if loss <= f32::EPSILON {
+            return;
+        }
+        let pressure = self.pressure(index);
+        self.add_uniform(index, -0.5 * pressure * loss);
     }
 }
 
@@ -540,8 +607,26 @@ impl RectangularMesh2d {
         // Read the radiating mesh state before applying this sample's strike force.
         // Otherwise nearby source/pickup apertures create a direct, unpropagated
         // hammer-to-output spike instead of a struck-body response.
-        self.source_weights
-            .inject_pressure(&mut self.current, excitation);
+        let excitation = math::snap_to_zero(excitation);
+        if excitation.abs() > f32::EPSILON {
+            let contact_envelope = excitation.abs().sqrt().min(1.0);
+            let contact_amount = self.config.strike_contact_absorption
+                * contact_envelope
+                * STRIKE_CONTACT_MOTION_DAMPING;
+            self.source_weights
+                .absorb_contact_motion(&mut self.current, contact_amount);
+            let local_motion = self.source_weights.pressure(&self.current);
+            let aligned_motion = (local_motion * excitation.signum()).max(0.0);
+            let max_loss = excitation.abs() * STRIKE_CONTACT_MAX_LOSS_FRACTION;
+            let contact_loss =
+                (self.config.strike_contact_absorption * contact_envelope * aligned_motion)
+                    .min(max_loss);
+            let conditioned_magnitude = excitation.abs() - contact_loss;
+            self.source_weights.inject_pressure(
+                &mut self.current,
+                excitation.signum() * conditioned_magnitude,
+            );
+        }
         self.scatter_and_propagate();
         math::snap_to_zero(output)
     }
@@ -587,7 +672,12 @@ impl RectangularMesh2d {
         let index = self.index(x, y);
         if x == 0 {
             let coeff = self.boundary_lowpass.coeff;
-            let filtered = boundary_lowpass_step(&mut self.boundary_lowpass.left[y], coeff, sample);
+            let filtered = boundary_lowpass_step(
+                &mut self.boundary_lowpass.left[y],
+                coeff,
+                self.config.boundary_hf_loss,
+                sample,
+            );
             self.next.from_left[index] += filtered * self.config.boundary.left.reflection();
         } else {
             let neighbor = self.index(x - 1, y);
@@ -599,8 +689,12 @@ impl RectangularMesh2d {
         let index = self.index(x, y);
         if x + 1 == self.config.width {
             let coeff = self.boundary_lowpass.coeff;
-            let filtered =
-                boundary_lowpass_step(&mut self.boundary_lowpass.right[y], coeff, sample);
+            let filtered = boundary_lowpass_step(
+                &mut self.boundary_lowpass.right[y],
+                coeff,
+                self.config.boundary_hf_loss,
+                sample,
+            );
             self.next.from_right[index] += filtered * self.config.boundary.right.reflection();
         } else {
             let neighbor = self.index(x + 1, y);
@@ -612,7 +706,12 @@ impl RectangularMesh2d {
         let index = self.index(x, y);
         if y == 0 {
             let coeff = self.boundary_lowpass.coeff;
-            let filtered = boundary_lowpass_step(&mut self.boundary_lowpass.top[x], coeff, sample);
+            let filtered = boundary_lowpass_step(
+                &mut self.boundary_lowpass.top[x],
+                coeff,
+                self.config.boundary_hf_loss,
+                sample,
+            );
             self.next.from_top[index] += filtered * self.config.boundary.top.reflection();
         } else {
             let neighbor = self.index(x, y - 1);
@@ -624,8 +723,12 @@ impl RectangularMesh2d {
         let index = self.index(x, y);
         if y + 1 == self.config.height {
             let coeff = self.boundary_lowpass.coeff;
-            let filtered =
-                boundary_lowpass_step(&mut self.boundary_lowpass.bottom[x], coeff, sample);
+            let filtered = boundary_lowpass_step(
+                &mut self.boundary_lowpass.bottom[x],
+                coeff,
+                self.config.boundary_hf_loss,
+                sample,
+            );
             self.next.from_bottom[index] += filtered * self.config.boundary.bottom.reflection();
         } else {
             let neighbor = self.index(x, y + 1);

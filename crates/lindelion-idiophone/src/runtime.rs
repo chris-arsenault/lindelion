@@ -157,6 +157,13 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
         // averaging window. Keep it narrower so dense plates do not cancel their
         // shimmer before it reaches the output.
         pickup_width: lerp(0.015, 0.16, clamp01(params.pickup_spread)),
+        boundary_hf_loss: boundary_hf_loss(material, params.damping, size, tension),
+        strike_contact_absorption: strike_contact_absorption(
+            material,
+            params.damping,
+            size,
+            tension,
+        ),
     }
 }
 
@@ -190,6 +197,32 @@ const MESH_POSITION_INSET: f32 = 0.06;
 /// Map a `0..1` control onto an active grid dimension in `[min, max]` cells.
 fn grid_dim(control: f32, min: usize, max: usize) -> usize {
     lerp(min as f32, max as f32, clamp01(control)).round() as usize
+}
+
+fn strike_contact_absorption(material: f32, damping: f32, size: f32, tension: f32) -> f32 {
+    let stiffness = clamp01(material);
+    let damping = clamp01(damping);
+    let density = 0.5 * (clamp01(size) + clamp01(tension));
+    let contact_impedance = 0.7 * stiffness + 0.3 * damping;
+    let dense_plate_escape = 1.0 - 0.55 * density;
+    finite_clamp(
+        0.04 + 0.50 * contact_impedance * dense_plate_escape + 0.18 * damping,
+        0.0,
+        0.55,
+        0.2,
+    )
+}
+
+fn boundary_hf_loss(material: f32, damping: f32, size: f32, tension: f32) -> f32 {
+    let stiffness = clamp01(material);
+    let damping = clamp01(damping);
+    let density = 0.5 * (clamp01(size) + clamp01(tension));
+    finite_clamp(
+        0.000_8 + 0.004_2 * damping.powf(1.2) + 0.001_2 * stiffness * (1.0 - density),
+        0.000_4,
+        0.008,
+        0.001_2,
+    )
 }
 
 /// Normalised position of a played pitch across the C2–C6 register (`0..1`), used to move
@@ -517,6 +550,27 @@ mod tests {
                 "pickup should stay outside the strike aperture: strike={strike:?} pickup={pickup:?}"
             );
         }
+    }
+
+    #[test]
+    fn ride_contact_damps_restrikes_more_than_crash() {
+        let ride_contact = strike_contact_absorption(0.60, 0.35, 0.50, 0.45);
+        let crash_contact = strike_contact_absorption(0.40, 0.10, 0.95, 0.88);
+        let ride_hf_loss = boundary_hf_loss(0.60, 0.35, 0.50, 0.45);
+        let crash_hf_loss = boundary_hf_loss(0.40, 0.10, 0.95, 0.88);
+
+        assert!(
+            ride_contact > crash_contact * 1.8,
+            "ride contact should absorb repeated hits more than crash: ride={ride_contact} crash={crash_contact}"
+        );
+        assert!(
+            ride_hf_loss > crash_hf_loss * 1.8,
+            "ride boundary should drain high modes faster than crash: ride={ride_hf_loss} crash={crash_hf_loss}"
+        );
+        assert!(
+            (0.000_9..=0.001_3).contains(&crash_hf_loss),
+            "crash should stay near the low-loss bloom point: {crash_hf_loss}"
+        );
     }
 
     fn render_default_mesh(sample_rate: f32, seconds: f32) -> Vec<f32> {

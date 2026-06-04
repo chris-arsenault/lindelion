@@ -5,7 +5,7 @@
 //! monophonically (one voice-stealing body). These are audition cases — the Mesh is a struck
 //! plate, judged by ear, not an objective pitch target.
 
-use super::super::{CatalogCase, PatchRecipe, RenderSchedule};
+use super::super::{CatalogCase, MeshVoicing, PatchRecipe, RenderSchedule};
 use notes::{
     CHORD_CMAJ, EXPRESSIVE_16, RANDOM_16, RESTRIKE_C4, SCALE_LEGATO, SCALE_TONGUED,
     SLOW_CLIMB_C2_C6,
@@ -52,7 +52,7 @@ const MESH_PHRASE: PatchRecipe = PatchRecipe::MeshPhrase {
 // The Tube is monophonic (normalization forces polyphony 1), so articulation is *how it changes
 // notes*, not overlapping voices: tongued separates and re-strikes the bore (the excitation kick);
 // slurred overlaps so the reed keeps blowing and the bore frequency glides between pitches.
-pub(super) const ARTICULATION_CASES: [CatalogCase; 10] = [
+pub(super) const ARTICULATION_CASES: [CatalogCase; 11] = [
     articulation_case!(
         "tube_scale_tongued_c4_c5",
         "Tube Scale Tongued C4-C5",
@@ -102,13 +102,21 @@ pub(super) const ARTICULATION_CASES: [CatalogCase; 10] = [
     ),
     articulation_case!(
         "mesh_rapid_restrike_c4",
-        "Mesh Rapid Restrike C4",
+        "Mesh Ride Rapid Restrike C4",
         "09_articulation/mesh_rapid_restrike_c4.wav",
-        ["articulation", "mesh", "restrike", "C4"],
+        ["articulation", "mesh", "ride", "restrike", "C4"],
         PatchRecipe::MeshPhrase {
             polyphony: 1,
             retrigger: false
         },
+        RESTRIKE_C4
+    ),
+    articulation_case!(
+        "mesh_crash_restrike_c4",
+        "Mesh Crash Rapid Restrike C4",
+        "09_articulation/mesh_crash_restrike_c4.wav",
+        ["articulation", "mesh", "crash", "restrike", "C4"],
+        PatchRecipe::MeshVoicing(MeshVoicing::Crash),
         RESTRIKE_C4
     ),
     articulation_case!(
