@@ -20,9 +20,10 @@ const RUNTIME_MESH_WIDTH: usize = 32;
 const RUNTIME_MESH_HEIGHT: usize = 24;
 
 /// Physical, per-voice parameters for the 2D-mesh resonator. Every control is
-/// normalised to `0..1` except `frequency_hz`. NB: `frequency_hz` is currently
-/// **ignored** — a unit-delay mesh is a fixed-pitch struck idiophone, so the note
-/// shapes nothing here; `size`/`tension` (grid cell count) carry the timbre instead.
+/// normalised to `0..1` except `frequency_hz`. NB: `frequency_hz` does **not**
+/// tune the unit-delay mesh; it moves the strike and pickup over the fixed grid so
+/// notes select different modal color mixes while `size`/`tension` carry the
+/// grid-density timbre.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeshVoiceParams {
     pub frequency_hz: f32,
@@ -112,8 +113,9 @@ impl MeshResonator {
 /// not from `wave_speed`/physical dimensions (which the update never reads). `size`
 /// scales the grid and `tension` its aspect, together spanning a 2-D timbre space:
 /// small/sparse = near-pitched triangle, large/dense = inharmonic cymbal-like wash.
-/// The played note's `frequency_hz` is intentionally ignored — the mesh is a struck
-/// idiophone, not a tuned voice.
+/// The played note's `frequency_hz` moves the strike and pickup positions only: the
+/// mesh remains a fixed-pitch struck idiophone, but notes select different modal
+/// colors.
 fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dConfig {
     let size = clamp01(params.size);
     let tension = clamp01(params.tension);
@@ -133,12 +135,12 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
         MeshBoundaryConfig::fixed(damping)
     };
 
-    // The note can't tune a fixed-grid mesh, but it *is* useful as **where you strike**:
-    // map the played pitch across the plate around the patch's strike position, so different
-    // notes excite different mode mixes — an audibly different intonation/timbre per note,
-    // the way striking a cymbal at different spots sounds different.
-    let note_offset = (mesh_note_position(params.frequency_hz) - 0.5) * MESH_NOTE_STRIKE_SPREAD;
-    let strike = clamp01(params.strike_position + note_offset);
+    // The note can't tune a fixed-grid mesh, but it *is* useful as a modal selector:
+    // move both the strike and pickup along different 2-D paths so a played note has
+    // two independent nodal selectors instead of one fixed readout point. This widens
+    // the note-to-timbre vocabulary without changing the grid or making the note a
+    // pitch target.
+    let note_position = mesh_note_position(params.frequency_hz);
     RectangularMesh2dConfig {
         width,
         height,
@@ -148,10 +150,13 @@ fn voice_config(sample_rate: f32, params: MeshVoiceParams) -> RectangularMesh2dC
         physical_width_m: 0.7,
         physical_height_m: 0.45,
         boundary,
-        strike_position: MeshPoint::new(strike, lerp(0.3, 0.7, strike)),
-        pickup_position: MeshPoint::new(0.7, 0.55),
+        strike_position: mesh_note_strike_position(params.strike_position, note_position),
+        pickup_position: mesh_note_pickup_position(params.strike_position, note_position),
         excitation_width: lerp(0.03, 0.12, material),
-        pickup_width: lerp(0.02, 0.25, clamp01(params.pickup_spread)),
+        // Aperture-integral pickup is a radiation area, not the old normalized
+        // averaging window. Keep it narrower so dense plates do not cancel their
+        // shimmer before it reaches the output.
+        pickup_width: lerp(0.015, 0.16, clamp01(params.pickup_spread)),
     }
 }
 
@@ -162,6 +167,25 @@ const MESH_MIN_HEIGHT: usize = 8;
 /// How far across the plate the played note moves the strike position (peak-to-peak). The
 /// note maps to a ±half-this offset around the patch strike position.
 const MESH_NOTE_STRIKE_SPREAD: f32 = 0.7;
+/// Vertical strike travel (peak-to-peak) driven by the note's independent Lissajous path.
+const MESH_NOTE_STRIKE_Y_SPREAD: f32 = 0.62;
+/// How much the strike control biases the independent vertical path.
+const MESH_STRIKE_CONTROL_Y_BIAS: f32 = 0.24;
+/// Horizontal pickup travel (peak-to-peak), intentionally opposing the strike's note
+/// travel to expose more modal combinations.
+const MESH_NOTE_PICKUP_X_SPREAD: f32 = 0.36;
+/// Vertical pickup travel (peak-to-peak) driven by a different note path than the strike.
+const MESH_NOTE_PICKUP_Y_SPREAD: f32 = 0.48;
+/// How much the strike control nudges the pickup away from the biased strike side.
+const MESH_STRIKE_CONTROL_PICKUP_BIAS: f32 = 0.16;
+/// Minimum normalized source-to-pickup separation. The pickup is a radiating
+/// aperture, not a contact mic at the strike point; keeping it outside the strike
+/// footprint prevents the hammer impulse from becoming a two-sample output spike
+/// when the note path crosses the pickup path.
+const MESH_MIN_STRIKE_PICKUP_DISTANCE: f32 = 0.34;
+/// Keep moving strike/pickup targets off the exact boundaries and centerline singular
+/// spots while preserving most of the playable plate area.
+const MESH_POSITION_INSET: f32 = 0.06;
 
 /// Map a `0..1` control onto an active grid dimension in `[min, max]` cells.
 fn grid_dim(control: f32, min: usize, max: usize) -> usize {
@@ -177,6 +201,80 @@ fn mesh_note_position(frequency_hz: f32) -> f32 {
     } else {
         0.5
     }
+}
+
+fn mesh_note_strike_position(strike_control: f32, note_position: f32) -> MeshPoint {
+    let strike_control = clamp01(strike_control);
+    let note_position = clamp01(note_position);
+    let x = strike_control + (note_position - 0.5) * MESH_NOTE_STRIKE_SPREAD;
+    let y = 0.5
+        + (strike_control - 0.5) * MESH_STRIKE_CONTROL_Y_BIAS
+        + 0.5
+            * MESH_NOTE_STRIKE_Y_SPREAD
+            * (std::f32::consts::TAU * (1.5 * note_position + 0.25)).sin();
+    MeshPoint::new(inset01(x), inset01(y))
+}
+
+fn mesh_note_pickup_position(strike_control: f32, note_position: f32) -> MeshPoint {
+    let strike_control = clamp01(strike_control);
+    let note_position = clamp01(note_position);
+    let strike = mesh_note_strike_position(strike_control, note_position);
+    let x = 0.7
+        - (note_position - 0.5) * MESH_NOTE_PICKUP_X_SPREAD
+        - (strike_control - 0.5) * MESH_STRIKE_CONTROL_PICKUP_BIAS;
+    let y = 0.55
+        + 0.5
+            * MESH_NOTE_PICKUP_Y_SPREAD
+            * (std::f32::consts::TAU * (1.25 * note_position + 0.375)).sin();
+    pickup_position_with_min_separation(strike, MeshPoint::new(inset01(x), inset01(y)))
+}
+
+fn pickup_position_with_min_separation(strike: MeshPoint, pickup: MeshPoint) -> MeshPoint {
+    let dx = pickup.x - strike.x;
+    let dy = pickup.y - strike.y;
+    let distance = (dx * dx + dy * dy).sqrt();
+    if distance >= MESH_MIN_STRIKE_PICKUP_DISTANCE {
+        return pickup;
+    }
+
+    let (unit_x, unit_y) = if distance > f32::EPSILON {
+        (dx / distance, dy / distance)
+    } else {
+        (1.0, 0.0)
+    };
+    let along_path = MeshPoint::new(
+        inset01(strike.x + unit_x * MESH_MIN_STRIKE_PICKUP_DISTANCE),
+        inset01(strike.y + unit_y * MESH_MIN_STRIKE_PICKUP_DISTANCE),
+    );
+    if mesh_point_distance(strike, along_path) >= MESH_MIN_STRIKE_PICKUP_DISTANCE - 0.005 {
+        return along_path;
+    }
+
+    [
+        MeshPoint::new(inset01(strike.x + MESH_MIN_STRIKE_PICKUP_DISTANCE), strike.y),
+        MeshPoint::new(inset01(strike.x - MESH_MIN_STRIKE_PICKUP_DISTANCE), strike.y),
+        MeshPoint::new(strike.x, inset01(strike.y + MESH_MIN_STRIKE_PICKUP_DISTANCE)),
+        MeshPoint::new(strike.x, inset01(strike.y - MESH_MIN_STRIKE_PICKUP_DISTANCE)),
+    ]
+    .into_iter()
+    .filter(|candidate| {
+        mesh_point_distance(strike, *candidate) >= MESH_MIN_STRIKE_PICKUP_DISTANCE - 0.005
+    })
+    .max_by(|left, right| {
+        pickup_alignment(strike, *left, unit_x, unit_y)
+            .total_cmp(&pickup_alignment(strike, *right, unit_x, unit_y))
+    })
+    .unwrap_or(along_path)
+}
+
+fn mesh_point_distance(a: MeshPoint, b: MeshPoint) -> f32 {
+    let dx = a.x - b.x;
+    let dy = a.y - b.y;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn pickup_alignment(strike: MeshPoint, pickup: MeshPoint, unit_x: f32, unit_y: f32) -> f32 {
+    (pickup.x - strike.x) * unit_x + (pickup.y - strike.y) * unit_y
 }
 
 /// Longest / shortest ring the `damping` control spans, as a −60 dB decay time. The
@@ -214,6 +312,10 @@ fn lerp(low: f32, high: f32, fraction: f32) -> f32 {
 
 fn clamp01(value: f32) -> f32 {
     finite_clamp(value, 0.0, 1.0, 0.0)
+}
+
+fn inset01(value: f32) -> f32 {
+    finite_clamp(value, MESH_POSITION_INSET, 1.0 - MESH_POSITION_INSET, 0.5)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -303,6 +405,42 @@ mod tests {
         mesh_decay_k(sample_rate, w, h) / -(1.0 - loss).ln()
     }
 
+    fn midi_note_hz(note: u8) -> f32 {
+        440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
+    }
+
+    fn span(values: impl IntoIterator<Item = f32>) -> f32 {
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for value in values {
+            min = min.min(value);
+            max = max.max(value);
+        }
+        max - min
+    }
+
+    fn point_distance(a: MeshPoint, b: MeshPoint) -> f32 {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    fn combined_position_zones(points: &[(MeshPoint, MeshPoint)]) -> usize {
+        let mut zones = Vec::new();
+        for &(strike, pickup) in points {
+            let zone = (
+                (strike.x * 20.0).round() as i32,
+                (strike.y * 20.0).round() as i32,
+                (pickup.x * 20.0).round() as i32,
+                (pickup.y * 20.0).round() as i32,
+            );
+            if !zones.contains(&zone) {
+                zones.push(zone);
+            }
+        }
+        zones.len()
+    }
+
     /// P2 (LAMATH-RENDER-FIXES) regression guard, proved by math rather than a render
     /// sweep: the `damping` control must have **no degenerate region**. Across the whole
     /// `0..1` range the resolved (1,1)-mode T60 stays inside the musical band, is
@@ -342,6 +480,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mesh_note_mapping_uses_independent_strike_and_pickup_paths() {
+        let scale_points = [60, 62, 64, 65, 67, 69, 71, 72]
+            .map(|note| mesh_note_position(midi_note_hz(note)))
+            .map(|note_position| {
+                (
+                    mesh_note_strike_position(0.42, note_position),
+                    mesh_note_pickup_position(0.42, note_position),
+                )
+            });
+
+        assert!(
+            span(scale_points.iter().map(|(strike, _)| strike.x)) > 0.15,
+            "scale should move the strike horizontally: {scale_points:?}"
+        );
+        assert!(
+            span(scale_points.iter().map(|(strike, _)| strike.y)) > 0.25,
+            "scale should move the strike vertically on an independent path: {scale_points:?}"
+        );
+        assert!(
+            span(scale_points.iter().map(|(_, pickup)| pickup.x)) > 0.08,
+            "scale should move the pickup horizontally: {scale_points:?}"
+        );
+        assert!(
+            span(scale_points.iter().map(|(_, pickup)| pickup.y)) > 0.18,
+            "scale should move the pickup vertically on a different path: {scale_points:?}"
+        );
+        assert!(
+            combined_position_zones(&scale_points) >= 6,
+            "C4-C5 scale collapsed into too few strike/pickup modal zones: {scale_points:?}"
+        );
+        for (strike, pickup) in scale_points {
+            assert!(
+                point_distance(strike, pickup) >= MESH_MIN_STRIKE_PICKUP_DISTANCE - 0.01,
+                "pickup should stay outside the strike aperture: strike={strike:?} pickup={pickup:?}"
+            );
+        }
+    }
+
     fn render_default_mesh(sample_rate: f32, seconds: f32) -> Vec<f32> {
         let mut mesh = MeshResonator::new(sample_rate);
         mesh.configure(MeshVoiceParams::default());
@@ -349,6 +526,35 @@ mod tests {
         (0..len)
             .map(|index| mesh.process_sample((index == 0) as u8 as f32))
             .collect()
+    }
+
+    #[test]
+    fn pickup_does_not_read_same_sample_strike_force() {
+        let sample_rate = 48_000.0;
+        let mut mesh = RectangularMesh2d::new(RectangularMesh2dConfig {
+            width: 32,
+            height: 24,
+            sample_rate,
+            strike_position: MeshPoint::new(0.5, 0.5),
+            pickup_position: MeshPoint::new(0.5, 0.5),
+            excitation_width: 0.03,
+            pickup_width: 0.03,
+            ..RectangularMesh2dConfig::default()
+        });
+
+        let first_sample = mesh.process_sample(1.0);
+        let propagated = (0..128)
+            .map(|_| mesh.process_sample(0.0))
+            .collect::<Vec<_>>();
+
+        assert!(
+            first_sample.abs() <= 1.0e-7,
+            "pickup read unpropagated strike force: {first_sample}"
+        );
+        assert!(
+            peak_abs(&propagated) > 1.0e-5,
+            "strike should still enter the mesh and propagate"
+        );
     }
 
     /// Per-window RMS envelope (`window` samples, non-overlapping).

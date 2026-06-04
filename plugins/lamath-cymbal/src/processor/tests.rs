@@ -1,6 +1,7 @@
 use super::*;
 use lindelion_dsp_utils::analysis::{
-    assert_all_finite, max_adjacent_delta, peak_abs, rms, rms_difference, spectral_centroid_hz,
+    assert_all_finite, max_adjacent_delta, peak_abs, rms, rms_difference,
+    sampled_high_frequency_ratio, spectral_centroid_hz,
 };
 
 const SAMPLE_RATE: f32 = 48_000.0;
@@ -11,7 +12,11 @@ fn strike_produces_sustained_finite_ring() {
     let left = render_strikes(CymbalPatch::default(), &[(60, 0, 1.0)], 8_192);
 
     assert_all_finite(&left);
-    assert!(peak_abs(&left) > 0.001);
+    assert!(
+        peak_abs(&left) > 0.03,
+        "default cymbal strike should be audible without post-extraction output makeup: peak={}",
+        peak_abs(&left)
+    );
     assert!(rms(&left[4_096..]) > 0.000_001);
 }
 
@@ -125,8 +130,9 @@ fn retune_sequence_stays_bounded_and_continuous() {
     assert_all_finite(&left);
     assert!(peak_abs(&left) < 1.0, "peak={}", peak_abs(&left));
     assert!(
-        max_adjacent_delta(&left) < 0.8,
-        "retune introduced click-like discontinuity"
+        max_adjacent_delta(&left) < 0.2,
+        "retune introduced click-like discontinuity: max_delta={}",
+        max_adjacent_delta(&left)
     );
 }
 
@@ -192,6 +198,39 @@ fn timbre_controls_are_audible_axes() {
     assert_ne!(
         sparse_centroid.round() as i32,
         dense_centroid.round() as i32
+    );
+}
+
+#[test]
+fn crash_voicing_keeps_dense_bloom() {
+    let crash = render_strikes(
+        CymbalPatch {
+            size: 0.95,
+            tension: 0.88,
+            damping: 0.10,
+            material: 0.40,
+            strike_position: 0.9,
+            output_gain_db: -5.0,
+            ..CymbalPatch::default()
+        },
+        &[(60, 0, 0.9)],
+        24_000,
+    );
+
+    let crash_early = &crash[1_024..5_120];
+    let crash_mid = &crash[9_600..20_000];
+    let crash_high = sampled_high_frequency_ratio(crash_early, SAMPLE_RATE, 3_000.0, 500.0);
+
+    assert_all_finite(&crash);
+    assert!(
+        crash_high > 0.015,
+        "crash should retain >3 kHz shimmer energy: ratio={crash_high}"
+    );
+    assert!(
+        rms(crash_mid) > rms(crash_early) * 0.4,
+        "crash bloom should sustain after the attack: early={} mid={}",
+        rms(crash_early),
+        rms(crash_mid)
     );
 }
 

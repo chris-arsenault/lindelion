@@ -40,6 +40,19 @@ const GEOMETRIC_MAX_SIN: f32 = 0.3;
 /// Maps the local junction displacement to the [0,1] amplitude factor: high-
 /// pressure junctions couple most (the large-deflection geometric nonlinearity).
 const GEOMETRIC_AMPLITUDE_SENS: f32 = 6.0;
+/// Blend from pure aperture pressure toward a bending/curvature radiation term.
+/// Cymbals do not radiate only by summing signed displacement over a broad area:
+/// high-spatial-frequency bending also couples to air. The curvature tap keeps
+/// dense plates from collapsing into a dark low-mode area integral after the
+/// source/pickup normalization fix.
+const CURVATURE_RADIATION_GAIN: f32 = 4.0;
+/// Dense cymbal meshes need a separate high-spatial-frequency radiation path:
+/// a broad signed aperture carries body level, while this density-scaled narrow
+/// tap lets shimmer/bloom radiate without adding a family output gain stage.
+const SHIMMER_RADIATION_GAIN: f32 = 12.0;
+const SHIMMER_RADIATION_DENSITY_EXP: f32 = 1.5;
+const SHIMMER_PICKUP_WIDTH_SCALE: f32 = 0.45;
+const SHIMMER_PICKUP_WIDTH_MIN: f32 = 0.012;
 
 /// Squared, normalized energy term in `[0, GEOMETRIC_MAX_DRIVE]` setting how
 /// strongly the mesh couples at the current playing energy.
@@ -220,14 +233,22 @@ struct SpatialWeight {
 #[derive(Debug, Clone, PartialEq)]
 struct SpatialWeights {
     weights: Vec<SpatialWeight>,
+    normalization: SpatialNormalization,
 }
 
 impl SpatialWeights {
-    fn new(point: MeshPoint, width: usize, height: usize, width_fraction: f32) -> Self {
+    fn new(
+        point: MeshPoint,
+        width: usize,
+        height: usize,
+        width_fraction: f32,
+        normalization: SpatialNormalization,
+    ) -> Self {
         // Capacity is the MAXIMUM grid, so an in-place recompute onto a larger active
         // sub-region (via `reconfigure`) never reallocates on the audio thread.
         let mut weights = Self {
             weights: Vec::with_capacity(MAX_MESH_CELLS),
+            normalization,
         };
         weights.recompute(point, width, height, width_fraction);
         weights
@@ -273,8 +294,19 @@ impl SpatialWeights {
             return;
         }
 
-        for weight in &mut self.weights {
-            weight.weight /= sum;
+        match self.normalization {
+            SpatialNormalization::UnitEnergy => {
+                let square_sum: f32 = self
+                    .weights
+                    .iter()
+                    .map(|weight| weight.weight * weight.weight)
+                    .sum();
+                let normalizer = square_sum.sqrt().max(f32::EPSILON);
+                for weight in &mut self.weights {
+                    weight.weight /= normalizer;
+                }
+            }
+            SpatialNormalization::ApertureIntegral => {}
         }
     }
 
@@ -291,6 +323,51 @@ impl SpatialWeights {
             .map(|spatial_weight| waves.pressure(spatial_weight.index) * spatial_weight.weight)
             .sum()
     }
+
+    fn curvature_pressure(&self, waves: &DirectionalWaves, width: usize, height: usize) -> f32 {
+        self.weights
+            .iter()
+            .map(|spatial_weight| {
+                let index = spatial_weight.index;
+                let x = index % width;
+                let y = index / width;
+                let center = waves.pressure(index);
+                let left = if x > 0 {
+                    waves.pressure(index - 1)
+                } else {
+                    center
+                };
+                let right = if x + 1 < width {
+                    waves.pressure(index + 1)
+                } else {
+                    center
+                };
+                let top = if y > 0 {
+                    waves.pressure(index - width)
+                } else {
+                    center
+                };
+                let bottom = if y + 1 < height {
+                    waves.pressure(index + width)
+                } else {
+                    center
+                };
+                let curvature = center - 0.25 * (left + right + top + bottom);
+                curvature * spatial_weight.weight
+            })
+            .sum()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpatialNormalization {
+    /// Source velocity maps to fixed strike energy; widening the strike footprint
+    /// suppresses high modes but does not make the whole instrument vanish.
+    UnitEnergy,
+    /// Raw signed aperture integral. The shipped broad body/radiation pickup uses
+    /// this, while the separate shimmer pickup uses `UnitEnergy` so the narrow
+    /// high-mode tap changes color without becoming a hidden level control.
+    ApertureIntegral,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -343,24 +420,31 @@ struct RectangularMesh2d {
     next: DirectionalWaves,
     source_weights: SpatialWeights,
     pickup_weights: SpatialWeights,
+    shimmer_weights: SpatialWeights,
     // Per-edge boundary loss filter (M11 P2 step 3): frequency-shaped reflections
     // so high plate modes die first.
     boundary_lowpass: BoundaryLowpass,
     // Measured resonator energy (M2 bus) driving the geometric (von Kármán)
     // coupling; set per host sample, constant across the 2x sub-samples. 0.0 => inert.
     geometric_drive: f32,
-    // Output level compensation for the active grid: a fixed strike spreads its energy
-    // over the grid, so the pickup amplitude falls ~`1/cells`. Scaling the output by
-    // `cells / REF` flattens the level across the `size`/`tension` timbre sweep, so the
-    // downstream per-family makeup is one constant again (not a function of grid size).
+    // Output level normalization for the active grid. The broad pickup is a signed
+    // aperture and dense meshes add a separate energy-normalized shimmer tap, so
+    // the old `cells / REF` correction for a normalized-average pickup no longer
+    // applies.
     level_compensation: f32,
 }
 
-/// Reference active-cell count the output level is normalized to (≈ the default grid).
-const MESH_LEVEL_REF_CELLS: f32 = 1024.0;
+fn mesh_level_compensation(_width: usize, _height: usize) -> f32 {
+    1.0
+}
 
-fn mesh_level_compensation(width: usize, height: usize) -> f32 {
-    (width * height) as f32 / MESH_LEVEL_REF_CELLS
+fn shimmer_pickup_width(pickup_width: f32) -> f32 {
+    (pickup_width * SHIMMER_PICKUP_WIDTH_SCALE).max(SHIMMER_PICKUP_WIDTH_MIN)
+}
+
+fn shimmer_radiation_gain(width: usize, height: usize) -> f32 {
+    let density = (width * height) as f32 / MAX_MESH_CELLS as f32;
+    SHIMMER_RADIATION_GAIN * density.clamp(0.0, 1.0).powf(SHIMMER_RADIATION_DENSITY_EXP)
 }
 
 impl RectangularMesh2d {
@@ -378,12 +462,21 @@ impl RectangularMesh2d {
                 config.width,
                 config.height,
                 config.excitation_width,
+                SpatialNormalization::UnitEnergy,
             ),
             pickup_weights: SpatialWeights::new(
                 config.pickup_position,
                 config.width,
                 config.height,
                 config.pickup_width,
+                SpatialNormalization::ApertureIntegral,
+            ),
+            shimmer_weights: SpatialWeights::new(
+                config.pickup_position,
+                config.width,
+                config.height,
+                shimmer_pickup_width(config.pickup_width),
+                SpatialNormalization::UnitEnergy,
             ),
             boundary_lowpass: BoundaryLowpass::new(
                 MAX_MESH_WIDTH,
@@ -424,12 +517,31 @@ impl RectangularMesh2d {
             config.height,
             config.pickup_width,
         );
+        self.shimmer_weights.recompute(
+            config.pickup_position,
+            config.width,
+            config.height,
+            shimmer_pickup_width(config.pickup_width),
+        );
     }
 
     fn process_sample(&mut self, excitation: f32) -> f32 {
+        let aperture_pressure = self.pickup_weights.pressure(&self.current);
+        let shimmer_pressure = self.shimmer_weights.pressure(&self.current);
+        let curvature_pressure = self.shimmer_weights.curvature_pressure(
+            &self.current,
+            self.config.width,
+            self.config.height,
+        );
+        let shimmer = shimmer_pressure + CURVATURE_RADIATION_GAIN * curvature_pressure;
+        let output = (aperture_pressure
+            + shimmer_radiation_gain(self.config.width, self.config.height) * shimmer)
+            * self.level_compensation;
+        // Read the radiating mesh state before applying this sample's strike force.
+        // Otherwise nearby source/pickup apertures create a direct, unpropagated
+        // hammer-to-output spike instead of a struck-body response.
         self.source_weights
             .inject_pressure(&mut self.current, excitation);
-        let output = self.pickup_weights.pressure(&self.current) * self.level_compensation;
         self.scatter_and_propagate();
         math::snap_to_zero(output)
     }
