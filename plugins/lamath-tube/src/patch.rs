@@ -9,6 +9,7 @@ pub struct TubePatch {
     pub pressure: f32,
     pub reed_stiffness: f32,
     pub embouchure: f32,
+    pub reed_aperture_inertia: f32,
     pub brightness: f32,
     pub damping: f32,
     pub bell: f32,
@@ -24,6 +25,7 @@ impl Default for TubePatch {
             pressure: 0.58,
             reed_stiffness: 0.48,
             embouchure: 0.52,
+            reed_aperture_inertia: 1.0,
             brightness: 0.52,
             damping: 0.28,
             bell: 1.0,
@@ -41,6 +43,8 @@ impl TubePatch {
         self.pressure = unit(self.pressure, fallback.pressure);
         self.reed_stiffness = unit(self.reed_stiffness, fallback.reed_stiffness);
         self.embouchure = unit(self.embouchure, fallback.embouchure);
+        self.reed_aperture_inertia =
+            unit(self.reed_aperture_inertia, fallback.reed_aperture_inertia);
         self.brightness = unit(self.brightness, fallback.brightness);
         self.damping = unit(self.damping, fallback.damping);
         self.bell = unit(self.bell, fallback.bell);

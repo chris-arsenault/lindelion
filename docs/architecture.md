@@ -8,6 +8,9 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | ---- | ---- |
 | `crates/lindelion-plugin-shell` | Shared plugin boundary: descriptors, parameter registry/codecs/apply dispatch, process context, MIDI/control events, state, typed VST3 messages, VST3 factory helpers, TOML patch I/O, and voice allocation. |
 | `crates/lindelion-dsp-utils` | DSP support code: analysis helpers, delay/interpolation, envelopes, filters, math, smoothing, saturation, and parameter smoothing policies. |
+| `crates/lindelion-idiophone` | Shared idiophone / mesh cymbal DSP kernel used by Lamath Cymbal and the Lamath-family render catalog. |
+| `crates/lindelion-wind` | Shared reed driver and tube waveguide DSP kernel used by Lamath Tube and the Lamath-family render catalog. |
+| `crates/lindelion-string` | Shared string waveguide, pick/bow driver, and reduced-body coupling DSP kernel used by Lamath Stringed and the Lamath-family render catalog. |
 | `crates/lindelion-test-allocator` | Shared counting allocator and no-allocation assertion helper for realtime-path tests. |
 | `crates/lindelion-capture` | Host-synced audio capture state, scratchpad audio/metadata, capture settings, sync modes, and capture timing constants. |
 | `crates/lindelion-sample-library` | Sample references, loaded-audio ownership, hashing, file-library ingest, preview generation, and moved-file recovery by content hash. |
@@ -18,8 +21,11 @@ Lindelion is a Rust workspace for related audio instruments and shared plugin in
 | `crates/lindelion-plugin-metadata` | Product VST3 bundle metadata shared by plugin factories, moduleinfo generation, and bundle/validation automation. |
 | `crates/lindelion-phrase-analysis` | Pitch/onset phrase orchestration, note segmentation, segmentation heuristics, and phrase-analysis results shared by captured-phrase workflows. |
 | `crates/lindelion-midi` | Root/scale models, timing and pitch quantization, velocity mapping, MIDI clip DTOs, and Standard MIDI File emission. |
-| `crates/lindelion-ui` | Shared UI command model, editor services, editor surface primitives, and product Vizia editor surfaces. |
-| `plugins/lamath` | Breath-excited resonator VST3 instrument. |
+| `crates/lindelion-ui` | Shared UI command model, editor services, audio-file slot components, editor surface primitives, and product Vizia editor surfaces. |
+| `plugins/lamath` | Dual modal resonator VST3 instrument with MIDI input, optional sidechain note/expression input, live excitation, and the retained surrounding layer. |
+| `plugins/lamath-cymbal` | Extracted Lamath-family shared-body idiophone / cymbal mesh VST3 with one excitation slot and sparse seven-parameter UI. See [Lamath Cymbal spec](plugins/lamath-cymbal.md). |
+| `plugins/lamath-tube` | Extracted Lamath-family monophonic reed-driven tube VST3 with eight key-switched articulation slots and sparse seven-parameter UI. See [Lamath Tube spec](plugins/lamath-tube.md). |
+| `plugins/lamath-stringed` | Extracted Lamath-family picked/bowed string VST3 with driver/body selectors, eight key-switched articulation slots, and sparse seven-parameter UI. See [Lamath Stringed spec](plugins/lamath-stringed.md). |
 | `plugins/linnod` | Melodic sample-slicer VST3 instrument with source analysis, patch model, realtime slice playback, editor bridge, and bundle metadata. |
 | `plugins/glirdir` | Sing-to-MIDI scratchpad plugin: shared capture composition, phrase analysis, quantized MIDI derivation, audition, VST3 adapter, editor, drag/export, sample-library save, and bundle metadata. |
 | `plugins/cenedril` | Windows-only passthrough Visualizer VST3: bit-exact zero-latency passthrough with an allocation-free analysis tap (reassignment STFT, levels/LUFS, off-thread voicing), a single-component VST3, and a Vizia editor (spectrogram/meters/analysis panel + view/scale/colormap/range controls with persisted settings). See [Cenedril spec](plugins/cenedril.md). |
@@ -108,13 +114,13 @@ These principles govern plugin reuse, shared crate boundaries, parameter managem
 - UI commands are typed `UiCommand` values. Primitive encodings such as float command codes are allowed only behind one adapter layer required by the UI/host bridge.
 - Patch save/load/export, sample ingest, sample-slot assignment, slot clearing, and telemetry requests flow through reusable editor services. File-dialog selection may remain host/UI-specific, but action handling should be shared.
 - Product VST3 editors should be thin host adapters: attach/detach lifecycle, controller callback projection, and DTO conversion. Vizia application code belongs in `lindelion-ui` or a future UI crate.
-- `lindelion-ui` may contain product-specific surfaces while there are few products. As the Lamath, Glirdir, and Linnod editors converge, promote repeated widgets and services into shared UI modules.
+- `lindelion-ui` may contain product-specific surfaces while there are few products. As Lamath-family, Glirdir, and Linnod editors converge, promote repeated widgets and services into shared UI modules.
 
 ### Module Boundaries
 
 - Crate roots should wire modules, descriptors, re-exports, and test hooks. Patch schema, parameters, runtime, plugin trait implementation, VST3 adapters, and tests belong in focused files.
 - VST3 adapters should be organized by role: processor, controller, factory, messages, MIDI mapping, state, editor, and tests.
-- Large DSP structs should be decomposed by responsibility. Lamath voices coordinate `ResonatorStack`, `ModulationState`, and `OutputStage`; future voices should follow the same pattern.
+- Large DSP structs should be decomposed by responsibility. Lamath voices coordinate excitation playback, dual modal routing, surrounding, and output stage; extracted Lamath-family processors keep single-model DSP and articulation policy in focused processor modules.
 - Shared voice allocation and stealing policy belongs in `VoiceManager`. Product voices implement `VoiceLike` and own product-specific trigger/render behavior.
 - Product DSP internals should not move into shared crates just because another product exists. Extract architecture, ownership, and routing primitives first; leave sound-generation behavior local until a second product needs the same algorithm.
 
@@ -146,7 +152,7 @@ These principles govern plugin reuse, shared crate boundaries, parameter managem
 
 ## VST3 Product Boundaries
 
-Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plugin crates keep host ABI code under `plugins/*/src/vst3_entry/` and keep audio/runtime code outside that boundary:
+Lamath, Lamath Cymbal, Lamath Tube, Lamath Stringed, Glirdir, and Linnod are the current macOS bundleable VST3 products. Their plugin crates keep host ABI code under `plugins/*/src/vst3_entry/` and keep audio/runtime code outside that boundary:
 
 | Module | Role |
 | ---- | ---- |
@@ -154,7 +160,11 @@ Lamath, Glirdir, and Linnod are the current bundleable VST3 products. Their plug
 | `patch.rs` / `patch_io.rs` | Serializable patch model, product-specific patch migrations, and shared TOML/state adapters. |
 | `parameters.rs` | Parameter registry, patch binding, apply policy, formatting, and editor-surface metadata. |
 | `vst3_entry/` | Processor/controller/factory/editor/state/message adapters for VST3 hosts. |
-| Lamath `runtime.rs` / `dsp/` | Resonator runtime patch conversion, excitation playback, resonators, voice rendering, modulation state, and output stage. |
+| Lamath `runtime.rs` / `dsp/` | Dual modal runtime patch conversion, excitation playback, modal resonators, voice rendering, sidechain/live-excitation handling, surrounding, and output stage. |
+| Lamath Cymbal `processor.rs` | Product policy around the shared idiophone mesh: MIDI strike/damp handling, injector pool, one excitation slot, output staging, and no-allocation processing. |
+| Lamath Tube `processor.rs` | Product policy around the shared reed/tube kernel: monophonic note ownership, C-2+n articulation key switches, articulation injectors, model switches, and output staging. |
+| Lamath Stringed `processor.rs` | Product policy around the shared string kernel: monophonic note ownership, driver/body selection, C-2+n articulation key switches, articulation injectors, model switches, and output staging. |
+| Lamath-family render catalog | Historical catalog invocation under `plugins/lamath/src/bin/lamath-render-catalog/`; dispatches modal cases to Lamath and cymbal/tube/string cases to the extracted processors. |
 | Glirdir `analysis.rs` / `analysis_job.rs` / `worker.rs` | Product orchestration around shared phrase analysis, cached MIDI derivation, and off-audio-thread jobs. |
 | Glirdir `patch.rs` | Product patch state plus Glirdir-specific scratchpad MIDI context layered on shared scratchpad audio. |
 | Glirdir `audition.rs` | Local MIDI audition engine; optional shared extraction only when a second consumer exists. |

@@ -168,17 +168,41 @@ fn catalog_selection_handles_articulation_group() {
     validate_catalog(&cases).unwrap();
 
     let selected = select_group(&cases, "articulation");
-    assert_eq!(selected.len(), 10);
+    assert_eq!(selected.len(), 11);
     assert_all_paths_safe(&selected);
     assert_eq!(selected.first().unwrap().id, "tube_scale_tongued_c4_c5");
     assert_eq!(selected.last().unwrap().id, "mesh_expressive_16");
 }
 
 #[test]
+fn catalog_selection_handles_mesh_strikers_group() {
+    let cases = catalog_cases();
+    validate_catalog(&cases).unwrap();
+
+    let selected = select_group(&cases, "mesh_strikers");
+    assert_eq!(selected.len(), 12);
+    assert_all_paths_safe(&selected);
+    assert_eq!(
+        selected.first().unwrap().id,
+        "mesh_striker_kit_ride_hard_stick_single"
+    );
+    assert_eq!(
+        selected.last().unwrap().id,
+        "mesh_striker_gong_crash_jazz_brush_overlap"
+    );
+    assert_eq!(
+        select_case(&cases, "mesh_striker_kit_crash_hard_stick_build")
+            .single()
+            .id,
+        "mesh_striker_kit_crash_hard_stick_build"
+    );
+}
+
+#[test]
 fn catalog_selection_handles_edges_group() {
     let cases = catalog_cases();
     validate_catalog(&cases).unwrap();
-    assert_eq!(cases.len(), 86);
+    assert_eq!(cases.len(), 105);
 
     let selected = select_group(&cases, "edges");
     assert_eq!(selected.len(), 8);
@@ -240,10 +264,10 @@ fn catalog_selection_rejects_unknown_group_or_case() {
 fn catalog_selection_by_tag_collects_all_tagged_cases() {
     let cases = catalog_cases();
     // Every Mesh case across all groups carries the "mesh" tag, so one `--tag mesh` selects
-    // them all (baseline + register + articulation + timbre + the edge case).
+    // them all (baseline + register + articulation + timbre + striker + the edge case).
     let mesh = selected_cases(&cases, &RenderSelection::Tag("mesh".to_string())).unwrap();
     assert!(
-        mesh.len() >= 19,
+        mesh.len() >= 31,
         "expected all mesh cases, got {}",
         mesh.len()
     );

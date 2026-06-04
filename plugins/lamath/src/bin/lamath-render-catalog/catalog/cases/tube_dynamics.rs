@@ -1,11 +1,9 @@
 //! Tube dynamics & bell audition cases (ADR-0032 item-B follow-up). The driven wind Tube plays
 //! a connected (slurred) C4→C5 scale at three velocities (soft/medium/hard) so the velocity
-//! dynamic can be heard as a *scale*, and each velocity is rendered twice — bell HF-radiation tap
-//! ON (current model) vs OFF — so the bell's actual contribution can be A/B'd by ear. These are
-//! audition cases; the open question is whether playing harder reads as *brighter* (cuivré) and
-//! not merely louder, and whether the (non-energy-conserving) bell tap is pulling its weight.
+//! dynamic can be heard as a *scale*. These are bell A/B cases only; separate model experiments
+//! must add their own current-vs-new cases with the changed mechanism isolated.
 
-use super::super::{CatalogCase, PatchRecipe, RenderSchedule, ScheduledNote};
+use super::super::{CatalogCase, PatchRecipe, RenderSchedule, ScheduledNote, TubeReedAperture};
 
 const PHRASE_DURATION_SECONDS: f32 = 3.4;
 
@@ -82,6 +80,7 @@ macro_rules! tube_dynamics_case {
                 polyphony: 1,
                 retrigger: false,
                 bell: $bell,
+                reed_aperture: TubeReedAperture::Inertial,
             },
             schedule: RenderSchedule {
                 duration_seconds: PHRASE_DURATION_SECONDS,

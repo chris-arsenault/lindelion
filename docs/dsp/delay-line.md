@@ -25,7 +25,7 @@ where `i = ⌊read_position⌋`, `τ = read_position - i`, and `read_position = 
 
 $$b[i] \mathrel{+}= (1 - \tau) \cdot s, \quad b[i+1 \bmod N] \mathrel{+}= \tau \cdot s$$
 
-Injecting at fractional positions preserves the spatial spectrum of the excitation when used inside a feedback loop. Used by [`WaveguideResonator`](waveguide.md) to model strike position along a string.
+Injecting at fractional positions preserves the spatial spectrum of the excitation when used inside a feedback loop. Used by the extracted string and wind waveguide models to place excitation along the resonator.
 
 **Capacity.** Constructor takes `max_delay_samples`; the internal buffer is `max_delay_samples + 4` slots to give the interpolator headroom. The four-sample headroom covers the fractional read's neighbor sample and the fractional add's neighbor write without ever indexing outside the buffer.
 
@@ -106,5 +106,5 @@ delay.add_at(integer_delay * strike_position, excitation_sample);
 - Julius O. Smith — [*Physical Audio Signal Processing*: Delay Lines](https://ccrma.stanford.edu/~jos/pasp/Delay_Lines.html).
 - Source: [`crates/lindelion-dsp-utils/src/delay.rs`](../../crates/lindelion-dsp-utils/src/delay.rs).
 - Companion: [`FirstOrderAllpass`](allpass.md) for sub-sample fractional delay paired with this ring buffer.
-- Consumer: [`WaveguideResonator`](waveguide.md).
+- Consumer: [extracted string and wind waveguide models](waveguide.md).
 - ADR-0001: [Allocation-free audio thread](../adr/0001-allocation-free-audio-thread.md).

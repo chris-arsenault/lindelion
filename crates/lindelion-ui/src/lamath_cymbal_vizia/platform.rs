@@ -7,7 +7,9 @@ use super::{
     LamathCymbalEditorHost, LamathCymbalEditorSize, LamathCymbalKnob,
 };
 use crate::{
-    audio_file_slot::AudioFileSlotHost,
+    audio_file_slot::{
+        AudioFileSlotId, AudioFileSlotListHost, AudioFileSlotListView, AudioFileSource,
+    },
     vizia_file_dialogs::{PendingFileDialog, wav_audio_dialog},
 };
 
@@ -49,9 +51,23 @@ const STYLE: &str = r#"
     }
     .cymbal-knob-label { color: #cbd3d0; font-size: 11px; text-align: center; }
     .cymbal-knob-value { color: #8e9a98; font-size: 10px; text-align: center; }
-    .cymbal-slot-row { horizontal-gap: 10px; height: auto; alignment: center; }
-    .cymbal-slot-label { color: #d0d8d5; width: 210px; }
-    .cymbal-slot-source { color: #8e9a98; width: 72px; font-size: 11px; }
+    .cymbal-slot-row { horizontal-gap: 8px; }
+    .cymbal-slot {
+        background-color: #202729;
+        border-width: 1px;
+        border-color: #3a4446;
+        border-radius: 5px;
+        width: 92px;
+        height: 58px;
+        padding: 5px;
+        vertical-gap: 2px;
+    }
+    .cymbal-slot-selected { border-color: #c99c45; }
+    .cymbal-slot-key { color: #92a09c; font-size: 10px; text-align: center; }
+    .cymbal-slot-label { color: #dde5e0; font-size: 10px; text-align: center; }
+    .cymbal-slot-source { color: #7f908a; font-size: 10px; text-align: center; }
+    .cymbal-action-row { horizontal-gap: 8px; alignment: center; }
+    .cymbal-selected-label { color: #d3ded8; width: 300px; }
     .cymbal-button {
         background-color: #232a2d;
         border-radius: 5px;
@@ -67,40 +83,36 @@ const STYLE: &str = r#"
 #[derive(Clone, Copy)]
 struct CymbalSignals {
     knobs: Signal<Vec<LamathCymbalKnob>>,
-    slot_label: Signal<String>,
-    slot_source: Signal<String>,
+    slots: Signal<AudioFileSlotListView>,
 }
 
 impl CymbalSignals {
     fn from_host(host: &LamathCymbalEditorHost) -> Self {
-        let slot = host.excitation.surface.slot_view();
         Self {
             knobs: Signal::new(host.controls.knobs()),
-            slot_label: Signal::new(slot.label),
-            slot_source: Signal::new(format!("{:?}", slot.source)),
+            slots: Signal::new(host.strikers.surface.slot_list_view()),
         }
     }
 
     fn sync(self, host: &LamathCymbalEditorHost) {
-        let slot = host.excitation.surface.slot_view();
         self.knobs.set(host.controls.knobs());
-        self.slot_label.set(slot.label);
-        self.slot_source.set(format!("{:?}", slot.source));
+        self.slots.set(host.strikers.surface.slot_list_view());
     }
 }
 
 enum CymbalEvent {
     SetKnob { id: u32, normalized: f32 },
-    OpenExcitationDialog,
-    ClearExcitation,
+    SelectSlot(AudioFileSlotId),
+    OpenSlotDialog(AudioFileSlotId),
+    ClearSlot(AudioFileSlotId),
     Sync,
 }
 
 struct CymbalModel {
     controls: Arc<dyn LamathCymbalControlSurface>,
-    excitation: AudioFileSlotHost,
+    strikers: AudioFileSlotListHost,
     signals: CymbalSignals,
-    pending_dialog: Option<PendingFileDialog>,
+    pending_dialog: Option<(AudioFileSlotId, PendingFileDialog)>,
 }
 
 impl Model for CymbalModel {
@@ -110,22 +122,30 @@ impl Model for CymbalModel {
                 self.controls.set_knob_normalized(*id, *normalized);
                 self.signals.knobs.set(self.controls.knobs());
             }
-            CymbalEvent::OpenExcitationDialog => {
-                self.pending_dialog = Some(PendingFileDialog::pick_file(wav_audio_dialog(
-                    Path::new("."),
-                    None,
-                )));
+            CymbalEvent::SelectSlot(slot) => {
+                self.strikers.surface.select_slot(*slot);
+                self.signals
+                    .slots
+                    .set(self.strikers.surface.slot_list_view());
             }
-            CymbalEvent::ClearExcitation => {
-                self.excitation.surface.clear_audio_file();
-                self.signals.slot_label.set("Built-in strike".to_string());
-                self.signals.slot_source.set("BuiltIn".to_string());
+            CymbalEvent::OpenSlotDialog(slot) => {
+                self.strikers.surface.select_slot(*slot);
+                self.pending_dialog = Some((
+                    *slot,
+                    PendingFileDialog::pick_file(wav_audio_dialog(Path::new("."), None)),
+                ));
+            }
+            CymbalEvent::ClearSlot(slot) => {
+                self.strikers.surface.clear_audio_file(*slot);
+                self.signals
+                    .slots
+                    .set(self.strikers.surface.slot_list_view());
             }
             CymbalEvent::Sync => {
-                if let Some(dialog) = self.pending_dialog.as_mut() {
+                if let Some((slot, dialog)) = self.pending_dialog.as_mut() {
                     match dialog.poll_path() {
                         Poll::Ready(Some(path)) => {
-                            self.excitation.surface.load_audio_file(&path);
+                            self.strikers.surface.load_audio_file(*slot, &path);
                             self.pending_dialog = None;
                         }
                         Poll::Ready(None) => self.pending_dialog = None,
@@ -134,7 +154,7 @@ impl Model for CymbalModel {
                 }
                 let host = LamathCymbalEditorHost {
                     controls: Arc::clone(&self.controls),
-                    excitation: self.excitation.clone(),
+                    strikers: self.strikers.clone(),
                 };
                 self.signals.sync(&host);
             }
@@ -159,18 +179,14 @@ fn build_editor(cx: &mut Context, signals: CymbalSignals) {
         .class("cymbal-panel");
 
         VStack::new(cx, move |cx| {
-            Label::new(cx, "Excitation").class("cymbal-section");
+            Label::new(cx, "Sticks / Mallets").class("cymbal-section");
             HStack::new(cx, move |cx| {
-                Label::new(cx, signals.slot_label).class("cymbal-slot-label");
-                Label::new(cx, signals.slot_source).class("cymbal-slot-source");
-                Button::new(cx, |cx| Label::new(cx, "Load"))
-                    .class("cymbal-button")
-                    .on_press(|cx| cx.emit(CymbalEvent::OpenExcitationDialog));
-                Button::new(cx, |cx| Label::new(cx, "Clear"))
-                    .class("cymbal-button")
-                    .on_press(|cx| cx.emit(CymbalEvent::ClearExcitation));
+                for index in 0..4 {
+                    slot_cell(cx, signals, index);
+                }
             })
             .class("cymbal-slot-row");
+            selected_slot_actions(cx, signals);
         })
         .class("cymbal-panel");
     })
@@ -230,6 +246,87 @@ fn knob_cell(cx: &mut Context, signals: CymbalSignals, index: usize) {
     .display(Memo::new(move |_| signals.knobs.get().len() > index));
 }
 
+fn slot_cell(cx: &mut Context, signals: CymbalSignals, index: usize) {
+    Button::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            Label::new(cx, slot_key_label(index)).class("cymbal-slot-key");
+            Label::new(
+                cx,
+                Memo::new(move |_| {
+                    signals
+                        .slots
+                        .get()
+                        .slots
+                        .get(index)
+                        .map(|slot| slot.label.clone())
+                        .unwrap_or_default()
+                }),
+            )
+            .class("cymbal-slot-label");
+            Label::new(
+                cx,
+                Memo::new(move |_| {
+                    signals
+                        .slots
+                        .get()
+                        .slots
+                        .get(index)
+                        .map(|slot| source_label(slot.source))
+                        .unwrap_or_default()
+                }),
+            )
+            .class("cymbal-slot-source");
+        });
+    })
+    .class("cymbal-slot")
+    .toggle_class(
+        "cymbal-slot-selected",
+        Memo::new(move |_| signals.slots.get().selected == AudioFileSlotId(index)),
+    )
+    .display(Memo::new(move |_| signals.slots.get().slots.len() > index))
+    .on_press(move |cx| cx.emit(CymbalEvent::SelectSlot(AudioFileSlotId(index))));
+}
+
+fn selected_slot_actions(cx: &mut Context, signals: CymbalSignals) {
+    HStack::new(cx, move |cx| {
+        Label::new(
+            cx,
+            Memo::new(move |_| {
+                let view = signals.slots.get();
+                let index = view.selected.0;
+                view.slots
+                    .get(index)
+                    .map(|slot| format!("{}  {}", slot_key_label(index), slot.label))
+                    .unwrap_or_default()
+            }),
+        )
+        .class("cymbal-selected-label");
+        Button::new(cx, |cx| Label::new(cx, "Load"))
+            .class("cymbal-button")
+            .on_press(move |cx| cx.emit(CymbalEvent::OpenSlotDialog(signals.slots.get().selected)));
+        Button::new(cx, |cx| Label::new(cx, "Clear"))
+            .class("cymbal-button")
+            .on_press(move |cx| cx.emit(CymbalEvent::ClearSlot(signals.slots.get().selected)));
+    })
+    .class("cymbal-action-row");
+}
+
+fn source_label(source: AudioFileSource) -> String {
+    match source {
+        AudioFileSource::BuiltIn => "Built-in".to_string(),
+        AudioFileSource::Loaded => "Loaded".to_string(),
+    }
+}
+
+fn slot_key_label(index: usize) -> &'static str {
+    match index {
+        0 => "C-2",
+        1 => "C#-2",
+        2 => "D-2",
+        _ => "D#-2",
+    }
+}
+
 fn build_application(
     host: LamathCymbalEditorHost,
     size: LamathCymbalEditorSize,
@@ -242,7 +339,7 @@ fn build_application(
         let signals = CymbalSignals::from_host(&host);
         CymbalModel {
             controls: Arc::clone(&host.controls),
-            excitation: host.excitation.clone(),
+            strikers: host.strikers.clone(),
             signals,
             pending_dialog: None,
         }

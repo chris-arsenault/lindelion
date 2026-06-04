@@ -8,15 +8,46 @@ const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
 const BUILTIN_EXCITATION_SAMPLE_RATE: f32 = 48_000.0;
 const INJECTOR_POOL_SIZE: usize = 16;
 const CHOKE_RAMP_MS: f32 = 60.0;
-const DAMP_KEY_LOW: u8 = 0;
+const STRIKER_KEYSWITCH_BASE_NOTE: u8 = 0;
+const DAMP_KEY_LOW: u8 = 4;
 const DAMP_KEY_HIGH: u8 = 11;
 
-const BUILTIN_EXCITATION: [f32; 48] = [
+pub const STRIKER_SLOT_COUNT: usize = 4;
+pub const STRIKER_NAMES: [&str; STRIKER_SLOT_COUNT] =
+    ["Hard stick", "Soft mallet", "Jazz brush", "Bell stick"];
+
+const HARD_STICK_EXCITATION: [f32; 48] = [
     0.00, 0.82, -0.58, 0.41, -0.36, 0.27, -0.20, 0.16, -0.13, 0.11, -0.09, 0.08, -0.07, 0.06,
     -0.052, 0.044, -0.038, 0.033, -0.028, 0.023, -0.019, 0.016, -0.013, 0.010, -0.008, 0.006,
     -0.0048, 0.0038, -0.0030, 0.0024, -0.0019, 0.0015, -0.0012, 0.00095, -0.00074, 0.00056,
     -0.00042, 0.00031, -0.00023, 0.00017, -0.00012, 0.000085, -0.00006, 0.00004, -0.000026,
     0.000016, -0.000009, 0.0,
+];
+
+const SOFT_MALLET_EXCITATION: [f32; 64] = [
+    0.00, 0.18, 0.36, 0.42, 0.34, 0.21, 0.08, -0.03, -0.09, -0.11, -0.10, -0.075, -0.050, -0.026,
+    -0.006, 0.011, 0.022, 0.027, 0.026, 0.021, 0.014, 0.007, 0.001, -0.004, -0.007, -0.008, -0.007,
+    -0.0055, -0.0035, -0.0015, 0.0004, 0.0018, 0.0026, 0.0028, 0.0024, 0.0017, 0.0010, 0.0003,
+    -0.0002, -0.00055, -0.00072, -0.00070, -0.00056, -0.00038, -0.00020, -0.00005, 0.00008,
+    0.00016, 0.00019, 0.00018, 0.00014, 0.00009, 0.00005, 0.00001, -0.00002, -0.000035, -0.00004,
+    -0.000035, -0.000025, -0.000015, -0.000008, -0.000003, 0.0, 0.0,
+];
+
+const JAZZ_BRUSH_EXCITATION: [f32; 72] = [
+    0.00, 0.055, -0.020, 0.080, 0.012, -0.034, 0.065, -0.016, 0.043, 0.020, -0.026, 0.046, -0.010,
+    0.035, -0.020, 0.030, 0.014, -0.018, 0.026, -0.008, 0.021, -0.012, 0.017, 0.009, -0.012, 0.014,
+    -0.006, 0.011, -0.007, 0.009, 0.0045, -0.0065, 0.0078, -0.0038, 0.0058, -0.0035, 0.0045,
+    0.0021, -0.0034, 0.0038, -0.0019, 0.0028, -0.0017, 0.0022, 0.0010, -0.0017, 0.0018, -0.0009,
+    0.0013, -0.0008, 0.00095, 0.00045, -0.00070, 0.00072, -0.00035, 0.00050, -0.00028, 0.00035,
+    0.00016, -0.00024, 0.00022, -0.00010, 0.00014, -0.000075, 0.000085, 0.000035, -0.000046,
+    0.000036, -0.000014, 0.000012, 0.000004, 0.0,
+];
+
+const BELL_STICK_EXCITATION: [f32; 40] = [
+    0.00, 0.96, -0.82, 0.60, -0.50, 0.38, -0.31, 0.24, -0.19, 0.15, -0.12, 0.095, -0.075, 0.058,
+    -0.044, 0.034, -0.026, 0.020, -0.015, 0.011, -0.0080, 0.0058, -0.0041, 0.0029, -0.0020, 0.0014,
+    -0.00095, 0.00064, -0.00042, 0.00027, -0.00017, 0.00010, -0.00006, 0.000036, -0.000020,
+    0.000011, -0.000005, 0.000002, 0.0, 0.0,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -26,16 +57,21 @@ pub struct ExcitationSource<'a> {
 }
 
 impl<'a> ExcitationSource<'a> {
-    pub const fn builtin() -> Self {
+    pub const fn builtin(slot: usize) -> Self {
         Self {
-            samples: &BUILTIN_EXCITATION,
+            samples: match slot {
+                1 => &SOFT_MALLET_EXCITATION,
+                2 => &JAZZ_BRUSH_EXCITATION,
+                3 => &BELL_STICK_EXCITATION,
+                _ => &HARD_STICK_EXCITATION,
+            },
             sample_rate: BUILTIN_EXCITATION_SAMPLE_RATE,
         }
     }
 
-    pub fn from_samples(samples: &'a [f32], sample_rate: f32) -> Self {
+    pub fn from_samples(samples: &'a [f32], sample_rate: f32, fallback_slot: usize) -> Self {
         if samples.is_empty() {
-            return Self::builtin();
+            return Self::builtin(fallback_slot);
         }
         Self {
             samples,
@@ -55,7 +91,7 @@ struct Injector<'a> {
 impl Default for Injector<'_> {
     fn default() -> Self {
         Self {
-            source: ExcitationSource::builtin(),
+            source: ExcitationSource::builtin(0),
             position: 0.0,
             step: 1.0,
             gain: 0.0,
@@ -101,7 +137,8 @@ pub struct CymbalProcessor<'a> {
     mesh: MeshResonator,
     energy: EnergyFollower,
     body_energy: f32,
-    excitation: ExcitationSource<'a>,
+    sources: [ExcitationSource<'a>; STRIKER_SLOT_COUNT],
+    selected_slot: usize,
     injectors: [Injector<'a>; INJECTOR_POOL_SIZE],
     cursor: usize,
     choke_gain: f32,
@@ -110,9 +147,14 @@ pub struct CymbalProcessor<'a> {
 }
 
 impl<'a> CymbalProcessor<'a> {
-    pub fn new(sample_rate: f32, patch: CymbalPatch, excitation: ExcitationSource<'a>) -> Self {
+    pub fn new(
+        sample_rate: f32,
+        patch: CymbalPatch,
+        sources: [ExcitationSource<'a>; STRIKER_SLOT_COUNT],
+    ) -> Self {
         let sample_rate = sanitize_sample_rate(sample_rate);
         let patch = patch.sanitized();
+        let selected_slot = patch.selected_striker;
         let mut mesh = MeshResonator::new(sample_rate);
         mesh.configure(mesh_params(&patch, 60));
         Self {
@@ -121,7 +163,8 @@ impl<'a> CymbalProcessor<'a> {
             mesh,
             energy: EnergyFollower::new(sample_rate),
             body_energy: 0.0,
-            excitation,
+            sources,
+            selected_slot,
             injectors: [Injector::default(); INJECTOR_POOL_SIZE],
             cursor: 0,
             choke_gain: 1.0,
@@ -146,11 +189,12 @@ impl<'a> CymbalProcessor<'a> {
 
     pub fn set_patch(&mut self, patch: CymbalPatch) {
         self.patch = patch.sanitized();
+        self.selected_slot = self.patch.selected_striker;
         self.mesh.configure(mesh_params(&self.patch, 60));
     }
 
-    pub fn set_excitation(&mut self, excitation: ExcitationSource<'a>) {
-        self.excitation = excitation;
+    pub fn set_sources(&mut self, sources: [ExcitationSource<'a>; STRIKER_SLOT_COUNT]) {
+        self.sources = sources;
     }
 
     pub fn process(&mut self, events: &[MidiEvent], left: &mut [f32], right: &mut [f32]) {
@@ -182,17 +226,24 @@ impl<'a> CymbalProcessor<'a> {
             .count()
     }
 
+    pub fn selected_slot(&self) -> usize {
+        self.selected_slot
+    }
+
     fn handle_events(&mut self, events: &[MidiEvent]) {
         for event in events {
             let MidiEvent::Note(note) = *event else {
                 continue;
             };
             match note {
-                NoteEvent::On { note, velocity, .. } if velocity > 0.0 && damp_key(note) => {
-                    self.damp()
-                }
                 NoteEvent::On { note, velocity, .. } if velocity > 0.0 => {
-                    self.strike(note, velocity)
+                    if let Some(slot) = keyswitch_slot(note) {
+                        self.select_slot(slot);
+                    } else if damp_key(note) {
+                        self.damp();
+                    } else {
+                        self.strike(note, velocity);
+                    }
                 }
                 _ => {}
             }
@@ -205,7 +256,12 @@ impl<'a> CymbalProcessor<'a> {
         self.mesh.configure(mesh_params(&self.patch, note));
         let gain = velocity.clamp(0.0, 1.0).sqrt();
         let index = self.free_injector_index();
-        self.injectors[index].trigger(self.excitation, gain, self.sample_rate);
+        self.injectors[index].trigger(self.sources[self.selected_slot], gain, self.sample_rate);
+    }
+
+    fn select_slot(&mut self, slot: usize) {
+        self.selected_slot = slot.min(STRIKER_SLOT_COUNT - 1);
+        self.patch.selected_striker = self.selected_slot;
     }
 
     fn damp(&mut self) {
@@ -255,6 +311,11 @@ fn mesh_params(patch: &CymbalPatch, midi_note: u8) -> MeshVoiceParams {
 
 fn damp_key(note: u8) -> bool {
     (DAMP_KEY_LOW..=DAMP_KEY_HIGH).contains(&note)
+}
+
+fn keyswitch_slot(note: u8) -> Option<usize> {
+    let slot = note.checked_sub(STRIKER_KEYSWITCH_BASE_NOTE)? as usize;
+    (slot < STRIKER_SLOT_COUNT).then_some(slot)
 }
 
 fn choke_step(sample_rate: f32) -> f32 {

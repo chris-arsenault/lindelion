@@ -16,7 +16,7 @@ pub(crate) const DSP_FALLBACK_SAMPLE_RATE: f32 = 48_000.0;
 pub(crate) const DEFAULT_BIQUAD_Q: f32 = 0.707;
 pub(crate) const LOWEST_TUBE_FREQUENCY_HZ: f32 = 20.0;
 
-pub(crate) const LOOP_FILTER_CUTOFF_DEFAULT_HZ: f32 = 8_000.0;
+pub(crate) const LOOP_FILTER_CUTOFF_DEFAULT_HZ: f32 = 4_200.0;
 pub(crate) const LOOP_GAIN_DEFAULT: f32 = 0.97;
 pub(crate) const LOOP_FILTER_RESONANCE_DEFAULT: f32 = 0.0;
 pub(crate) const PICKUP_POSITION_DEFAULT: f32 = 0.82;

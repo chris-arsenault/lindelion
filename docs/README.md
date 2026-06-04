@@ -6,7 +6,10 @@ Documentation index for the Lindelion audio-plugin workspace.
 
 | Product | Description | Docs |
 | ---- | ---- | ---- |
-| Lamath | VST3 resonator instrument with MIDI and sidechain audio inputs | [Spec](plugins/lamath.md), [backlog](plugins/lamath-backlog.md), [README](../plugins/lamath/README.md) |
+| Lamath | VST3 dual modal resonator instrument with MIDI input, optional sidechain note/expression input, and live excitation | [Spec](plugins/lamath.md), [backlog](plugins/lamath-backlog.md), [README](../plugins/lamath/README.md) |
+| Lamath Cymbal | Extracted shared-body idiophone / cymbal mesh VST3 with one excitation slot and seven host parameters | [Spec](plugins/lamath-cymbal.md), [README](../plugins/lamath-cymbal/README.md) |
+| Lamath Tube | Extracted monophonic reed-driven tube VST3 with eight key-switched articulation slots and seven host parameters | [Spec](plugins/lamath-tube.md), [README](../plugins/lamath-tube/README.md) |
+| Lamath Stringed | Extracted picked/bowed string VST3 with driver/body selectors, eight key-switched articulation slots, and seven host parameters | [Spec](plugins/lamath-stringed.md), [README](../plugins/lamath-stringed/README.md) |
 | Linnod | VST3 melodic slicer instrument with source analysis, slice playback, editor surface, and bundle support | [Spec](plugins/linnod.md), [backlog](plugins/linnod-backlog.md), [README](../plugins/linnod/README.md) |
 | Glirdir | VST3 sing-to-MIDI scratchpad with editor, drag/export, sample-library save, and bundle support | [Spec](plugins/glirdir.md), [backlog](plugins/glirdir-backlog.md), [README](../plugins/glirdir/README.md) |
 | Calóma | Windows-only speech-clarity VST3 — 20-effect serial chain, 3 signal orders, self-contained Vizia editor (no host params), per-order tuned defaults | [Spec](plugins/caloma.md), [backlog](plugins/caloma-backlog.md), [README](../plugins/caloma/README.md) |

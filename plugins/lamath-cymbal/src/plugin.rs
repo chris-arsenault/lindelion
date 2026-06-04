@@ -10,7 +10,7 @@ use lindelion_sample_library::{
 };
 use lindelion_ui::{
     WaveformPoint,
-    audio_file_slot::{AudioFileSlotView, AudioFileSource},
+    audio_file_slot::{AudioFileSlotId, AudioFileSlotListView, AudioFileSlotView, AudioFileSource},
     lamath_cymbal_vizia::LamathCymbalKnob,
     waveform_points_from_samples,
 };
@@ -19,7 +19,7 @@ use crate::{
     parameters,
     patch::CymbalPatch,
     patch_io,
-    processor::{CymbalProcessor, ExcitationSource},
+    processor::{CymbalProcessor, ExcitationSource, STRIKER_NAMES, STRIKER_SLOT_COUNT},
 };
 
 pub const DESCRIPTOR: PluginDescriptor =
@@ -33,7 +33,7 @@ pub struct LamathCymbal {
     setup: ProcessSetup,
     patch: CymbalPatch,
     processor: CymbalProcessor<'static>,
-    loaded_buffer: Option<RuntimeMonoAudioBuffer>,
+    loaded_buffers: [Option<RuntimeMonoAudioBuffer>; STRIKER_SLOT_COUNT],
     library_root: PathBuf,
 }
 
@@ -46,10 +46,10 @@ impl Default for LamathCymbal {
             processor: CymbalProcessor::new(
                 setup.sample_rate as f32,
                 patch.clone(),
-                ExcitationSource::builtin(),
+                builtin_sources(),
             ),
             patch,
-            loaded_buffer: None,
+            loaded_buffers: std::array::from_fn(|_| None),
             library_root: lindelion_sample_library::music_library_root(DEFAULT_LIBRARY_DIR),
         }
     }
@@ -73,7 +73,19 @@ impl LamathCymbal {
         self.rebuild_processor();
     }
 
-    pub fn load_excitation_from_path(&mut self, path: &Path) -> Result<(), SampleLibraryError> {
+    pub fn select_striker_slot(&mut self, slot: usize) {
+        self.patch.selected_striker = slot.min(STRIKER_SLOT_COUNT - 1);
+        self.processor.set_patch(self.patch.clone());
+    }
+
+    pub fn load_excitation_from_path(
+        &mut self,
+        slot: usize,
+        path: &Path,
+    ) -> Result<(), SampleLibraryError> {
+        if slot >= STRIKER_SLOT_COUNT {
+            return Err(SampleLibraryError::InvalidPath(path.to_path_buf()));
+        }
         let mut library = FileSampleLibrary::open(
             lindelion_sample_library::LibraryPaths::from_root(self.library_root.clone()),
         )?;
@@ -81,17 +93,22 @@ impl LamathCymbal {
         let Some(decoded) = library.decode(&metadata.reference)? else {
             return Err(SampleLibraryError::InvalidPath(path.to_path_buf()));
         };
-        self.patch.excitation_sample = Some(metadata.reference);
-        self.loaded_buffer = Some(RuntimeMonoAudioBuffer::from_owned(
+        self.patch.strikers[slot].sample = Some(metadata.reference);
+        self.loaded_buffers[slot] = Some(RuntimeMonoAudioBuffer::from_owned(
             OwnedMonoAudioBuffer::from(decoded),
         ));
+        self.patch.selected_striker = slot;
         self.rebuild_processor();
         Ok(())
     }
 
-    pub fn clear_excitation(&mut self) {
-        self.patch.excitation_sample = None;
-        self.loaded_buffer = None;
+    pub fn clear_excitation(&mut self, slot: usize) {
+        if slot >= STRIKER_SLOT_COUNT {
+            return;
+        }
+        self.patch.strikers[slot].sample = None;
+        self.loaded_buffers[slot] = None;
+        self.patch.selected_striker = slot;
         self.rebuild_processor();
     }
 
@@ -110,15 +127,20 @@ impl LamathCymbal {
             .collect()
     }
 
-    pub fn excitation_slot_view(&self) -> AudioFileSlotView {
-        AudioFileSlotView {
-            label: self.excitation_label(),
-            source: if self.patch.excitation_sample.is_some() {
-                AudioFileSource::Loaded
-            } else {
-                AudioFileSource::BuiltIn
-            },
-            waveform: self.excitation_waveform(),
+    pub fn striker_slot_list_view(&self) -> AudioFileSlotListView {
+        AudioFileSlotListView {
+            selected: AudioFileSlotId(self.patch.selected_striker),
+            slots: (0..STRIKER_SLOT_COUNT)
+                .map(|index| AudioFileSlotView {
+                    label: self.striker_label(index),
+                    source: if self.patch.strikers[index].sample.is_some() {
+                        AudioFileSource::Loaded
+                    } else {
+                        AudioFileSource::BuiltIn
+                    },
+                    waveform: self.striker_waveform(index),
+                })
+                .collect(),
         }
     }
 
@@ -126,55 +148,56 @@ impl LamathCymbal {
         self.processor = CymbalProcessor::new(
             self.setup.sample_rate as f32,
             self.patch.clone(),
-            self.runtime_excitation(),
+            self.runtime_sources(),
         );
     }
 
-    fn runtime_excitation(&self) -> ExcitationSource<'static> {
-        let Some(buffer) = &self.loaded_buffer else {
-            return ExcitationSource::builtin();
-        };
-        let samples = unsafe { buffer.samples_with_static_lifetime() };
-        ExcitationSource::from_samples(samples, buffer.sample_rate())
+    fn runtime_sources(&self) -> [ExcitationSource<'static>; STRIKER_SLOT_COUNT] {
+        std::array::from_fn(|slot| {
+            let Some(buffer) = &self.loaded_buffers[slot] else {
+                return ExcitationSource::builtin(slot);
+            };
+            let samples = unsafe { buffer.samples_with_static_lifetime() };
+            ExcitationSource::from_samples(samples, buffer.sample_rate(), slot)
+        })
     }
 
     fn load_patch_from_sample_paths(&mut self, patch: CymbalPatch) {
         self.patch = patch.sanitized();
         let references = self
             .patch
-            .excitation_sample
-            .as_ref()
-            .map(|reference| (0usize, reference));
-        let Some(reference) = references else {
-            self.loaded_buffer = None;
-            self.rebuild_processor();
-            return;
-        };
-        let (buffers, _report) = load_referenced_mono_audio_from_paths::<1, _>([reference]);
-        self.loaded_buffer = buffers
-            .into_iter()
-            .next()
-            .flatten()
-            .map(RuntimeMonoAudioBuffer::from_owned);
+            .strikers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| slot.sample.as_ref().map(|reference| (index, reference)));
+        let (buffers, _report) =
+            load_referenced_mono_audio_from_paths::<STRIKER_SLOT_COUNT, _>(references);
+        self.loaded_buffers = buffers.map(|slot| slot.map(RuntimeMonoAudioBuffer::from_owned));
         self.rebuild_processor();
     }
 
-    fn excitation_label(&self) -> String {
+    fn striker_label(&self, index: usize) -> String {
         self.patch
-            .excitation_sample
-            .as_ref()
+            .strikers
+            .get(index)
+            .and_then(|slot| slot.sample.as_ref())
             .and_then(|reference| reference.last_known_path.file_name())
             .and_then(|name| name.to_str())
-            .unwrap_or("Built-in strike")
+            .unwrap_or_else(|| STRIKER_NAMES.get(index).copied().unwrap_or("Striker"))
             .to_string()
     }
 
-    fn excitation_waveform(&self) -> Vec<WaveformPoint> {
-        self.loaded_buffer
-            .as_ref()
+    fn striker_waveform(&self, index: usize) -> Vec<WaveformPoint> {
+        self.loaded_buffers
+            .get(index)
+            .and_then(Option::as_ref)
             .map(|buffer| waveform_points_from_samples(buffer.samples(), WAVEFORM_PREVIEW_POINTS))
             .unwrap_or_default()
     }
+}
+
+fn builtin_sources() -> [ExcitationSource<'static>; STRIKER_SLOT_COUNT] {
+    std::array::from_fn(ExcitationSource::builtin)
 }
 
 impl AudioPlugin for LamathCymbal {
@@ -195,6 +218,7 @@ impl AudioPlugin for LamathCymbal {
         self.setup = context.setup;
         self.processor
             .process(context.events, context.buffer.left, context.buffer.right);
+        self.patch.selected_striker = self.processor.selected_slot();
     }
 
     fn state(&self) -> PluginState {
@@ -224,6 +248,48 @@ mod tests {
         restored.load_state(state);
 
         assert!((restored.patch.damping - plugin.patch.damping).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn exposes_four_builtin_striker_slots() {
+        let plugin = LamathCymbal::default();
+        let view = plugin.striker_slot_list_view();
+
+        assert_eq!(view.selected, AudioFileSlotId(0));
+        assert_eq!(view.slots.len(), STRIKER_SLOT_COUNT);
+        assert_eq!(view.slots[0].label, "Hard stick");
+        assert_eq!(view.slots[1].label, "Soft mallet");
+        assert_eq!(view.slots[2].label, "Jazz brush");
+        assert_eq!(view.slots[3].label, "Bell stick");
+        assert!(
+            view.slots
+                .iter()
+                .all(|slot| slot.source == AudioFileSource::BuiltIn)
+        );
+    }
+
+    #[test]
+    fn midi_keyswitch_updates_exposed_selected_striker() {
+        let mut plugin = LamathCymbal::default();
+        let mut left = [0.0; 128];
+        let mut right = [0.0; 128];
+        let events = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 2,
+            velocity: 1.0,
+        })];
+
+        plugin.process(ProcessContext::new(
+            ProcessSetup::default(),
+            AudioBuffer {
+                left: &mut left,
+                right: &mut right,
+            },
+            &events,
+        ));
+
+        assert_eq!(plugin.striker_slot_list_view().selected, AudioFileSlotId(2));
+        assert!(left.iter().all(|sample| sample.abs() == 0.0));
     }
 
     #[test]

@@ -77,11 +77,21 @@ impl LamathCymbalVst3Processor {
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(super) fn excitation_slot_view(&self) -> lindelion_ui::audio_file_slot::AudioFileSlotView {
+    pub(super) fn striker_slot_list_view(
+        &self,
+    ) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
         self.plugin
             .try_borrow()
-            .map(|plugin| plugin.excitation_slot_view())
+            .map(|plugin| plugin.striker_slot_list_view())
             .unwrap_or_default()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(super) fn select_striker_slot(&self, slot: usize) {
+        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
+            return;
+        };
+        plugin.select_striker_slot(slot);
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -97,22 +107,22 @@ impl LamathCymbalVst3Processor {
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(super) fn load_excitation_from_path(&self, path: &Path) {
+    pub(super) fn load_excitation_from_path(&self, slot: usize, path: &Path) {
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
             return;
         };
-        let _ = plugin.load_excitation_from_path(path);
+        let _ = plugin.load_excitation_from_path(slot, path);
         self.values
             .replace(parameters::normalized_values_from_patch(plugin.patch()));
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(super) fn clear_excitation(&self) {
+    pub(super) fn clear_excitation(&self, slot: usize) {
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
             return;
         };
-        plugin.clear_excitation();
+        plugin.clear_excitation(slot);
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 

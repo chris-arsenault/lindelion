@@ -112,5 +112,5 @@ for sample in audio_block.iter_mut() {
 - Karplus & Strong — *Digital Synthesis of Plucked-String and Drum Timbres* (Computer Music Journal, 1983) — the canonical paired-delay-and-allpass tuning construction.
 - Source: [`crates/lindelion-dsp-utils/src/delay.rs`](../../crates/lindelion-dsp-utils/src/delay.rs).
 - Companion: [`DelayLine`](delay-line.md).
-- Consumer: [`WaveguideResonator`](waveguide.md).
+- Consumer: [extracted string and wind waveguide models](waveguide.md).
 - ADR-0001: [Allocation-free audio thread](../adr/0001-allocation-free-audio-thread.md).

@@ -15,6 +15,9 @@ For Intel DAWs, also install `x86_64-apple-darwin` and set `MACOS_TARGET=x86_64-
 ```bash
 make build
 make build PLUGIN=lamath
+make build PLUGIN=lamath-cymbal
+make build PLUGIN=lamath-tube
+make build PLUGIN=lamath-stringed
 make build PLUGIN=glirdir
 make build PLUGIN=linnod
 ```
@@ -23,6 +26,9 @@ The Makefile uses the repo-local `./target-build` as the iteration target direct
 
 ```text
 /Library/Audio/Plug-Ins/VST3/Ahara/Lamath.vst3
+/Library/Audio/Plug-Ins/VST3/Ahara/Lamath Cymbal.vst3
+/Library/Audio/Plug-Ins/VST3/Ahara/Lamath Tube.vst3
+/Library/Audio/Plug-Ins/VST3/Ahara/Lamath Stringed.vst3
 /Library/Audio/Plug-Ins/VST3/Ahara/Glirdir.vst3
 /Library/Audio/Plug-Ins/VST3/Ahara/Linnod.vst3
 ```
@@ -37,6 +43,9 @@ Then restart Ableton or rescan VST3 plugins after each rebuild. If using a downl
 
 ```bash
 sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Lamath.vst3"
+sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Lamath Cymbal.vst3"
+sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Lamath Tube.vst3"
+sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Lamath Stringed.vst3"
 sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Glirdir.vst3"
 sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Ahara/Linnod.vst3"
 ```
@@ -47,6 +56,9 @@ Before running a host or validator, inspect the installed bundle:
 
 ```bash
 make inspect-vst3
+make inspect-vst3 PLUGIN=lamath-cymbal
+make inspect-vst3 PLUGIN=lamath-tube
+make inspect-vst3 PLUGIN=lamath-stringed
 make inspect-vst3 PLUGIN=glirdir
 make inspect-vst3 PLUGIN=linnod
 ```
@@ -57,6 +69,9 @@ When the Steinberg VST3 SDK validator is installed:
 
 ```bash
 make validate-vst3
+make validate-vst3 PLUGIN=lamath-cymbal
+make validate-vst3 PLUGIN=lamath-tube
+make validate-vst3 PLUGIN=lamath-stringed
 make validate-vst3 PLUGIN=glirdir
 make validate-vst3 PLUGIN=linnod
 ```

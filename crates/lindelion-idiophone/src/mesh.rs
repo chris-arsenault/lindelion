@@ -6,8 +6,11 @@ use super::sanitize_sample_rate;
 mod boundary;
 #[path = "runtime.rs"]
 mod runtime;
+#[path = "mesh/spatial.rs"]
+mod spatial;
 use boundary::{BoundaryLowpass, DEFAULT_BOUNDARY_HF_LOSS, boundary_lowpass_step};
 pub use runtime::{MeshResonator, MeshVoiceParams};
+use spatial::{SpatialNormalization, SpatialWeights};
 
 const MIN_MESH_SIZE: usize = 3;
 /// Maximum active grid the mesh can be configured to. Buffers are allocated once at
@@ -235,167 +238,6 @@ impl Default for RectangularMesh2dConfig {
             strike_contact_absorption: 0.0,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct SpatialWeight {
-    index: usize,
-    weight: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct SpatialWeights {
-    weights: Vec<SpatialWeight>,
-    normalization: SpatialNormalization,
-}
-
-impl SpatialWeights {
-    fn new(
-        point: MeshPoint,
-        width: usize,
-        height: usize,
-        width_fraction: f32,
-        normalization: SpatialNormalization,
-    ) -> Self {
-        // Capacity is the MAXIMUM grid, so an in-place recompute onto a larger active
-        // sub-region (via `reconfigure`) never reallocates on the audio thread.
-        let mut weights = Self {
-            weights: Vec::with_capacity(MAX_MESH_CELLS),
-            normalization,
-        };
-        weights.recompute(point, width, height, width_fraction);
-        weights
-    }
-
-    /// Recompute the Gaussian spatial weights in place: `clear` + `push` reuses
-    /// the grid-sized capacity, so re-tuning a live voice never allocates.
-    fn recompute(&mut self, point: MeshPoint, width: usize, height: usize, width_fraction: f32) {
-        self.weights.clear();
-        let center_x = point.x * (width - 1) as f32;
-        let center_y = point.y * (height - 1) as f32;
-        let sigma = (width.min(height) as f32 * width_fraction).max(0.35);
-        let radius = (sigma * 2.5).ceil() as isize;
-        let mut sum = 0.0;
-
-        for y in (center_y.floor() as isize - radius)..=(center_y.floor() as isize + radius) {
-            for x in (center_x.floor() as isize - radius)..=(center_x.floor() as isize + radius) {
-                if x < 0 || y < 0 || x >= width as isize || y >= height as isize {
-                    continue;
-                }
-                let dx = (x as f32 - center_x) / sigma;
-                let dy = (y as f32 - center_y) / sigma;
-                let weight = (-0.5 * (dx * dx + dy * dy)).exp();
-                if weight <= 1.0e-6 {
-                    continue;
-                }
-                self.weights.push(SpatialWeight {
-                    index: y as usize * width + x as usize,
-                    weight,
-                });
-                sum += weight;
-            }
-        }
-
-        if sum <= f32::EPSILON {
-            self.weights.clear();
-            let x = center_x.round().clamp(0.0, (width - 1) as f32) as usize;
-            let y = center_y.round().clamp(0.0, (height - 1) as f32) as usize;
-            self.weights.push(SpatialWeight {
-                index: y * width + x,
-                weight: 1.0,
-            });
-            return;
-        }
-
-        match self.normalization {
-            SpatialNormalization::UnitEnergy => {
-                let square_sum: f32 = self
-                    .weights
-                    .iter()
-                    .map(|weight| weight.weight * weight.weight)
-                    .sum();
-                let normalizer = square_sum.sqrt().max(f32::EPSILON);
-                for weight in &mut self.weights {
-                    weight.weight /= normalizer;
-                }
-            }
-            SpatialNormalization::ApertureIntegral => {}
-        }
-    }
-
-    fn inject_pressure(&self, waves: &mut DirectionalWaves, pressure: f32) {
-        let component = math::snap_to_zero(pressure) * 0.25;
-        for spatial_weight in &self.weights {
-            waves.add_uniform(spatial_weight.index, component * spatial_weight.weight);
-        }
-    }
-
-    fn absorb_contact_motion(&self, waves: &mut DirectionalWaves, amount: f32) {
-        let amount = math::finite_clamp(amount, 0.0, 0.95, 0.0);
-        if amount <= f32::EPSILON {
-            return;
-        }
-        for spatial_weight in &self.weights {
-            let local_loss = (amount * spatial_weight.weight.abs()).min(0.95);
-            waves.damp_directional_motion(spatial_weight.index, local_loss);
-            waves.damp_pressure(
-                spatial_weight.index,
-                local_loss * STRIKE_CONTACT_PRESSURE_DAMPING,
-            );
-        }
-    }
-
-    fn pressure(&self, waves: &DirectionalWaves) -> f32 {
-        self.weights
-            .iter()
-            .map(|spatial_weight| waves.pressure(spatial_weight.index) * spatial_weight.weight)
-            .sum()
-    }
-
-    fn curvature_pressure(&self, waves: &DirectionalWaves, width: usize, height: usize) -> f32 {
-        self.weights
-            .iter()
-            .map(|spatial_weight| {
-                let index = spatial_weight.index;
-                let x = index % width;
-                let y = index / width;
-                let center = waves.pressure(index);
-                let left = if x > 0 {
-                    waves.pressure(index - 1)
-                } else {
-                    center
-                };
-                let right = if x + 1 < width {
-                    waves.pressure(index + 1)
-                } else {
-                    center
-                };
-                let top = if y > 0 {
-                    waves.pressure(index - width)
-                } else {
-                    center
-                };
-                let bottom = if y + 1 < height {
-                    waves.pressure(index + width)
-                } else {
-                    center
-                };
-                let curvature = center - 0.25 * (left + right + top + bottom);
-                curvature * spatial_weight.weight
-            })
-            .sum()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SpatialNormalization {
-    /// Source velocity maps to fixed strike energy; widening the strike footprint
-    /// suppresses high modes but does not make the whole instrument vanish.
-    UnitEnergy,
-    /// Raw signed aperture integral. The shipped broad body/radiation pickup uses
-    /// this, while the separate shimmer pickup uses `UnitEnergy` so the narrow
-    /// high-mode tap changes color without becoming a hidden level control.
-    ApertureIntegral,
 }
 
 #[derive(Debug, Clone, PartialEq)]

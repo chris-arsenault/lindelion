@@ -22,11 +22,8 @@ fn strike_produces_sustained_finite_ring() {
 
 #[test]
 fn strike_processing_does_not_allocate() {
-    let mut processor = CymbalProcessor::new(
-        SAMPLE_RATE,
-        CymbalPatch::default(),
-        ExcitationSource::builtin(),
-    );
+    let mut processor =
+        CymbalProcessor::new(SAMPLE_RATE, CymbalPatch::default(), builtin_sources());
     let mut left = [0.0; 512];
     let mut right = [0.0; 512];
 
@@ -38,11 +35,8 @@ fn strike_processing_does_not_allocate() {
 
 #[test]
 fn damp_key_chokes_the_body() {
-    let mut processor = CymbalProcessor::new(
-        SAMPLE_RATE,
-        CymbalPatch::default(),
-        ExcitationSource::builtin(),
-    );
+    let mut processor =
+        CymbalProcessor::new(SAMPLE_RATE, CymbalPatch::default(), builtin_sources());
     let mut left = vec![0.0; 4_096];
     let mut right = vec![0.0; 4_096];
     processor.process(&[note_on(60, 1.0)], &mut left, &mut right);
@@ -50,7 +44,7 @@ fn damp_key_chokes_the_body() {
 
     for block in 0..8 {
         let events = if block == 0 {
-            vec![note_on(1, 1.0)]
+            vec![note_on(4, 1.0)]
         } else {
             Vec::new()
         };
@@ -139,15 +133,38 @@ fn retune_sequence_stays_bounded_and_continuous() {
 #[test]
 fn loaded_excitation_changes_attack() {
     let builtin = render_strikes(CymbalPatch::default(), &[(60, 0, 0.9)], 8_192);
-    let custom = render_with_excitation(
+    let custom = render_with_sources(
         CymbalPatch::default(),
-        ExcitationSource::from_samples(&[0.0, 1.0, -0.75, 0.45, -0.2, 0.0], SAMPLE_RATE),
+        custom_sources(&[0.0, 1.0, -0.75, 0.45, -0.2, 0.0]),
         &[(60, 0, 0.9)],
         8_192,
     );
 
     assert_all_finite(&custom);
     assert!(rms_difference(&builtin[..2_048], &custom[..2_048]) > 0.000_01);
+}
+
+#[test]
+fn striker_keyswitch_selects_slot_without_triggering_audio() {
+    let mut processor =
+        CymbalProcessor::new(SAMPLE_RATE, CymbalPatch::default(), builtin_sources());
+    let mut left = [0.0; BLOCK];
+    let mut right = [0.0; BLOCK];
+
+    processor.process(&[note_on(2, 1.0)], &mut left, &mut right);
+
+    assert_eq!(processor.selected_slot(), 2);
+    assert_eq!(processor.active_injectors(), 0);
+    assert!(left.iter().all(|sample| sample.abs() == 0.0));
+}
+
+#[test]
+fn builtin_striker_slots_have_distinct_attacks() {
+    let hard_stick = render_strikes(CymbalPatch::default(), &[(60, 0, 0.9)], 8_192);
+    let jazz_brush = render_strikes(CymbalPatch::default(), &[(2, 0, 1.0), (60, 0, 0.9)], 8_192);
+
+    assert_all_finite(&jazz_brush);
+    assert!(rms_difference(&hard_stick[..2_048], &jazz_brush[..2_048]) > 0.000_01);
 }
 
 #[test]
@@ -380,16 +397,16 @@ fn full_timbre_sweep_stays_finite_bounded_and_audible() {
 }
 
 fn render_strikes(patch: CymbalPatch, strikes: &[(u8, usize, f32)], frames: usize) -> Vec<f32> {
-    render_with_excitation(patch, ExcitationSource::builtin(), strikes, frames)
+    render_with_sources(patch, builtin_sources(), strikes, frames)
 }
 
-fn render_with_excitation(
+fn render_with_sources(
     patch: CymbalPatch,
-    excitation: ExcitationSource<'_>,
+    sources: [ExcitationSource<'_>; STRIKER_SLOT_COUNT],
     strikes: &[(u8, usize, f32)],
     frames: usize,
 ) -> Vec<f32> {
-    let mut processor = CymbalProcessor::new(SAMPLE_RATE, patch, excitation);
+    let mut processor = CymbalProcessor::new(SAMPLE_RATE, patch, sources);
     let total_blocks = frames.div_ceil(BLOCK);
     let mut left = vec![0.0; BLOCK];
     let mut right = vec![0.0; BLOCK];
@@ -407,6 +424,20 @@ fn render_with_excitation(
     }
     rendered.truncate(frames);
     rendered
+}
+
+fn builtin_sources<'a>() -> [ExcitationSource<'a>; STRIKER_SLOT_COUNT] {
+    std::array::from_fn(ExcitationSource::builtin)
+}
+
+fn custom_sources<'a>(samples: &'a [f32]) -> [ExcitationSource<'a>; STRIKER_SLOT_COUNT] {
+    std::array::from_fn(|slot| {
+        if slot == 0 {
+            ExcitationSource::from_samples(samples, SAMPLE_RATE, slot)
+        } else {
+            ExcitationSource::builtin(slot)
+        }
+    })
 }
 
 fn note_on(note: u8, velocity: f32) -> MidiEvent {

@@ -55,6 +55,7 @@ pub(crate) enum PatchRecipe {
         /// Bell HF-radiation tap: `true` = current model, `false` = bell off (the audition
         /// A/B for the radiation tap; ADR-0032 item-B follow-up).
         bell: bool,
+        reed_aperture: TubeReedAperture,
     },
     /// Struck Mesh playing a multi-note phrase, exposing the same articulation knobs the schedule
     /// can't express: `polyphony` (1 = single voice-stealing body; >1 = independent struck voices
@@ -66,6 +67,10 @@ pub(crate) enum PatchRecipe {
     /// A single struck-Mesh voicing exercising the timbre controls (grid density via `size`/
     /// `tension`, decay via `damping`, edge/strike character via `material`/strike position).
     MeshVoicing(MeshVoicing),
+    MeshStriker {
+        voicing: MeshVoicing,
+        striker: MeshStriker,
+    },
 }
 
 /// Named Mesh timbre points: character presets (triangle → ride → crash) plus single-axis
@@ -85,6 +90,14 @@ pub(crate) enum MeshVoicing {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MeshStriker {
+    HardStick,
+    SoftMallet,
+    JazzBrush,
+    BellStick,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DriverRecipe {
     Sample,
     PickSoft,
@@ -93,6 +106,12 @@ pub(crate) enum DriverRecipe {
     BowScratch,
     ReedSoft,
     ReedHard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeReedAperture {
+    Instant,
+    Inertial,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +185,7 @@ pub(crate) enum CatalogError {
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 11] = [
+const GROUPS: [CatalogGroup; 13] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -232,6 +251,18 @@ const GROUPS: [CatalogGroup; 11] = [
         directory: "11_tube_dynamics",
         title: "Tube Dynamics & Bell",
         question: "Does the wind Tube brighten with velocity (cuivré, not just louder) across a C4-C5 scale, and what does the bell HF-radiation tap contribute (on vs off)?",
+    },
+    CatalogGroup {
+        id: "tube_reed_aperture",
+        directory: "12_tube_reed_aperture",
+        title: "Tube Reed Aperture A/B",
+        question: "Does a finite-inertia reed aperture reduce digital HF while preserving articulation and pitch?",
+    },
+    CatalogGroup {
+        id: "mesh_strikers",
+        directory: "13_mesh_strikers",
+        title: "Mesh Sticks & Mallets",
+        question: "Do the four Mesh striker impulses stay distinct across single hits, repeated notes, overlap phrases, and ride/crash body settings?",
     },
 ];
 

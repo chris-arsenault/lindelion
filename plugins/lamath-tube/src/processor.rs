@@ -258,12 +258,15 @@ impl<'a> TubeProcessor<'a> {
         self.drive_gate += (self.drive_target - self.drive_gate) * self.gate_coeff;
         let excitation = self.injector.process();
         self.tube.set_brightness_effort(self.effort);
+        let mut params = tube_params(&self.patch, self.frequency_hz);
+        params.reed_phase_delay_samples = self
+            .reed
+            .aperture_phase_delay_samples(self.frequency_hz, self.effort);
         let feedback = self.tube.driven_feedback();
         let mouth_wave = self
             .reed
             .process(excitation, self.effort, feedback, self.drive_gate);
-        self.tube
-            .process_wind(mouth_wave, tube_params(&self.patch, self.frequency_hz))
+        self.tube.process_wind(mouth_wave, params)
     }
 }
 
@@ -277,6 +280,7 @@ fn tube_params(patch: &TubePatch, frequency_hz: f32) -> ReedTubeParams {
         boundary_reflection: -0.75,
         pickup_position: 0.82,
         bell_radiation: patch.bell,
+        reed_phase_delay_samples: 0.0,
         switches: ReedTubeSwitches {
             reed_enabled: true,
             bell_enabled: patch.switches.bell_enabled,
@@ -291,6 +295,7 @@ fn reed_params(patch: &TubePatch) -> ReedParams {
         pressure_depth: patch.pressure,
         stiffness: patch.reed_stiffness,
         embouchure: patch.embouchure,
+        aperture_inertia: patch.reed_aperture_inertia,
     }
 }
 

@@ -1,12 +1,12 @@
 //! Lamath Cymbal editor surface.
 //!
 //! The plugin owns the physical model and sample loading. The UI crate only exposes a sparse
-//! parameter and single-audio-slot boundary that compiles on every target; the Vizia view itself is
+//! parameter and audio-slot-list boundary that compiles on every target; the Vizia view itself is
 //! target-gated.
 
 use std::sync::Arc;
 
-use crate::audio_file_slot::AudioFileSlotHost;
+use crate::audio_file_slot::AudioFileSlotListHost;
 
 pub const LAMATH_CYMBAL_EDITOR_WIDTH: i32 = 560;
 pub const LAMATH_CYMBAL_EDITOR_HEIGHT: i32 = 420;
@@ -34,18 +34,15 @@ pub trait LamathCymbalControlSurface: Send + Sync {
 #[derive(Clone)]
 pub struct LamathCymbalEditorHost {
     pub controls: Arc<dyn LamathCymbalControlSurface>,
-    pub excitation: AudioFileSlotHost,
+    pub strikers: AudioFileSlotListHost,
 }
 
 impl LamathCymbalEditorHost {
     pub fn new(
         controls: Arc<dyn LamathCymbalControlSurface>,
-        excitation: AudioFileSlotHost,
+        strikers: AudioFileSlotListHost,
     ) -> Self {
-        Self {
-            controls,
-            excitation,
-        }
+        Self { controls, strikers }
     }
 }
 
@@ -58,7 +55,9 @@ pub use platform::LamathCymbalViziaEditor;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_file_slot::{AudioFileSlotSurface, AudioFileSlotView};
+    use crate::audio_file_slot::{
+        AudioFileSlotId, AudioFileSlotListSurface, AudioFileSlotListView, AudioFileSlotView,
+    };
     use std::path::Path;
 
     struct StubControls;
@@ -79,23 +78,28 @@ mod tests {
 
     struct StubSlot;
 
-    impl AudioFileSlotSurface for StubSlot {
-        fn slot_view(&self) -> AudioFileSlotView {
-            AudioFileSlotView::default()
+    impl AudioFileSlotListSurface for StubSlot {
+        fn slot_list_view(&self) -> AudioFileSlotListView {
+            AudioFileSlotListView {
+                selected: AudioFileSlotId(0),
+                slots: vec![AudioFileSlotView::default(); 4],
+            }
         }
 
-        fn load_audio_file(&self, _path: &Path) {}
+        fn select_slot(&self, _slot: AudioFileSlotId) {}
 
-        fn clear_audio_file(&self) {}
+        fn load_audio_file(&self, _slot: AudioFileSlotId, _path: &Path) {}
+
+        fn clear_audio_file(&self, _slot: AudioFileSlotId) {}
     }
 
     #[test]
-    fn host_exposes_sparse_knob_and_excitation_boundaries() {
+    fn host_exposes_sparse_knob_and_striker_boundaries() {
         let host = LamathCymbalEditorHost::new(
             Arc::new(StubControls),
-            AudioFileSlotHost::new(Arc::new(StubSlot)),
+            AudioFileSlotListHost::new(Arc::new(StubSlot)),
         );
         assert_eq!(host.controls.knobs().len(), 1);
-        assert_eq!(host.excitation.surface.slot_view().label, "Built-in strike");
+        assert_eq!(host.strikers.surface.slot_list_view().slots.len(), 4);
     }
 }

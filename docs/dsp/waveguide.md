@@ -1,185 +1,88 @@
-# WaveguideResonator
+# Extracted String And Wind Waveguide Models
 
-Karplus-Strong-style digital waveguide with selectable string or tube boundary behavior, fractional-delay tuning, loop low-pass damping, and optional nonlinear saturation.
+The old Lamath `WaveguideResonator` documentation has been replaced by the current extracted model boundary. String and wind waveguide DSP now live in separate shared crates:
 
-> **Note.** Sections 2–3 describe the single-loop model. The implementation is now split into
-> `string_1d.rs` (half-wave) and `tube_1d.rs` (quarter-wave) loops with corrected tube tuning,
-> phase-delay boundary compensation, cubic fractional-delay reads, and a calibrated T60(f) damping;
-> a rectangular 2D mesh is a sibling resonator model. See the
-> [waveguide technique catalog](waveguide-techniques.md) and
-> [ADR-0011](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md) for the current behavior.
+| Model | Crate | Product consumer |
+| ---- | ---- | ---- |
+| String waveguide, pick/bow driver, reduced body coupling | `crates/lindelion-string` | [Lamath Stringed](../plugins/lamath-stringed.md) |
+| Reed driver and tube waveguide | `crates/lindelion-wind` | [Lamath Tube](../plugins/lamath-tube.md) |
+
+Lamath itself is now a dual modal resonator and does not own waveguide string or tube DSP. The historical Lamath render catalog still exercises the extracted processors for string and tube audition cases.
 
 ## 1. Purpose
 
-Single-loop digital waveguide composed of an integer-delay ring buffer, a fractional-sample all-pass for tuning resolution, and a low-pass biquad in the feedback path for frequency-dependent damping. Two boundary models:
+Both extracted models are physical resonators driven by short excitation/articulation signals. The excitation is not treated as pitched sample playback; pitch and sustain come from the waveguide model.
 
-- **`String`** — symmetric loop with single-output tap and feedback gain.
-- **`Tube`** — asymmetric reflection at the boundary; reflection sign controls open-versus-closed end character.
+`lindelion-string` owns:
 
-Used by Lamath as the alternative resonator family to [ModalBank](modal-bank.md). Where a modal bank synthesizes a tone as a sum of independent second-order resonators, the waveguide builds tone from the recirculation of an excitation through a delayed-and-filtered feedback loop. Plucked strings, blown tubes, and air-column resonances fit this model better than independent modes.
+- `StringModel` - traveling-wave string loop, loop damping, stiffness dispersion, pickup/strike positions, energy-driven tension, and reduced-body radiation/coupling;
+- `StringDriver` - `None`, `Pick`, and `Bow` driver modes;
+- `StringBodyMode` - disabled, guitar, and violin body families.
 
-## 2. Theory
+`lindelion-wind` owns:
 
-**Closed-loop structure.** A sample written into the delay buffer reappears at the read tap one period later, scaled by feedback gain and damped by the loop filter:
+- `ReedDriver` - beating-reed valve driven by effort, embouchure, stiffness, feedback, and articulation excitation;
+- `ReedTube` - driven wind tube with bore feedback, bell radiation, bore steepening, and optional body coloration.
 
-```
-                  ┌──[× g_loop]──[lowpass]──[soft_saturate]──┐
-                  │                                          │
-excitation ──►(+)─┤                                          ├──► output
-                  │                                          │
-                  └──[delay D = fs/f − 1]──[allpass τ]───────┘
-```
+Product crates own MIDI, articulation slots, patch serialization, UI controls, key-switch policy, VST3 entry points, and output staging.
 
-The fundamental frequency of the resonator is determined by the total loop delay:
+## 2. Shared Techniques
 
-$$f_0 \approx \frac{f_s}{D + \tau + \text{filter group delay}}$$
+The detailed technique catalog is [waveguide-techniques.md](waveguide-techniques.md). Current shared ideas include:
 
-The integer part `D` is set by the `DelayLine` tap; the fractional part `τ ∈ [0, 1)` is the [FirstOrderAllpass](allpass.md) coefficient.
+- allocation-free traveling-wave storage after construction;
+- fractional-delay tuning using shared interpolation/delay helpers;
+- calibrated loop damping with bounded feedback gain;
+- finite-output clamps and denormal cleanup at loop boundaries;
+- product-local oversampling in Lamath Tube and Lamath Stringed processors;
+- objective tuning, stability, bounded-output, and audibility tests in the extracted crates.
 
-**Per-sample loop step.**
+## 3. String Model
 
-$$\mathit{tapped} = \mathit{delay}.\mathrm{read}(D)$$
-$$\mathit{tuned} = \mathit{allpass}.\mathrm{process}(\mathit{tapped})$$
-$$\mathit{damped} = \mathit{loop\_filter}.\mathrm{process}(\mathit{tuned})$$
-$$\mathit{nonlinear} = \mathrm{soft\_saturate}(\mathit{damped},\ \mathit{loop\_nonlinearity})$$
-$$\mathit{feedback} = \mathit{boundary\_feedback}(\mathit{nonlinear},\ \mathit{style},\ \mathit{boundary\_reflection})$$
-$$\mathit{delay}.\mathrm{push}(\mathit{snap\_to\_zero}(\mathit{feedback}))$$
-$$\mathit{delay}.\mathrm{add\_at}(D \cdot \mathit{position},\ \mathit{snap\_to\_zero}(\mathit{boundary\_excitation}(\mathit{excitation})))$$
-$$y[n] = \mathit{snap\_to\_zero}(\mathit{boundary\_output}(\mathit{tuned}))$$
+`StringModel` is a half-wave string resonator. A played pitch maps to the loop delay; damping controls decay; brightness maps to loop-filter cutoff; stiffness adds dispersion; strike and pickup positions shape the mode balance.
 
-**Boundary models.**
+The reduced-body model is coupled at the bridge and radiates a guitar or violin body response. Body coupling is passive and allocation-free after construction. The product-level `body_contact`, `bow_drive`, and `tension` switches in Lamath Stringed map into this model boundary.
 
-| Style | Feedback gain factor | Excitation gain factor | Output gain factor |
-| ---- | ---- | ---- | ---- |
-| String | `loop_gain` | unity | unity |
-| Tube | `loop_gain · tube_feedback_gain(reflection)` | `tube_excitation_gain(reflection)` | `tube_output_gain(reflection)` |
+The product-level driver selector chooses:
 
-The tube boundary's three gain factors fold the reflection coefficient into the loop and out to the output. Reflection `> 0` approximates an open tube end (pressure node); `< 0` approximates a closed end (velocity node).
+- `None` - no active physical driver;
+- `Pick` - transient pick excitation;
+- `Bow` - continuous bow/friction driver while the note gate is open.
 
-**Resonance compensation.** Higher loop-filter resonance lifts the loop magnitude near the filter's cutoff, which would push the closed-loop gain over unity at the resonance peak. The feedback path divides by `1 + R · K` where `R` is the loop-filter resonance and `K` is `WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH`, keeping the loop stable across resonance values.
+See [Lamath Stringed](../plugins/lamath-stringed.md) for the product patch, parameters, key switches, and UI surface.
 
-**Stability.** The closed-loop is stable iff the magnitude around the loop stays below unity at all frequencies. With `loop_gain ≤ 0.99` and the loop low-pass attenuating high frequencies, this holds for the documented parameter ranges. The soft-saturate nonlinearity is a passive compressor; it cannot destabilize a stable linear loop.
+## 4. Wind Model
 
-**Valid parameter range.** Frequency clamped to `[fs / delay_capacity, fs · 0.45]` (the delay buffer's longest period to a margin below Nyquist). Loop gain, resonance, and boundary reflection clamped by their respective `FloatRange` definitions in `dsp::constants`.
+`ReedTube` is a driven wind resonator, not a struck tube. The reed driver terminates the bore mouth and processes articulation excitation, effort, and bore feedback. The tube then renders the pressure wave with brightness, damping, bell, bore steepening, and body-coloring controls.
 
-## 3. Algorithm
+The current Lamath Tube product keeps the reed enabled. Bell, bore steepening, and body switches map into the shared `ReedTubeSwitches`.
 
-```rust
-let frequency_hz = params.frequency_hz.clamp(
-    self.sample_rate / self.delay.capacity() as f32,
-    self.sample_rate * 0.45,
-);
-let delay_samples = (self.sample_rate / frequency_hz - 1.0)
-    .clamp(1.0, self.delay.capacity() as f32 - 3.0);
-let integer_delay = delay_samples.floor();
-let fractional_delay = delay_samples - integer_delay;
-self.fractional_delay.set_fractional_delay(fractional_delay);
-self.loop_filter.set_coefficients(loop_filter_coefficients(
-    self.sample_rate, params.loop_filter_cutoff, params.loop_filter_resonance,
-));
+See [Lamath Tube](../plugins/lamath-tube.md) for the product patch, parameters, key switches, and UI surface.
 
-let delay_tap = self.delay.read(integer_delay);
-let delayed = self.fractional_delay.process(delay_tap);
-let damped = self.loop_filter.process(delayed);
-let nonlinear = if params.loop_nonlinearity > 0.0 {
-    soft_saturate(damped, params.loop_nonlinearity)
-} else {
-    damped
-};
+## 5. Realtime Contract
 
-let resonance_compensation = 1.0
-    / (1.0 + FILTER_RESONANCE.clamp(params.loop_filter_resonance)
-            * WAVEGUIDE_RESONANCE_GAIN_COMPENSATION_DEPTH);
-let feedback = feedback_sample(nonlinear, params, resonance_compensation);
-self.delay.push(snap_to_zero(feedback));
-self.delay.add_at(
-    injection_delay_samples(integer_delay, params.position_of_strike),
-    snap_to_zero(excitation_sample(excitation, params)),
-);
+- Construction may allocate fixed buffers; per-sample and per-block processing must not allocate.
+- Processing must not perform file I/O, patch serialization, logging, UI calls, or host callbacks.
+- All user-controlled parameters are clamped at the model or product boundary.
+- Output must remain finite and bounded across register and drive sweeps.
+- Product processors own loaded-articulation buffers before audio processing begins; the model only sees slices and scalar parameters.
 
-snap_to_zero(output_sample(delayed, params))
-```
+## 6. Current Test Coverage
 
-## 4. Parameters
+`make ci` includes fast unit coverage for the extracted crates and products:
 
-| Name | Type | Units | Range | Default | Notes |
-| ---- | ---- | ---- | ---- | ---- | ---- |
-| `style` | `WaveguideStyle` | enum | `String | Tube` | `String` | Boundary model |
-| `frequency_hz` | `f32` | Hz | `[fs/capacity, fs · 0.45]` | 220 | Tunes the loop length |
-| `loop_filter_cutoff` | `f32` | Hz | `WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ` clamp | preset-defined | Damping color |
-| `loop_filter_resonance` | `f32` | 0..1 | `FILTER_RESONANCE` clamp | preset-defined | Loop-filter Q |
-| `loop_gain` | `f32` | 0..1 | `WAVEGUIDE_LOOP_GAIN` clamp | preset-defined | Decay length |
-| `loop_nonlinearity` | `f32` | 0..1 | `[0, 1]` | 0.0 | Soft-saturate amount |
-| `position_of_strike` | `f32` | 0..1 | `STRIKE_POSITION` clamp | preset-defined | Fractional injection point |
-| `boundary_reflection` | `f32` | -1..1 | `TUBE_BOUNDARY.reflection` clamp | preset-defined | Tube end character |
+- `lindelion-string`: finite/audible default renders, pitch tracking, body coupling, body-family behavior, dispersion, source/body balance, tension modulation, and extreme-drive boundedness.
+- `lindelion-wind`: finite/audible reed-driven output, low/mid-register tuning, bell/body/bore switch behavior, effort dynamics, and extreme-drive boundedness.
+- `lamath-stringed`: no-allocation processing, driver/body/switch materiality, articulation slots, loaded excitation, register behavior, and VST3 state/parameter/editor boundaries.
+- `lamath-tube`: no-allocation processing, model-switch materiality, articulation slots, loaded excitation, sustain/release, register behavior, and VST3 state/parameter/editor boundaries.
 
-Constructor: `WaveguideResonator::new(sample_rate, lowest_frequency_hz)` sizes the `DelayLine` capacity for the longest period the resonator must support.
+`make test-integration` runs the heavier register and stability sweeps excluded from the fast unit path.
 
-## 5. Response plots
+## 7. References
 
-![Impulse response](../plots/waveguide_impulse.svg)
-
-Impulse response over 8192 samples (~0.17 s at 48 kHz). String style at 240 Hz, loop gain 0.95, loop-filter cutoff 12 kHz, resonance 0, strike position 0.5. The decay envelope and harmonic content visible in the waveform reflect the loop-filter damping and the fractional-tap injection at the midpoint of the delay.
-
-Parameter sweep plots (loop gain, loop-filter cutoff, strike position, tube vs string, boundary reflection) are not yet emitted; they would extend the extracted string/wind crate tests with additional CSV-emit functions on the same pattern as the impulse-response test.
-
-## 6. Realtime contract
-
-- **Allocation.** Allocation-free after construction. `new()` allocates the `DelayLine` buffer once. `process_sample()` and the boundary helpers do not allocate.
-- **Denormals.** Loop feedback flushed via `snap_to_zero` before being pushed into the delay. The excitation injected via `add_at` is also `snap_to_zero`-flushed. Output is flushed before return.
-- **Reset.** `reset()` clears the delay buffer, resets the all-pass `z1`, and resets the loop biquad. Frequency / parameter changes do not require a reset; the loop tracks new parameters per sample.
-- **Thread safety.** `process_sample()` is the only audio-thread method; not safe to call concurrently with itself. The `WaveguideParams` is passed by value each sample, so the caller is responsible for the parameter pipeline.
-- **Bounded work.** O(1) per sample. Per-sample cost is dominated by the loop biquad and the all-pass; the delay-line read and write are constant-time.
-- **Finite output.** Per-sample `snap_to_zero` at three points (feedback push, excitation add, output) backstops the loop against non-finite poisoning. Stability tests sweep the parameter space and assert finite output.
-- **SIMD.** Scalar. The loop's per-sample dependence on previous samples prevents trivial vectorization.
-
-## 7. Test coverage
-
-- `lamath::dsp::waveguide::tests::impulse_produces_decaying_output` — feeds a unit impulse, asserts later RMS is less than earlier RMS (basic decay sanity).
-- `lamath::dsp::waveguide::tests::impulse_frequency_tracks_delay_length` — auto-correlation pitch estimate within 12 Hz of 440 Hz target.
-- `lamath::dsp::waveguide::tests::non_integer_delay_tracks_fractional_frequency` — fractional tuning at 277.18 Hz lands within 6 Hz.
-- `lamath::dsp::waveguide::tests::loop_filter_{resonance,cutoff}_materially_changes_render` — extreme parameter changes produce audibly different output.
-- `lamath::dsp::waveguide::tests::loop_gain_materially_changes_decay` — short loop-gain decays faster than long loop-gain.
-- `lamath::dsp::waveguide::tests::loop_nonlinearity_materially_changes_render` — nonlinearity changes output spectrum.
-- `lamath::dsp::waveguide::tests::tube_style_materially_changes_render`, `tube_boundary_reflection_materially_changes_render` — boundary mode produces distinct timbres.
-- `lamath::dsp::waveguide::tests::strike_position_moves_excitation_injection_point` — onset arrives earlier when strike position is near the output tap.
-- `lamath::dsp::waveguide::tests::stable_across_parameter_sweep` — 20 000-sample sweep over all parameters; asserts finite output and peak `< 10`.
-
-## 8. Usage example
-
-```rust
-use lamath::dsp::{
-    constants::{STRIKE_POSITION, WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ, WAVEGUIDE_LOOP_GAIN},
-    waveguide::{WaveguideParams, WaveguideResonator, WaveguideStyle},
-};
-
-let sample_rate = 48_000.0;
-let mut resonator = WaveguideResonator::new(sample_rate, 30.0); // support down to 30 Hz
-let params = WaveguideParams {
-    style: WaveguideStyle::String,
-    frequency_hz: 220.0,
-    loop_filter_cutoff: WAVEGUIDE_LOOP_FILTER_CUTOFF_HZ.default,
-    loop_filter_resonance: 0.1,
-    loop_gain: 0.97,
-    loop_nonlinearity: 0.0,
-    position_of_strike: STRIKE_POSITION.default,
-    boundary_reflection: 0.0,
-};
-
-let mut output = vec![0.0; 8192];
-output[0] = resonator.process_sample(1.0, params);
-for sample in &mut output[1..] {
-    *sample = resonator.process_sample(0.0, params);
-}
-```
-
-## 9. References
-
-- Karplus & Strong — *Digital Synthesis of Plucked-String and Drum Timbres* (Computer Music Journal, 1983).
-- Julius O. Smith — [*Physical Audio Signal Processing*: Digital Waveguide Models](https://ccrma.stanford.edu/~jos/pasp/Digital_Waveguide_Models.html).
-- Sources: [`crates/lindelion-string/src/model.rs`](../../crates/lindelion-string/src/model.rs), [`crates/lindelion-wind/src/tube.rs`](../../crates/lindelion-wind/src/tube.rs).
-- Building blocks: [`DelayLine`](delay-line.md), [`FirstOrderAllpass`](allpass.md), [`Biquad`](biquad.md).
-- Sibling resonator: [`ModalBank`](modal-bank.md).
+- Product specs: [Lamath Stringed](../plugins/lamath-stringed.md), [Lamath Tube](../plugins/lamath-tube.md).
 - Technique catalog: [Waveguide resonator techniques](waveguide-techniques.md).
+- Building blocks: [DelayLine](delay-line.md), [FirstOrderAllpass](allpass.md), [Biquad](biquad.md).
 - ADR-0001: [Allocation-free audio thread](../adr/0001-allocation-free-audio-thread.md).
 - ADR-0011: [Waveguide tube tuning correction and 2D mesh resonator](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md).
+- ADR-0032: [Lamath Tube is a driven wind voice](../adr/0032-lamath-tube-driven-wind-voice.md).

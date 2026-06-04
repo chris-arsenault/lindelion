@@ -1,6 +1,7 @@
 use crate::catalog::{
     CATALOG_BLOCK_SIZE, CATALOG_SAMPLE_RATE, CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe,
-    MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe,
+    MeshStriker, MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth,
+    SurroundingRecipe, TubeReedAperture,
 };
 use lamath::{ModalConfig, ModalPreset, ResonatorRouting, ResonatorSynth, ResonatorSynthPatch};
 use lamath_cymbal::{CymbalExcitationSource, CymbalPatch, CymbalProcessor};
@@ -92,7 +93,7 @@ fn render_cymbal(
     let mut processor = CymbalProcessor::new(
         CATALOG_SAMPLE_RATE as f32,
         patch,
-        CymbalExcitationSource::builtin(),
+        std::array::from_fn(CymbalExcitationSource::builtin),
     );
     render_blocks(notes, target_frames, |events, left, right| {
         processor.process(events, left, right);
@@ -215,10 +216,14 @@ fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
         } => surrounding_target(family, surrounding),
         PatchRecipe::Edge(recipe) => edge_target(recipe),
         PatchRecipe::TubePhrase {
-            retrigger, bell, ..
+            retrigger,
+            bell,
+            reed_aperture,
+            ..
         } => {
             let patch = TubePatch {
                 bell: if bell { 1.0 } else { 0.0 },
+                reed_aperture_inertia: reed_aperture_inertia(reed_aperture),
                 selected_articulation: if retrigger { 0 } else { 2 },
                 switches: TubeModelSwitchPatch {
                     bell_enabled: bell,
@@ -232,6 +237,11 @@ fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             RenderTarget::Cymbal(cymbal_voicing_patch(MeshVoicing::Ride))
         }
         PatchRecipe::MeshVoicing(voicing) => RenderTarget::Cymbal(cymbal_voicing_patch(voicing)),
+        PatchRecipe::MeshStriker { voicing, striker } => {
+            let mut patch = cymbal_voicing_patch(voicing);
+            patch.selected_striker = mesh_striker_slot(striker);
+            RenderTarget::Cymbal(patch)
+        }
     }
 }
 
@@ -325,6 +335,22 @@ fn tube_driver_patch(driver: DriverRecipe) -> TubePatch {
             ..TubePatch::default()
         },
         _ => TubePatch::default(),
+    }
+}
+
+fn reed_aperture_inertia(reed_aperture: TubeReedAperture) -> f32 {
+    match reed_aperture {
+        TubeReedAperture::Instant => 0.0,
+        TubeReedAperture::Inertial => 1.0,
+    }
+}
+
+fn mesh_striker_slot(striker: MeshStriker) -> usize {
+    match striker {
+        MeshStriker::HardStick => 0,
+        MeshStriker::SoftMallet => 1,
+        MeshStriker::JazzBrush => 2,
+        MeshStriker::BellStick => 3,
     }
 }
 

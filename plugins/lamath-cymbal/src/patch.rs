@@ -1,6 +1,8 @@
 use lindelion_sample_library::SampleReference;
 use serde::{Deserialize, Serialize};
 
+use crate::processor::STRIKER_SLOT_COUNT;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CymbalPatch {
@@ -11,6 +13,9 @@ pub struct CymbalPatch {
     pub strike_position: f32,
     pub pickup_spread: f32,
     pub output_gain_db: f32,
+    pub selected_striker: usize,
+    pub strikers: [CymbalStrikerPatch; STRIKER_SLOT_COUNT],
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub excitation_sample: Option<SampleReference>,
 }
 
@@ -24,6 +29,8 @@ impl Default for CymbalPatch {
             strike_position: 0.42,
             pickup_spread: 0.42,
             output_gain_db: -3.0,
+            selected_striker: 0,
+            strikers: std::array::from_fn(|_| CymbalStrikerPatch::default()),
             excitation_sample: None,
         }
     }
@@ -42,8 +49,23 @@ impl CymbalPatch {
         } else {
             Self::default().output_gain_db
         };
+        if self.strikers.iter().all(|striker| striker.sample.is_none())
+            && let Some(sample) = self.excitation_sample.take()
+        {
+            self.strikers[0].sample = Some(sample);
+        }
+        self.excitation_sample = None;
+        if self.selected_striker >= STRIKER_SLOT_COUNT {
+            self.selected_striker = Self::default().selected_striker;
+        }
         self
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CymbalStrikerPatch {
+    pub sample: Option<SampleReference>,
 }
 
 fn unit(value: f32, fallback: f32) -> f32 {
@@ -51,5 +73,24 @@ fn unit(value: f32, fallback: f32) -> f32 {
         value.clamp(0.0, 1.0)
     } else {
         fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_single_excitation_sample_migrates_to_first_striker() {
+        let reference = SampleReference::new("abc123", "legacy-strike.wav");
+        let patch = CymbalPatch {
+            excitation_sample: Some(reference.clone()),
+            ..CymbalPatch::default()
+        }
+        .sanitized();
+
+        assert_eq!(patch.strikers[0].sample, Some(reference));
+        assert!(patch.strikers[1..].iter().all(|slot| slot.sample.is_none()));
+        assert!(patch.excitation_sample.is_none());
     }
 }

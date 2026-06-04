@@ -2,7 +2,10 @@
 use lindelion_dsp_utils::phase::principal_angle_f32;
 use lindelion_dsp_utils::{filters::BiquadCoefficients, math};
 
-use super::{DSP_FALLBACK_SAMPLE_RATE, LOOP_FILTER_Q, LOOP_GAIN, PICKUP_POSITION, ResonanceQ};
+use super::{
+    DSP_FALLBACK_SAMPLE_RATE, LOOP_FILTER_CUTOFF_DEFAULT_HZ, LOOP_FILTER_Q, LOOP_GAIN,
+    PICKUP_POSITION, ResonanceQ,
+};
 
 const DECAY_MIN_SECONDS: f32 = 0.02;
 const DECAY_MAX_SECONDS: f32 = 10.0;
@@ -12,6 +15,11 @@ const FILTER_PEAK_SCAN_POINTS: usize = 96;
 #[cfg(test)]
 const GROUP_DELAY_PROBE_RADIANS: f32 = 0.001;
 const MAX_FILTER_DELAY_COMPENSATION_SAMPLES: f32 = 8.0;
+const BORE_HF_LOSS_CONTROL_SCALE: f32 = 0.30;
+const BORE_HF_LOSS_BRIGHT_SCALE: f32 = 0.60;
+const BORE_HF_LOSS_REGISTER_FLOOR_MULTIPLE: f32 = 2.75;
+const BORE_HF_LOSS_MIN_CUTOFF_HZ: f32 = 650.0;
+const BORE_HF_LOSS_MAX_CUTOFF_HZ: f32 = 8_000.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DelayTuning {
@@ -105,6 +113,34 @@ pub fn loop_damping(
         coefficients,
         loop_gain,
     }
+}
+
+pub fn bore_hf_loss_cutoff_hz(
+    sample_rate: f32,
+    frequency_hz: f32,
+    requested_cutoff_hz: f32,
+) -> f32 {
+    let sample_rate = sanitize_sample_rate(sample_rate);
+    let frequency_hz = sanitize_frequency(sample_rate, frequency_hz);
+    let requested_cutoff_hz = math::finite_clamp(
+        requested_cutoff_hz,
+        20.0,
+        sample_rate * 0.45,
+        LOOP_FILTER_CUTOFF_DEFAULT_HZ,
+    );
+    let bright_lift = ((requested_cutoff_hz / LOOP_FILTER_CUTOFF_DEFAULT_HZ) - 1.0).max(0.0) / 2.0;
+    let control_scale = BORE_HF_LOSS_CONTROL_SCALE
+        + (BORE_HF_LOSS_BRIGHT_SCALE - BORE_HF_LOSS_CONTROL_SCALE) * bright_lift.clamp(0.0, 1.0);
+    let control_cutoff = requested_cutoff_hz * control_scale;
+    let register_floor = frequency_hz * BORE_HF_LOSS_REGISTER_FLOOR_MULTIPLE;
+    let max_cutoff = BORE_HF_LOSS_MAX_CUTOFF_HZ.min(sample_rate * 0.45);
+
+    math::finite_clamp(
+        control_cutoff.max(register_floor),
+        BORE_HF_LOSS_MIN_CUTOFF_HZ,
+        max_cutoff,
+        LOOP_FILTER_CUTOFF_DEFAULT_HZ * BORE_HF_LOSS_CONTROL_SCALE,
+    )
 }
 
 pub fn endpoint_reflection_gain(loop_gain: f32) -> f32 {
@@ -259,6 +295,18 @@ mod tests {
         assert!(quiet.loop_gain > 0.0);
         assert!(sustained.loop_gain > quiet.loop_gain);
         assert!(sustained.loop_gain < 1.0);
+    }
+
+    #[test]
+    fn bore_hf_loss_cutoff_keeps_default_in_clarinet_band() {
+        let dark = bore_hf_loss_cutoff_hz(48_000.0, 392.0, 1_200.0);
+        let default = bore_hf_loss_cutoff_hz(48_000.0, 392.0, LOOP_FILTER_CUTOFF_DEFAULT_HZ);
+        let bright = bore_hf_loss_cutoff_hz(48_000.0, 392.0, 14_000.0);
+
+        assert!(dark < default, "dark={dark} default={default}");
+        assert!(default > 1_150.0 && default < 1_400.0, "default={default}");
+        assert!(bright > default * 4.0, "default={default} bright={bright}");
+        assert!(bright <= BORE_HF_LOSS_MAX_CUTOFF_HZ);
     }
 
     #[test]

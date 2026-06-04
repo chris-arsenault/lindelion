@@ -7,11 +7,11 @@ use lindelion_plugin_shell::vst3::{
     FixedSizePlugView, FixedSizePlugViewDelegate, FixedSizePlugViewSize,
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use lindelion_ui::audio_file_slot::AudioFileSlotHost;
+use lindelion_ui::audio_file_slot::AudioFileSlotListHost;
 use lindelion_ui::lamath_cymbal_vizia::{LAMATH_CYMBAL_EDITOR_HEIGHT, LAMATH_CYMBAL_EDITOR_WIDTH};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use lindelion_ui::{
-    audio_file_slot::{AudioFileSlotSurface, AudioFileSlotView},
+    audio_file_slot::{AudioFileSlotId, AudioFileSlotListSurface, AudioFileSlotListView},
     lamath_cymbal_vizia::{LamathCymbalControlSurface, LamathCymbalEditorHost, LamathCymbalKnob},
 };
 use vst3::{ComWrapper, Steinberg::*};
@@ -58,8 +58,8 @@ impl FixedSizePlugViewDelegate for LamathCymbalEditorView {
                 controller: self.controller,
             });
             let controls: Arc<dyn LamathCymbalControlSurface> = surface.clone();
-            let excitation: Arc<dyn AudioFileSlotSurface> = surface;
-            let host = LamathCymbalEditorHost::new(controls, AudioFileSlotHost::new(excitation));
+            let strikers: Arc<dyn AudioFileSlotListSurface> = surface;
+            let host = LamathCymbalEditorHost::new(controls, AudioFileSlotListHost::new(strikers));
             *editor = Some(unsafe {
                 lindelion_ui::lamath_cymbal_vizia::LamathCymbalViziaEditor::attach(
                     parent,
@@ -119,17 +119,21 @@ impl LamathCymbalControlSurface for EditorSurface {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-impl AudioFileSlotSurface for EditorSurface {
-    fn slot_view(&self) -> AudioFileSlotView {
-        self.component().excitation_slot_view()
+impl AudioFileSlotListSurface for EditorSurface {
+    fn slot_list_view(&self) -> AudioFileSlotListView {
+        self.component().striker_slot_list_view()
     }
 
-    fn load_audio_file(&self, path: &Path) {
-        self.component().load_excitation_from_path(path);
+    fn select_slot(&self, slot: AudioFileSlotId) {
+        self.component().select_striker_slot(slot.0);
     }
 
-    fn clear_audio_file(&self) {
-        self.component().clear_excitation();
+    fn load_audio_file(&self, slot: AudioFileSlotId, path: &Path) {
+        self.component().load_excitation_from_path(slot.0, path);
+    }
+
+    fn clear_audio_file(&self, slot: AudioFileSlotId) {
+        self.component().clear_excitation(slot.0);
     }
 }
 

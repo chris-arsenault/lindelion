@@ -1,23 +1,24 @@
 # Waveguide Resonator Techniques
 
 Catalog of the digital-waveguide techniques behind the extracted string and wind resonator crates
-(`crates/lindelion-string/src/`, `crates/lindelion-wind/src/`) and the 2D-mesh resonator model. The module overview is in
+(`crates/lindelion-string/src/`, `crates/lindelion-wind/src/`) and the extracted idiophone mesh crate
+(`crates/lindelion-idiophone/src/`). The module overview is in
 [waveguide.md](waveguide.md); the tuning-correction and 2D-mesh decision rationale is in
 [ADR-0011](../adr/0011-waveguide-tube-tuning-and-2d-mesh.md).
 
-Tuning is validated by a permanent steady-state gate,
-`lamath::dsp::waveguide::measurement_tests::steady_state_tuning_within_three_cents_across_matrix`,
-which renders each model across 30 Hz–4 kHz at 44.1 / 48 / 88.2 / 96 kHz and asserts the played
-pitch within 3 cents. Pitch is read with the periodicity-faithful estimator (see below), not a raw
-magnitude-peak scan, because a struck bore's strike response is harmonically rich and body-coloured.
+Tuning and stability are validated in the extracted crates: `string_model_pitch_tracks_target_matrix`
+in `lindelion-string`, `tuning_tracks_low_mid_register` plus the register stability sweep in
+`lindelion-wind`, and mesh finite/bounded/audibility sweeps in `lindelion-idiophone` and
+`lamath-cymbal`. Pitch is read with a periodicity-faithful estimator where the response is
+harmonically rich and body-coloured.
 
 ## Tuning and loop structure
 
 | Technique | Implementation | Note |
 | ---- | ---- | ---- |
-| Half-wave string tuning | `string_1d.rs` (`cycle_divisor = 2.0`) | Both terminations invert (fixed ends), so the string is a half-wave resonator: a full round trip is one period of the played pitch. |
+| Half-wave string tuning | `crates/lindelion-string/src/model.rs` and `traveling.rs` (`cycle_divisor = 2.0`) | Both terminations invert (fixed ends), so the string is a half-wave resonator: a full round trip is one period of the played pitch. |
 | Stiffness dispersion | `dispersion.rs` (`WaveguideDispersion`) | Cascaded first-order all-passes add string-stiffness inharmonicity, with group-delay compensation so the fundamental still tracks `frequency_hz`. String only. |
-| Quarter-wave tube tuning | `tube_1d.rs` (`cycle_divisor = 4.0`) | The bore's terminations are asymmetric — inverting mouth (`MOUTH_REFLECTION = -0.36`) and non-inverting end — which makes it a quarter-wave resonator: the round trip is half a period of the played pitch. |
+| Quarter-wave tube tuning | `crates/lindelion-wind/src/tube.rs` and `traveling.rs` (`cycle_divisor = 4.0`) | The bore's terminations are asymmetric - inverting mouth and non-inverting end - which makes it a quarter-wave resonator: the round trip is half a period of the played pitch. |
 | Boundary-filter phase-delay compensation | `core.rs` (`filter_phase_delay_samples`) | Loop resonance is set by the phase a wave accumulates per round trip, so each boundary lowpass's phase delay at the played pitch (not its group delay, which drifts as the pitch nears the cutoff) is divided out of the delay length. The tube compensates both of its boundary filters; the string compensates its single loop filter. |
 | Cubic (4-point Lagrange) fractional-delay read | `crates/lindelion-dsp-utils/src/interpolation.rs` (`cubic_wrapped`), via `DelayLine::read` | Keeps the fractional-delay group delay flat into the passband, so short loops stay in tune at high frequencies; String tuning is within ~1.5 cents across the whole range. Shared by every `DelayLine` user. |
 
@@ -31,8 +32,8 @@ magnitude-peak scan, because a struck bore's strike response is harmonically ric
 
 | Technique | Implementation | Note |
 | ---- | ---- | ---- |
-| Rectangular 2D waveguide mesh | `mesh_2d.rs` (`RectangularMesh2d`) | A fixed 14×10 grid of scattering junctions with per-edge fixed/free terminations — a struck two-dimensional surface (plate/membrane). Lossless scattering is passive; boundary damping sets decay. |
-| Allocation-free in-place re-tuning | `mesh_2d/runtime.rs` (`MeshResonator`) | The grid is fixed, so a voice allocates its mesh once and every later `configure` recomputes the Gaussian strike/pickup weights in place (grid-sized capacity, `clear` + `push`). Selectable as a resonator model alongside Modal and the 1D waveguide; the lowest `(1,1)` mode is steered to the played pitch via the wave speed. |
+| Rectangular 2D waveguide mesh | `crates/lindelion-idiophone/src/mesh.rs` (`RectangularMesh2d`) | A fixed grid of scattering junctions with per-edge fixed/free terminations - a struck two-dimensional surface (plate/membrane). Lossless scattering is passive; boundary damping sets decay. |
+| Allocation-free in-place re-tuning | `crates/lindelion-idiophone/src/runtime.rs` (`MeshResonator`) | The grid is fixed, so the resonator allocates its mesh once and every later `configure` recomputes strike/pickup weights in place. Lamath Cymbal owns the MIDI strike/damp policy around this persistent body. |
 
 ## Tuning measurement
 
@@ -46,7 +47,7 @@ magnitude-peak scan, because a struck bore's strike response is harmonically ric
 - **Tube top-octave tuning.** The quarter-wave bore's loops are half the string's length, so at the
   top of the range the round trip is only a few samples (≈ 5.5 samples at 4 kHz / 44.1 kHz), where a
   sub-sample interpolation residual reaches tens of cents. The steady-state gate asserts String
-  < 3 cents across the full range and Tube < 3 cents through its tunable range; `tube_1d`'s matrix
+  < 3 cents across the full range and Tube < 3 cents through its tunable range; `lindelion-wind`'s matrix
   and full-range tests cover the taper and the finite/bounded/decaying guarantee across the whole
   30 Hz–4 kHz span.
 - **Mesh pitch.** The mesh is inharmonic; "pitch" is its lowest mode steered to the note, so it

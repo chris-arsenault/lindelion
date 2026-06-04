@@ -20,6 +20,10 @@ const STEEPEN_MAX_ENERGY: f32 = 1.0;
 const STEEPEN_MAX_COEFF: f32 = 0.9;
 const STEEPEN_AMPLITUDE_SENS: f32 = 10.0;
 const RADIATION_CUTOFF_HZ: f32 = 500.0;
+const REED_PHASE_ONE_WAY_FACTOR: f32 = 0.5;
+const WARM_BORE_DELAY_EXTRA_SAMPLES: f32 = 1.7;
+const WARM_BORE_DELAY_FULL_CUTOFF_HZ: f32 = 1_300.0;
+const WARM_BORE_DELAY_CLEAR_CUTOFF_HZ: f32 = 3_000.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReedTubeSwitches {
@@ -50,6 +54,11 @@ pub struct ReedTubeParams {
     pub boundary_reflection: f32,
     pub pickup_position: f32,
     pub bell_radiation: f32,
+    /// Phase delay (samples) the inertial reed aperture adds to the feedback loop at the
+    /// playing frequency, supplied by the driving [`crate::ReedDriver`]. Folded into the
+    /// bore-length tuning so the reed's loop phase is compensated like the mouth-loss and
+    /// damping filters; `0.0` (instant aperture) leaves tuning unchanged.
+    pub reed_phase_delay_samples: f32,
     pub switches: ReedTubeSwitches,
 }
 
@@ -64,6 +73,7 @@ impl Default for ReedTubeParams {
             boundary_reflection: BOUNDARY_REFLECTION_DEFAULT,
             pickup_position: PICKUP_POSITION_DEFAULT,
             bell_radiation: 1.0,
+            reed_phase_delay_samples: 0.0,
             switches: ReedTubeSwitches::default(),
         }
     }
@@ -101,6 +111,12 @@ impl ReedTubeParams {
                 fallback.pickup_position,
             ),
             bell_radiation: unit(self.bell_radiation, fallback.bell_radiation),
+            reed_phase_delay_samples: math::finite_clamp(
+                self.reed_phase_delay_samples,
+                0.0,
+                24.0,
+                fallback.reed_phase_delay_samples,
+            ),
             switches: ReedTubeSwitches {
                 reed_enabled: true,
                 ..self.switches
@@ -239,14 +255,24 @@ impl ReedTube {
             return prepared;
         }
 
-        let damping = core::loop_damping(
+        let bore_cutoff_hz = core::bore_hf_loss_cutoff_hz(
             self.sample_rate,
             params.frequency_hz,
             params.loop_filter_cutoff_hz,
+        );
+        let damping = core::loop_damping(
+            self.sample_rate,
+            params.frequency_hz,
+            bore_cutoff_hz,
             params.loop_filter_resonance,
             params.loop_gain,
         );
-        let profile = TubeBoreProfile::from_params(self.sample_rate, params, damping.loop_gain);
+        let profile = TubeBoreProfile::from_params(
+            self.sample_rate,
+            params,
+            damping.loop_gain,
+            bore_cutoff_hz,
+        );
         let geometry = core::waveguide_geometry(params.pickup_position);
         let mouth_phase_delay = core::filter_phase_delay_samples(
             profile.mouth_loss,
@@ -263,7 +289,12 @@ impl ReedTube {
             self.waves.capacity(),
             params.frequency_hz,
             4.0,
-            1.0 + 0.5 * (mouth_phase_delay + damping_phase_delay),
+            delay_offset_samples(
+                bore_cutoff_hz,
+                mouth_phase_delay,
+                damping_phase_delay,
+                params.reed_phase_delay_samples,
+            ),
         );
         let one_way_delay = tuning.integer_delay + tuning.fractional_delay;
 
@@ -370,16 +401,21 @@ struct TubeBoreProfile {
 }
 
 impl TubeBoreProfile {
-    fn from_params(sample_rate: f32, params: ReedTubeParams, loop_gain: f32) -> Self {
+    fn from_params(
+        sample_rate: f32,
+        params: ReedTubeParams,
+        loop_gain: f32,
+        bore_cutoff_hz: f32,
+    ) -> Self {
         let sample_rate = core::sanitize_sample_rate(sample_rate);
         let endpoint_loss = core::endpoint_reflection_gain(loop_gain);
         let end_reflection = bore_end_reflection(params.boundary_reflection) * endpoint_loss;
         let openness = (1.0 - TUBE_BOUNDARY.reflection(params.boundary_reflection)) * 0.5;
         let mouth_cutoff = math::finite_clamp(
-            params.loop_filter_cutoff_hz * (0.75 + 0.35 * openness),
+            bore_cutoff_hz * (0.90 + 0.15 * openness),
             160.0,
             sample_rate * 0.45,
-            6_000.0,
+            1_900.0,
         );
 
         Self {
@@ -409,6 +445,29 @@ fn bore_end_reflection(boundary_reflection: f32) -> f32 {
 fn steepening_energy(energy: f32) -> f32 {
     let normalized = math::finite_or(energy, 0.0).max(0.0) / STEEPEN_ENERGY_REF;
     math::finite_clamp(normalized * normalized, 0.0, STEEPEN_MAX_ENERGY, 0.0)
+}
+
+fn delay_offset_samples(
+    bore_cutoff_hz: f32,
+    mouth_phase_delay: f32,
+    damping_phase_delay: f32,
+    reed_phase_delay: f32,
+) -> f32 {
+    let warm_bore = ((WARM_BORE_DELAY_CLEAR_CUTOFF_HZ - bore_cutoff_hz)
+        / (WARM_BORE_DELAY_CLEAR_CUTOFF_HZ - WARM_BORE_DELAY_FULL_CUTOFF_HZ))
+        .clamp(0.0, 1.0);
+    let phase_scale = 0.5 + 0.5 * warm_bore;
+    // The mouth-loss and damping filters each sit in the loop once per round trip; their
+    // phase delays convert to a one-way bore-length reduction by `phase_scale`, whose
+    // `warm_bore` ramp (½→1) is an empirical bore-coloration adjustment for those filters.
+    // The reed aperture also sits in the loop once per round trip, but its round-trip→one-way
+    // conversion is the plain physical ½ (halving one-way delay shortens the round-trip period
+    // by the reed's full phase delay) and must NOT ride the bore-coloration ramp, or warm
+    // bores double the reed compensation and play sharp. `reed_phase_delay` already carries the
+    // reed's nonlinear-coupling and effort factors (see `ReedDriver::aperture_phase_delay_samples`).
+    1.0 + WARM_BORE_DELAY_EXTRA_SAMPLES * warm_bore
+        + phase_scale * (mouth_phase_delay + damping_phase_delay)
+        + REED_PHASE_ONE_WAY_FACTOR * reed_phase_delay
 }
 
 fn unit(value: f32, fallback: f32) -> f32 {

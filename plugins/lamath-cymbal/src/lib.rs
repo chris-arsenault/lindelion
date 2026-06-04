@@ -11,10 +11,12 @@ mod vst3_entry;
 
 #[cfg(feature = "vst3-entry")]
 pub use lindelion_plugin_metadata::LAMATH_CYMBAL_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;
-pub use patch::CymbalPatch;
+pub use patch::{CymbalPatch, CymbalStrikerPatch};
 #[cfg(feature = "vst3-entry")]
 pub use plugin::{DESCRIPTOR, LamathCymbal};
-pub use processor::{CymbalProcessor, ExcitationSource as CymbalExcitationSource};
+pub use processor::{
+    CymbalProcessor, ExcitationSource as CymbalExcitationSource, STRIKER_NAMES, STRIKER_SLOT_COUNT,
+};
 
 #[cfg(test)]
 pub(crate) use lindelion_test_allocator::assert_no_allocations;

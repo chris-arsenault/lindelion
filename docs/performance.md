@@ -29,7 +29,7 @@ In Rust, that rule is meaningful: ordinary stack values, slices, fixed-size arra
 ## Benchmarks
 
 - `docs/perf/lindelion-dsp-utils.md` records host-free Criterion numbers for shared DSP utilities.
-- `docs/perf/lamath.md` records host-free Criterion numbers for Lamath modal, waveguide, and engine DSP paths.
+- `docs/perf/lamath.md` records host-free Criterion numbers for Lamath modal and historical pre-extraction engine/waveguide DSP paths.
 - `docs/perf/glirdir.md` records host-free Criterion throughput for Glirdir's offline analysis job.
 - `docs/perf/linnod.md` records the Linnod runtime benchmark scope and release-measurement procedure.
 - `make bench-smoke` compiles all workspace benches without running Criterion measurements.

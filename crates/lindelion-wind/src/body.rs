@@ -5,8 +5,8 @@ use lindelion_dsp_utils::{
 
 use super::{DEFAULT_BIQUAD_Q, TUBE_BOUNDARY, core, tube::ReedTubeParams};
 
-const TUBE_BORE_BODY_HZ: f32 = 280.0;
-const TUBE_BELL_FLARE_HZ: f32 = 1_500.0;
+const TUBE_AIR_COLUMN_BODY_HZ: f32 = 280.0;
+const TUBE_CLARINET_RING_HZ: f32 = 1_180.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TubeBody {
@@ -88,17 +88,19 @@ impl BodyProfile {
             sample_rate * 0.45,
             8_000.0,
         );
+        let bore_cutoff =
+            core::bore_hf_loss_cutoff_hz(sample_rate, params.frequency_hz, loop_cutoff);
         let radiation_cutoff =
-            math::finite_clamp(loop_cutoff * 1.4, 2_200.0, sample_rate * 0.45, 10_000.0);
+            math::finite_clamp(bore_cutoff * 1.55, 1_800.0, sample_rate * 0.45, 3_000.0);
 
         Self {
             highpass: BiquadCoefficients::highpass(sample_rate, 45.0, DEFAULT_BIQUAD_Q),
             lowpass: BiquadCoefficients::lowpass(sample_rate, radiation_cutoff, DEFAULT_BIQUAD_Q),
-            low_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_BORE_BODY_HZ, 2.0),
-            high_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_BELL_FLARE_HZ, 1.6),
-            direct_gain: 0.72,
-            low_resonance_gain: 0.18,
-            high_resonance_gain: 0.16,
+            low_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_AIR_COLUMN_BODY_HZ, 2.0),
+            high_resonance: BiquadCoefficients::bandpass(sample_rate, TUBE_CLARINET_RING_HZ, 2.4),
+            direct_gain: 0.62,
+            low_resonance_gain: 0.14,
+            high_resonance_gain: 0.34,
             output_gain: TUBE_BOUNDARY.output_gain(params.boundary_reflection),
         }
     }

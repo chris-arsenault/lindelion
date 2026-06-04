@@ -8,7 +8,7 @@ Host metadata for this run:
 - Command: `cargo bench -p lamath -p glirdir`
 - Environment: local Linux run, not CPU-pinned, CPU governor not forced to performance
 
-These are host-free Criterion measurements of Lamath DSP code. The numbers are useful for comparing changes on the same machine; use a CPU-pinned run with a performance governor before citing them as stable release figures.
+These are host-free Criterion measurements of Lamath DSP code from before the Lamath-family extraction. The modal rows still describe Lamath's current modal DSP; the waveguide rows are historical measurements for the former in-Lamath string/tube paths and should be remeasured in the extracted crates before being cited for Lamath Tube or Lamath Stringed. The numbers are useful for comparing changes on the same machine; use a CPU-pinned run with a performance governor before citing them as stable release figures.
 
 | Bench | Mean | Effective throughput | Normalized cost | Notes |
 | ---- | ----: | ----: | ----: | ---- |

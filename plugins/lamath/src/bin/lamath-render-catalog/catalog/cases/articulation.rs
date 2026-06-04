@@ -5,7 +5,7 @@
 //! monophonically (one voice-stealing body). These are audition cases — the Mesh is a struck
 //! plate, judged by ear, not an objective pitch target.
 
-use super::super::{CatalogCase, MeshVoicing, PatchRecipe, RenderSchedule};
+use super::super::{CatalogCase, MeshVoicing, PatchRecipe, RenderSchedule, TubeReedAperture};
 use notes::{
     CHORD_CMAJ, EXPRESSIVE_16, RANDOM_16, RESTRIKE_C4, SCALE_LEGATO, SCALE_TONGUED,
     SLOW_CLIMB_C2_C6,
@@ -61,7 +61,8 @@ pub(super) const ARTICULATION_CASES: [CatalogCase; 11] = [
         PatchRecipe::TubePhrase {
             polyphony: 1,
             retrigger: true,
-            bell: true
+            bell: true,
+            reed_aperture: TubeReedAperture::Inertial
         },
         SCALE_TONGUED
     ),
@@ -73,7 +74,8 @@ pub(super) const ARTICULATION_CASES: [CatalogCase; 11] = [
         PatchRecipe::TubePhrase {
             polyphony: 1,
             retrigger: false,
-            bell: true
+            bell: true,
+            reed_aperture: TubeReedAperture::Inertial
         },
         SCALE_LEGATO
     ),

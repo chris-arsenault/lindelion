@@ -1,8 +1,8 @@
 use super::*;
 use lindelion_dsp_utils::{
     analysis::{
-        assert_all_finite, dft_magnitude_at, estimate_f0_autocorrelation, max_adjacent_delta,
-        peak_abs, rms, rms_difference, spectral_centroid_hz,
+        assert_all_finite, dft_magnitude_at, estimate_f0_autocorrelation_refined,
+        max_adjacent_delta, peak_abs, rms, rms_difference, spectral_centroid_hz,
     },
     math::midi_note_to_hz,
 };
@@ -201,11 +201,15 @@ fn scale_notes_are_tuned_well_enough_for_audition() {
     let phrase = render_phrase(&c_major_scale(0.30, 0.22, 100.0 / 127.0));
     for (index, &note) in [60_u8, 62, 64, 65, 67, 69, 71, 72].iter().enumerate() {
         let f0 = midi_note_to_hz(note as f32);
-        let center = ((index as f32 * 0.30 + 0.11) * SAMPLE_RATE) as usize;
-        let end = (center + 8_192).min(phrase.len());
-        let estimate =
-            estimate_f0_autocorrelation(&phrase[center..end], SAMPLE_RATE, 90.0, 1_400.0)
-                .unwrap_or_else(|| panic!("scale note {note} produced no pitch"));
+        let start = ((index as f32 * 0.30 + 0.17) * SAMPLE_RATE) as usize;
+        let end = (start + 2_048).min(phrase.len());
+        let estimate = estimate_f0_autocorrelation_refined(
+            &phrase[start..end],
+            SAMPLE_RATE,
+            f0 * 0.70,
+            f0 * 1.6,
+        )
+        .unwrap_or_else(|| panic!("scale note {note} produced no pitch"));
         let cents = 1200.0 * (estimate / f0).log2();
         assert!(
             cents.abs() < 90.0,

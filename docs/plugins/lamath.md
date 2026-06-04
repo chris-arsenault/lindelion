@@ -3,27 +3,25 @@
 **Name:** Lamath
 **Name etymology:** Sindarin, "echo" or "ringing of voices." Six letters, pronounced LAH-math; paired phonetically with Glirdir.
 **Target:** macOS VST3 instrument, Apple Silicon primary and Intel best-effort.
-**Status:** VST3 resonator instrument with MIDI and sidechain audio inputs. Linux workspace validation and realtime/no-allocation tests pass.
+**Status:** Dual modal resonator VST3 instrument with MIDI input, optional sidechain note/expression input, and live excitation. Linux workspace validation and realtime/no-allocation tests pass.
 
 This document describes the behavior implemented in the workspace today. Planned work for Lamath lives in [lamath-backlog.md](lamath-backlog.md).
 
 ---
 
-## 1. Concept And Goals
+## 1. Product Boundary
 
-Lamath is a polyphonic physical-modeling synth where short samples act as excitation signals into resonator models. The sample is not treated as pitched/timestretched playback material; tonality comes from the resonator.
+Lamath is now the original Lamath product narrowed to a pure dual modal resonator. It keeps the A/B resonator design, sample-slot excitation, live sidechain excitation, audio-created notes, audio expression, and the surrounding mechanical/radiation/sympathetic layer. It no longer contains waveguide string, reed tube, 2D mesh, shared-body idiophone, or modulation routing.
 
-The core product goal is hybrid acoustic timbre: real breath transients, key clicks, chiff, plucks, or articulation noise drive modal and waveguide resonators so the instrument avoids the synthetic attack character common to physical-model synths.
+The extracted physical-model products are separate VST3 instruments:
 
-Design principles:
+| Product | Model | Spec |
+| ---- | ---- | ---- |
+| Lamath Cymbal | Shared-body idiophone / mesh cymbal | [lamath-cymbal.md](lamath-cymbal.md) |
+| Lamath Tube | Reed-driven wind tube | [lamath-tube.md](lamath-tube.md) |
+| Lamath Stringed | Picked/bowed string with body selection | [lamath-stringed.md](lamath-stringed.md) |
 
-- Sound generation only. Reverb, delay, and broad effect chains belong downstream in the host.
-- Sample as DSP component. Excitation samples are short transients, not melodic loops or complete sampled notes.
-- One instrument boundary. MIDI, sidechain note creation, audio expression, and live excitation all run through the same VST3 instrument and voice manager.
-- Shared host-neutral core. Plugin shell, process context, MIDI normalization, patch/state helpers, sample-library ownership, and audio-expression analysis live in shared crates. Lamath owns product identity, sidechain policy, voice ownership, and resonator behavior.
-- Bounded realtime path. Audio-thread processing must not allocate, block, log, perform file/database I/O, or call UI/host services.
-
-Primary host target: Ableton on macOS.
+Lamath's product-local code owns product identity, patch paths, host parameters, sidechain policy, voice ownership, live-excitation routing, the dual-modal runtime, and VST3/editor adapters. Shared crates own host-neutral shell contracts, sample references, audio-expression analysis, UI services, and reusable DSP support.
 
 ---
 
@@ -43,184 +41,73 @@ flowchart LR
 
     subgraph Voice
         EE[Excitation Engine<br/>sample slots plus optional live input]
-        RA[Resonator A]
-        RB[Resonator B]
+        RA[Modal Resonator A]
+        RB[Modal Resonator B]
+        ROUTE[A/B Routing]
         FILT[SVF Filter]
         SAT[Soft Saturator]
 
         SIDE -.->|continuous or latched drive| EE
-        EE -->|excitation buffer| RA
-        EE -.->|parallel routing| RB
-        RA -->|series routing| RB
-        RA -.->|parallel direct| MIX2
-        RB --> MIX2[Resonator Mix]
-        MIX2 --> FILT
+        EE --> RA
+        EE --> RB
+        RA --> ROUTE
+        RB --> ROUTE
+        ROUTE --> FILT
         FILT --> SAT
     end
 
     VA --> MIX[Voice Mixer]
     VB --> MIX
     VN --> MIX
-    MIX --> OUT[Stereo Out]
+    MIX --> SUR[Surrounding]
+    SUR --> OUT[Stereo Out]
 ```
 
-Each voice owns independent excitation playback cursors, resonator state, modulation state, filter state, and output state. Voice allocation and ownership live above the voice DSP so MIDI-created and audio-created voices use the same runtime path. In shared-body idiophone mode the idiophone resonator is instead promoted to a single runtime-owned body that note-ons re-strike rather than per-note voices (§4.5).
+Each voice owns excitation playback cursors, two modal-bank states, filter/output state, and expression state. Voice allocation and ownership live above voice DSP so MIDI-created and audio-created voices use the same runtime path.
 
 ---
 
-## 3. Excitation Engine
+## 3. Excitation
 
-### 3.1 Sample Slots
+Lamath patches declare excitation slots. Each slot stores a shared `SampleReference`, pre-mix gain, velocity zone, start offset, velocity start modulation, loop flag, pitch-track flag, and optional round-robin group.
 
-A patch declares up to four excitation slots. Each slot stores:
+On note-on, the engine filters slots by velocity, advances round-robin cursors, sums selected excitation streams, and routes that signal into the modal graph. Missing samples are bypassed while the rest of the patch loads.
 
-- sample reference by blake3 hash and last-known library-relative path;
-- pre-mix gain in dB;
-- velocity zone;
-- fixed sample-start offset plus optional velocity modulation depth;
-- one-shot or loop playback mode;
-- pitch-track switch;
-- round-robin group.
-
-On note-on, the engine filters slots by velocity zone, advances round-robin cursors, sums selected slots into the per-voice excitation stream, and routes that stream into the resonator graph.
-
-### 3.2 Playback
-
-- Samples are loaded into RAM during patch load or structural patch application.
-- Per-voice playback cursor advances in f32 sample space.
-- Linear interpolation is used because excitation transients do not require high-fidelity sampler interpolation.
-- One-shot playback terminates at sample end; loop playback wraps.
-
-### 3.3 Live Sidechain Excitation
-
-The optional sidechain input bus can feed voice excitation in patch-configurable modes:
+The optional sidechain input bus can also feed voice excitation:
 
 - `Off` - sample-slot excitation only.
 - `Continuous` - sanitized sidechain audio is mixed into active voices every block.
-- `NoteLatched` - each note copies a bounded sidechain onset window into a per-voice latch buffer and plays it through the excitation path.
+- `NoteLatched` - each note captures a bounded sidechain onset window and plays it through the excitation path.
 - `ContinuousAndNoteLatched` - a latched onset transient plus continuous sidechain drive while the voice remains active.
 
-Lamath-local policy owns sidechain bus setup, live-excitation mode, gain, latch window, pre-roll, fade, and structural apply rules. Shared `ProcessContext::input` carries the audio input and shared detector/expression crates produce host-neutral analysis events.
-
-Realtime constraints:
-
-- Sidechain scratch buffers, pre-roll rings, detector state, and per-voice latch buffers are allocated during setup or structural patch application.
-- Latch window size, pre-roll, and max-latency changes are structural because they size preallocated buffers.
-- Empty, inactive, or unrouted input produces MIDI-only behavior.
+Sidechain scratch buffers, pre-roll rings, detector state, and per-voice latch buffers are allocated during setup or structural patch application, not on the realtime path.
 
 ---
 
-## 4. Resonators
+## 4. Modal Resonators
 
-Each voice has two resonator slots, A and B. Each slot can be a modal bank, a one-dimensional waveguide, or a 2D waveguide mesh, and both slots may use the same model type.
+Each voice has two modal resonator slots, A and B. A modal bank is a parallel bank of second-order resonant filters. Current modal controls include:
 
-### 4.1 Modal Bank
-
-The modal bank is a parallel bank of second-order resonant filters. Current parameters include:
-
-- `mode_count` - default 64, soft cap 128, hard realtime cap 256;
-- `model_preset` - hardcoded templates such as kalimba, marimba, bell, glass-bowl, metal-bar, woodblock, and generic-strike;
-- `fundamental_tune` - MIDI tracked with semitone and cent offsets;
+- `mode_count` - default 64, hard realtime cap 256;
+- `preset` - `Kalimba`, `Marimba`, `Bell`, `GlassBowl`, `MetalBar`, `Woodblock`, or `GenericStrike`;
+- semitone and cent offsets;
 - `inharmonicity`;
 - `brightness`;
 - `decay_global`;
 - `decay_tilt`;
 - `position_of_strike`.
 
-Position of strike modulates mode gain so excitation location changes the modal response.
+Position of strike modulates mode gain so the excitation point changes the modal response.
 
-### 4.2 Waveguide
+Implemented A/B routing modes:
 
-The waveguide is a Karplus-Strong-derived single-delay-line model for plucked-string and tube-like timbres. Current parameters include:
-
-- `fundamental_tune`;
-- `waveguide_style` - `String` or `Tube`;
-- `loop_filter_cutoff`;
-- `loop_filter_resonance`;
-- `loop_gain`;
-- `loop_nonlinearity`;
-- `position_of_strike`;
-- `boundary_reflection`.
-
-The string style uses ordinary same-polarity feedback. The **tube style is a driven wind voice**, not a struck one: a tube bore is a wind resonator and only sounds when continuously reed-driven, so selecting `Tube` always engages the reed/breath driver and the strike/pick/bow drivers are not valid for it (a patch naming one normalizes to the reed on load — the instrument never holds a silent tube). The reed is a physical beating-reed valve (the opening closes to zero at a closing pressure, orifice/Bernoulli flow) that **terminates the bore mouth** — its scattered wave replaces the passive mouth reflection, solving the reed↔bore scattering junction each sample — so the bore self-oscillates on its tuned fundamental across the register. Playing effort maps into the reed's usable pressure window (soft below it is breathy near-silence); `loop_filter_cutoff` is the brightness control and `boundary_reflection` voices the bell within its usable closed-bell band. Effort drives a ~10 dB level dynamic. A true **brightness-with-effort (cuivré)** is **not yet achieved**: the current bell HF-radiation tap is non-energy-conserving and squares the tone when driven (turning it down, via the `bell_radiation` control, reveals a cleaner clarinet underneath), and the reed's own spectrum is nearly blowing-pressure-invariant — so a musical cuivré awaits a bell+bore+reed redesign (see [ADR-0032](../adr/0032-lamath-tube-driven-wind-voice.md) audition correction). The tone today is an odd-harmonic clarinet without a strongly resonant body. The top octave genuinely overblows / squeaks when blown hard at fortissimo, like a real reed — a kept, physically-accurate behaviour, not a defect. The Tube is **monophonic** (a patch with a Tube forces `polyphony = 1`), so articulation is how the one voice changes notes: a **tongued** note is separated and re-onsets with the excitation kick, a **slurred** note overlaps so the reed keeps blowing while the bore frequency glides (an 8 ms portamento); a breath-onset ramp keeps onsets click-free. See [ADR-0032](../adr/0032-lamath-tube-driven-wind-voice.md).
-
-### 4.3 2D Waveguide Mesh
-
-The 2D mesh is a rectangular digital-waveguide mesh — a grid of lossless scattering junctions joined by unit delays — modelling a struck plate, a metallic idiophone. Because the junctions propagate one cell per sample the mesh's wave speed is structurally fixed, so its modal frequencies are set by the **grid cell count**, not by the played pitch: the mesh is a fixed-pitch struck body, not a tuned voice. Controls:
-
-- `size` / `tension` — the active grid's width and height in cells. A large maximum grid is allocated once and these select an active sub-region, so re-tuning is allocation-free. Cell count is the timbre/density lever: a small grid is sparse and near-pitched (triangle-like), a large grid dense and inharmonic (ride/crash-like).
-- `damping` — decay time. The control maps geometrically over a musical −60 dB ring band inverted from the boundary-reflection physics, so the whole `0..1` range rings (no dead zone) and the ring length is sample-rate- and grid-independent.
-- `material` — free↔fixed boundary condition (membrane↔plate) plus the strike coupling width.
-- `position_of_strike` / `pickup_spread` — where the plate is struck and the pickup integration width, i.e. which modes are excited and heard.
-
-The played **note moves the strike position** across the plate, so different notes excite different mode mixes — a timbral/intonation variation, not a tuned pitch. Because the dominant low modes have few nodal regions, this spans only a handful of distinct timbral zones (a logged characteristic, not a defect). Output is level-compensated for the grid (a fixed strike's pickup level falls ~`1/cells` as the grid grows) so every voicing sits at a consistent, family-matched level.
-
-### 4.4 Routing
-
-Three routing modes are implemented:
-
-- `Parallel` - excitation feeds A and B independently and their outputs are mixed.
-- `Series` - excitation feeds A, then A's output feeds B's excitation input.
-- `Body Color` - excitation feeds A, and a short window of A's response becomes the colored excitation for B.
-
-Series routing includes a high-pass and transient-bias gate before B to keep steady-state resonance from becoming runaway feedback.
-Body Color is intended for stable commuted/body-response sounds: A imprints early resonator color onto B without feeding A's long ringing tail into B continuously.
-When both resonator slots are modal banks, selecting `Series` is canonicalized to `Body Color` while preserving the routing mix values. Mixed modal/waveguide pairs keep all three routing modes available.
-
-### 4.5 Shared-Body Idiophone Mode
-
-An opt-in per-patch mode (`shared_body`, default off) promotes an idiophone patch's resonator to a single runtime-owned, persistent body that note-ons re-strike instead of allocating a per-note voice. Off is bit-identical to the per-voice behavior and the two coexist; the body is owned by the runtime alongside the sympathetic chamber, and the voice engine is unaware of it. Decisions and rejected alternatives live in [ADR-0031](../adr/0031-shared-body-idiophone-mode.md).
-
-**Strike path.** With the mode on and an idiophone slot present, a note-on drives the body, not a voice:
-
-- A note outside the configured key-switch damp range strikes the body, carrying force (velocity mapped to gain), pitch, and the velocity-selected excitation; a note inside the range damps it. Either way no voice is allocated and polyphony does not apply.
-- The body mirrors the patch's resonator stack restricted to the idiophone families (modal and mesh); a waveguide slot is silenced in the body, and the toggle no-ops when neither slot is idiophone. Waveguide slots otherwise stay polyphonic-per-voice.
-- A preallocated, allocation-free injector pool plays the selected excitation into the live body at the strike position, preserving the samples-as-excitation identity.
-
-**Per-strike retune.** Each strike after the first retunes the live body to the note through the state-preserving `retune` path (no buffer clear), then injects. The prior strike's ring keeps propagating in the persisted state while the tuning tracks the most recent strike, so the body is melodically playable.
-
-**Dynamics, coloration, and attack.** The body runs its own measured-energy follower on the raw resonator output, feeding the mesh geometric nonlinearity. The per-family output makeup applies as on a voice, so the body stages at the same level a same-family voice does, and the runtime master soft-clip bounds it. The body's decay is the envelope: the per-note amp envelope steps aside (unity amp gain, no per-note release), the patch's output filter and saturation apply as a static post-body coloration, and each strike arms the mechanical-noise attack burst scaled by the strike force.
-
-**Damp.** An inclusive MIDI-note key-switch range (`damp_key_low`..`damp_key_high`) damps the body: a note in range ramps the body's output to silence over a short choke ramp, then clears the ring so the next strike starts fresh. A strike re-opens the gate; note-off does nothing to the ring.
-
-**Summing and reset.** The runtime sums engine, then shared body, then sympathetic chamber, then master, so the body feeds the chamber and master like any voice energy. A patch change or reset silences the body and re-mirrors its configs.
+- `Parallel` - excitation feeds both modal banks and their outputs are mixed.
+- `Series` - excitation feeds A, then A's output feeds B.
+- `BodyColor` - excitation feeds A and a short window of A's response becomes colored excitation for B.
 
 ---
 
-## 5. Output Stage
-
-Per voice:
-
-- state-variable filter with low-pass, band-pass, and high-pass modes;
-- post-filter soft saturation with drive and gain compensation;
-- amp envelope controlled gain;
-- voice mix to stereo with master gain and pan.
-
-The output path is intentionally compact. Resonators supply most of the timbral identity.
-
----
-
-## 6. Voice Management And Expression
-
-- Baseline polyphony is 8 voices, configurable up to 16.
-- Voice stealing order is oldest released, then quietest released, then oldest active.
-- Note-on resets excitation cursors and envelopes. Resonator retrigger is patch-configurable and defaults to ringing carryover.
-- All voice state is allocated up front.
-- In shared-body idiophone mode, idiophone note-ons re-strike the runtime-owned body instead of allocating voices, bypassing voice allocation and polyphony entirely (§4.5).
-
-Lamath uses a per-voice expression stream:
-
-```rust
-struct ExpressionStream {
-    pitch_bend: f32,
-    pressure: f32,
-    brightness: f32,
-    velocity: f32,
-    gate: bool,
-}
-```
-
-MIDI maps channel pitch bend, channel pressure, CC brightness, note velocity, and note gate into the stream. Sidechain analysis maps stable pitch, pitch drift, RMS, and spectral centroid into audio-created note events plus expression. Lamath owns source mode, voice ownership, retrigger behavior, latch/continuous excitation routing, and UI/status payloads.
+## 5. Sidechain Notes And Expression
 
 Implemented source modes:
 
@@ -228,144 +115,45 @@ Implemented source modes:
 - `AudioCreatesNotes` - sidechain onsets create and release voices.
 - `MidiPlusAudioCreatesNotes` - MIDI and sidechain audio can both create voices, with ownership tracked so one source cannot release the other source's voices.
 
----
-
-## 7. Modulation
-
-Current sources:
-
-- amp envelope;
-- secondary envelope;
-- LFO;
-- MIDI velocity;
-- MIDI channel aftertouch;
-- MIDI mod wheel;
-- MIDI pitch bend;
-- audio-derived pressure, brightness, and pitch bend when sidechain expression is enabled.
-
-Assignable destinations:
-
-- filter cutoff;
-- Resonator A damping;
-- Resonator B damping;
-- Resonator A position-of-strike;
-- Resonator B position-of-strike;
-- excitation gain;
-- LFO rate.
-
-Fixed routings:
-
-- amp envelope to output gain;
-- pitch bend to both resonator pitches;
-- velocity to excitation gain;
-- MIDI note or audio-created note pitch to resonator fundamental.
-
-Four user-assignable modulation slots are exposed as linear source-to-destination routes.
+Lamath uses a per-voice expression stream for pitch bend, pressure, brightness, velocity, and gate. MIDI maps channel pitch bend, channel pressure, CC brightness, note velocity, and note gate into that stream. Sidechain analysis maps stable pitch, pitch drift, RMS, and spectral centroid into audio-created note events plus expression when enabled.
 
 ---
 
-## 8. Sample Library
+## 6. Surrounding
 
-Lamath uses the shared file-backed sample library.
+The surrounding layer was intentionally kept while Lamath was narrowed back to dual modal resonators. It currently exposes:
 
-Default disk layout:
+- `mechanical_noise`;
+- `radiation_brightness`;
+- `sympathetic`.
 
-```text
-~/Library/Application Support/Ahara/Lamath/
-|-- Samples/
-|-- Patches/
-|-- index.db
-`-- config.toml
-```
-
-Samples are content-addressed by blake3 hash with last-known-path fallback. The SQLite index tracks relative path, filename, duration, sample rate, channel count, RMS/peak metadata, waveform preview, import time, notes, and tags.
-
-Patch sample resolution:
-
-1. Look up the stored hash in SQLite.
-2. If the hash is missing, try the last-known path.
-3. If a file is found by path, hash and index it.
-4. Otherwise mark the slot missing and bypass it while loading the rest of the patch.
-
-The library supports drag/drop ingest, copy or reference-only policies, preview generation, moved-file recovery, missing-sample reporting, and patch export with embedded sample audio.
+These controls remain part of Lamath's product-local modal runtime. They are not part of the extracted Cymbal, Tube, or Stringed parameter surfaces.
 
 ---
 
-## 9. State And Presets
+## 7. State, UI, And VST3
 
-- Patches are stored as TOML through the shared versioned patch I/O helpers.
+- Patches are stored as TOML through shared versioned patch I/O helpers.
 - VST3 DAW state uses shared `PluginState` and Lamath patch payloads through `IComponent::getState` and `setState`.
-- Current patch/state payloads include audio input, expression, note-detection, and live-excitation fields directly.
+- The Vizia editor exposes patch save/load/export, excitation slots, modal A/B controls, routing, output controls, sidechain note/expression controls, live-excitation controls, surrounding controls, sample ingest/assignment/clear, and telemetry.
+- The UI reads audio-thread state through lock-free or message-based boundaries.
 - The default patch is hardcoded so the plugin makes sound without user samples.
 
-No compatibility or migration layer is carried for undeployed pre-sidechain Lamath state.
+---
+
+## 8. Review Render Catalog
+
+Lamath includes an offline review render catalog for subjective listening across the current Lamath-family resonators. The catalog is a command-line tool, not an integration test harness: it renders audio artifacts for human review through the real Lamath modal synth path and the extracted Lamath Cymbal, Tube, and Stringed processors.
+
+The catalog keeps the pre-extraction 86-case, 11-group selection surface: baseline dynamics, register range, drivers, contact, source/body balance, surrounding, chords, articulation, edge cases, tube dynamics, and mesh timbre. Modal cases render through Lamath; string, tube, and mesh/cymbal cases render through the extracted processors that now own those physical-model paths.
+
+`make render-lamath-audio` writes the WAV catalog to `review/lamath-render-catalog/` with a `manifest.toml` and `index.md`. The WAV tree is ignored because it is large and regeneratable. `make compress-review-audio` creates stageable MP3 previews under `review/audio-previews/lamath-render-catalog/`.
+
+The local React/TypeScript review UI in `tools/lamath-review-ui/` reads the manifest, plays the MP3 previews or WAV fallback, and writes per-file plus category comments to `review/lamath-render-catalog-comments.json` for later analysis. See [development.md](../development.md#review-audio) for commands, storage policy, and the Sulion dev-server port range.
 
 ---
 
-## 10. UI And Services
-
-The native Vizia editor exposes:
-
-- top-level patch save/load/export and library commands;
-- excitation slot controls;
-- Resonator A/B controls and routing;
-- shared-body mode toggle and key-switch damp-range controls;
-- output filter, saturation, gain, and pan controls;
-- envelope, LFO, and modulation controls;
-- sidechain source, audio-expression, note-detection, and live-excitation controls;
-- sample ingest, assignment, clear, and telemetry services.
-
-The UI runs at editor framerate and reads audio-thread state through lock-free or message-based boundaries.
-
----
-
-## 11. Technology Stack
-
-Lamath follows the workspace framework-less plugin architecture:
-
-| Layer | Choice | Responsibility |
-| ---- | ---- | ---- |
-| VST3 ABI | `vst3` crate | COM ABI and generated bindings |
-| Plugin shell | `lindelion-plugin-shell` | descriptors, parameters, process context, MIDI/control events, state, VST3 helpers, messages, and voice-management primitives |
-| UI | `lindelion-ui` with Vizia direct | native editor surfaces and product command model |
-| DSP utilities | `lindelion-dsp-utils` | math, smoothing, filters, delay/interpolation, envelopes, and analysis helpers |
-| Audio expression | `lindelion-audio-expression`, `lindelion-pitch-detect`, `lindelion-onset-detect` | streaming pitch/onset/loudness/expression contracts |
-| Sample library | `lindelion-sample-library` | loaded-audio ownership, file-library ingest, hashing, indexing, and previews |
-| Serialization | `serde` and `toml` | diffable patches and versioned DAW state payloads |
-
-Shared crates carry host protocol mechanics and host-neutral analysis contracts. Lamath-local code carries product CIDs, bus table, parameter list, patch paths, apply-policy enums, runtime targets, UI slots, VST3 messages, resonator DSP, sidechain source modes, audio-created voice ownership, live-excitation routing, and latch-buffer policy.
-
----
-
-## 12. Review Render Catalog
-
-Lamath includes an offline review render catalog for subjective listening across
-the current Lamath-family resonators. The catalog is a command-line tool, not a
-test harness: it renders audio artifacts for human review through the real
-Lamath modal synth path and the extracted Lamath Cymbal, Tube, and Stringed
-processors.
-
-The catalog keeps the pre-extraction 86-case, 11-group selection surface:
-baseline dynamics, register range, drivers, contact, source/body balance,
-surrounding, chords, articulation, edge cases, tube dynamics, and mesh timbre.
-Modal cases render through Lamath; string, tube, and mesh/cymbal cases render
-through the extracted processors that now own those physical-model paths.
-
-`make render-lamath-audio` writes the WAV catalog to
-`review/lamath-render-catalog/` with a `manifest.toml` and `index.md`. The WAV
-tree is ignored because it is large and regeneratable. `make
-compress-review-audio` creates stageable MP3 previews under
-`review/audio-previews/lamath-render-catalog/`.
-
-The local React/TypeScript review UI in `tools/lamath-review-ui/` reads the
-manifest, plays the MP3 previews or WAV fallback, and writes per-file plus
-category comments to `review/lamath-render-catalog-comments.json` for later
-analysis. See [development.md](../development.md#review-audio) for commands,
-storage policy, and the Sulion dev-server port range.
-
----
-
-## 13. Performance
+## 9. Performance And Tests
 
 Current realtime targets:
 
@@ -374,46 +162,7 @@ Current realtime targets:
 - no file/database/UI/host calls from the audio thread;
 - preallocated voices, resonator state, sidechain buffers, detector state, and latch buffers.
 
-Measured Linux release probe for the all-enabled sidechain path:
-
-- effective audio-onset to first-output latency: 407 samples / 8.479 ms at 48 kHz;
-- 10 seconds rendered in 942.925 ms on the current x86_64 Linux runner;
-- realtime ratio: 0.09429.
-
-The realtime note-creation path uses the shared realtime audio analysis note detector backed by zero-crossing pitch and a bounded energy-transient detector. Higher-quality detectors remain behind shared traits for offline or quality-focused use.
-
-Default bounded settings:
-
-- onset sensitivity `0.5`;
-- release floor `0.01` RMS;
-- minimum note length `60 ms`;
-- pitch confidence `0.65`;
-- realtime detector frame `512` samples at 48 kHz;
-- latch window `120 ms`;
-- pre-roll `20 ms`;
-- fade `5 ms`;
-- live excitation disabled by default.
-
-Offline processing can use looser caps than realtime rendering when the host reports offline process mode.
-
----
-
-## 14. Current Implementation Status
-
-Implemented:
-
-- stable host parameter surface with component/controller tests;
-- parameter updates that mutate patch state and update live runtime targets;
-- smoothed live output, loop-gain, filter, pitch-bend, saturation, and routing controls;
-- structural resonator and modulation changes that update future voices without killing active notes;
-- opt-in shared-body idiophone mode with per-strike ring-preserving retune, key-switch damp, body-scoped energy follower and staging, and static post-body coloration, covered by objective stability and fidelity sweeps;
-- DSP render, automation stress, sample-rate/buffer-size, offline, and no-allocation tests for the audio path;
-- sidechain note creation, MIDI/audio ownership, audio expression, continuous and note-latched live excitation, no-allocation coverage, and latency/CPU probe coverage;
-- TOML patch save/load and DAW state roundtrip;
-- file-backed sample library with ingest, hashing, indexing, preview generation, moved-file recovery, and missing-sample reporting;
-- native editor command services for patch save/load/export, sample ingest/assignment/clear, and telemetry requests;
-- offline review render catalog with manifest/index generation, MP3 preview compression, and a local review UI for per-file/category feedback;
-- macOS VST3 bundle layout, moduleinfo generation, ad-hoc signing, staging, and install automation.
+`make ci` covers the fast workspace unit path, including Lamath patch/state roundtrips, host parameter binding, modal runtime behavior, sidechain note/expression behavior, live excitation, and no-allocation audio-path guards. Heavier DSP sweeps and render/audition work stay behind the integration/render harnesses described in [development.md](../development.md#testing).
 
 ---
 
@@ -421,9 +170,7 @@ Implemented:
 
 - **Excitation:** the input signal that drives a resonator.
 - **Modal bank:** a parallel array of resonant filters, each modeling one vibrational mode.
-- **Waveguide:** a delay-line-based model of a vibrating string or tube.
 - **Mode:** a single vibrational frequency of a physical object.
 - **Position of strike:** where excitation is applied to the resonating object.
 - **Expression stream:** Lamath's per-voice continuous-control contract for pitch bend, pressure, brightness, velocity, and gate.
-- **Idiophone:** a body that sounds by vibrating as a whole (cymbal, gong, bell); here the modal and mesh resonator families. Modeled by the modal bank and the 2D mesh, which are linear-superposable physical models.
-- **Shared body:** in shared-body mode, the single runtime-owned persistent resonator that idiophone note-ons re-strike, in place of per-note voices (§4.5).
+- **Surrounding:** Lamath's retained mechanical/radiation/sympathetic coloration layer around the modal instrument.
