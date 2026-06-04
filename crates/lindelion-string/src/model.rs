@@ -516,34 +516,4 @@ impl StringModel {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn string_model_renders_finite_audible_impulse() {
-        let mut model = StringModel::new(48_000.0);
-        let params = StringModelParams::default();
-        let mut peak = 0.0_f32;
-        for index in 0..4_800 {
-            let excitation = if index == 0 { 0.8 } else { 0.0 };
-            let out = model.process(excitation, params);
-            assert!(out.is_finite(), "out={out}");
-            peak = peak.max(out.abs());
-        }
-        assert!(peak > 0.001, "peak={peak}");
-    }
-
-    #[test]
-    fn disabled_body_remains_finite() {
-        let mut model = StringModel::new(48_000.0);
-        let params = StringModelParams {
-            body_mode: StringBodyMode::Disabled,
-            ..StringModelParams::default()
-        };
-        for index in 0..2_400 {
-            let excitation = if index == 0 { 0.8 } else { 0.0 };
-            let out = model.process(excitation, params);
-            assert!(out.is_finite(), "out={out}");
-        }
-    }
-}
+mod tests;

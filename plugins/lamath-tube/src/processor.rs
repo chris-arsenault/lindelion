@@ -343,48 +343,4 @@ fn soft_limit(sample: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms};
-
-    fn default_sources<'a>() -> [ExcitationSource<'a>; ARTICULATION_SLOT_COUNT] {
-        std::array::from_fn(ExcitationSource::builtin)
-    }
-
-    #[test]
-    fn default_note_produces_finite_audible_output() {
-        let mut processor = TubeProcessor::new(48_000.0, TubePatch::default(), default_sources());
-        let mut left = [0.0; 2048];
-        let mut right = [0.0; 2048];
-        let events = [MidiEvent::Note(NoteEvent::On {
-            channel: 0,
-            note: 60,
-            velocity: 1.0,
-        })];
-
-        processor.process(&events, &mut left, &mut right);
-
-        assert_all_finite(&left);
-        assert_eq!(left, right);
-        assert!(peak_abs(&left) > 0.001);
-        assert!(rms(&left[512..]) > 0.000_01);
-    }
-
-    #[test]
-    fn c_minus_two_key_selects_first_articulation_without_triggering_note() {
-        let mut processor = TubeProcessor::new(48_000.0, TubePatch::default(), default_sources());
-        let mut left = [1.0; 32];
-        let mut right = [1.0; 32];
-        let events = [MidiEvent::Note(NoteEvent::On {
-            channel: 0,
-            note: KEYSWITCH_BASE_NOTE,
-            velocity: 1.0,
-        })];
-
-        processor.process(&events, &mut left, &mut right);
-
-        assert_eq!(processor.selected_slot(), 0);
-        assert!(left.iter().all(|sample| *sample == 0.0));
-        assert_eq!(left, right);
-    }
-}
+mod tests;

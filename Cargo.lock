@@ -1928,6 +1928,9 @@ name = "lamath"
 version = "0.15.2"
 dependencies = [
  "criterion",
+ "lamath-cymbal",
+ "lamath-stringed",
+ "lamath-tube",
  "lindelion-audio-expression",
  "lindelion-dsp-utils",
  "lindelion-midi",

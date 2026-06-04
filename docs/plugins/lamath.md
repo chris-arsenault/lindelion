@@ -340,20 +340,16 @@ Shared crates carry host protocol mechanics and host-neutral analysis contracts.
 ## 12. Review Render Catalog
 
 Lamath includes an offline review render catalog for subjective listening across
-the resonator dynamic-response surface. The catalog is a command-line tool, not
-a test harness: it renders audio artifacts for human review through the real
-Lamath synth path.
+the current Lamath-family resonators. The catalog is a command-line tool, not a
+test harness: it renders audio artifacts for human review through the real
+Lamath modal synth path and the extracted Lamath Cymbal, Tube, and Stringed
+processors.
 
-The catalog currently covers 68 cases across eight groups:
-
-- baseline dynamics;
-- register range;
-- excitation drivers;
-- contact spread and contact-time darkening;
-- source/body balance;
-- surrounding effects;
-- chord and tail behavior;
-- bounded edge settings.
+The catalog keeps the pre-extraction 86-case, 11-group selection surface:
+baseline dynamics, register range, drivers, contact, source/body balance,
+surrounding, chords, articulation, edge cases, tube dynamics, and mesh timbre.
+Modal cases render through Lamath; string, tube, and mesh/cymbal cases render
+through the extracted processors that now own those physical-model paths.
 
 `make render-lamath-audio` writes the WAV catalog to
 `review/lamath-render-catalog/` with a `manifest.toml` and `index.md`. The WAV

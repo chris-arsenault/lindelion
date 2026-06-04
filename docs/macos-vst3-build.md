@@ -1,6 +1,6 @@
 # macOS VST3 Build
 
-Lamath, Glirdir, and Linnod are the current DAW-loadable VST3 bundle targets. `make build` builds, stages, and installs all three products. Pass `PLUGIN=lamath`, `PLUGIN=glirdir`, or `PLUGIN=linnod` to build only one product.
+Lamath, Lamath Cymbal, Lamath Tube, Lamath Stringed, Glirdir, and Linnod are the current DAW-loadable VST3 bundle targets. `make build` builds, stages, and installs all macOS products in `$(PLUGINS)`. Pass `PLUGIN=lamath`, `PLUGIN=lamath-cymbal`, `PLUGIN=lamath-tube`, `PLUGIN=lamath-stringed`, `PLUGIN=glirdir`, or `PLUGIN=linnod` to build only one product.
 
 ## Prerequisites
 

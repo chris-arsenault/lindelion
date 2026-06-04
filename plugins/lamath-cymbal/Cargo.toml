@@ -23,4 +23,6 @@ vst3.workspace = true
 lindelion-test-allocator.workspace = true
 
 [features]
+default = ["vst3-entry"]
 integration-tests = []
+vst3-entry = []

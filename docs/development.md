@@ -21,7 +21,7 @@ Local development uses stable Rust and Makefile entrypoints for repeatable check
 | `make test-integration` | Run the heavy suite excluded from `make ci`: multi-second DSP fidelity/stability/tuning renders plus filesystem/thread-touching tests (per-crate `integration-tests` feature). |
 | `make test-models` | Run the `#[ignore]`d neural-network model-integration tests (ONNX Runtime). |
 | `make docs` | Run the `#[ignore]`d doc-data generators (plot/CSV/baseline writers). |
-| `make render-lamath-audio` | Render the Lamath review audio catalog to local WAV artifacts under `review/lamath-render-catalog/`. |
+| `make render-lamath-audio` | Render the Lamath-family review audio catalog to local WAV artifacts under `review/lamath-render-catalog/`. |
 | `make compress-review-audio` | Compress a review-audio source tree to stageable MP3 previews under `review/audio-previews/lamath-render-catalog/`. |
 
 ## Testing
@@ -50,14 +50,15 @@ In short: *move the render, keep the invariant.*
 
 ## Review Audio
 
-Lamath has a deterministic offline review catalog for subjective listening and
-human feedback. It is a tool and generated artifact workflow, not a test
-harness.
+The Lamath family has a deterministic offline review catalog for subjective
+listening and human feedback. It is a tool and generated artifact workflow, not
+a test harness.
 
-`make render-lamath-audio` renders WAVs through the real Lamath synth path into
-`review/lamath-render-catalog/`. That directory is ignored because the WAVs are
-large and regeneratable. Pass `LAMATH_RENDER_ARGS` through to the binary for
-focused regeneration:
+`make render-lamath-audio` renders the historical Lamath review catalog through
+the real Lamath modal synth and the extracted Lamath Cymbal, Tube, and Stringed
+processors into `review/lamath-render-catalog/`. That directory is ignored
+because the WAVs are large and regeneratable. Pass `LAMATH_RENDER_ARGS` through
+to the binary for focused regeneration:
 
 ```sh
 make render-lamath-audio LAMATH_RENDER_ARGS="--group baseline_dynamics"
@@ -81,7 +82,10 @@ use `PORT=26001` through `PORT=26010` if the first slot is occupied.
 
 ## Bundle Work
 
-Lamath, Glirdir, and Linnod are the current macOS VST3 bundle targets. Use [macos-vst3-build.md](macos-vst3-build.md) for macOS build, install, inspect, and validator steps.
+Lamath, Lamath Cymbal, Lamath Tube, Lamath Stringed, Glirdir, and Linnod are the
+current macOS VST3 bundle targets. Use
+[macos-vst3-build.md](macos-vst3-build.md) for macOS build, install, inspect,
+and validator steps.
 
 The Windows-only VST3s (Calóma, Lúmedir, Cenedril) bundle via `make build-windows` (cargo-xwin, MSVC ABI), staging each `*.vst3` for a Windows host or the Galad host. Their cross-platform DSP, the VST3-boundary load/run, persistence, and the soak/stability checks run on Linux (`make ci` + `make test-integration`); only each editor's on-screen rendering is confirmed on a Windows host ([ADR-0023](adr/0023-new-vsts-windows-only.md)).
 

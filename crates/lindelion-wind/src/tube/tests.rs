@@ -1,0 +1,410 @@
+use super::*;
+use crate::{ReedDriver, ReedParams};
+use lindelion_dsp_utils::{
+    analysis::{
+        assert_all_finite, audio_window_metrics, dft_magnitude_at,
+        estimate_f0_autocorrelation_refined, max_adjacent_delta, peak_abs, rms, rms_difference,
+    },
+    math::{cents_between, midi_note_to_hz},
+};
+
+#[test]
+fn reed_driven_tube_renders_finite_audible_audio() {
+    let output = render_reed_tube(48_000.0, ReedTubeParams::default(), 0.8, 4_096);
+
+    assert_all_finite(&output);
+    assert!(peak_abs(&output) > 0.001);
+    assert!(rms(&output[1_024..]) > 0.000_01);
+}
+
+#[test]
+fn reed_driven_tube_decays_after_drive_is_removed() {
+    let sample_rate = 48_000.0;
+    let mut reed = ReedDriver::new(ReedParams::default(), sample_rate);
+    let mut tube = ReedTube::new(sample_rate);
+    let params = ReedTubeParams {
+        frequency_hz: 220.0,
+        ..ReedTubeParams::default()
+    };
+    let output = (0..24_000)
+        .map(|index| {
+            let gate = if index < 12_000 { 1.0 } else { 0.0 };
+            let excitation = if index == 0 { 0.4 } else { 0.0 };
+            tube.set_brightness_effort(0.8 * gate);
+            let mouth = reed.process(excitation, 0.8, tube.driven_feedback(), gate);
+            tube.process_wind(mouth, params)
+        })
+        .collect::<Vec<_>>();
+
+    assert_all_finite(&output);
+    assert!(rms(&output[18_000..]) < rms(&output[6_000..12_000]));
+}
+
+#[test]
+fn tuning_tracks_low_mid_register() {
+    let sample_rate = 48_000.0;
+    for frequency_hz in [110.0, 220.0, 440.0] {
+        let output = render_reed_tube(
+            sample_rate,
+            ReedTubeParams {
+                frequency_hz,
+                loop_filter_cutoff_hz: 12_000.0,
+                loop_gain: 0.992,
+                ..ReedTubeParams::default()
+            },
+            0.9,
+            32_000,
+        );
+        let estimate = estimate_f0_autocorrelation_refined(
+            &output[8_000..],
+            sample_rate,
+            frequency_hz * 0.70,
+            frequency_hz * 1.6,
+        )
+        .unwrap_or_else(|| panic!("no pitch estimate for {frequency_hz} Hz"));
+        let cents = cents_between(frequency_hz, estimate);
+
+        assert!(
+            cents < 70.0,
+            "frequency={frequency_hz} estimate={estimate} cents={cents}"
+        );
+    }
+}
+
+#[test]
+fn boundary_reflection_materially_changes_bore_response() {
+    let sample_rate = 48_000.0;
+    let base = ReedTubeParams {
+        frequency_hz: 220.0,
+        loop_filter_cutoff_hz: 8_000.0,
+        loop_gain: 0.97,
+        ..ReedTubeParams::default()
+    };
+    let closed = render_reed_tube(
+        sample_rate,
+        ReedTubeParams {
+            boundary_reflection: -0.85,
+            ..base
+        },
+        0.8,
+        16_000,
+    );
+    let open = render_reed_tube(
+        sample_rate,
+        ReedTubeParams {
+            boundary_reflection: -0.45,
+            ..base
+        },
+        0.8,
+        16_000,
+    );
+
+    assert_all_finite(&closed);
+    assert_all_finite(&open);
+    assert!(rms_difference(&closed[2_048..], &open[2_048..]) > 0.000_01);
+}
+
+#[test]
+fn reset_clears_bore_state() {
+    let sample_rate = 48_000.0;
+    let mut reed = ReedDriver::new(ReedParams::default(), sample_rate);
+    let mut tube = ReedTube::new(sample_rate);
+    let params = ReedTubeParams::default();
+    for index in 0..4_096 {
+        let excitation = if index == 0 { 0.4 } else { 0.0 };
+        let mouth = reed.process(excitation, 0.8, tube.driven_feedback(), 1.0);
+        tube.process_wind(mouth, params);
+    }
+    tube.reset();
+
+    let output = (0..512)
+        .map(|_| tube.process_wind(0.0, params))
+        .collect::<Vec<_>>();
+
+    assert_all_finite(&output);
+    assert!(audio_window_metrics(&output, sample_rate).peak_abs < 0.000_001);
+}
+
+#[test]
+fn bore_model_derived_once_for_constant_params() {
+    let mut tube = ReedTube::new(48_000.0);
+    let params = ReedTubeParams {
+        frequency_hz: 196.0,
+        loop_filter_cutoff_hz: 7_500.0,
+        loop_filter_resonance: 0.15,
+        loop_gain: 0.95,
+        loop_nonlinearity: 0.05,
+        pickup_position: 0.72,
+        boundary_reflection: -0.82,
+        ..ReedTubeParams::default()
+    };
+
+    for index in 0..2_048 {
+        tube.process_wind((index == 0) as u8 as f32 * 0.3, params);
+    }
+
+    assert_eq!(
+        tube.recompute_count, 1,
+        "bore operators recomputed per sample"
+    );
+}
+
+#[test]
+fn bore_model_recomputes_when_params_move() {
+    let mut tube = ReedTube::new(48_000.0);
+    let base = ReedTubeParams {
+        frequency_hz: 196.0,
+        loop_filter_cutoff_hz: 7_500.0,
+        loop_gain: 0.95,
+        boundary_reflection: -0.82,
+        ..ReedTubeParams::default()
+    };
+    let moved = ReedTubeParams {
+        boundary_reflection: -0.5,
+        ..base
+    };
+
+    for _ in 0..16 {
+        tube.process_wind(0.0, base);
+    }
+    let settled = tube.recompute_count;
+    for _ in 0..8_000 {
+        tube.process_wind(0.0, moved);
+    }
+
+    assert_eq!(settled, 1, "constant base params should derive once");
+    assert!(
+        tube.recompute_count > settled,
+        "moving params should invalidate the cache"
+    );
+}
+
+#[test]
+fn bell_radiation_does_not_depend_on_effort() {
+    let ratio_at = |effort: f32| {
+        let render = |bell_enabled: bool| {
+            render_reed_tube(
+                48_000.0,
+                ReedTubeParams {
+                    switches: ReedTubeSwitches {
+                        bell_enabled,
+                        ..ReedTubeSwitches::default()
+                    },
+                    ..ReedTubeParams::default()
+                },
+                effort,
+                8_192,
+            )
+        };
+        let on = render(true);
+        let off = render(false);
+        assert_all_finite(&on);
+        peak_abs(&on[2_048..]) / peak_abs(&off[2_048..]).max(1.0e-6)
+    };
+    let soft = ratio_at(0.45);
+    let hard = ratio_at(1.0);
+
+    assert!(
+        (soft / hard).max(hard / soft) < 1.3,
+        "bell contribution is effort-dependent: soft ratio {soft}, hard ratio {hard}"
+    );
+}
+
+#[test]
+fn effort_changes_level_while_preserving_tuning() {
+    let sample_rate = 48_000.0;
+    let params = ReedTubeParams {
+        frequency_hz: 196.0,
+        loop_filter_cutoff_hz: 12_000.0,
+        loop_filter_resonance: 0.1,
+        loop_gain: 0.985,
+        ..ReedTubeParams::default()
+    };
+    let quiet = render_reed_tube(sample_rate, params, 0.35, 24_000);
+    let loud = render_reed_tube(sample_rate, params, 1.0, 24_000);
+    let quiet_window = &quiet[12_000..20_000];
+    let loud_window = &loud[12_000..20_000];
+
+    assert_all_finite(&quiet);
+    assert_all_finite(&loud);
+    assert!(
+        rms(loud_window) > rms(quiet_window) * 1.05,
+        "quiet_rms={} loud_rms={}",
+        rms(quiet_window),
+        rms(loud_window)
+    );
+
+    let estimate =
+        |samples: &[f32]| estimate_f0_autocorrelation_refined(samples, sample_rate, 100.0, 260.0);
+    if let (Some(quiet_f0), Some(loud_f0)) = (estimate(quiet_window), estimate(loud_window)) {
+        assert!(
+            cents_between(quiet_f0, loud_f0).abs() < 40.0,
+            "quiet_f0={quiet_f0} loud_f0={loud_f0}"
+        );
+    }
+}
+
+#[test]
+fn model_switches_do_not_make_output_non_finite() {
+    let output = render_reed_tube(
+        48_000.0,
+        ReedTubeParams {
+            switches: ReedTubeSwitches {
+                bell_enabled: false,
+                bore_steepening_enabled: false,
+                body_enabled: false,
+                ..ReedTubeSwitches::default()
+            },
+            ..ReedTubeParams::default()
+        },
+        0.7,
+        512,
+    );
+
+    assert_all_finite(&output);
+}
+
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn tube_stays_finite_bounded_and_audible_across_register() {
+    for note in [36_u8, 48, 60, 72, 84] {
+        let frequency_hz = midi_note_to_hz(note as f32);
+        let output = render_reed_tube(
+            48_000.0,
+            ReedTubeParams {
+                frequency_hz,
+                ..ReedTubeParams::default()
+            },
+            0.85,
+            28_800,
+        );
+        assert_all_finite(&output);
+        assert!(
+            peak_abs(&output) < 8.0,
+            "note {note} peak={}",
+            peak_abs(&output)
+        );
+        let sustain_dbfs = 20.0 * rms(&output[14_400..]).max(1.0e-9).log10();
+        assert!(
+            sustain_dbfs > -45.0,
+            "note {note} sustain {sustain_dbfs:.1} dBFS"
+        );
+    }
+}
+
+#[cfg_attr(
+    not(feature = "integration-tests"),
+    ignore = "see make test-integration"
+)]
+#[test]
+fn steepening_stays_finite_and_bounded_under_extreme_drive() {
+    for &(frequency_hz, cutoff, boundary_reflection) in &[
+        (55.0, 3_000.0, -0.9),
+        (196.0, 12_000.0, -0.8),
+        (660.0, 8_000.0, -0.6),
+    ] {
+        let params = ReedTubeParams {
+            frequency_hz,
+            loop_filter_cutoff_hz: cutoff,
+            loop_filter_resonance: 0.3,
+            loop_gain: 0.985,
+            loop_nonlinearity: 0.4,
+            boundary_reflection,
+            ..ReedTubeParams::default()
+        };
+        let mut reed = ReedDriver::new(ReedParams::default(), 48_000.0);
+        let mut tube = ReedTube::new(48_000.0);
+        let output = (0..24_000)
+            .map(|index| {
+                let drive = match index % 7 {
+                    0 => 1_000.0,
+                    1 => f32::NAN,
+                    2 => f32::INFINITY,
+                    3 => -5.0,
+                    _ => (index as f32 * 0.013).sin() * 50.0,
+                };
+                tube.set_brightness_effort(drive);
+                let phase = std::f32::consts::TAU * frequency_hz * index as f32 / 48_000.0;
+                let excitation = 0.4 * phase.sin();
+                let mouth = reed.process(excitation, 0.9, tube.driven_feedback(), 1.0);
+                tube.process_wind(mouth, params)
+            })
+            .collect::<Vec<_>>();
+
+        assert_all_finite(&output);
+        assert!(
+            audio_window_metrics(&output, 48_000.0).peak_abs < 8.0,
+            "frequency_hz={frequency_hz} peak too high"
+        );
+    }
+}
+
+#[test]
+fn driven_onsets_are_continuous_against_held_reference() {
+    let held = render_reed_tube(
+        48_000.0,
+        ReedTubeParams {
+            frequency_hz: 440.0,
+            ..ReedTubeParams::default()
+        },
+        0.8,
+        24_000,
+    );
+    let mut reed = ReedDriver::new(ReedParams::default(), 48_000.0);
+    let mut tube = ReedTube::new(48_000.0);
+    let output = (0..24_000)
+        .map(|index| {
+            let note = if index < 12_000 { 220.0 } else { 440.0 };
+            let excitation = if index == 0 || index == 12_000 {
+                0.4
+            } else {
+                0.0
+            };
+            tube.set_brightness_effort(0.8);
+            let mouth = reed.process(excitation, 0.8, tube.driven_feedback(), 1.0);
+            tube.process_wind(
+                mouth,
+                ReedTubeParams {
+                    frequency_hz: note,
+                    ..ReedTubeParams::default()
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        max_adjacent_delta(&output) <= max_adjacent_delta(&held) * 2.4,
+        "retuned tube onset has a step-like discontinuity"
+    );
+}
+
+fn render_reed_tube(
+    sample_rate: f32,
+    params: ReedTubeParams,
+    effort: f32,
+    sample_count: usize,
+) -> Vec<f32> {
+    let mut reed = ReedDriver::new(ReedParams::default(), sample_rate);
+    let mut tube = ReedTube::new(sample_rate);
+    (0..sample_count)
+        .map(|index| {
+            let excitation = if index == 0 { 0.4 } else { 0.0 };
+            tube.set_brightness_effort(effort);
+            let mouth = reed.process(excitation, effort, tube.driven_feedback(), 1.0);
+            tube.process_wind(mouth, params)
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn harmonic_richness(samples: &[f32], sample_rate: f32, f0: f32) -> f32 {
+    let h1 = dft_magnitude_at(samples, sample_rate, f0).max(1.0e-9);
+    [3.0_f32, 5.0, 7.0, 9.0, 11.0]
+        .iter()
+        .map(|partial| dft_magnitude_at(samples, sample_rate, f0 * *partial))
+        .sum::<f32>()
+        / h1
+}

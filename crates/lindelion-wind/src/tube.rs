@@ -132,6 +132,8 @@ pub struct ReedTube {
     steepening_allpass: FirstOrderAllpass,
     radiation_highpass: Biquad,
     mouth_incident: f32,
+    #[cfg(test)]
+    recompute_count: u32,
 }
 
 impl ReedTube {
@@ -160,6 +162,8 @@ impl ReedTube {
                 DEFAULT_BIQUAD_Q,
             )),
             mouth_incident: 0.0,
+            #[cfg(test)]
+            recompute_count: 0,
         }
     }
 
@@ -272,6 +276,10 @@ impl ReedTube {
             one_way_delay,
         };
         self.prepared = Some((cache_key, prepared));
+        #[cfg(test)]
+        {
+            self.recompute_count += 1;
+        }
         prepared
     }
 
@@ -412,97 +420,4 @@ fn unit(value: f32, fallback: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ReedDriver, ReedParams};
-    use lindelion_dsp_utils::analysis::{assert_all_finite, peak_abs, rms};
-
-    #[test]
-    fn reed_driven_tube_renders_finite_audible_audio() {
-        let mut reed = ReedDriver::new(ReedParams::default(), 48_000.0);
-        let mut tube = ReedTube::new(48_000.0);
-        let params = ReedTubeParams {
-            frequency_hz: 220.0,
-            ..ReedTubeParams::default()
-        };
-        let mut output = Vec::with_capacity(4096);
-
-        for index in 0..4096 {
-            let excitation = if index == 0 { 0.4 } else { 0.0 };
-            tube.set_brightness_effort(0.8);
-            let mouth = reed.process(excitation, 0.8, tube.driven_feedback(), 1.0);
-            output.push(tube.process_wind(mouth, params));
-        }
-
-        assert_all_finite(&output);
-        assert!(peak_abs(&output) > 0.001);
-        assert!(rms(&output[1024..]) > 0.000_01);
-    }
-
-    #[test]
-    fn bell_radiation_does_not_depend_on_effort() {
-        // Energy-conservation invariant for the redesigned bell: it radiates the bell-incident
-        // wave NOT reflected back into the bore (`incident + reflected`, bounded by the incident —
-        // no gain > 1, no double-count), shaped by a fixed far-field HF filter. A real bell's
-        // radiation *efficiency* is fixed; what rises with blowing is the harmonic content the
-        // reed generates, which then radiates through this fixed bell. So the bell's relative
-        // contribution must be (near) **effort-independent** — unlike the old tap, which gated the
-        // whole radiation by `effort²` (silent-ish soft, ballooning loud → the square at ff). Guard
-        // that the bell-on / bell-off level ratio is similar at soft and hard effort.
-        let ratio_at = |effort: f32| {
-            let render = |bell_enabled: bool| {
-                let mut reed = ReedDriver::new(ReedParams::default(), 48_000.0);
-                let mut tube = ReedTube::new(48_000.0);
-                let params = ReedTubeParams {
-                    frequency_hz: 220.0,
-                    switches: ReedTubeSwitches {
-                        bell_enabled,
-                        ..ReedTubeSwitches::default()
-                    },
-                    ..ReedTubeParams::default()
-                };
-                let mut out = Vec::with_capacity(8192);
-                for index in 0..8192 {
-                    let excitation = if index == 0 { 0.4 } else { 0.0 };
-                    tube.set_brightness_effort(effort);
-                    let mouth = reed.process(excitation, effort, tube.driven_feedback(), 1.0);
-                    out.push(tube.process_wind(mouth, params));
-                }
-                out
-            };
-            let on = render(true);
-            let off = render(false);
-            assert_all_finite(&on);
-            peak_abs(&on[2048..]) / peak_abs(&off[2048..]).max(1.0e-6)
-        };
-        let soft = ratio_at(0.45);
-        let hard = ratio_at(1.0);
-        // The old effort²-gated tap made this ratio swing wildly with effort; the fixed-efficiency
-        // bell keeps it stable (within ~30%).
-        assert!(
-            (soft / hard).max(hard / soft) < 1.3,
-            "bell contribution is effort-dependent (soft ratio {soft}, hard ratio {hard}) — should be fixed-efficiency"
-        );
-    }
-
-    #[test]
-    fn model_switches_do_not_make_output_non_finite() {
-        let mut reed = ReedDriver::new(ReedParams::default(), 48_000.0);
-        let mut tube = ReedTube::new(48_000.0);
-        let params = ReedTubeParams {
-            switches: ReedTubeSwitches {
-                bell_enabled: false,
-                bore_steepening_enabled: false,
-                body_enabled: false,
-                ..ReedTubeSwitches::default()
-            },
-            ..ReedTubeParams::default()
-        };
-
-        for index in 0..512 {
-            let excitation = if index == 0 { 0.3 } else { 0.0 };
-            let mouth = reed.process(excitation, 0.7, tube.driven_feedback(), 1.0);
-            assert!(tube.process_wind(mouth, params).is_finite());
-        }
-    }
-}
+mod tests;

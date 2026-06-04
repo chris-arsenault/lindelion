@@ -100,6 +100,12 @@ compress-review-audio:
 # default `make ci` unit run; run them here on their own.
 test-integration:
 	cargo test -p lamath --features integration-tests
+	cargo test -p lindelion-idiophone --features integration-tests
+	cargo test -p lindelion-wind --features integration-tests
+	cargo test -p lindelion-string --features integration-tests
+	cargo test -p lamath-cymbal --features integration-tests
+	cargo test -p lamath-tube --features integration-tests
+	cargo test -p lamath-stringed --features integration-tests
 	cargo test -p linnod --features integration-tests
 	cargo test -p glirdir --features integration-tests
 	cargo test -p cenedril --features integration-tests

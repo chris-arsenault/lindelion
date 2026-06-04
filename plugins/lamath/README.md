@@ -10,7 +10,7 @@ Lamath is Lindelion's dual modal resonator VST3 instrument. It combines sample-s
 - Optional sidechain audio can create and release notes, or run alongside MIDI in a mixed MIDI/audio mode.
 - Sidechain audio can drive expression and live excitation. Expression uses shared `lindelion-audio-expression` analysis; Lamath owns voice allocation, MIDI/audio ownership policy, sidechain bus policy, and continuous/note-latched excitation routing.
 - Live excitation is patch-configurable as `Off`, `Continuous`, `NoteLatched`, or `ContinuousAndNoteLatched`.
-- The offline review render catalog produces deterministic WAVs, compressed MP3 previews, and a local review UI for per-file/category feedback. See the [spec](../../docs/plugins/lamath.md#12-review-render-catalog) and [development docs](../../docs/development.md#review-audio).
+- The offline Lamath-family review render catalog produces deterministic WAVs for Lamath modal plus the extracted Cymbal, Tube, and Stringed processors, compressed MP3 previews, and a local review UI for per-file/category feedback. See the [spec](../../docs/plugins/lamath.md#12-review-render-catalog) and [development docs](../../docs/development.md#review-audio).
 - The realtime path is covered by no-allocation tests for audio note creation, continuous excitation, note-latched excitation, and mixed MIDI/audio mode.
 
 ## Validation Status
