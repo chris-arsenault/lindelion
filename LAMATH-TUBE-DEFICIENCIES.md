@@ -358,6 +358,21 @@ or a resonant body, and it does not make the bore's own sustained wave lossy. Un
 formant body + energy-conserving bell, brightness generated at the reed source) is still the headline
 tone fix; the inertial reed is one keepable source-side piece of it.
 
+## Audition outcome (2026-06-05) — Humanize is useful but register-dependent
+
+The new `Humanize` knob drives independent steady random walks for reed pressure, embouchure, and
+body/formant voicing. The auditioned low-E result is good: pressure + embouchure variance adds the
+held-note motion that was missing from the reference match, and voicing variance adds the expected
+formant motion. The maximum setting is intentionally beyond normal performance, but it must still keep
+the note speaking; pressure depth above ≈0.40 can cross the reed's oscillation threshold and create
+complete cutouts, so the current max pressure depth is backed down to 0.37 while embouchure remains
+0.35 and voicing remains 2.0.
+
+Open caveat: the effect is **register dependent**. It works well on the low-E reference but is too
+strong on the register-key C# audition. Before treating the knob as finished, Humanize needs
+pitch/register-aware scaling (likely from the tracked note/f0 already available to the Tube processor),
+so the high register gets less pressure/voicing excursion than the low-register sustain.
+
 ## How I'd prioritize (post-audition)
 
 1. **A1 — resonant body / formant-shaped spectrum + bell/bore redesign (headline tone fix).** The

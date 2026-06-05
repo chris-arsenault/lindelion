@@ -2,7 +2,7 @@ use crate::catalog::{
     CATALOG_BLOCK_SIZE, CATALOG_SAMPLE_RATE, CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe,
     MeshStriker, MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth,
     SurroundingRecipe, TubeBellLevel, TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture,
-    TubeReferenceArticulation, TubeReferenceMatchGain,
+    TubeReferenceArticulation, TubeReferenceHumanize, TubeReferenceMatchGain,
 };
 use lindelion_dsp_utils::resampling::WindowedSincResampler;
 use lamath::{ModalConfig, ModalPreset, ResonatorRouting, ResonatorSynth, ResonatorSynthPatch};
@@ -357,10 +357,15 @@ fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             };
             RenderTarget::Tube(patch)
         }
-        PatchRecipe::TubeReferenceMatchPhrase { articulation, gain } => {
+        PatchRecipe::TubeReferenceMatchPhrase {
+            articulation,
+            gain,
+            humanize,
+        } => {
             let patch = TubePatch {
                 reed_aperture_inertia: reed_aperture_inertia(TubeReedAperture::Inertial),
                 body_formant: tube_body_formant_level(TubeBodyFormantLevel::Strong),
+                humanize: tube_reference_humanize_value(humanize),
                 output_gain_db: TubePatch::default().output_gain_db
                     + tube_reference_match_gain_db(gain),
                 selected_articulation: tube_reference_articulation_slot(articulation),
@@ -520,6 +525,14 @@ fn tube_reference_match_gain_db(gain: TubeReferenceMatchGain) -> f32 {
         TubeReferenceMatchGain::LowESustain => 10.1,
         TubeReferenceMatchGain::RegisterKeyHighSustain => 11.6,
         TubeReferenceMatchGain::LowHighArticulation => 8.35,
+    }
+}
+
+fn tube_reference_humanize_value(humanize: TubeReferenceHumanize) -> f32 {
+    match humanize {
+        TubeReferenceHumanize::Off => 0.0,
+        TubeReferenceHumanize::Medium => 0.5,
+        TubeReferenceHumanize::Full => 1.0,
     }
 }
 

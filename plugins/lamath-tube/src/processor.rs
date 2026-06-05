@@ -1,6 +1,10 @@
-use lindelion_dsp_utils::{db_to_gain, math::midi_note_to_hz};
+use lindelion_dsp_utils::{
+    db_to_gain,
+    math::{self, midi_note_to_hz},
+};
 use lindelion_plugin_shell::{MidiEvent, NoteEvent};
 use lindelion_wind::{ReedDriver, ReedParams, ReedTube, ReedTubeParams, ReedTubeSwitches};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::patch::TubePatch;
 
@@ -16,6 +20,20 @@ const MAX_LOOP_GAIN: f32 = 0.995;
 const MIN_BRIGHTNESS_HZ: f32 = 1_200.0;
 const MAX_BRIGHTNESS_HZ: f32 = 14_000.0;
 const BELL_MIX_EXPONENT: f32 = 1.514_573_2;
+const PRESSURE_VARIANCE_TARGET_SECONDS: f32 = 0.37;
+const PRESSURE_VARIANCE_SMOOTH_SECONDS: f32 = 0.26;
+const EMBOUCHURE_VARIANCE_TARGET_SECONDS: f32 = 0.53;
+const EMBOUCHURE_VARIANCE_SMOOTH_SECONDS: f32 = 0.42;
+const VOICING_VARIANCE_TARGET_SECONDS: f32 = 0.71;
+const VOICING_VARIANCE_SMOOTH_SECONDS: f32 = 0.55;
+const HUMANIZE_PRESSURE_DEPTH: f32 = 0.37;
+const HUMANIZE_EMBOUCHURE_DEPTH: f32 = 0.35;
+const HUMANIZE_VOICING_DEPTH: f32 = 2.0;
+const PRESSURE_WALK_TAG: u32 = 0xA511_E9B3;
+const EMBOUCHURE_WALK_TAG: u32 = 0x63D8_35AF;
+const VOICING_WALK_TAG: u32 = 0xD1B5_4A32;
+
+static NEXT_VARIANCE_INSTANCE: AtomicU32 = AtomicU32::new(0x6C8E_9CF5);
 
 const TONGUE: &[f32] = &[
     0.00, 0.46, -0.30, 0.18, -0.12, 0.08, -0.055, 0.038, -0.026, 0.018, -0.012, 0.008, -0.005,
@@ -49,6 +67,63 @@ pub const ARTICULATION_NAMES: [&str; ARTICULATION_SLOT_COUNT] = [
     "Slur",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TubeSteadyVariance {
+    pressure_depth: f32,
+    embouchure_depth: f32,
+    voicing_depth: f32,
+}
+
+impl TubeSteadyVariance {
+    const OFF: Self = Self {
+        pressure_depth: 0.0,
+        embouchure_depth: 0.0,
+        voicing_depth: 0.0,
+    };
+
+    const fn with_voicing(
+        pressure_depth: f32,
+        embouchure_depth: f32,
+        voicing_depth: f32,
+    ) -> Self {
+        Self {
+            pressure_depth,
+            embouchure_depth,
+            voicing_depth,
+        }
+    }
+
+    fn from_humanize(humanize: f32) -> Self {
+        let humanize = math::finite_clamp(humanize, 0.0, 1.0, 0.0);
+        if humanize <= f32::EPSILON {
+            return Self::OFF;
+        }
+        Self::with_voicing(
+            HUMANIZE_PRESSURE_DEPTH * humanize,
+            HUMANIZE_EMBOUCHURE_DEPTH * humanize,
+            HUMANIZE_VOICING_DEPTH * humanize,
+        )
+    }
+
+    fn sanitized(self) -> Self {
+        Self {
+            pressure_depth: self.pressure_depth.clamp(0.0, 0.95),
+            embouchure_depth: self.embouchure_depth.clamp(0.0, 0.45),
+            voicing_depth: self.voicing_depth.clamp(0.0, 2.0),
+        }
+    }
+
+    fn is_active(self) -> bool {
+        self.pressure_depth > 0.0 || self.embouchure_depth > 0.0 || self.voicing_depth > 0.0
+    }
+}
+
+impl Default for TubeSteadyVariance {
+    fn default() -> Self {
+        Self::OFF
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ExcitationSource<'a> {
     samples: &'a [f32],
@@ -80,6 +155,105 @@ struct Injector<'a> {
     position: f32,
     step: f32,
     gain: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SteadyVarianceSource {
+    pressure: SmoothNoise,
+    embouchure: SmoothNoise,
+    voicing: SmoothNoise,
+}
+
+impl SteadyVarianceSource {
+    fn new(sample_rate: f32) -> Self {
+        let sample_rate = sanitize_sample_rate(sample_rate);
+        let instance = NEXT_VARIANCE_INSTANCE.fetch_add(0x9E37_79B9, Ordering::Relaxed);
+        Self {
+            pressure: SmoothNoise::new(
+                sample_rate,
+                PRESSURE_VARIANCE_TARGET_SECONDS,
+                PRESSURE_VARIANCE_SMOOTH_SECONDS,
+                walk_state(instance, PRESSURE_WALK_TAG),
+            ),
+            embouchure: SmoothNoise::new(
+                sample_rate,
+                EMBOUCHURE_VARIANCE_TARGET_SECONDS,
+                EMBOUCHURE_VARIANCE_SMOOTH_SECONDS,
+                walk_state(instance, EMBOUCHURE_WALK_TAG),
+            ),
+            voicing: SmoothNoise::new(
+                sample_rate,
+                VOICING_VARIANCE_TARGET_SECONDS,
+                VOICING_VARIANCE_SMOOTH_SECONDS,
+                walk_state(instance, VOICING_WALK_TAG),
+            ),
+        }
+    }
+
+    fn reset(&mut self, sample_rate: f32) {
+        *self = Self::new(sample_rate);
+    }
+
+    fn process(&mut self, variance: TubeSteadyVariance) -> (f32, f32, f32) {
+        if variance.is_active() {
+            (
+                self.pressure.process() * variance.pressure_depth,
+                self.embouchure.process() * variance.embouchure_depth,
+                self.voicing.process() * variance.voicing_depth,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SmoothNoise {
+    state: u32,
+    value: f32,
+    target: f32,
+    coeff: f32,
+    target_samples: usize,
+    samples_until_target: usize,
+}
+
+impl SmoothNoise {
+    fn new(sample_rate: f32, target_seconds: f32, smooth_seconds: f32, seed: u32) -> Self {
+        let sample_rate = sanitize_sample_rate(sample_rate);
+        let target_samples = ((target_seconds.max(0.001) * sample_rate).round() as usize).max(1);
+        let coeff = 1.0 - (-1.0 / (smooth_seconds.max(0.001) * sample_rate)).exp();
+        let mut noise = Self {
+            state: seed,
+            value: 0.0,
+            target: 0.0,
+            coeff,
+            target_samples,
+            samples_until_target: target_samples,
+        };
+        let initial = noise.next_noise();
+        noise.value = initial;
+        noise.target = initial;
+        noise
+    }
+
+    fn process(&mut self) -> f32 {
+        if self.samples_until_target == 0 {
+            self.target = self.next_noise();
+            self.samples_until_target = self.target_samples;
+        }
+        self.samples_until_target = self.samples_until_target.saturating_sub(1);
+        self.value += (self.target - self.value) * self.coeff;
+        self.value
+    }
+
+    fn next_noise(&mut self) -> f32 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.state = x;
+        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
 }
 
 impl Default for Injector<'_> {
@@ -140,6 +314,7 @@ pub struct TubeProcessor<'a> {
     drive_gate: f32,
     drive_target: f32,
     gate_coeff: f32,
+    steady_variance_source: SteadyVarianceSource,
 }
 
 impl<'a> TubeProcessor<'a> {
@@ -167,6 +342,7 @@ impl<'a> TubeProcessor<'a> {
             drive_gate: 0.0,
             drive_target: 0.0,
             gate_coeff: gate_coeff(model_sample_rate),
+            steady_variance_source: SteadyVarianceSource::new(model_sample_rate),
         }
     }
 
@@ -183,6 +359,7 @@ impl<'a> TubeProcessor<'a> {
         self.drive_gate = 0.0;
         self.drive_target = 0.0;
         self.gate_coeff = gate_coeff(self.model_sample_rate);
+        self.steady_variance_source.reset(self.model_sample_rate);
     }
 
     pub fn set_patch(&mut self, patch: TubePatch) {
@@ -259,7 +436,12 @@ impl<'a> TubeProcessor<'a> {
         self.drive_gate += (self.drive_target - self.drive_gate) * self.gate_coeff;
         let excitation = self.injector.process();
         self.tube.set_brightness_effort(self.effort);
-        let mut params = tube_params(&self.patch, self.frequency_hz);
+        let variance = TubeSteadyVariance::from_humanize(self.patch.humanize).sanitized();
+        let (pressure_mod, embouchure_mod, voicing_mod) =
+            self.steady_variance_source.process(variance);
+        let mut params = tube_params_with_mod(&self.patch, self.frequency_hz, voicing_mod);
+        self.reed
+            .set_params(reed_params_with_mod(&self.patch, pressure_mod, embouchure_mod));
         params.reed_phase_delay_samples = self
             .reed
             .aperture_phase_delay_samples(self.frequency_hz, self.effort);
@@ -271,7 +453,11 @@ impl<'a> TubeProcessor<'a> {
     }
 }
 
-fn tube_params(patch: &TubePatch, frequency_hz: f32) -> ReedTubeParams {
+fn tube_params_with_mod(
+    patch: &TubePatch,
+    frequency_hz: f32,
+    body_formant_shift: f32,
+) -> ReedTubeParams {
     ReedTubeParams {
         frequency_hz,
         loop_filter_cutoff_hz: brightness_hz(patch.brightness),
@@ -283,6 +469,7 @@ fn tube_params(patch: &TubePatch, frequency_hz: f32) -> ReedTubeParams {
         bell_radiation: bell_radiation_from_mix(patch.bell),
         bell_radiation_shape: patch.bell_radiation_shape,
         body_formant: patch.body_formant,
+        body_formant_shift: math::finite_clamp(body_formant_shift, -2.0, 2.0, 0.0),
         reed_phase_delay_samples: 0.0,
         switches: ReedTubeSwitches {
             reed_enabled: true,
@@ -294,10 +481,24 @@ fn tube_params(patch: &TubePatch, frequency_hz: f32) -> ReedTubeParams {
 }
 
 fn reed_params(patch: &TubePatch) -> ReedParams {
+    reed_params_with_mod(patch, 0.0, 0.0)
+}
+
+fn reed_params_with_mod(patch: &TubePatch, pressure_mod: f32, embouchure_mod: f32) -> ReedParams {
     ReedParams {
-        pressure_depth: patch.pressure,
+        pressure_depth: math::finite_clamp(
+            patch.pressure * (1.0 + pressure_mod),
+            0.0,
+            1.0,
+            patch.pressure,
+        ),
         stiffness: patch.reed_stiffness,
-        embouchure: patch.embouchure,
+        embouchure: math::finite_clamp(
+            patch.embouchure + embouchure_mod,
+            0.0,
+            1.0,
+            patch.embouchure,
+        ),
         aperture_inertia: patch.reed_aperture_inertia,
     }
 }
@@ -352,6 +553,15 @@ fn soft_limit(sample: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+fn walk_state(instance: u32, tag: u32) -> u32 {
+    let mut x = instance ^ tag;
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7FEB_352D);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846C_A68B);
+    x ^ (x >> 16)
 }
 
 #[cfg(test)]

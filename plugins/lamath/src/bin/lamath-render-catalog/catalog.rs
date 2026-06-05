@@ -83,6 +83,7 @@ pub(crate) enum PatchRecipe {
     TubeReferenceMatchPhrase {
         articulation: TubeReferenceArticulation,
         gain: TubeReferenceMatchGain,
+        humanize: TubeReferenceHumanize,
     },
     /// Struck Mesh playing a multi-note phrase, exposing the same articulation knobs the schedule
     /// can't express: `polyphony` (1 = single voice-stealing body; >1 = independent struck voices
@@ -172,6 +173,13 @@ pub(crate) enum TubeReferenceMatchGain {
     LowESustain,
     RegisterKeyHighSustain,
     LowHighArticulation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeReferenceHumanize {
+    Off,
+    Medium,
+    Full,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

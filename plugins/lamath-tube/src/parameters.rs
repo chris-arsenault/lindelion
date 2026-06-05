@@ -9,6 +9,7 @@ pub const BRIGHTNESS_ID: u32 = 4;
 pub const DAMPING_ID: u32 = 5;
 pub const BELL_ID: u32 = 6;
 pub const OUTPUT_GAIN_ID: u32 = 7;
+pub const HUMANIZE_ID: u32 = 8;
 
 pub const PARAMETERS: &[ParameterInfo] = &[
     ParameterInfo::continuous(
@@ -28,6 +29,12 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         "Embouchure",
         "",
         ParameterRange::linear(0.0, 1.0, 0.52),
+    ),
+    ParameterInfo::continuous(
+        HUMANIZE_ID,
+        "Humanize",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.0),
     ),
     ParameterInfo::continuous(
         BRIGHTNESS_ID,
@@ -77,6 +84,7 @@ pub fn plain_value(patch: &TubePatch, id: u32) -> Option<f32> {
         PRESSURE_ID => Some(patch.pressure),
         REED_STIFFNESS_ID => Some(patch.reed_stiffness),
         EMBOUCHURE_ID => Some(patch.embouchure),
+        HUMANIZE_ID => Some(patch.humanize),
         BRIGHTNESS_ID => Some(patch.brightness),
         DAMPING_ID => Some(patch.damping),
         BELL_ID => Some(patch.bell),
@@ -98,6 +106,7 @@ pub fn apply_plain(patch: &mut TubePatch, id: u32, plain: f32) -> bool {
         PRESSURE_ID => patch.pressure = unit(plain),
         REED_STIFFNESS_ID => patch.reed_stiffness = unit(plain),
         EMBOUCHURE_ID => patch.embouchure = unit(plain),
+        HUMANIZE_ID => patch.humanize = unit(plain),
         BRIGHTNESS_ID => patch.brightness = unit(plain),
         DAMPING_ID => patch.damping = unit(plain),
         BELL_ID => patch.bell = unit(plain),

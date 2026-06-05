@@ -11,6 +11,7 @@ pub struct TubePatch {
     pub embouchure: f32,
     pub reed_aperture_inertia: f32,
     pub body_formant: f32,
+    pub humanize: f32,
     pub brightness: f32,
     pub damping: f32,
     pub bell: f32,
@@ -29,6 +30,7 @@ impl Default for TubePatch {
             embouchure: 0.52,
             reed_aperture_inertia: 1.0,
             body_formant: 1.0,
+            humanize: 0.0,
             brightness: 0.52,
             damping: 0.28,
             bell: 0.5,
@@ -50,6 +52,7 @@ impl TubePatch {
         self.reed_aperture_inertia =
             unit(self.reed_aperture_inertia, fallback.reed_aperture_inertia);
         self.body_formant = unit(self.body_formant, fallback.body_formant);
+        self.humanize = unit(self.humanize, fallback.humanize);
         self.brightness = unit(self.brightness, fallback.brightness);
         self.damping = unit(self.damping, fallback.damping);
         self.bell = unit(self.bell, fallback.bell);

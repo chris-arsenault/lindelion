@@ -2,7 +2,7 @@
 
 **Name:** Lamath Tube
 **Target:** VST3 instrument bundle on the Lamath-family build paths; Linux validates the library and DSP tests.
-**Status:** Extracted reed-driven tube product with eight articulation slots, seven host parameters, model-switch UI scaffolding, and a sparse Vizia editor.
+**Status:** Extracted reed-driven tube product with eight articulation slots, eight host parameters, model-switch UI scaffolding, and a sparse Vizia editor.
 
 ---
 
@@ -10,7 +10,7 @@
 
 Lamath Tube is the focused extraction of Lamath's reed-driven wind tube model. It keeps the validated reed/tube DSP and discards the original Lamath machinery around dual resonators, waveguide selection, modulation, streamed excitation, and sidechain input.
 
-The reusable physical model lives in `lindelion-wind` as `ReedDriver` plus `ReedTube`. The product crate owns patch serialization, the seven-parameter host surface, MIDI/key-switch policy, articulation-slot state, VST3 entry points, and editor plumbing.
+The reusable physical model lives in `lindelion-wind` as `ReedDriver` plus `ReedTube`. The product crate owns patch serialization, the eight-parameter host surface, MIDI/key-switch policy, articulation-slot state, VST3 entry points, and editor plumbing.
 
 Non-goals in this product:
 
@@ -45,13 +45,14 @@ The tube is monophonic. A note-on sets the current pitch, opens the breath gate,
 
 ## 3. Patch And Parameters
 
-The patch stores seven sound controls, three applied model switches, a selected articulation, and eight articulation slots:
+The patch stores eight sound controls, three applied model switches, a selected articulation, and eight articulation slots:
 
 | Host parameter | Patch field | Range | Default |
 | ---- | ---- | ---- | ---- |
 | `Pressure` | `pressure` | `0..1` | `0.58` |
 | `Reed` | `reed_stiffness` | `0..1` | `0.48` |
 | `Embouchure` | `embouchure` | `0..1` | `0.52` |
+| `Humanize` | `humanize` | `0..1` | `0.0` |
 | `Brightness` | `brightness` | `0..1` | `0.52` |
 | `Damping` | `damping` | `0..1` | `0.28` |
 | `Bell` | `bell` | `0..1` | `1.0` |
@@ -64,6 +65,8 @@ The model-switch patch fields are:
 - `body_enabled`.
 
 The editor also shows a `Reed` switch as physical-model scaffolding, but the current DSP keeps the reed enabled because this product is specifically a reed-driven tube.
+
+`Humanize` drives independent steady-state random walks for reed pressure, embouchure, and vocal-tract/body-formant voicing. `0.0` disables variance; `1.0` reaches an intentionally unmusical boundary for auditioning.
 
 ---
 
@@ -93,7 +96,7 @@ MIDI notes C-2 + n select slot n and do not trigger a played note. Other note-on
 The Vizia editor is deliberately sparse:
 
 - an instrument-style tube layout;
-- seven knobs for the complete host parameter surface;
+- eight knobs for the complete host parameter surface;
 - model switches for reed, bell, bore steepening, and body;
 - eight articulation slots with shared drag-and-drop/file-browser assignment.
 

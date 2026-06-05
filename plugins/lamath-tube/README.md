@@ -7,7 +7,7 @@ Lamath Tube is the extracted Lamath-family VST3 instrument for the reed-driven w
 - One monophonic reed-driven tube voice.
 - Eight articulation slots with built-in fallbacks and shared drag-and-drop/file-browser loading.
 - C-2 + n key switches select articulation slot n without triggering a played note.
-- Seven host parameters: pressure, reed, embouchure, brightness, damping, bell, and output.
+- Eight host parameters: pressure, reed, embouchure, humanize, brightness, damping, bell, and output.
 - Model-switch UI for reed, bell, bore steepening, and body; the reed remains enabled in the current DSP.
 - No dual resonators, sidechain, streamed excitation, modulation, or family selector.
 

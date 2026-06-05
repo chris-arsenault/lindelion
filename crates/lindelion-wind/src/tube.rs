@@ -67,6 +67,7 @@ pub struct ReedTubeParams {
     pub bell_radiation: f32,
     pub bell_radiation_shape: f32,
     pub body_formant: f32,
+    pub body_formant_shift: f32,
     /// Phase delay (samples) the inertial reed aperture adds to the feedback loop at the
     /// playing frequency, supplied by the driving [`crate::ReedDriver`]. Folded into the
     /// bore-length tuning so the reed's loop phase is compensated like the mouth-loss and
@@ -88,6 +89,7 @@ impl Default for ReedTubeParams {
             bell_radiation: 1.0,
             bell_radiation_shape: 0.0,
             body_formant: 0.0,
+            body_formant_shift: 0.0,
             reed_phase_delay_samples: 0.0,
             switches: ReedTubeSwitches::default(),
         }
@@ -131,6 +133,12 @@ impl ReedTubeParams {
                 fallback.bell_radiation_shape,
             ),
             body_formant: unit(self.body_formant, fallback.body_formant),
+            body_formant_shift: math::finite_clamp(
+                self.body_formant_shift,
+                -2.0,
+                2.0,
+                fallback.body_formant_shift,
+            ),
             reed_phase_delay_samples: math::finite_clamp(
                 self.reed_phase_delay_samples,
                 0.0,
@@ -294,6 +302,8 @@ impl ReedTube {
         let cache_key = ReedTubeParams {
             bell_radiation: 1.0,
             bell_radiation_shape: 0.0,
+            body_formant: 0.0,
+            body_formant_shift: 0.0,
             switches: ReedTubeSwitches::default(),
             ..params
         };

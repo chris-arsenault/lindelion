@@ -10,6 +10,7 @@ const TUBE_CLARINET_RING_HZ: f32 = 1_180.0;
 const TUBE_CLARINET_RING_PARTIAL: f32 = 3.0;
 const TUBE_CLARINET_RING_MIN_HZ: f32 = 760.0;
 const TUBE_CLARINET_RING_MAX_HZ: f32 = 1_650.0;
+const TUBE_VOICING_SHIFT_OCTAVES: f32 = 0.55;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TubeBody {
@@ -107,7 +108,17 @@ impl BodyProfile {
             TUBE_CLARINET_RING_HZ,
         );
         let ring_hz = lerp(TUBE_CLARINET_RING_HZ, tracked_ring, formant);
-        let ring_q = lerp(2.4, 5.2, formant);
+        let voicing = math::finite_clamp(params.body_formant_shift, -2.0, 2.0, 0.0);
+        let ring_hz = math::finite_clamp(
+            ring_hz * 2.0_f32.powf(voicing * TUBE_VOICING_SHIFT_OCTAVES),
+            260.0,
+            sample_rate * 0.45,
+            ring_hz,
+        );
+        let ring_q =
+            lerp(2.4, 5.2, formant) * math::finite_clamp(1.0 + 0.20 * voicing, 0.35, 1.80, 1.0);
+        let high_gain = lerp(0.34, 4.20, formant)
+            * math::finite_clamp(1.0 + 0.50 * voicing, 0.10, 2.60, 1.0);
 
         Self {
             highpass: BiquadCoefficients::highpass(sample_rate, 45.0, DEFAULT_BIQUAD_Q),
@@ -116,7 +127,7 @@ impl BodyProfile {
             high_resonance: BiquadCoefficients::bandpass(sample_rate, ring_hz, ring_q),
             direct_gain: lerp(0.62, 0.08, formant),
             low_resonance_gain: lerp(0.14, 0.20, formant),
-            high_resonance_gain: lerp(0.34, 4.20, formant),
+            high_resonance_gain: high_gain,
             output_gain: TUBE_BOUNDARY.output_gain(params.boundary_reflection),
         }
     }
