@@ -25,6 +25,16 @@ const REED_PHASE_ONE_WAY_FACTOR: f32 = 0.5;
 const WARM_BORE_DELAY_EXTRA_SAMPLES: f32 = 1.7;
 const WARM_BORE_DELAY_FULL_CUTOFF_HZ: f32 = 1_300.0;
 const WARM_BORE_DELAY_CLEAR_CUTOFF_HZ: f32 = 3_000.0;
+const CLARINET_CONTOUR_Q: f32 = 10.0;
+const CLARINET_CONTOUR_H2_DB: f32 = -18.0;
+const CLARINET_CONTOUR_H3_DB: f32 = -6.0;
+const CLARINET_CONTOUR_H4_DB: f32 = -16.0;
+const CLARINET_CONTOUR_H5_DB: f32 = -18.0;
+const CLARINET_CONTOUR_H6_DB: f32 = -10.0;
+const CLARINET_CONTOUR_H7_DB: f32 = -12.0;
+const CLARINET_CONTOUR_UPPER_HZ: f32 = 3_100.0;
+const CLARINET_CONTOUR_UPPER_Q: f32 = 1.15;
+const CLARINET_CONTOUR_UPPER_DB: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReedTubeSwitches {
@@ -158,6 +168,13 @@ pub struct ReedTube {
     steepening_allpass: FirstOrderAllpass,
     radiation_highpass: Biquad,
     gentle_radiation_lowpass: OnePoleLowpass,
+    contour_h2: Biquad,
+    contour_h3: Biquad,
+    contour_h4: Biquad,
+    contour_h5: Biquad,
+    contour_h6: Biquad,
+    contour_h7: Biquad,
+    contour_upper: Biquad,
     mouth_incident: f32,
     #[cfg(test)]
     recompute_count: u32,
@@ -192,6 +209,13 @@ impl ReedTube {
                 GENTLE_RADIATION_CUTOFF_HZ,
                 sample_rate,
             ),
+            contour_h2: Biquad::new(BiquadCoefficients::identity()),
+            contour_h3: Biquad::new(BiquadCoefficients::identity()),
+            contour_h4: Biquad::new(BiquadCoefficients::identity()),
+            contour_h5: Biquad::new(BiquadCoefficients::identity()),
+            contour_h6: Biquad::new(BiquadCoefficients::identity()),
+            contour_h7: Biquad::new(BiquadCoefficients::identity()),
+            contour_upper: Biquad::new(BiquadCoefficients::identity()),
             mouth_incident: 0.0,
             #[cfg(test)]
             recompute_count: 0,
@@ -221,6 +245,13 @@ impl ReedTube {
         self.steepening_allpass.reset();
         self.radiation_highpass.reset();
         self.gentle_radiation_lowpass.reset();
+        self.contour_h2.reset();
+        self.contour_h3.reset();
+        self.contour_h4.reset();
+        self.contour_h5.reset();
+        self.contour_h6.reset();
+        self.contour_h7.reset();
+        self.contour_upper.reset();
         self.mouth_incident = 0.0;
     }
 
@@ -317,6 +348,7 @@ impl ReedTube {
 
         self.boundary_filters
             .set_coefficients(profile.mouth_loss, damping.coefficients);
+        self.set_clarinet_contour(params.frequency_hz);
 
         let prepared = PreparedTubeModel {
             profile,
@@ -403,7 +435,7 @@ impl ReedTube {
         let radiated = self.radiated_bell_sample(bell_incident + bell_reflected, params)
             * bell_gain;
 
-        math::snap_to_zero(body + radiated)
+        self.clarinet_contour_sample(body + radiated)
     }
 
     fn radiated_bell_sample(&mut self, bell_pressure: f32, params: ReedTubeParams) -> f32 {
@@ -411,6 +443,63 @@ impl ReedTube {
         let gentle = bell_pressure - self.gentle_radiation_lowpass.process(bell_pressure);
         let shape = math::finite_clamp(params.bell_radiation_shape, 0.0, 1.0, 0.0);
         math::snap_to_zero(current + (gentle - current) * shape)
+    }
+
+    fn set_clarinet_contour(&mut self, frequency_hz: f32) {
+        let frequency_hz = math::finite_clamp(frequency_hz, 20.0, self.sample_rate * 0.20, 220.0);
+        self.contour_h2.set_coefficients(harmonic_cut(
+            self.sample_rate,
+            frequency_hz,
+            2.0,
+            CLARINET_CONTOUR_H2_DB,
+        ));
+        self.contour_h3.set_coefficients(harmonic_cut(
+            self.sample_rate,
+            frequency_hz,
+            3.0,
+            CLARINET_CONTOUR_H3_DB,
+        ));
+        self.contour_h4.set_coefficients(harmonic_cut(
+            self.sample_rate,
+            frequency_hz,
+            4.0,
+            CLARINET_CONTOUR_H4_DB,
+        ));
+        self.contour_h5.set_coefficients(harmonic_cut(
+            self.sample_rate,
+            frequency_hz,
+            5.0,
+            CLARINET_CONTOUR_H5_DB,
+        ));
+        self.contour_h6.set_coefficients(harmonic_cut(
+            self.sample_rate,
+            frequency_hz,
+            6.0,
+            CLARINET_CONTOUR_H6_DB,
+        ));
+        self.contour_h7.set_coefficients(harmonic_cut(
+            self.sample_rate,
+            frequency_hz,
+            7.0,
+            CLARINET_CONTOUR_H7_DB,
+        ));
+        self.contour_upper
+            .set_coefficients(BiquadCoefficients::peaking(
+                self.sample_rate,
+                CLARINET_CONTOUR_UPPER_HZ,
+                CLARINET_CONTOUR_UPPER_Q,
+                CLARINET_CONTOUR_UPPER_DB,
+            ));
+    }
+
+    fn clarinet_contour_sample(&mut self, sample: f32) -> f32 {
+        let sample = self.contour_h2.process(sample);
+        let sample = self.contour_h3.process(sample);
+        let sample = self.contour_h4.process(sample);
+        let sample = self.contour_h5.process(sample);
+        let sample = self.contour_h6.process(sample);
+        let sample = self.contour_h7.process(sample);
+        math::snap_to_zero(self.contour_upper.process(sample))
     }
 }
 
@@ -490,6 +579,21 @@ fn delay_offset_samples(
     1.0 + WARM_BORE_DELAY_EXTRA_SAMPLES * warm_bore
         + phase_scale * (mouth_phase_delay + damping_phase_delay)
         + REED_PHASE_ONE_WAY_FACTOR * reed_phase_delay
+}
+
+fn harmonic_cut(
+    sample_rate: f32,
+    frequency_hz: f32,
+    harmonic: f32,
+    gain_db: f32,
+) -> BiquadCoefficients {
+    let cutoff_hz = math::finite_clamp(
+        frequency_hz * harmonic,
+        20.0,
+        sample_rate * 0.45,
+        frequency_hz,
+    );
+    BiquadCoefficients::peaking(sample_rate, cutoff_hz, CLARINET_CONTOUR_Q, gain_db)
 }
 
 fn unit(value: f32, fallback: f32) -> f32 {

@@ -517,7 +517,7 @@ fn tube_reference_articulation_slot(articulation: TubeReferenceArticulation) -> 
 
 fn tube_reference_match_gain_db(gain: TubeReferenceMatchGain) -> f32 {
     match gain {
-        TubeReferenceMatchGain::LowESustain => 4.5,
+        TubeReferenceMatchGain::LowESustain => 10.1,
         TubeReferenceMatchGain::RegisterKeyHighSustain => 11.6,
         TubeReferenceMatchGain::LowHighArticulation => 8.35,
     }
