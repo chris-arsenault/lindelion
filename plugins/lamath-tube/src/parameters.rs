@@ -1,6 +1,6 @@
 use lindelion_plugin_shell::{ParameterId, ParameterInfo, ParameterRange};
 
-use crate::patch::TubePatch;
+use crate::patch::{OUTPUT_GAIN_MAX_DB, OUTPUT_GAIN_MIN_DB, TubePatch};
 
 pub const PRESSURE_ID: u32 = 1;
 pub const REED_STIFFNESS_ID: u32 = 2;
@@ -10,6 +10,7 @@ pub const DAMPING_ID: u32 = 5;
 pub const BELL_ID: u32 = 6;
 pub const OUTPUT_GAIN_ID: u32 = 7;
 pub const HUMANIZE_ID: u32 = 8;
+pub const REGISTER_BREAK_ID: u32 = 9;
 
 pub const PARAMETERS: &[ParameterInfo] = &[
     ParameterInfo::continuous(
@@ -36,6 +37,13 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         "",
         ParameterRange::linear(0.0, 1.0, 0.0),
     ),
+    ParameterInfo::stepped(
+        REGISTER_BREAK_ID,
+        "Register Break",
+        "MIDI",
+        ParameterRange::linear(48.0, 96.0, 69.0),
+        48,
+    ),
     ParameterInfo::continuous(
         BRIGHTNESS_ID,
         "Brightness",
@@ -53,7 +61,7 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         OUTPUT_GAIN_ID,
         "Output",
         "dB",
-        ParameterRange::linear(-24.0, 12.0, -8.0),
+        ParameterRange::linear(OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB, -8.0),
     ),
 ];
 
@@ -85,6 +93,7 @@ pub fn plain_value(patch: &TubePatch, id: u32) -> Option<f32> {
         REED_STIFFNESS_ID => Some(patch.reed_stiffness),
         EMBOUCHURE_ID => Some(patch.embouchure),
         HUMANIZE_ID => Some(patch.humanize),
+        REGISTER_BREAK_ID => Some(patch.register_break_note),
         BRIGHTNESS_ID => Some(patch.brightness),
         DAMPING_ID => Some(patch.damping),
         BELL_ID => Some(patch.bell),
@@ -107,12 +116,19 @@ pub fn apply_plain(patch: &mut TubePatch, id: u32, plain: f32) -> bool {
         REED_STIFFNESS_ID => patch.reed_stiffness = unit(plain),
         EMBOUCHURE_ID => patch.embouchure = unit(plain),
         HUMANIZE_ID => patch.humanize = unit(plain),
+        REGISTER_BREAK_ID => {
+            patch.register_break_note = if plain.is_finite() {
+                plain.clamp(48.0, 96.0).round()
+            } else {
+                69.0
+            }
+        }
         BRIGHTNESS_ID => patch.brightness = unit(plain),
         DAMPING_ID => patch.damping = unit(plain),
         BELL_ID => patch.bell = unit(plain),
         OUTPUT_GAIN_ID => {
             patch.output_gain_db = if plain.is_finite() {
-                plain.clamp(-24.0, 12.0)
+                plain.clamp(OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB)
             } else {
                 -8.0
             }
@@ -139,10 +155,10 @@ pub fn normalized_values_from_patch(patch: &TubePatch) -> [f64; PARAMETER_COUNT]
 }
 
 pub fn format_plain_value(id: u32, plain: f32) -> String {
-    if id == OUTPUT_GAIN_ID {
-        format!("{plain:+.1}")
-    } else {
-        format!("{plain:.2}")
+    match id {
+        OUTPUT_GAIN_ID => format!("{plain:+.1}"),
+        REGISTER_BREAK_ID => format!("{:.0}", plain.round()),
+        _ => format!("{plain:.2}"),
     }
 }
 

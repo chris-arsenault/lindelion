@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -9,12 +9,36 @@ interface ReviewCase {
   wav: string;
   audioPath: string;
   audioUrl: string;
-  audioFormat: "mp3" | "wav";
+  audioFormat: "wav";
   tags: string[];
   durationSeconds: number;
   peakDbfs: number;
   rmsDbfs: number;
   fileBytes: number;
+  createdAt: string | null;
+}
+
+interface AxisOption {
+  value: string;
+  label: string;
+}
+
+interface VariantAxis {
+  id: string;
+  label: string;
+  varying: boolean;
+  options: AxisOption[];
+}
+
+interface Variant {
+  coords: Record<string, string>;
+  case: ReviewCase;
+}
+
+interface VariantFamily {
+  id: string;
+  axes: VariantAxis[];
+  variants: Variant[];
 }
 
 interface ReviewGroup {
@@ -22,21 +46,11 @@ interface ReviewGroup {
   directory: string;
   title: string;
   question: string;
-  cases: ReviewCase[];
-}
-
-interface ReviewCategory {
-  id: string;
-  type: "group" | "tag";
-  value: string;
-  label: string;
-  count: number;
-  caseIds: string[];
+  families: VariantFamily[];
 }
 
 interface CatalogResponse {
   groups: ReviewGroup[];
-  categories: ReviewCategory[];
   commentsPath: string;
 }
 
@@ -46,64 +60,62 @@ interface CommentEntry {
   updatedAt: string;
 }
 
-interface CategoryCommentEntry {
-  categoryId: string;
-  categoryType: "group" | "tag" | "category";
-  categoryValue: string;
-  comment: string;
-  updatedAt: string;
-}
-
 interface CommentsResponse {
   comments: Record<string, CommentEntry>;
-  categoryComments?: Record<string, CategoryCommentEntry>;
 }
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+
+interface CommentController {
+  comments: Record<string, string>;
+  saveState: Record<string, SaveState>;
+  edit: (caseId: string, comment: string) => void;
+  save: (caseId: string) => void;
+}
 
 function App() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
   const [savedComments, setSavedComments] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
-  const [categoryComments, setCategoryComments] = useState<Record<string, string>>({});
-  const [savedCategoryComments, setSavedCategoryComments] = useState<Record<string, string>>({});
-  const [categorySaveState, setCategorySaveState] = useState<Record<string, SaveState>>({});
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [catalogResponse, commentsResponse] = await Promise.all([
+        fetchJson<CatalogResponse>("/api/catalog"),
+        fetchJson<CommentsResponse>("/api/comments")
+      ]);
+      const loadedComments = Object.fromEntries(
+        Object.entries(commentsResponse.comments).map(([caseId, entry]) => [
+          caseId,
+          entry.comment
+        ])
+      );
+      setCatalog(catalogResponse);
+      setActiveGroupId((current) => {
+        if (current && catalogResponse.groups.some((group) => group.id === current)) {
+          return current;
+        }
+        return catalogResponse.groups[0]?.id ?? null;
+      });
+      setComments(loadedComments);
+      setSavedComments(loadedComments);
+      setLoadError(null);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const [catalogResponse, commentsResponse] = await Promise.all([
-          fetchJson<CatalogResponse>("/api/catalog"),
-          fetchJson<CommentsResponse>("/api/comments")
-        ]);
-        const loadedComments = Object.fromEntries(
-          Object.entries(commentsResponse.comments).map(([caseId, entry]) => [
-            caseId,
-            entry.comment
-          ])
-        );
-        const loadedCategoryComments = Object.fromEntries(
-          Object.entries(commentsResponse.categoryComments ?? {}).map(([categoryId, entry]) => [
-            categoryId,
-            entry.comment
-          ])
-        );
-        setCatalog(catalogResponse);
-        setActiveGroupId(catalogResponse.groups[0]?.id ?? null);
-        setComments(loadedComments);
-        setSavedComments(loadedComments);
-        setCategoryComments(loadedCategoryComments);
-        setSavedCategoryComments(loadedCategoryComments);
-      } catch (error) {
-        setLoadError(error instanceof Error ? error.message : String(error));
-      }
-    }
     void load();
-  }, []);
+  }, [load]);
 
   const visibleGroups = useMemo(() => {
     if (!catalog) {
@@ -114,23 +126,13 @@ function App() {
       .filter((group) => !activeGroupId || group.id === activeGroupId)
       .map((group) => ({
         ...group,
-        cases:
+        families:
           needle.length === 0
-            ? group.cases
-            : group.cases.filter((item) => caseMatches(item, needle))
+            ? group.families
+            : group.families.filter((family) => familyMatches(family, needle))
       }))
-      .filter((group) => group.cases.length > 0 || query.trim().length === 0);
+      .filter((group) => group.families.length > 0 || query.trim().length === 0);
   }, [activeGroupId, catalog, query]);
-
-  const visibleCategories = useMemo(() => {
-    if (!catalog) {
-      return [];
-    }
-    const needle = query.trim().toLowerCase();
-    return needle.length === 0
-      ? catalog.categories
-      : catalog.categories.filter((category) => categoryMatches(category, needle));
-  }, [catalog, query]);
 
   if (loadError) {
     return <main className="load-error">{loadError}</main>;
@@ -140,15 +142,20 @@ function App() {
     return <main className="loading">Loading catalog</main>;
   }
 
-  const totalCases = catalog.groups.reduce((sum, group) => sum + group.cases.length, 0);
+  const totalFiles = catalog.groups.reduce(
+    (sum, group) => sum + group.families.reduce((count, family) => count + family.variants.length, 0),
+    0
+  );
   const commentedCount = Object.values(savedComments).filter(
     (comment) => comment.trim().length > 0
   ).length;
-  const categoryCommentedCount = Object.values(savedCategoryComments).filter(
-    (comment) => comment.trim().length > 0
-  ).length;
 
-  async function saveOnBlur(caseId: string) {
+  const edit = (caseId: string, comment: string) => {
+    setComments((state) => ({ ...state, [caseId]: comment }));
+    setSaveState((state) => ({ ...state, [caseId]: "dirty" }));
+  };
+
+  async function save(caseId: string) {
     const next = comments[caseId] ?? "";
     if (next === (savedComments[caseId] ?? "")) {
       setSaveState((state) => ({ ...state, [caseId]: "idle" }));
@@ -168,35 +175,17 @@ function App() {
     }
   }
 
-  async function saveCategoryOnBlur(categoryId: string) {
-    const next = categoryComments[categoryId] ?? "";
-    if (next === (savedCategoryComments[categoryId] ?? "")) {
-      setCategorySaveState((state) => ({ ...state, [categoryId]: "idle" }));
-      return;
-    }
-    setCategorySaveState((state) => ({ ...state, [categoryId]: "saving" }));
-    try {
-      await fetchJson<CategoryCommentEntry>(
-        `/api/category-comments/${encodeURIComponent(categoryId)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ comment: next })
-        }
-      );
-      setSavedCategoryComments((state) => ({ ...state, [categoryId]: next }));
-      setCategorySaveState((state) => ({ ...state, [categoryId]: "saved" }));
-    } catch {
-      setCategorySaveState((state) => ({ ...state, [categoryId]: "error" }));
-    }
-  }
+  const controller: CommentController = { comments, saveState, edit, save };
+
+  const groupFileCount = (group: ReviewGroup) =>
+    group.families.reduce((count, family) => count + family.variants.length, 0);
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="app-title">
           <h1>Lamath Review</h1>
-          <p>{totalCases} files</p>
+          <p>{totalFiles} files</p>
         </div>
         <nav className="group-list" aria-label="Catalog folders">
           {catalog.groups.map((group) => (
@@ -208,7 +197,7 @@ function App() {
             >
               <span className="folder-name">{group.directory}</span>
               <span className="folder-title">{group.title}</span>
-              <span className="folder-count">{group.cases.length}</span>
+              <span className="folder-count">{groupFileCount(group)}</span>
             </button>
           ))}
         </nav>
@@ -218,68 +207,26 @@ function App() {
         <header className="toolbar">
           <div>
             <h2>{catalog.groups.find((group) => group.id === activeGroupId)?.title}</h2>
-            <p>
-              {commentedCount} file comments / {categoryCommentedCount} category comments
-            </p>
+            <p>{commentedCount} file comments</p>
           </div>
-          <input
-            aria-label="Filter cases"
-            className="filter-input"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter"
-            value={query}
-          />
+          <div className="toolbar-controls">
+            <input
+              aria-label="Filter cases"
+              className="filter-input"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter"
+              value={query}
+            />
+            <button
+              className="refresh-button"
+              disabled={refreshing}
+              onClick={() => void load()}
+              type="button"
+            >
+              {refreshing ? "Refreshing" : "Refresh"}
+            </button>
+          </div>
         </header>
-
-        <details className="category-feedback" open>
-          <summary>
-            <span>Category Feedback</span>
-            <span>
-              {visibleCategories.length} shown / {catalog.categories.length} total
-            </span>
-          </summary>
-          {visibleCategories.length === 0 ? (
-            <p className="empty-note">No matching categories</p>
-          ) : (
-            <div className="category-comment-grid">
-              {visibleCategories.map((category) => (
-                <article className="category-comment-row" key={category.id}>
-                  <div className="category-meta">
-                    <div className="category-title-line">
-                      <span className="category-type">{category.type}</span>
-                      <strong>{category.label}</strong>
-                    </div>
-                    <div className="category-detail">
-                      {category.id} / {category.count} files
-                    </div>
-                  </div>
-                  <div className="category-comment-cell">
-                    <textarea
-                      aria-label={`Category comment for ${category.label}`}
-                      onBlur={() => void saveCategoryOnBlur(category.id)}
-                      onChange={(event) => {
-                        const comment = event.target.value;
-                        setCategoryComments((state) => ({
-                          ...state,
-                          [category.id]: comment
-                        }));
-                        setCategorySaveState((state) => ({
-                          ...state,
-                          [category.id]: "dirty"
-                        }));
-                      }}
-                      placeholder="Category comment"
-                      value={categoryComments[category.id] ?? ""}
-                    />
-                    <div className={`save-state ${categorySaveState[category.id] ?? "idle"}`}>
-                      {statusLabel(categorySaveState[category.id])}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </details>
 
         <div className="case-groups">
           {visibleGroups.map((group) => (
@@ -290,45 +237,8 @@ function App() {
                   <p>{group.question}</p>
                 </div>
               </div>
-              {group.cases.map((item) => (
-                <article className="case-row" key={item.id}>
-                  <div className="case-main">
-                    <div className="case-title-line">
-                      <h4>{item.title}</h4>
-                      <span className="format-badge">{item.audioFormat}</span>
-                    </div>
-                    <div className="case-path">{item.audioPath}</div>
-                    <div className="tag-row">
-                      {item.tags.map((tag) => (
-                        <span className="tag" key={tag}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    <audio className="audio-player" controls preload="metadata" src={item.audioUrl} />
-                  </div>
-                  <div className="metrics">
-                    <Metric label="Peak" value={`${item.peakDbfs.toFixed(2)} dBFS`} />
-                    <Metric label="RMS" value={`${item.rmsDbfs.toFixed(2)} dBFS`} />
-                    <Metric label="Time" value={`${item.durationSeconds.toFixed(2)}s`} />
-                  </div>
-                  <div className="comment-cell">
-                    <textarea
-                      aria-label={`Comment for ${item.title}`}
-                      onBlur={() => void saveOnBlur(item.id)}
-                      onChange={(event) => {
-                        const comment = event.target.value;
-                        setComments((state) => ({ ...state, [item.id]: comment }));
-                        setSaveState((state) => ({ ...state, [item.id]: "dirty" }));
-                      }}
-                      placeholder="Comment"
-                      value={comments[item.id] ?? ""}
-                    />
-                    <div className={`save-state ${saveState[item.id] ?? "idle"}`}>
-                      {statusLabel(saveState[item.id])}
-                    </div>
-                  </div>
-                </article>
+              {group.families.map((family) => (
+                <FamilyRow key={family.id} family={family} controller={controller} />
               ))}
             </section>
           ))}
@@ -336,6 +246,144 @@ function App() {
       </main>
     </div>
   );
+}
+
+// One variant family rendered as a single row: a selector per varying axis switches which
+// rendered case the player, metrics, and comment reflect. Constant axes show as fixed context.
+function FamilyRow({
+  family,
+  controller
+}: {
+  family: VariantFamily;
+  controller: CommentController;
+}) {
+  const [coords, setCoords] = useState<Record<string, string>>(
+    () => family.variants[0]?.coords ?? {}
+  );
+  const selected = useMemo(() => resolveVariant(family, coords), [family, coords]);
+  const item = selected.case;
+  const audioSrc = cacheBustedAudioUrl(item);
+  const selectors = family.axes.filter(
+    (axis) => axis.varying && !(axis.id === "variant" && axis.options.length <= 1)
+  );
+  const constants = family.axes.filter(
+    (axis) => !axis.varying && axis.id !== "variant" && (axis.options[0]?.label ?? "") !== ""
+  );
+
+  const pick = (axisId: string, value: string) => {
+    setCoords((current) => snapCoords(family, current, axisId, value));
+  };
+
+  return (
+    <article className="case-row">
+      <div className="case-main">
+        <div className="case-title-line">
+          <h4>{item.title}</h4>
+          <span className="format-badge">{item.audioFormat}</span>
+        </div>
+        <div className="case-path">{item.audioPath}</div>
+        {(selectors.length > 0 || constants.length > 0) && (
+          <div className="axis-bar">
+            {selectors.map((axis) => (
+              <div className="axis-group" key={axis.id}>
+                <span className="axis-label">{axis.label}</span>
+                <div className="axis-options">
+                  {axis.options.map((option) => (
+                    <button
+                      className={
+                        coords[axis.id] === option.value
+                          ? "axis-option active"
+                          : "axis-option"
+                      }
+                      key={option.value}
+                      onClick={() => pick(axis.id, option.value)}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {constants.map((axis) => (
+              <span className="axis-constant" key={axis.id}>
+                {axis.label}: {axis.options[0]?.label}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="tag-row">
+          {item.tags.map((tag) => (
+            <span className="tag" key={tag}>
+              {tag}
+            </span>
+          ))}
+        </div>
+        <audio
+          className="audio-player"
+          controls
+          preload="metadata"
+          src={audioSrc}
+          key={audioSrc}
+        />
+      </div>
+      <div className="metrics">
+        <Metric label="Peak" value={`${item.peakDbfs.toFixed(2)} dBFS`} />
+        <Metric label="RMS" value={`${item.rmsDbfs.toFixed(2)} dBFS`} />
+        <Metric label="Time" value={`${item.durationSeconds.toFixed(2)}s`} />
+        <Metric label="Created" value={formatCreatedAt(item.createdAt)} />
+      </div>
+      <div className="comment-cell">
+        <textarea
+          aria-label={`Comment for ${item.title}`}
+          onBlur={() => void controller.save(item.id)}
+          onChange={(event) => controller.edit(item.id, event.target.value)}
+          placeholder="Comment"
+          value={controller.comments[item.id] ?? ""}
+        />
+        <div className={`save-state ${controller.saveState[item.id] ?? "idle"}`}>
+          {statusLabel(controller.saveState[item.id])}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// The variant whose coordinates exactly match the current selection, falling back to the first
+// variant (selection is always seeded from, and snapped to, a real variant's coordinates).
+function resolveVariant(family: VariantFamily, coords: Record<string, string>): Variant {
+  const exact = family.variants.find((variant) =>
+    Object.entries(coords).every(([axis, value]) => variant.coords[axis] === value)
+  );
+  return exact ?? family.variants[0];
+}
+
+// Move one axis to `value` and land on the existing variant that best preserves the other axes —
+// so sparse grids (not every combination rendered) always resolve to a real, playable case.
+function snapCoords(
+  family: VariantFamily,
+  current: Record<string, string>,
+  axisId: string,
+  value: string
+): Record<string, string> {
+  const candidates = family.variants.filter((variant) => variant.coords[axisId] === value);
+  if (candidates.length === 0) {
+    return current;
+  }
+  let best = candidates[0];
+  let bestScore = -1;
+  for (const candidate of candidates) {
+    const score = Object.entries(current).reduce(
+      (sum, [axis, axisValue]) =>
+        axis !== axisId && candidate.coords[axis] === axisValue ? sum + 1 : sum,
+      0
+    );
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+  return best.coords;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -347,26 +395,45 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function caseMatches(item: ReviewCase, needle: string): boolean {
-  return [
-    item.id,
-    item.title,
-    item.wav,
-    item.audioPath,
-    item.groupId,
-    ...item.tags
-  ].some((value) => value.toLowerCase().includes(needle));
+function cacheBustedAudioUrl(item: ReviewCase): string {
+  const separator = item.audioUrl.includes("?") ? "&" : "?";
+  const version = encodeURIComponent(`${item.createdAt ?? "missing"}-${item.fileBytes}`);
+  return `${item.audioUrl}${separator}ui_v=${version}`;
 }
 
-function categoryMatches(category: ReviewCategory, needle: string): boolean {
-  return [
-    category.id,
-    category.type,
-    category.value,
-    category.label,
-    String(category.count),
-    ...category.caseIds
-  ].some((value) => value.toLowerCase().includes(needle));
+function formatCreatedAt(createdAt: string | null): string {
+  if (!createdAt) {
+    return "—";
+  }
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+// A family matches the filter if any of its variants matches — keeps the whole switchable row
+// visible when searching by family/velocity/tag.
+function familyMatches(family: VariantFamily, needle: string): boolean {
+  return family.variants.some((variant) => {
+    const haystack = [
+      variant.case.id,
+      variant.case.title,
+      variant.case.wav,
+      variant.case.audioPath,
+      variant.case.groupId,
+      ...variant.case.tags,
+      ...Object.values(variant.coords)
+    ];
+    return haystack.some((value) => value.toLowerCase().includes(needle));
+  });
 }
 
 function statusLabel(state: SaveState | undefined): string {

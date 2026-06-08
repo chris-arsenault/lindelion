@@ -1,14 +1,63 @@
 use lindelion_dsp_utils::{
     db_to_gain,
+    filters::{Biquad, BiquadCoefficients},
     math::{self, midi_note_to_hz},
 };
 use lindelion_plugin_shell::{MidiEvent, NoteEvent};
-use lindelion_wind::{ReedDriver, ReedParams, ReedTube, ReedTubeParams, ReedTubeSwitches};
+use lindelion_wind::{
+    ReedDriver, ReedParams, ReedProcessTaps, ReedTube, ReedTubeParams, ReedTubeSwitches,
+    ReedTubeTaps,
+};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::patch::TubePatch;
 
 pub const ARTICULATION_SLOT_COUNT: usize = 8;
+pub const TUBE_RENDER_TAP_COUNT: usize = 38;
+pub const TUBE_RENDER_TAP_NAMES: [&str; TUBE_RENDER_TAP_COUNT] = [
+    "excitation",
+    "drive_gate",
+    "effort",
+    "pressure_mod",
+    "embouchure_mod",
+    "voicing_mod",
+    "feedback",
+    "reed_breath",
+    "reed_delta_p",
+    "reed_aperture",
+    "reed_raw_flow",
+    "reed_source_flow",
+    "reed_output",
+    "reed_radiated",
+    "mouth_wave",
+    "mouth_incident",
+    "mouth_filtered",
+    "mouth_reflection",
+    "bell_incident",
+    "bell_reflection",
+    "bell_pressure",
+    "pickup_left",
+    "pickup_right",
+    "pickup_pressure",
+    "pickup_flow",
+    "pickup_sample",
+    "body_input",
+    "body_output",
+    "body_reaction_flow",
+    "bell_radiated",
+    "register_vent_flow",
+    "register_vent_output",
+    "body_bell_sum",
+    "tube_main_output",
+    "tube_final_output",
+    "final_pre_gain",
+    "final_post_gain",
+    "final_output",
+];
+
+const FINAL_PRE_GAIN_TAP_INDEX: usize = 35;
+const FINAL_POST_GAIN_TAP_INDEX: usize = 36;
+const FINAL_OUTPUT_TAP_INDEX: usize = 37;
 
 const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
 const OVERSAMPLE_FACTOR: usize = 2;
@@ -29,6 +78,19 @@ const VOICING_VARIANCE_SMOOTH_SECONDS: f32 = 0.55;
 const HUMANIZE_PRESSURE_DEPTH: f32 = 0.37;
 const HUMANIZE_EMBOUCHURE_DEPTH: f32 = 0.35;
 const HUMANIZE_VOICING_DEPTH: f32 = 2.0;
+const REED_RADIATION_CUTOFF_HZ: f32 = 1_050.0;
+const REED_RADIATION_Q: f32 = 0.707;
+const REED_RADIATION_EDGE_CUTOFF_HZ: f32 = 1_200.0;
+const REED_RADIATION_EDGE_Q: f32 = 0.707;
+const REED_RADIATION_ROLLOFF_HZ: f32 = 6_000.0;
+const REED_RADIATION_ROLLOFF_Q: f32 = 0.707;
+const REED_RADIATION_SLOT_ROLLOFF_HZ: f32 = 3_000.0;
+const REED_RADIATION_SLOT_ROLLOFF_Q: f32 = 0.707;
+const REED_RADIATION_GAIN: f32 = 0.75;
+const REED_RADIATION_LIMIT: f32 = 0.22;
+const REGISTER_MODE_RATIO: f32 = 2.88;
+const REGISTER_VENT_ADMITTANCE: f32 = 1.20;
+const REGISTER_VENT_POSITION: f32 = 1.0 / 3.0;
 const PRESSURE_WALK_TAG: u32 = 0xA511_E9B3;
 const EMBOUCHURE_WALK_TAG: u32 = 0x63D8_35AF;
 const VOICING_WALK_TAG: u32 = 0xD1B5_4A32;
@@ -67,6 +129,93 @@ pub const ARTICULATION_NAMES: [&str; ARTICULATION_SLOT_COUNT] = [
     "Slur",
 ];
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TubeRenderTaps {
+    pub excitation: f32,
+    pub drive_gate: f32,
+    pub effort: f32,
+    pub pressure_mod: f32,
+    pub embouchure_mod: f32,
+    pub voicing_mod: f32,
+    pub feedback: f32,
+    pub reed_breath: f32,
+    pub reed_delta_p: f32,
+    pub reed_aperture: f32,
+    pub reed_raw_flow: f32,
+    pub reed_source_flow: f32,
+    pub reed_output: f32,
+    pub reed_radiated: f32,
+    pub mouth_wave: f32,
+    pub mouth_incident: f32,
+    pub mouth_filtered: f32,
+    pub mouth_reflection: f32,
+    pub bell_incident: f32,
+    pub bell_reflection: f32,
+    pub bell_pressure: f32,
+    pub pickup_left: f32,
+    pub pickup_right: f32,
+    pub pickup_pressure: f32,
+    pub pickup_flow: f32,
+    pub pickup_sample: f32,
+    pub body_input: f32,
+    pub body_output: f32,
+    pub body_reaction_flow: f32,
+    pub bell_radiated: f32,
+    pub register_vent_flow: f32,
+    pub register_vent_output: f32,
+    pub body_bell_sum: f32,
+    pub tube_main_output: f32,
+    pub tube_final_output: f32,
+    pub final_pre_gain: f32,
+    pub final_post_gain: f32,
+    pub final_output: f32,
+}
+
+impl TubeRenderTaps {
+    pub fn values(self) -> [f32; TUBE_RENDER_TAP_COUNT] {
+        [
+            self.excitation,
+            self.drive_gate,
+            self.effort,
+            self.pressure_mod,
+            self.embouchure_mod,
+            self.voicing_mod,
+            self.feedback,
+            self.reed_breath,
+            self.reed_delta_p,
+            self.reed_aperture,
+            self.reed_raw_flow,
+            self.reed_source_flow,
+            self.reed_output,
+            self.reed_radiated,
+            self.mouth_wave,
+            self.mouth_incident,
+            self.mouth_filtered,
+            self.mouth_reflection,
+            self.bell_incident,
+            self.bell_reflection,
+            self.bell_pressure,
+            self.pickup_left,
+            self.pickup_right,
+            self.pickup_pressure,
+            self.pickup_flow,
+            self.pickup_sample,
+            self.body_input,
+            self.body_output,
+            self.body_reaction_flow,
+            self.bell_radiated,
+            self.register_vent_flow,
+            self.register_vent_output,
+            self.body_bell_sum,
+            self.tube_main_output,
+            self.tube_final_output,
+            self.final_pre_gain,
+            self.final_post_gain,
+            self.final_output,
+        ]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TubeSteadyVariance {
     pressure_depth: f32,
@@ -81,11 +230,7 @@ impl TubeSteadyVariance {
         voicing_depth: 0.0,
     };
 
-    const fn with_voicing(
-        pressure_depth: f32,
-        embouchure_depth: f32,
-        voicing_depth: f32,
-    ) -> Self {
+    const fn with_voicing(pressure_depth: f32, embouchure_depth: f32, voicing_depth: f32) -> Self {
         Self {
             pressure_depth,
             embouchure_depth,
@@ -305,6 +450,11 @@ pub struct TubeProcessor<'a> {
     patch: TubePatch,
     tube: ReedTube,
     reed: ReedDriver,
+    reed_radiation_highpass: Biquad,
+    reed_radiation_edge_highpass: Biquad,
+    reed_radiation_rolloff_a: Biquad,
+    reed_radiation_rolloff_b: Biquad,
+    reed_radiation_slot_rolloff: Biquad,
     sources: [ExcitationSource<'a>; ARTICULATION_SLOT_COUNT],
     injector: Injector<'a>,
     selected_slot: usize,
@@ -332,6 +482,11 @@ impl<'a> TubeProcessor<'a> {
             model_sample_rate,
             tube: ReedTube::new(model_sample_rate),
             reed,
+            reed_radiation_highpass: reed_radiation_highpass(model_sample_rate),
+            reed_radiation_edge_highpass: reed_radiation_edge_highpass(model_sample_rate),
+            reed_radiation_rolloff_a: reed_radiation_rolloff(model_sample_rate),
+            reed_radiation_rolloff_b: reed_radiation_rolloff(model_sample_rate),
+            reed_radiation_slot_rolloff: reed_radiation_slot_rolloff(model_sample_rate),
             selected_slot: patch.selected_articulation,
             patch,
             sources,
@@ -352,6 +507,12 @@ impl<'a> TubeProcessor<'a> {
         self.model_sample_rate = sample_rate * OVERSAMPLE_FACTOR as f32;
         self.tube = ReedTube::new(self.model_sample_rate);
         self.reed = ReedDriver::new(reed_params(&self.patch), self.model_sample_rate);
+        self.reed_radiation_highpass = reed_radiation_highpass(self.model_sample_rate);
+        self.reed_radiation_edge_highpass =
+            reed_radiation_edge_highpass(self.model_sample_rate);
+        self.reed_radiation_rolloff_a = reed_radiation_rolloff(self.model_sample_rate);
+        self.reed_radiation_rolloff_b = reed_radiation_rolloff(self.model_sample_rate);
+        self.reed_radiation_slot_rolloff = reed_radiation_slot_rolloff(self.model_sample_rate);
         self.injector.clear();
         self.current_note = None;
         self.frequency_hz = midi_note_to_hz(60.0);
@@ -383,6 +544,46 @@ impl<'a> TubeProcessor<'a> {
             let sample = soft_limit(sample);
             left[index] = sample;
             right[index] = sample;
+        }
+    }
+
+    pub fn process_with_taps(
+        &mut self,
+        events: &[MidiEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        tap_traces: &mut [Vec<f32>; TUBE_RENDER_TAP_COUNT],
+    ) {
+        left.fill(0.0);
+        right.fill(0.0);
+        self.handle_events(events);
+        let len = left.len().min(right.len());
+        let output_gain = db_to_gain(self.patch.output_gain_db);
+        for index in 0..len {
+            let mut sample = 0.0;
+            let mut frame_taps = [0.0; TUBE_RENDER_TAP_COUNT];
+            for _ in 0..OVERSAMPLE_FACTOR {
+                let mut taps = TubeRenderTaps::default();
+                sample += self.process_model_sample_with_taps(Some(&mut taps));
+                for (slot, value) in frame_taps.iter_mut().zip(taps.values()) {
+                    *slot += value;
+                }
+            }
+            let oversample_scale = 1.0 / OVERSAMPLE_FACTOR as f32;
+            for value in &mut frame_taps {
+                *value *= oversample_scale;
+            }
+            let final_pre_gain = sample * oversample_scale;
+            let final_post_gain = final_pre_gain * output_gain;
+            let final_output = soft_limit(final_post_gain);
+            frame_taps[FINAL_PRE_GAIN_TAP_INDEX] = final_pre_gain;
+            frame_taps[FINAL_POST_GAIN_TAP_INDEX] = final_post_gain;
+            frame_taps[FINAL_OUTPUT_TAP_INDEX] = final_output;
+            for (trace, value) in tap_traces.iter_mut().zip(frame_taps) {
+                trace.push(value);
+            }
+            left[index] = final_output;
+            right[index] = final_output;
         }
     }
 
@@ -433,31 +634,117 @@ impl<'a> TubeProcessor<'a> {
     }
 
     fn process_model_sample(&mut self) -> f32 {
+        self.process_model_sample_with_taps(None)
+    }
+
+    fn process_model_sample_with_taps(&mut self, taps: Option<&mut TubeRenderTaps>) -> f32 {
         self.drive_gate += (self.drive_target - self.drive_gate) * self.gate_coeff;
         let excitation = self.injector.process();
         self.tube.set_brightness_effort(self.effort);
         let variance = TubeSteadyVariance::from_humanize(self.patch.humanize).sanitized();
         let (pressure_mod, embouchure_mod, voicing_mod) =
             self.steady_variance_source.process(variance);
-        let mut params = tube_params_with_mod(&self.patch, self.frequency_hz, voicing_mod);
-        self.reed
-            .set_params(reed_params_with_mod(&self.patch, pressure_mod, embouchure_mod));
+        let mut params = tube_params_with_mod(
+            &self.patch,
+            self.current_note,
+            self.frequency_hz,
+            voicing_mod,
+        );
+        self.reed.set_params(reed_params_with_mod(
+            &self.patch,
+            pressure_mod,
+            embouchure_mod,
+        ));
         params.reed_phase_delay_samples = self
             .reed
             .aperture_phase_delay_samples(self.frequency_hz, self.effort);
         let feedback = self.tube.driven_feedback();
-        let mouth_wave = self
-            .reed
-            .process(excitation, self.effort, feedback, self.drive_gate);
-        self.tube.process_wind(mouth_wave, params)
+        let mut reed_taps = ReedProcessTaps::default();
+        let mouth_wave = self.reed.process_with_taps(
+            excitation,
+            self.effort,
+            feedback,
+            self.drive_gate,
+            &mut reed_taps,
+        );
+        let reed_radiated = if self.patch.switches.reed_radiation_enabled {
+            self.reed_radiated_sample(reed_taps.source_flow)
+        } else {
+            0.0
+        };
+        if let Some(taps) = taps {
+            let mut tube_taps = ReedTubeTaps::default();
+            let tube_output =
+                self.tube
+                    .process_wind_with_taps(mouth_wave, params, &mut tube_taps);
+            let output = tube_output + reed_radiated;
+            *taps = TubeRenderTaps {
+                excitation,
+                drive_gate: self.drive_gate,
+                effort: self.effort,
+                pressure_mod,
+                embouchure_mod,
+                voicing_mod,
+                feedback,
+                reed_breath: reed_taps.breath,
+                reed_delta_p: reed_taps.delta_p,
+                reed_aperture: reed_taps.aperture,
+                reed_raw_flow: reed_taps.raw_flow,
+                reed_source_flow: reed_taps.source_flow,
+                reed_output: reed_taps.output,
+                reed_radiated,
+                mouth_wave,
+                mouth_incident: tube_taps.mouth_incident,
+                mouth_filtered: tube_taps.mouth_filtered,
+                mouth_reflection: tube_taps.mouth_reflection,
+                bell_incident: tube_taps.bell_incident,
+                bell_reflection: tube_taps.bell_reflection,
+                bell_pressure: tube_taps.bell_pressure,
+                pickup_left: tube_taps.pickup_left,
+                pickup_right: tube_taps.pickup_right,
+                pickup_pressure: tube_taps.pickup_pressure,
+                pickup_flow: tube_taps.pickup_flow,
+                pickup_sample: tube_taps.pickup_sample,
+                body_input: tube_taps.body_input,
+                body_output: tube_taps.body_output,
+                body_reaction_flow: tube_taps.body_reaction_flow,
+                bell_radiated: tube_taps.bell_radiated,
+                register_vent_flow: tube_taps.register_vent_flow,
+                register_vent_output: tube_taps.register_vent_output,
+                body_bell_sum: tube_taps.body_bell_sum,
+                tube_main_output: tube_taps.main_output,
+                tube_final_output: tube_output,
+                ..TubeRenderTaps::default()
+            };
+            output
+        } else {
+            self.tube.process_wind(mouth_wave, params) + reed_radiated
+        }
+    }
+
+    fn reed_radiated_sample(&mut self, source_flow: f32) -> f32 {
+        let bright_flow = self.reed_radiation_highpass.process(source_flow);
+        let edge_flow = self.reed_radiation_edge_highpass.process(bright_flow);
+        let anti_air_flow = self
+            .reed_radiation_rolloff_b
+            .process(self.reed_radiation_rolloff_a.process(edge_flow));
+        let shaped_flow = self.reed_radiation_slot_rolloff.process(anti_air_flow);
+        math::finite_clamp(
+            shaped_flow * REED_RADIATION_GAIN * self.drive_gate,
+            -REED_RADIATION_LIMIT,
+            REED_RADIATION_LIMIT,
+            0.0,
+        )
     }
 }
 
 fn tube_params_with_mod(
     patch: &TubePatch,
+    current_note: Option<u8>,
     frequency_hz: f32,
     body_formant_shift: f32,
 ) -> ReedTubeParams {
+    let register = register_key_state(patch, current_note);
     ReedTubeParams {
         frequency_hz,
         loop_filter_cutoff_hz: brightness_hz(patch.brightness),
@@ -470,12 +757,18 @@ fn tube_params_with_mod(
         bell_radiation_shape: patch.bell_radiation_shape,
         body_formant: patch.body_formant,
         body_formant_shift: math::finite_clamp(body_formant_shift, -2.0, 2.0, 0.0),
+        register_mode_ratio: register.mode_ratio,
+        register_vent_admittance: register.vent_admittance,
+        register_vent_position: REGISTER_VENT_POSITION,
+        body_odd_mode_projection: patch.body_odd_mode_projection,
+        body_upper_odd_modes: patch.body_upper_odd_modes,
         reed_phase_delay_samples: 0.0,
         switches: ReedTubeSwitches {
             reed_enabled: true,
             bell_enabled: patch.switches.bell_enabled,
             bore_steepening_enabled: patch.switches.bore_steepening_enabled,
             body_enabled: patch.switches.body_enabled,
+            clarinet_contour_enabled: patch.switches.clarinet_contour_enabled,
         },
     }
 }
@@ -500,6 +793,30 @@ fn reed_params_with_mod(patch: &TubePatch, pressure_mod: f32, embouchure_mod: f3
             patch.embouchure,
         ),
         aperture_inertia: patch.reed_aperture_inertia,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RegisterKeyState {
+    mode_ratio: f32,
+    vent_admittance: f32,
+}
+
+fn register_key_state(patch: &TubePatch, current_note: Option<u8>) -> RegisterKeyState {
+    let break_note = math::finite_clamp(patch.register_break_note, 48.0, 96.0, 69.0).round();
+    let active = current_note
+        .map(|note| note as f32 >= break_note)
+        .unwrap_or(false);
+    if active {
+        RegisterKeyState {
+            mode_ratio: REGISTER_MODE_RATIO,
+            vent_admittance: REGISTER_VENT_ADMITTANCE,
+        }
+    } else {
+        RegisterKeyState {
+            mode_ratio: 1.0,
+            vent_admittance: 0.0,
+        }
     }
 }
 
@@ -537,6 +854,42 @@ const fn builtin_samples(slot: usize) -> &'static [f32] {
 
 fn gate_coeff(sample_rate: f32) -> f32 {
     1.0 - (-1.0 / (GATE_RAMP_SECONDS * sanitize_sample_rate(sample_rate))).exp()
+}
+
+fn reed_radiation_highpass(sample_rate: f32) -> Biquad {
+    let sample_rate = sanitize_sample_rate(sample_rate);
+    Biquad::new(BiquadCoefficients::highpass(
+        sample_rate,
+        REED_RADIATION_CUTOFF_HZ,
+        REED_RADIATION_Q,
+    ))
+}
+
+fn reed_radiation_edge_highpass(sample_rate: f32) -> Biquad {
+    let sample_rate = sanitize_sample_rate(sample_rate);
+    Biquad::new(BiquadCoefficients::highpass(
+        sample_rate,
+        REED_RADIATION_EDGE_CUTOFF_HZ,
+        REED_RADIATION_EDGE_Q,
+    ))
+}
+
+fn reed_radiation_rolloff(sample_rate: f32) -> Biquad {
+    let sample_rate = sanitize_sample_rate(sample_rate);
+    Biquad::new(BiquadCoefficients::lowpass(
+        sample_rate,
+        REED_RADIATION_ROLLOFF_HZ,
+        REED_RADIATION_ROLLOFF_Q,
+    ))
+}
+
+fn reed_radiation_slot_rolloff(sample_rate: f32) -> Biquad {
+    let sample_rate = sanitize_sample_rate(sample_rate);
+    Biquad::new(BiquadCoefficients::lowpass(
+        sample_rate,
+        REED_RADIATION_SLOT_ROLLOFF_HZ,
+        REED_RADIATION_SLOT_ROLLOFF_Q,
+    ))
 }
 
 fn sanitize_sample_rate(sample_rate: f32) -> f32 {

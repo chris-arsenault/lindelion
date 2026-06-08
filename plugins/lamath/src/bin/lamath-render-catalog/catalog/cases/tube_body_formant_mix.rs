@@ -90,7 +90,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v100_current_full",
         "Tube Body Mix C4-C5 Velocity 100 (current body, full bell)",
         "16_tube_body_formant_mix/tube_body_mix_v100_current_full.wav",
-        ["tube", "body-formant", "current", "bell-full", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "body-formant",
+            "current",
+            "bell-full",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Full,
         TubeBodyFormantLevel::Current,
         SCALE_V100
@@ -99,7 +106,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v100_current_body",
         "Tube Body Mix C4-C5 Velocity 100 (current body, bell off)",
         "16_tube_body_formant_mix/tube_body_mix_v100_current_body.wav",
-        ["tube", "body-formant", "current", "bell-off", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "body-formant",
+            "current",
+            "bell-off",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Off,
         TubeBodyFormantLevel::Current,
         SCALE_V100
@@ -108,7 +122,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v100_strong_body",
         "Tube Body Mix C4-C5 Velocity 100 (strong h3 body, bell off)",
         "16_tube_body_formant_mix/tube_body_mix_v100_strong_body.wav",
-        ["tube", "body-formant", "strong", "bell-off", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "body-formant",
+            "strong",
+            "bell-off",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Off,
         TubeBodyFormantLevel::Strong,
         SCALE_V100
@@ -133,7 +154,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v100_strong_full_bell",
         "Tube Body Mix C4-C5 Velocity 100 (strong h3 body, full bell)",
         "16_tube_body_formant_mix/tube_body_mix_v100_strong_full_bell.wav",
-        ["tube", "body-formant", "strong", "bell-full", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "body-formant",
+            "strong",
+            "bell-full",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Full,
         TubeBodyFormantLevel::Strong,
         SCALE_V100
@@ -142,7 +170,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v127_current_full",
         "Tube Body Mix C4-C5 Velocity 127 (current body, full bell)",
         "16_tube_body_formant_mix/tube_body_mix_v127_current_full.wav",
-        ["tube", "body-formant", "current", "bell-full", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "body-formant",
+            "current",
+            "bell-full",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Full,
         TubeBodyFormantLevel::Current,
         SCALE_V127
@@ -151,7 +186,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v127_current_body",
         "Tube Body Mix C4-C5 Velocity 127 (current body, bell off)",
         "16_tube_body_formant_mix/tube_body_mix_v127_current_body.wav",
-        ["tube", "body-formant", "current", "bell-off", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "body-formant",
+            "current",
+            "bell-off",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Off,
         TubeBodyFormantLevel::Current,
         SCALE_V127
@@ -160,7 +202,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v127_strong_body",
         "Tube Body Mix C4-C5 Velocity 127 (strong h3 body, bell off)",
         "16_tube_body_formant_mix/tube_body_mix_v127_strong_body.wav",
-        ["tube", "body-formant", "strong", "bell-off", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "body-formant",
+            "strong",
+            "bell-off",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Off,
         TubeBodyFormantLevel::Strong,
         SCALE_V127
@@ -185,7 +234,14 @@ pub(super) const TUBE_BODY_FORMANT_MIX_CASES: [CatalogCase; 10] = [
         "tube_body_mix_v127_strong_full_bell",
         "Tube Body Mix C4-C5 Velocity 127 (strong h3 body, full bell)",
         "16_tube_body_formant_mix/tube_body_mix_v127_strong_full_bell.wav",
-        ["tube", "body-formant", "strong", "bell-full", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "body-formant",
+            "strong",
+            "bell-full",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Full,
         TubeBodyFormantLevel::Strong,
         SCALE_V127

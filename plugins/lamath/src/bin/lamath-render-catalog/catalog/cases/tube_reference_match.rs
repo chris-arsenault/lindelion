@@ -4,7 +4,7 @@
 
 use super::super::{
     CatalogCase, PatchRecipe, RenderSchedule, ScheduledNote, TubeReferenceArticulation,
-    TubeReferenceHumanize, TubeReferenceMatchGain,
+    TubeReferenceHumanize, TubeReferenceMatchGain, TubeReferenceRegisterKey,
 };
 
 const EMPTY: [ScheduledNote; 0] = [];
@@ -226,7 +226,7 @@ const TUBE_LOW_HIGH_ARTICULATION: [ScheduledNote; 32] = [
     },
 ];
 
-pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 12] = [
+pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 13] = [
     reference_case(
         "tube_ref_low_e_sustain_reference",
         "Reference Clarinet Low E Sustain",
@@ -237,46 +237,43 @@ pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 12] = [
     ),
     tube_case(
         "tube_ref_low_e_sustain_current",
-        "Current Tube Low E Sustain Match (RMS-matched)",
+        "Current Tube Low E Sustain - Upper Odd Tail",
         "19_tube_reference_match/tube_ref_low_e_sustain_current.wav",
         &["tube", "reference-match", "current", "low-e", "sustain"],
         TubeReferenceArticulation::Legato,
-        TubeReferenceMatchGain::LowESustain,
+        TubeReferenceMatchGain::LowESustainPhysical,
         TubeReferenceHumanize::Off,
         LOW_E_SUSTAIN_DURATION_SECONDS,
         &TUBE_LOW_E_SUSTAIN,
     ),
-    tube_case(
-        "tube_ref_low_e_sustain_humanize_050",
-        "Tube Low E Sustain Match - Humanize 50%",
-        "19_tube_reference_match/tube_ref_low_e_sustain_humanize_050.wav",
-        &[
-            "tube",
-            "reference-match",
-            "humanize-050",
-            "low-e",
-            "sustain",
-        ],
+    tube_case_with_body(
+        "tube_ref_low_e_sustain_body_off",
+        "Tube Low E Sustain - Body Disabled",
+        "19_tube_reference_match/tube_ref_low_e_sustain_body_off.wav",
+        &["tube", "reference-match", "body-off", "low-e", "sustain"],
         TubeReferenceArticulation::Legato,
-        TubeReferenceMatchGain::LowESustain,
-        TubeReferenceHumanize::Medium,
+        TubeReferenceMatchGain::LowESustainBodyOff,
+        TubeReferenceHumanize::Off,
+        false,
         LOW_E_SUSTAIN_DURATION_SECONDS,
         &TUBE_LOW_E_SUSTAIN,
     ),
-    tube_case(
-        "tube_ref_low_e_sustain_humanize_100",
-        "Tube Low E Sustain Match - Humanize 100%",
-        "19_tube_reference_match/tube_ref_low_e_sustain_humanize_100.wav",
+    tube_case_with_body_and_reed_radiation(
+        "tube_ref_low_e_sustain_no_reed",
+        "Tube Low E Sustain - Reed Radiation Disabled",
+        "19_tube_reference_match/tube_ref_low_e_sustain_no_reed.wav",
         &[
             "tube",
             "reference-match",
-            "humanize-100",
+            "no-reed",
             "low-e",
             "sustain",
         ],
         TubeReferenceArticulation::Legato,
-        TubeReferenceMatchGain::LowESustain,
-        TubeReferenceHumanize::Full,
+        TubeReferenceMatchGain::LowESustainPhysical,
+        TubeReferenceHumanize::Off,
+        true,
+        false,
         LOW_E_SUSTAIN_DURATION_SECONDS,
         &TUBE_LOW_E_SUSTAIN,
     ),
@@ -306,8 +303,26 @@ pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 12] = [
             "sustain",
         ],
         TubeReferenceArticulation::Legato,
+        TubeReferenceMatchGain::RegisterKeyHighSustainVented,
+        TubeReferenceHumanize::Off,
+        REGISTER_KEY_HIGH_DURATION_SECONDS,
+        &TUBE_REGISTER_KEY_HIGH_SUSTAIN,
+    ),
+    tube_case_with_register_key(
+        "tube_ref_register_key_high_no_register_vent",
+        "Tube Register-Key High Sustain - No Register Vent",
+        "19_tube_reference_match/tube_ref_register_key_high_no_register_vent.wav",
+        &[
+            "tube",
+            "reference-match",
+            "no-register-vent",
+            "register-key",
+            "sustain",
+        ],
+        TubeReferenceArticulation::Legato,
         TubeReferenceMatchGain::RegisterKeyHighSustain,
         TubeReferenceHumanize::Off,
+        TubeReferenceRegisterKey::Disabled,
         REGISTER_KEY_HIGH_DURATION_SECONDS,
         &TUBE_REGISTER_KEY_HIGH_SUSTAIN,
     ),
@@ -323,7 +338,7 @@ pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 12] = [
             "sustain",
         ],
         TubeReferenceArticulation::Legato,
-        TubeReferenceMatchGain::RegisterKeyHighSustain,
+        TubeReferenceMatchGain::RegisterKeyHighSustainVented,
         TubeReferenceHumanize::Medium,
         REGISTER_KEY_HIGH_DURATION_SECONDS,
         &TUBE_REGISTER_KEY_HIGH_SUSTAIN,
@@ -340,7 +355,7 @@ pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 12] = [
             "sustain",
         ],
         TubeReferenceArticulation::Legato,
-        TubeReferenceMatchGain::RegisterKeyHighSustain,
+        TubeReferenceMatchGain::RegisterKeyHighSustainVented,
         TubeReferenceHumanize::Full,
         REGISTER_KEY_HIGH_DURATION_SECONDS,
         &TUBE_REGISTER_KEY_HIGH_SUSTAIN,
@@ -445,6 +460,121 @@ const fn tube_case(
     duration_seconds: f32,
     notes: &'static [ScheduledNote],
 ) -> CatalogCase {
+    tube_case_with_register_key_and_body(
+        id,
+        title,
+        relative_wav,
+        tags,
+        articulation,
+        gain,
+        humanize,
+        TubeReferenceRegisterKey::Default,
+        true,
+        true,
+        duration_seconds,
+        notes,
+    )
+}
+
+const fn tube_case_with_register_key(
+    id: &'static str,
+    title: &'static str,
+    relative_wav: &'static str,
+    tags: &'static [&'static str],
+    articulation: TubeReferenceArticulation,
+    gain: TubeReferenceMatchGain,
+    humanize: TubeReferenceHumanize,
+    register_key: TubeReferenceRegisterKey,
+    duration_seconds: f32,
+    notes: &'static [ScheduledNote],
+) -> CatalogCase {
+    tube_case_with_register_key_and_body(
+        id,
+        title,
+        relative_wav,
+        tags,
+        articulation,
+        gain,
+        humanize,
+        register_key,
+        true,
+        true,
+        duration_seconds,
+        notes,
+    )
+}
+
+const fn tube_case_with_body(
+    id: &'static str,
+    title: &'static str,
+    relative_wav: &'static str,
+    tags: &'static [&'static str],
+    articulation: TubeReferenceArticulation,
+    gain: TubeReferenceMatchGain,
+    humanize: TubeReferenceHumanize,
+    body_enabled: bool,
+    duration_seconds: f32,
+    notes: &'static [ScheduledNote],
+) -> CatalogCase {
+    tube_case_with_register_key_and_body(
+        id,
+        title,
+        relative_wav,
+        tags,
+        articulation,
+        gain,
+        humanize,
+        TubeReferenceRegisterKey::Default,
+        body_enabled,
+        true,
+        duration_seconds,
+        notes,
+    )
+}
+
+const fn tube_case_with_body_and_reed_radiation(
+    id: &'static str,
+    title: &'static str,
+    relative_wav: &'static str,
+    tags: &'static [&'static str],
+    articulation: TubeReferenceArticulation,
+    gain: TubeReferenceMatchGain,
+    humanize: TubeReferenceHumanize,
+    body_enabled: bool,
+    reed_radiation_enabled: bool,
+    duration_seconds: f32,
+    notes: &'static [ScheduledNote],
+) -> CatalogCase {
+    tube_case_with_register_key_and_body(
+        id,
+        title,
+        relative_wav,
+        tags,
+        articulation,
+        gain,
+        humanize,
+        TubeReferenceRegisterKey::Default,
+        body_enabled,
+        reed_radiation_enabled,
+        duration_seconds,
+        notes,
+    )
+}
+
+const fn tube_case_with_register_key_and_body(
+    id: &'static str,
+    title: &'static str,
+    relative_wav: &'static str,
+    tags: &'static [&'static str],
+    articulation: TubeReferenceArticulation,
+    gain: TubeReferenceMatchGain,
+    humanize: TubeReferenceHumanize,
+    register_key: TubeReferenceRegisterKey,
+    body_enabled: bool,
+    reed_radiation_enabled: bool,
+    duration_seconds: f32,
+    notes: &'static [ScheduledNote],
+) -> CatalogCase {
     CatalogCase {
         id,
         title,
@@ -455,6 +585,9 @@ const fn tube_case(
             articulation,
             gain,
             humanize,
+            register_key,
+            body_enabled,
+            reed_radiation_enabled,
         },
         schedule: RenderSchedule {
             duration_seconds,

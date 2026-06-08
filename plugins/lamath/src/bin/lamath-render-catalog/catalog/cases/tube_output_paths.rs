@@ -88,7 +88,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v100_current",
         "Tube Output Paths C4-C5 Velocity 100 (current body + bell)",
         "14_tube_output_paths/tube_output_paths_v100_current.wav",
-        ["tube", "output-paths", "current", "body-on", "bell-on", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "output-paths",
+            "current",
+            "body-on",
+            "bell-on",
+            "C4-C5",
+            "velocity-100"
+        ],
         true,
         true,
         SCALE_V100
@@ -97,7 +105,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v100_body_only",
         "Tube Output Paths C4-C5 Velocity 100 (body path only)",
         "14_tube_output_paths/tube_output_paths_v100_body_only.wav",
-        ["tube", "output-paths", "body-only", "body-on", "bell-off", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "output-paths",
+            "body-only",
+            "body-on",
+            "bell-off",
+            "C4-C5",
+            "velocity-100"
+        ],
         false,
         true,
         SCALE_V100
@@ -106,7 +122,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v100_pickup_bell",
         "Tube Output Paths C4-C5 Velocity 100 (dry pickup + bell)",
         "14_tube_output_paths/tube_output_paths_v100_pickup_bell.wav",
-        ["tube", "output-paths", "pickup-bell", "body-off", "bell-on", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "output-paths",
+            "pickup-bell",
+            "body-off",
+            "bell-on",
+            "C4-C5",
+            "velocity-100"
+        ],
         true,
         false,
         SCALE_V100
@@ -115,7 +139,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v100_dry_pickup",
         "Tube Output Paths C4-C5 Velocity 100 (dry pickup only)",
         "14_tube_output_paths/tube_output_paths_v100_dry_pickup.wav",
-        ["tube", "output-paths", "dry-pickup", "body-off", "bell-off", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "output-paths",
+            "dry-pickup",
+            "body-off",
+            "bell-off",
+            "C4-C5",
+            "velocity-100"
+        ],
         false,
         false,
         SCALE_V100
@@ -124,7 +156,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v127_current",
         "Tube Output Paths C4-C5 Velocity 127 (current body + bell)",
         "14_tube_output_paths/tube_output_paths_v127_current.wav",
-        ["tube", "output-paths", "current", "body-on", "bell-on", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "output-paths",
+            "current",
+            "body-on",
+            "bell-on",
+            "C4-C5",
+            "velocity-127"
+        ],
         true,
         true,
         SCALE_V127
@@ -133,7 +173,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v127_body_only",
         "Tube Output Paths C4-C5 Velocity 127 (body path only)",
         "14_tube_output_paths/tube_output_paths_v127_body_only.wav",
-        ["tube", "output-paths", "body-only", "body-on", "bell-off", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "output-paths",
+            "body-only",
+            "body-on",
+            "bell-off",
+            "C4-C5",
+            "velocity-127"
+        ],
         false,
         true,
         SCALE_V127
@@ -142,7 +190,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v127_pickup_bell",
         "Tube Output Paths C4-C5 Velocity 127 (dry pickup + bell)",
         "14_tube_output_paths/tube_output_paths_v127_pickup_bell.wav",
-        ["tube", "output-paths", "pickup-bell", "body-off", "bell-on", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "output-paths",
+            "pickup-bell",
+            "body-off",
+            "bell-on",
+            "C4-C5",
+            "velocity-127"
+        ],
         true,
         false,
         SCALE_V127
@@ -151,7 +207,15 @@ pub(super) const TUBE_OUTPUT_PATH_CASES: [CatalogCase; 8] = [
         "tube_output_paths_v127_dry_pickup",
         "Tube Output Paths C4-C5 Velocity 127 (dry pickup only)",
         "14_tube_output_paths/tube_output_paths_v127_dry_pickup.wav",
-        ["tube", "output-paths", "dry-pickup", "body-off", "bell-off", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "output-paths",
+            "dry-pickup",
+            "body-off",
+            "bell-off",
+            "C4-C5",
+            "velocity-127"
+        ],
         false,
         false,
         SCALE_V127

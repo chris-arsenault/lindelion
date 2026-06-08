@@ -16,7 +16,7 @@ pub use patch::{TubeArticulationPatch, TubeModelSwitchPatch, TubePatch};
 pub use plugin::{DESCRIPTOR, LamathTube};
 pub use processor::{
     ARTICULATION_NAMES, ARTICULATION_SLOT_COUNT, ExcitationSource as TubeExcitationSource,
-    TubeProcessor,
+    TUBE_RENDER_TAP_COUNT, TUBE_RENDER_TAP_NAMES, TubeProcessor, TubeRenderTaps,
 };
 
 #[cfg(test)]

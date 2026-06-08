@@ -88,7 +88,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v100_current_nominal",
         "Tube Bore Steepening C4-C5 Velocity 100 (current steepening, nominal bell)",
         "18_tube_bore_steepening/tube_steepening_v100_current_nominal.wav",
-        ["tube", "bore-steepening", "current", "bell-nominal", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "bore-steepening",
+            "current",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Nominal,
         true,
         SCALE_V100
@@ -97,7 +104,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v100_off_nominal",
         "Tube Bore Steepening C4-C5 Velocity 100 (steepening off, nominal bell)",
         "18_tube_bore_steepening/tube_steepening_v100_off_nominal.wav",
-        ["tube", "bore-steepening", "off", "bell-nominal", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "bore-steepening",
+            "off",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Nominal,
         false,
         SCALE_V100
@@ -106,7 +120,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v100_current_full",
         "Tube Bore Steepening C4-C5 Velocity 100 (current steepening, full bell)",
         "18_tube_bore_steepening/tube_steepening_v100_current_full.wav",
-        ["tube", "bore-steepening", "current", "bell-full", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "bore-steepening",
+            "current",
+            "bell-full",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Full,
         true,
         SCALE_V100
@@ -115,7 +136,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v100_off_full",
         "Tube Bore Steepening C4-C5 Velocity 100 (steepening off, full bell)",
         "18_tube_bore_steepening/tube_steepening_v100_off_full.wav",
-        ["tube", "bore-steepening", "off", "bell-full", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "bore-steepening",
+            "off",
+            "bell-full",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Full,
         false,
         SCALE_V100
@@ -124,7 +152,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v127_current_nominal",
         "Tube Bore Steepening C4-C5 Velocity 127 (current steepening, nominal bell)",
         "18_tube_bore_steepening/tube_steepening_v127_current_nominal.wav",
-        ["tube", "bore-steepening", "current", "bell-nominal", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "bore-steepening",
+            "current",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Nominal,
         true,
         SCALE_V127
@@ -133,7 +168,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v127_off_nominal",
         "Tube Bore Steepening C4-C5 Velocity 127 (steepening off, nominal bell)",
         "18_tube_bore_steepening/tube_steepening_v127_off_nominal.wav",
-        ["tube", "bore-steepening", "off", "bell-nominal", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "bore-steepening",
+            "off",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Nominal,
         false,
         SCALE_V127
@@ -142,7 +184,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v127_current_full",
         "Tube Bore Steepening C4-C5 Velocity 127 (current steepening, full bell)",
         "18_tube_bore_steepening/tube_steepening_v127_current_full.wav",
-        ["tube", "bore-steepening", "current", "bell-full", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "bore-steepening",
+            "current",
+            "bell-full",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Full,
         true,
         SCALE_V127
@@ -151,7 +200,14 @@ pub(super) const TUBE_BORE_STEEPENING_CASES: [CatalogCase; 8] = [
         "tube_steepening_v127_off_full",
         "Tube Bore Steepening C4-C5 Velocity 127 (steepening off, full bell)",
         "18_tube_bore_steepening/tube_steepening_v127_off_full.wav",
-        ["tube", "bore-steepening", "off", "bell-full", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "bore-steepening",
+            "off",
+            "bell-full",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Full,
         false,
         SCALE_V127

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::processor::ARTICULATION_SLOT_COUNT;
 
+pub const OUTPUT_GAIN_MIN_DB: f32 = -24.0;
+pub const OUTPUT_GAIN_MAX_DB: f32 = 12.0;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TubePatch {
@@ -11,7 +14,10 @@ pub struct TubePatch {
     pub embouchure: f32,
     pub reed_aperture_inertia: f32,
     pub body_formant: f32,
+    pub body_odd_mode_projection: f32,
+    pub body_upper_odd_modes: f32,
     pub humanize: f32,
+    pub register_break_note: f32,
     pub brightness: f32,
     pub damping: f32,
     pub bell: f32,
@@ -30,7 +36,10 @@ impl Default for TubePatch {
             embouchure: 0.52,
             reed_aperture_inertia: 1.0,
             body_formant: 1.0,
+            body_odd_mode_projection: 1.0,
+            body_upper_odd_modes: 1.0,
             humanize: 0.0,
+            register_break_note: 69.0,
             brightness: 0.52,
             damping: 0.28,
             bell: 0.5,
@@ -52,14 +61,24 @@ impl TubePatch {
         self.reed_aperture_inertia =
             unit(self.reed_aperture_inertia, fallback.reed_aperture_inertia);
         self.body_formant = unit(self.body_formant, fallback.body_formant);
+        self.body_odd_mode_projection = unit(
+            self.body_odd_mode_projection,
+            fallback.body_odd_mode_projection,
+        );
+        self.body_upper_odd_modes = unit(self.body_upper_odd_modes, fallback.body_upper_odd_modes);
         self.humanize = unit(self.humanize, fallback.humanize);
+        self.register_break_note = if self.register_break_note.is_finite() {
+            self.register_break_note.clamp(48.0, 96.0).round()
+        } else {
+            fallback.register_break_note
+        };
         self.brightness = unit(self.brightness, fallback.brightness);
         self.damping = unit(self.damping, fallback.damping);
         self.bell = unit(self.bell, fallback.bell);
-        self.bell_radiation_shape =
-            unit(self.bell_radiation_shape, fallback.bell_radiation_shape);
+        self.bell_radiation_shape = unit(self.bell_radiation_shape, fallback.bell_radiation_shape);
         self.output_gain_db = if self.output_gain_db.is_finite() {
-            self.output_gain_db.clamp(-24.0, 12.0)
+            self.output_gain_db
+                .clamp(OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB)
         } else {
             fallback.output_gain_db
         };
@@ -77,6 +96,8 @@ pub struct TubeModelSwitchPatch {
     pub bell_enabled: bool,
     pub bore_steepening_enabled: bool,
     pub body_enabled: bool,
+    pub reed_radiation_enabled: bool,
+    pub clarinet_contour_enabled: bool,
 }
 
 impl Default for TubeModelSwitchPatch {
@@ -85,6 +106,8 @@ impl Default for TubeModelSwitchPatch {
             bell_enabled: true,
             bore_steepening_enabled: true,
             body_enabled: true,
+            reed_radiation_enabled: true,
+            clarinet_contour_enabled: false,
         }
     }
 }

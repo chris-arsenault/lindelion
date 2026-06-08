@@ -91,7 +91,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v100_current_nominal",
         "Tube Radiation C4-C5 Velocity 100 (current radiation, nominal bell)",
         "17_tube_radiation_shape/tube_radiation_v100_current_nominal.wav",
-        ["tube", "radiation-shape", "current", "bell-nominal", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "radiation-shape",
+            "current",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Nominal,
         TubeRadiationShape::Current,
         SCALE_V100
@@ -100,7 +107,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v100_gentle_nominal",
         "Tube Radiation C4-C5 Velocity 100 (gentle radiation, nominal bell)",
         "17_tube_radiation_shape/tube_radiation_v100_gentle_nominal.wav",
-        ["tube", "radiation-shape", "gentle", "bell-nominal", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "radiation-shape",
+            "gentle",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Nominal,
         TubeRadiationShape::Gentle,
         SCALE_V100
@@ -109,7 +123,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v100_current_full",
         "Tube Radiation C4-C5 Velocity 100 (current radiation, full bell)",
         "17_tube_radiation_shape/tube_radiation_v100_current_full.wav",
-        ["tube", "radiation-shape", "current", "bell-full", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "radiation-shape",
+            "current",
+            "bell-full",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Full,
         TubeRadiationShape::Current,
         SCALE_V100
@@ -118,7 +139,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v100_gentle_full",
         "Tube Radiation C4-C5 Velocity 100 (gentle radiation, full bell)",
         "17_tube_radiation_shape/tube_radiation_v100_gentle_full.wav",
-        ["tube", "radiation-shape", "gentle", "bell-full", "C4-C5", "velocity-100"],
+        [
+            "tube",
+            "radiation-shape",
+            "gentle",
+            "bell-full",
+            "C4-C5",
+            "velocity-100"
+        ],
         TubeBellLevel::Full,
         TubeRadiationShape::Gentle,
         SCALE_V100
@@ -127,7 +155,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v127_current_nominal",
         "Tube Radiation C4-C5 Velocity 127 (current radiation, nominal bell)",
         "17_tube_radiation_shape/tube_radiation_v127_current_nominal.wav",
-        ["tube", "radiation-shape", "current", "bell-nominal", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "radiation-shape",
+            "current",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Nominal,
         TubeRadiationShape::Current,
         SCALE_V127
@@ -136,7 +171,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v127_gentle_nominal",
         "Tube Radiation C4-C5 Velocity 127 (gentle radiation, nominal bell)",
         "17_tube_radiation_shape/tube_radiation_v127_gentle_nominal.wav",
-        ["tube", "radiation-shape", "gentle", "bell-nominal", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "radiation-shape",
+            "gentle",
+            "bell-nominal",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Nominal,
         TubeRadiationShape::Gentle,
         SCALE_V127
@@ -145,7 +187,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v127_current_full",
         "Tube Radiation C4-C5 Velocity 127 (current radiation, full bell)",
         "17_tube_radiation_shape/tube_radiation_v127_current_full.wav",
-        ["tube", "radiation-shape", "current", "bell-full", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "radiation-shape",
+            "current",
+            "bell-full",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Full,
         TubeRadiationShape::Current,
         SCALE_V127
@@ -154,7 +203,14 @@ pub(super) const TUBE_RADIATION_SHAPE_CASES: [CatalogCase; 8] = [
         "tube_radiation_v127_gentle_full",
         "Tube Radiation C4-C5 Velocity 127 (gentle radiation, full bell)",
         "17_tube_radiation_shape/tube_radiation_v127_gentle_full.wav",
-        ["tube", "radiation-shape", "gentle", "bell-full", "C4-C5", "velocity-127"],
+        [
+            "tube",
+            "radiation-shape",
+            "gentle",
+            "bell-full",
+            "C4-C5",
+            "velocity-127"
+        ],
         TubeBellLevel::Full,
         TubeRadiationShape::Gentle,
         SCALE_V127

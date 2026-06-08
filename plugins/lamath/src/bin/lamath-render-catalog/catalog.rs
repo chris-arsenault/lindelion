@@ -41,6 +41,7 @@ pub(crate) enum PatchRecipe {
     SourceBodyBalance {
         depth: SourceBodyDepth,
     },
+    StringBowAlternatingScale,
     Surrounding {
         family: ResonatorFamily,
         surrounding: SurroundingRecipe,
@@ -84,6 +85,9 @@ pub(crate) enum PatchRecipe {
         articulation: TubeReferenceArticulation,
         gain: TubeReferenceMatchGain,
         humanize: TubeReferenceHumanize,
+        register_key: TubeReferenceRegisterKey,
+        body_enabled: bool,
+        reed_radiation_enabled: bool,
     },
     /// Struck Mesh playing a multi-note phrase, exposing the same articulation knobs the schedule
     /// can't express: `polyphony` (1 = single voice-stealing body; >1 = independent struck voices
@@ -170,8 +174,10 @@ pub(crate) enum TubeReferenceArticulation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TubeReferenceMatchGain {
-    LowESustain,
+    LowESustainPhysical,
+    LowESustainBodyOff,
     RegisterKeyHighSustain,
+    RegisterKeyHighSustainVented,
     LowHighArticulation,
 }
 
@@ -180,6 +186,12 @@ pub(crate) enum TubeReferenceHumanize {
     Off,
     Medium,
     Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TubeReferenceRegisterKey {
+    Default,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,7 +294,7 @@ const GROUPS: [CatalogGroup; 19] = [
         id: "source_body_balance",
         directory: "05_source_body_balance",
         title: "Source-Body Balance",
-        question: "Does String move from soft-warm to loud-bright without acting like a fader?",
+        question: "Does String move from pickup-forward source to radiated body across single and repeated plucks?",
     },
     CatalogGroup {
         id: "surrounding",

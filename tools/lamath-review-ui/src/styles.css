@@ -121,7 +121,7 @@ textarea {
   top: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 300px);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px);
   gap: 16px;
   align-items: center;
   margin: -20px -24px 18px;
@@ -136,8 +136,15 @@ textarea {
   line-height: 1.2;
 }
 
+.toolbar-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .filter-input {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   height: 38px;
   border: 1px solid #c7ccc5;
   border-radius: 6px;
@@ -145,104 +152,30 @@ textarea {
   background: #ffffff;
 }
 
+.refresh-button {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid #c7ccc5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #252b2e;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.refresh-button:hover {
+  background: #eef0ea;
+}
+
+.refresh-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .case-groups {
   display: grid;
   gap: 22px;
-}
-
-.category-feedback {
-  margin-bottom: 22px;
-  border: 1px solid #d7dbd3;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.category-feedback summary {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  color: #252b2e;
-  font-weight: 700;
-}
-
-.category-feedback summary span:last-child {
-  color: #69706b;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.category-comment-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 1px;
-  border-top: 1px solid #d7dbd3;
-  background: #d7dbd3;
-}
-
-.category-comment-row {
-  display: grid;
-  grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
-  gap: 12px;
-  min-height: 116px;
-  padding: 12px;
-  background: #ffffff;
-}
-
-.category-meta {
-  min-width: 0;
-}
-
-.category-title-line {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-}
-
-.category-title-line strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 14px;
-}
-
-.category-type {
-  flex: 0 0 auto;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: #e8ebdf;
-  color: #515a35;
-  font-size: 11px;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
-.category-detail {
-  margin-top: 6px;
-  color: #69706b;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.category-comment-cell {
-  display: grid;
-  grid-template-rows: minmax(72px, 1fr) 18px;
-  gap: 5px;
-  min-width: 0;
-}
-
-.category-comment-cell textarea {
-  width: 100%;
-  min-height: 72px;
-  resize: vertical;
-  border: 1px solid #cbd0c8;
-  border-radius: 6px;
-  padding: 9px 10px;
-  background: #fbfcfa;
-  line-height: 1.35;
 }
 
 .case-group {
@@ -302,6 +235,64 @@ textarea {
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.axis-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 9px;
+}
+
+.axis-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.axis-label {
+  color: #69706b;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.axis-options {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid #c7ccc5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.axis-option {
+  padding: 3px 9px;
+  border: 0;
+  border-left: 1px solid #d8ddd6;
+  background: #ffffff;
+  color: #3b4240;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.axis-option:first-child {
+  border-left: 0;
+}
+
+.axis-option:hover {
+  background: #eef0ea;
+}
+
+.axis-option.active {
+  background: #4d675a;
+  color: #ffffff;
+}
+
+.axis-constant {
+  color: #59625e;
+  font-size: 12px;
 }
 
 .tag-row {
@@ -368,7 +359,6 @@ textarea {
 }
 
 .comment-cell textarea:focus,
-.category-comment-cell textarea:focus,
 .filter-input:focus {
   border-color: #667a70;
   outline: 2px solid rgba(77, 103, 90, 0.18);
@@ -408,12 +398,6 @@ textarea {
   color: #9a2f28;
 }
 
-.empty-note {
-  margin: 0;
-  padding: 14px;
-  color: #69706b;
-}
-
 @media (max-width: 920px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -428,7 +412,6 @@ textarea {
   }
 
   .case-row,
-  .category-comment-row,
   .toolbar {
     grid-template-columns: 1fr;
   }

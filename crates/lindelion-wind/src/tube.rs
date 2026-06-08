@@ -1,5 +1,5 @@
 use lindelion_dsp_utils::{
-    delay::FirstOrderAllpass,
+    delay::{DelayLine, FirstOrderAllpass},
     filters::{Biquad, BiquadCoefficients, OnePoleLowpass},
     math, soft_saturate,
 };
@@ -8,7 +8,7 @@ use super::{
     BOUNDARY_REFLECTION_DEFAULT, DEFAULT_BIQUAD_Q, LOOP_FILTER_CUTOFF_DEFAULT_HZ,
     LOOP_FILTER_RESONANCE_DEFAULT, LOOP_GAIN_DEFAULT, LOWEST_TUBE_FREQUENCY_HZ,
     PICKUP_POSITION_DEFAULT, TUBE_BOUNDARY,
-    body::TubeBody,
+    body::{TubeBody, TubeBodySample},
     core,
     traveling::{BoundaryFilters, BoundarySide, PickupSamples, TravelingWavePair},
 };
@@ -19,8 +19,14 @@ const STEEPEN_ENERGY_REF: f32 = 0.005;
 const STEEPEN_MAX_ENERGY: f32 = 1.0;
 const STEEPEN_MAX_COEFF: f32 = 0.9;
 const STEEPEN_AMPLITUDE_SENS: f32 = 10.0;
-const RADIATION_CUTOFF_HZ: f32 = 500.0;
-const GENTLE_RADIATION_CUTOFF_HZ: f32 = 500.0;
+const RADIATION_CUTOFF_HZ: f32 = 1_850.0;
+const GENTLE_RADIATION_CUTOFF_HZ: f32 = 1_850.0;
+const BODY_ODD_MODE_PROJECTION_DEFAULT: f32 = 1.0;
+const REGISTER_VENT_RADIATION_CUTOFF_HZ: f32 = 1_800.0;
+const REGISTER_VENT_RADIATION_GAIN: f32 = 0.24;
+const REGISTER_VENT_TURBULENCE_LOW_CUTOFF_HZ: f32 = 2_000.0;
+const REGISTER_VENT_TURBULENCE_HIGH_CUTOFF_HZ: f32 = 2_700.0;
+const REGISTER_VENT_TURBULENCE_GAIN: f32 = 0.0015;
 const REED_PHASE_ONE_WAY_FACTOR: f32 = 0.5;
 const WARM_BORE_DELAY_EXTRA_SAMPLES: f32 = 1.7;
 const WARM_BORE_DELAY_FULL_CUTOFF_HZ: f32 = 1_300.0;
@@ -35,6 +41,10 @@ const CLARINET_CONTOUR_H7_DB: f32 = -12.0;
 const CLARINET_CONTOUR_UPPER_HZ: f32 = 3_100.0;
 const CLARINET_CONTOUR_UPPER_Q: f32 = 1.15;
 const CLARINET_CONTOUR_UPPER_DB: f32 = 8.0;
+const REGISTER_MODE_RATIO_MIN: f32 = 1.0;
+const REGISTER_MODE_RATIO_MAX: f32 = 4.0;
+const REGISTER_VENT_ADMITTANCE_MAX: f32 = 4.0;
+const REGISTER_VENT_POSITION_DEFAULT: f32 = 1.0 / 3.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReedTubeSwitches {
@@ -42,6 +52,7 @@ pub struct ReedTubeSwitches {
     pub bell_enabled: bool,
     pub bore_steepening_enabled: bool,
     pub body_enabled: bool,
+    pub clarinet_contour_enabled: bool,
 }
 
 impl Default for ReedTubeSwitches {
@@ -51,6 +62,7 @@ impl Default for ReedTubeSwitches {
             bell_enabled: true,
             bore_steepening_enabled: true,
             body_enabled: true,
+            clarinet_contour_enabled: false,
         }
     }
 }
@@ -68,6 +80,23 @@ pub struct ReedTubeParams {
     pub bell_radiation_shape: f32,
     pub body_formant: f32,
     pub body_formant_shift: f32,
+    /// Ratio between sounding frequency and bore fundamental. A register-keyed clarinet note
+    /// speaks on the third bore mode, so `3.0` keeps the long low-register bore while the sounding
+    /// frequency stays high.
+    pub register_mode_ratio: f32,
+    /// Effective side-hole admittance for the register vent. `0.0` is closed; larger values leak
+    /// pressure at `register_vent_position`, suppressing the fundamental and encouraging the third
+    /// mode.
+    pub register_vent_admittance: f32,
+    /// Normalized bore position of the register vent, measured from the mouthpiece.
+    pub register_vent_position: f32,
+    /// Mix amount for the closed-open body projection. `1.0` is the physical odd-mode
+    /// projection `0.5 * (x[n] - x[n - T/2])`, which rejects even harmonics at the radiating body
+    /// input; lower values leak direct pickup pressure into the body path.
+    pub body_odd_mode_projection: f32,
+    /// Strength of the low-register upper odd body/radiation mode bank. These tracked h9/h11/h13
+    /// modes fill the clarinet tail above the primary h3/h5/h7 body resonances.
+    pub body_upper_odd_modes: f32,
     /// Phase delay (samples) the inertial reed aperture adds to the feedback loop at the
     /// playing frequency, supplied by the driving [`crate::ReedDriver`]. Folded into the
     /// bore-length tuning so the reed's loop phase is compensated like the mouth-loss and
@@ -90,6 +119,11 @@ impl Default for ReedTubeParams {
             bell_radiation_shape: 0.0,
             body_formant: 0.0,
             body_formant_shift: 0.0,
+            register_mode_ratio: 1.0,
+            register_vent_admittance: 0.0,
+            register_vent_position: REGISTER_VENT_POSITION_DEFAULT,
+            body_odd_mode_projection: BODY_ODD_MODE_PROJECTION_DEFAULT,
+            body_upper_odd_modes: 1.0,
             reed_phase_delay_samples: 0.0,
             switches: ReedTubeSwitches::default(),
         }
@@ -128,10 +162,7 @@ impl ReedTubeParams {
                 fallback.pickup_position,
             ),
             bell_radiation: unit(self.bell_radiation, fallback.bell_radiation),
-            bell_radiation_shape: unit(
-                self.bell_radiation_shape,
-                fallback.bell_radiation_shape,
-            ),
+            bell_radiation_shape: unit(self.bell_radiation_shape, fallback.bell_radiation_shape),
             body_formant: unit(self.body_formant, fallback.body_formant),
             body_formant_shift: math::finite_clamp(
                 self.body_formant_shift,
@@ -139,6 +170,29 @@ impl ReedTubeParams {
                 2.0,
                 fallback.body_formant_shift,
             ),
+            register_mode_ratio: math::finite_clamp(
+                self.register_mode_ratio,
+                REGISTER_MODE_RATIO_MIN,
+                REGISTER_MODE_RATIO_MAX,
+                fallback.register_mode_ratio,
+            ),
+            register_vent_admittance: math::finite_clamp(
+                self.register_vent_admittance,
+                0.0,
+                REGISTER_VENT_ADMITTANCE_MAX,
+                fallback.register_vent_admittance,
+            ),
+            register_vent_position: math::finite_clamp(
+                self.register_vent_position,
+                0.05,
+                0.95,
+                fallback.register_vent_position,
+            ),
+            body_odd_mode_projection: unit(
+                self.body_odd_mode_projection,
+                fallback.body_odd_mode_projection,
+            ),
+            body_upper_odd_modes: unit(self.body_upper_odd_modes, fallback.body_upper_odd_modes),
             reed_phase_delay_samples: math::finite_clamp(
                 self.reed_phase_delay_samples,
                 0.0,
@@ -151,6 +205,31 @@ impl ReedTubeParams {
             },
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ReedTubeTaps {
+    pub mouth_wave: f32,
+    pub mouth_incident: f32,
+    pub mouth_filtered: f32,
+    pub mouth_reflection: f32,
+    pub bell_incident: f32,
+    pub bell_reflection: f32,
+    pub bell_pressure: f32,
+    pub pickup_left: f32,
+    pub pickup_right: f32,
+    pub pickup_pressure: f32,
+    pub pickup_flow: f32,
+    pub pickup_sample: f32,
+    pub body_input: f32,
+    pub body_output: f32,
+    pub body_reaction_flow: f32,
+    pub bell_radiated: f32,
+    pub register_vent_flow: f32,
+    pub register_vent_output: f32,
+    pub body_bell_sum: f32,
+    pub main_output: f32,
+    pub final_output: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -166,6 +245,7 @@ pub struct ReedTube {
     waves: TravelingWavePair,
     boundary_filters: BoundaryFilters,
     body: TubeBody,
+    body_odd_mode_delay: DelayLine,
     prepared: Option<(ReedTubeParams, PreparedTubeModel)>,
     loop_gain: core::ScalarSmoother,
     loop_filter_cutoff: core::ScalarSmoother,
@@ -176,6 +256,11 @@ pub struct ReedTube {
     steepening_allpass: FirstOrderAllpass,
     radiation_highpass: Biquad,
     gentle_radiation_lowpass: OnePoleLowpass,
+    register_vent_highpass: Biquad,
+    register_vent_turbulence_highpass: Biquad,
+    register_vent_turbulence_lowpass: Biquad,
+    register_vent_flow: f32,
+    register_vent_noise: u32,
     contour_h2: Biquad,
     contour_h3: Biquad,
     contour_h4: Biquad,
@@ -200,6 +285,11 @@ impl ReedTube {
             waves: TravelingWavePair::new(sample_rate, lowest_frequency_hz, 4.0),
             boundary_filters: BoundaryFilters::new(),
             body: TubeBody::new(sample_rate),
+            body_odd_mode_delay: DelayLine::new(core::max_delay_samples(
+                sample_rate,
+                lowest_frequency_hz,
+                2.0,
+            )),
             prepared: None,
             loop_gain: core::ScalarSmoother::new(sample_rate),
             loop_filter_cutoff: core::ScalarSmoother::new(sample_rate),
@@ -213,10 +303,24 @@ impl ReedTube {
                 RADIATION_CUTOFF_HZ,
                 DEFAULT_BIQUAD_Q,
             )),
-            gentle_radiation_lowpass: OnePoleLowpass::new(
-                GENTLE_RADIATION_CUTOFF_HZ,
+            gentle_radiation_lowpass: OnePoleLowpass::new(GENTLE_RADIATION_CUTOFF_HZ, sample_rate),
+            register_vent_highpass: Biquad::new(BiquadCoefficients::highpass(
                 sample_rate,
-            ),
+                REGISTER_VENT_RADIATION_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
+            register_vent_turbulence_highpass: Biquad::new(BiquadCoefficients::highpass(
+                sample_rate,
+                REGISTER_VENT_TURBULENCE_LOW_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
+            register_vent_turbulence_lowpass: Biquad::new(BiquadCoefficients::lowpass(
+                sample_rate,
+                REGISTER_VENT_TURBULENCE_HIGH_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
+            register_vent_flow: 0.0,
+            register_vent_noise: 0x4F1B_BCDC,
             contour_h2: Biquad::new(BiquadCoefficients::identity()),
             contour_h3: Biquad::new(BiquadCoefficients::identity()),
             contour_h4: Biquad::new(BiquadCoefficients::identity()),
@@ -243,6 +347,7 @@ impl ReedTube {
         self.waves.clear();
         self.boundary_filters.reset();
         self.body.reset();
+        self.body_odd_mode_delay.clear();
         self.prepared = None;
         self.loop_gain.reset();
         self.loop_filter_cutoff.reset();
@@ -253,6 +358,10 @@ impl ReedTube {
         self.steepening_allpass.reset();
         self.radiation_highpass.reset();
         self.gentle_radiation_lowpass.reset();
+        self.register_vent_highpass.reset();
+        self.register_vent_turbulence_highpass.reset();
+        self.register_vent_turbulence_lowpass.reset();
+        self.register_vent_flow = 0.0;
         self.contour_h2.reset();
         self.contour_h3.reset();
         self.contour_h4.reset();
@@ -264,6 +373,24 @@ impl ReedTube {
     }
 
     pub fn process_wind(&mut self, mouth_wave: f32, params: ReedTubeParams) -> f32 {
+        self.process_wind_inner(mouth_wave, params, None)
+    }
+
+    pub fn process_wind_with_taps(
+        &mut self,
+        mouth_wave: f32,
+        params: ReedTubeParams,
+        taps: &mut ReedTubeTaps,
+    ) -> f32 {
+        self.process_wind_inner(mouth_wave, params, Some(taps))
+    }
+
+    fn process_wind_inner(
+        &mut self,
+        mouth_wave: f32,
+        params: ReedTubeParams,
+        mut taps: Option<&mut ReedTubeTaps>,
+    ) -> f32 {
         let params = self.smoothed_params(params.sanitized());
         let prepared = self.prepared_model(params);
         let profile = prepared.profile;
@@ -274,15 +401,58 @@ impl ReedTube {
         let pickup = self
             .waves
             .pickup_samples(one_way_delay, prepared.geometry.pickup_position);
+        let pickup_sample = profile.pickup_sample(pickup);
+        let body_input = if params.switches.body_enabled {
+            self.closed_open_body_sample(pickup_sample, one_way_delay, params)
+        } else {
+            pickup_sample
+        };
+        let body = if params.switches.body_enabled {
+            self.body
+                .process_sample(body_input, prepared.geometry.pickup_position, params)
+        } else {
+            TubeBodySample {
+                output: pickup_sample * TUBE_BOUNDARY.output_gain(params.boundary_reflection),
+                reaction_flow: 0.0,
+            }
+        };
         let filtered = self
             .boundary_filters
             .process(BoundarySide::Left, mouth_wave);
         let mouth_reflection = math::snap_to_zero(self.apply_steepening(filtered, params));
         let end_reflection =
             self.reflected_sample(BoundarySide::Right, boundary.right, profile, params);
+        if let Some(taps) = taps.as_mut() {
+            **taps = ReedTubeTaps {
+                mouth_wave,
+                mouth_incident: boundary.left,
+                mouth_filtered: filtered,
+                mouth_reflection,
+                bell_incident: boundary.right,
+                bell_reflection: end_reflection,
+                ..ReedTubeTaps::default()
+            };
+        }
 
+        self.register_vent_flow = 0.0;
+        self.apply_register_vent(one_way_delay, params);
+        self.apply_body_reaction(
+            one_way_delay,
+            prepared.geometry.pickup_position,
+            body.reaction_flow,
+        );
         self.waves.push(end_reflection, mouth_reflection);
-        self.output_sample(boundary.right, end_reflection, pickup, profile, params)
+        self.output_sample(
+            boundary.right,
+            end_reflection,
+            pickup,
+            pickup_sample,
+            body_input,
+            body.output,
+            body.reaction_flow,
+            params,
+            taps,
+        )
     }
 
     fn smoothed_params(&mut self, params: ReedTubeParams) -> ReedTubeParams {
@@ -304,6 +474,8 @@ impl ReedTube {
             bell_radiation_shape: 0.0,
             body_formant: 0.0,
             body_formant_shift: 0.0,
+            body_odd_mode_projection: 0.0,
+            body_upper_odd_modes: 0.0,
             switches: ReedTubeSwitches::default(),
             ..params
         };
@@ -313,14 +485,16 @@ impl ReedTube {
             return prepared;
         }
 
+        let sounding_frequency_hz = params.frequency_hz;
+        let bore_frequency_hz = bore_frequency_hz(params);
         let bore_cutoff_hz = core::bore_hf_loss_cutoff_hz(
             self.sample_rate,
-            params.frequency_hz,
+            sounding_frequency_hz,
             params.loop_filter_cutoff_hz,
         );
         let damping = core::loop_damping(
             self.sample_rate,
-            params.frequency_hz,
+            sounding_frequency_hz,
             bore_cutoff_hz,
             params.loop_filter_resonance,
             params.loop_gain,
@@ -335,17 +509,17 @@ impl ReedTube {
         let mouth_phase_delay = core::filter_phase_delay_samples(
             profile.mouth_loss,
             self.sample_rate,
-            params.frequency_hz,
+            sounding_frequency_hz,
         );
         let damping_phase_delay = core::filter_phase_delay_samples(
             damping.coefficients,
             self.sample_rate,
-            params.frequency_hz,
+            sounding_frequency_hz,
         );
         let tuning = core::delay_tuning(
             self.sample_rate,
             self.waves.capacity(),
-            params.frequency_hz,
+            bore_frequency_hz,
             4.0,
             delay_offset_samples(
                 bore_cutoff_hz,
@@ -358,7 +532,7 @@ impl ReedTube {
 
         self.boundary_filters
             .set_coefficients(profile.mouth_loss, damping.coefficients);
-        self.set_clarinet_contour(params.frequency_hz);
+        self.set_clarinet_contour(sounding_frequency_hz);
 
         let prepared = PreparedTubeModel {
             profile,
@@ -413,20 +587,65 @@ impl ReedTube {
         self.steepening_allpass.process(sample)
     }
 
+    fn apply_register_vent(&mut self, one_way_delay: f32, params: ReedTubeParams) {
+        let admittance = math::finite_clamp(
+            params.register_vent_admittance,
+            0.0,
+            REGISTER_VENT_ADMITTANCE_MAX,
+            0.0,
+        );
+        if admittance <= f32::EPSILON {
+            return;
+        }
+
+        let position = math::finite_clamp(
+            params.register_vent_position,
+            0.05,
+            0.95,
+            REGISTER_VENT_POSITION_DEFAULT,
+        );
+        let junction = self.waves.junction_samples(one_way_delay, position);
+        let pressure = math::snap_to_zero(junction.from_mouth + junction.from_bell);
+        if pressure == 0.0 {
+            return;
+        }
+
+        // Two equal-impedance bore sections plus a resistive shunt to atmosphere:
+        // p = 2(a+b)/(2+Y). The through-going waves are already in the delay lines, so inject only
+        // the correction from the open side hole, common to both outgoing directions. The shunt flow
+        // itself radiates locally from the register key, but it is output-only: it does not feed back
+        // into the bore or reed.
+        let junction_pressure = 2.0 * pressure / (2.0 + admittance);
+        self.register_vent_flow = math::snap_to_zero(admittance * junction_pressure);
+        let correction = -pressure * admittance / (2.0 + admittance);
+        self.waves
+            .add_junction_correction(one_way_delay, position, correction);
+    }
+
+    fn apply_body_reaction(&mut self, one_way_delay: f32, position: f32, reaction_flow: f32) {
+        let reaction_flow = math::snap_to_zero(reaction_flow);
+        if reaction_flow == 0.0 {
+            return;
+        }
+
+        self.waves
+            .add_junction_correction(one_way_delay, position, -0.5 * reaction_flow);
+    }
+
     fn output_sample(
         &mut self,
         bell_incident: f32,
         bell_reflected: f32,
         pickup: PickupSamples,
-        profile: TubeBoreProfile,
+        pickup_sample: f32,
+        body_input: f32,
+        body: f32,
+        body_reaction_flow: f32,
         params: ReedTubeParams,
+        taps: Option<&mut ReedTubeTaps>,
     ) -> f32 {
-        let pickup_sample = profile.pickup_sample(pickup);
-        let body = if params.switches.body_enabled {
-            self.body.process_sample(pickup_sample, params)
-        } else {
-            pickup_sample * TUBE_BOUNDARY.output_gain(params.boundary_reflection)
-        };
+        let pickup_pressure = pickup.average();
+        let pickup_flow = (pickup.right - pickup.left) * 0.5;
         let bell_gain = if params.switches.bell_enabled {
             params.bell_radiation
         } else {
@@ -442,10 +661,52 @@ impl ReedTube {
         // replaces the old `highpass(incident)·2.5·effort²` tap, which re-emitted the highs above
         // unity *on top of* reflecting them and squared the tone; brightness-with-effort must now
         // come from the source (the reed generating more harmonics), not this tap.
-        let radiated = self.radiated_bell_sample(bell_incident + bell_reflected, params)
-            * bell_gain;
+        let bell_pressure = bell_incident + bell_reflected;
+        let radiated = self.radiated_bell_sample(bell_pressure, params) * bell_gain;
 
-        self.clarinet_contour_sample(body + radiated)
+        let register_vent = self.radiated_register_vent_sample();
+
+        let body_bell_sum = body + radiated;
+        let main_output = if params.switches.clarinet_contour_enabled {
+            self.clarinet_contour_sample(body_bell_sum)
+        } else {
+            body_bell_sum
+        };
+
+        let final_output = math::snap_to_zero(main_output + register_vent);
+        if let Some(taps) = taps {
+            taps.bell_pressure = bell_pressure;
+            taps.pickup_left = pickup.left;
+            taps.pickup_right = pickup.right;
+            taps.pickup_pressure = pickup_pressure;
+            taps.pickup_flow = pickup_flow;
+            taps.pickup_sample = pickup_sample;
+            taps.body_input = body_input;
+            taps.body_output = body;
+            taps.body_reaction_flow = body_reaction_flow;
+            taps.bell_radiated = radiated;
+            taps.register_vent_flow = self.register_vent_flow;
+            taps.register_vent_output = register_vent;
+            taps.body_bell_sum = body_bell_sum;
+            taps.main_output = main_output;
+            taps.final_output = final_output;
+        }
+        final_output
+    }
+
+    fn closed_open_body_sample(
+        &mut self,
+        sample: f32,
+        one_way_delay: f32,
+        params: ReedTubeParams,
+    ) -> f32 {
+        let half_period_delay =
+            (one_way_delay * 2.0).clamp(0.0, self.body_odd_mode_delay.capacity() as f32 - 3.0);
+        let delayed = self.body_odd_mode_delay.read(half_period_delay);
+        self.body_odd_mode_delay.push(sample);
+        let odd_mode = (sample - delayed) * 0.5;
+        let projection = math::finite_clamp(params.body_odd_mode_projection, 0.0, 1.0, 1.0);
+        math::snap_to_zero(sample + (odd_mode - sample) * projection)
     }
 
     fn radiated_bell_sample(&mut self, bell_pressure: f32, params: ReedTubeParams) -> f32 {
@@ -453,6 +714,32 @@ impl ReedTube {
         let gentle = bell_pressure - self.gentle_radiation_lowpass.process(bell_pressure);
         let shape = math::finite_clamp(params.bell_radiation_shape, 0.0, 1.0, 0.0);
         math::snap_to_zero(current + (gentle - current) * shape)
+    }
+
+    fn radiated_register_vent_sample(&mut self) -> f32 {
+        let bright_flow = self.register_vent_highpass.process(self.register_vent_flow);
+        let turbulence = self.register_vent_turbulence_sample();
+        math::snap_to_zero(bright_flow * REGISTER_VENT_RADIATION_GAIN + turbulence)
+    }
+
+    fn register_vent_turbulence_sample(&mut self) -> f32 {
+        let flow_drive = math::finite_clamp(self.register_vent_flow.abs(), 0.0, 1.0, 0.0).sqrt();
+        if flow_drive <= f32::EPSILON {
+            return 0.0;
+        }
+
+        let noise = self.next_register_vent_noise() * flow_drive * REGISTER_VENT_TURBULENCE_GAIN;
+        let bright_noise = self.register_vent_turbulence_highpass.process(noise);
+        math::snap_to_zero(self.register_vent_turbulence_lowpass.process(bright_noise))
+    }
+
+    fn next_register_vent_noise(&mut self) -> f32 {
+        let mut x = self.register_vent_noise;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.register_vent_noise = x;
+        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
 
     fn set_clarinet_contour(&mut self, frequency_hz: f32) {
@@ -561,6 +848,16 @@ fn bore_end_reflection(boundary_reflection: f32) -> f32 {
     } else {
         reflection
     }
+}
+
+fn bore_frequency_hz(params: ReedTubeParams) -> f32 {
+    let ratio = math::finite_clamp(
+        params.register_mode_ratio,
+        REGISTER_MODE_RATIO_MIN,
+        REGISTER_MODE_RATIO_MAX,
+        1.0,
+    );
+    math::finite_or(params.frequency_hz / ratio, params.frequency_hz).max(1.0)
 }
 
 fn steepening_energy(energy: f32) -> f32 {

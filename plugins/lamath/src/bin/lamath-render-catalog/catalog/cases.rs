@@ -7,9 +7,9 @@ mod edges;
 mod mesh_strikers;
 mod mesh_timbre;
 mod surrounding;
-mod tube_bore_steepening;
 mod tube_body_formant_levels;
 mod tube_body_formant_mix;
+mod tube_bore_steepening;
 mod tube_dynamics;
 mod tube_output_paths;
 mod tube_radiation_shape;
@@ -335,6 +335,8 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(dynamic_response::SOURCE_BODY_CASE_SPECS.iter())
         .copied()
         .map(CatalogCaseSpec::catalog_case)
+        .chain(dynamic_response::BOW_DRIVER_PHRASE_CASES.iter().cloned())
+        .chain(dynamic_response::SOURCE_BODY_REPEAT_CASES.iter().cloned())
         .chain(surrounding::SURROUNDING_CASES.iter().cloned())
         .chain(chords::CHORD_CASES.iter().cloned())
         .chain(edges::EDGE_CASES.iter().cloned())
@@ -344,11 +346,31 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(tube_reed_aperture::TUBE_REED_APERTURE_CASES.iter().cloned())
         .chain(mesh_strikers::MESH_STRIKER_CASES.iter().cloned())
         .chain(tube_output_paths::TUBE_OUTPUT_PATH_CASES.iter().cloned())
-        .chain(tube_body_formant_levels::TUBE_BODY_FORMANT_LEVEL_CASES.iter().cloned())
-        .chain(tube_body_formant_mix::TUBE_BODY_FORMANT_MIX_CASES.iter().cloned())
-        .chain(tube_radiation_shape::TUBE_RADIATION_SHAPE_CASES.iter().cloned())
-        .chain(tube_bore_steepening::TUBE_BORE_STEEPENING_CASES.iter().cloned())
-        .chain(tube_reference_match::TUBE_REFERENCE_MATCH_CASES.iter().cloned())
+        .chain(
+            tube_body_formant_levels::TUBE_BODY_FORMANT_LEVEL_CASES
+                .iter()
+                .cloned(),
+        )
+        .chain(
+            tube_body_formant_mix::TUBE_BODY_FORMANT_MIX_CASES
+                .iter()
+                .cloned(),
+        )
+        .chain(
+            tube_radiation_shape::TUBE_RADIATION_SHAPE_CASES
+                .iter()
+                .cloned(),
+        )
+        .chain(
+            tube_bore_steepening::TUBE_BORE_STEEPENING_CASES
+                .iter()
+                .cloned(),
+        )
+        .chain(
+            tube_reference_match::TUBE_REFERENCE_MATCH_CASES
+                .iter()
+                .cloned(),
+        )
         .collect()
 }
 

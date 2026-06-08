@@ -9,8 +9,8 @@ mod reed;
 mod traveling;
 mod tube;
 
-pub use reed::{ReedDriver, ReedParams};
-pub use tube::{ReedTube, ReedTubeParams, ReedTubeSwitches};
+pub use reed::{ReedDriver, ReedParams, ReedProcessTaps};
+pub use tube::{ReedTube, ReedTubeParams, ReedTubeSwitches, ReedTubeTaps};
 
 pub(crate) const DSP_FALLBACK_SAMPLE_RATE: f32 = 48_000.0;
 pub(crate) const DEFAULT_BIQUAD_Q: f32 = 0.707;

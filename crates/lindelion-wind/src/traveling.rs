@@ -29,6 +29,12 @@ impl PickupSamples {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JunctionSamples {
+    pub from_bell: f32,
+    pub from_mouth: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TravelingWavePair {
     leftward: DelayLine,
@@ -75,6 +81,38 @@ impl TravelingWavePair {
                 pickup_position,
             )),
         }
+    }
+
+    pub fn junction_samples(
+        &self,
+        one_way_delay_samples: f32,
+        position: f32,
+    ) -> JunctionSamples {
+        JunctionSamples {
+            from_bell: self.leftward.read(complementary_position_delay_samples(
+                one_way_delay_samples,
+                position,
+            )),
+            from_mouth: self
+                .rightward
+                .read(core::position_delay_samples(one_way_delay_samples, position)),
+        }
+    }
+
+    pub fn add_junction_correction(
+        &mut self,
+        one_way_delay_samples: f32,
+        position: f32,
+        correction: f32,
+    ) {
+        self.leftward.add_at(
+            complementary_position_delay_samples(one_way_delay_samples, position),
+            correction,
+        );
+        self.rightward.add_at(
+            core::position_delay_samples(one_way_delay_samples, position),
+            correction,
+        );
     }
 
     pub fn push(&mut self, leftward_sample: f32, rightward_sample: f32) {

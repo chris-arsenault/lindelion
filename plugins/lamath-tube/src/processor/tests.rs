@@ -117,6 +117,7 @@ fn model_switches_stay_finite_and_material() {
                 bell_enabled: false,
                 bore_steepening_enabled: false,
                 body_enabled: false,
+                reed_radiation_enabled: false,
             },
             ..TubePatch::default()
         },

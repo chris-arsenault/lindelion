@@ -1,10 +1,13 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::path::Path;
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+use std::sync::RwLock;
 use std::{
     cell::{Cell, RefCell},
     ffi::c_char,
     mem::MaybeUninit,
     ptr,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -38,6 +41,12 @@ pub(crate) struct LamathTubeVst3Processor {
     plugin: RefCell<LamathTube>,
     setup: Cell<ShellProcessSetup>,
     values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
+    pending_values: [AtomicU32; parameters::PARAMETER_COUNT],
+    pending_dirty: [AtomicBool; parameters::PARAMETER_COUNT],
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_switches: RwLock<Vec<lindelion_ui::lamath_tube_vizia::LamathTubeModelSwitch>>,
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_slots: RwLock<lindelion_ui::audio_file_slot::AudioFileSlotListView>,
     handler: Cell<*mut IComponentHandler>,
 }
 
@@ -62,43 +71,57 @@ impl LamathTubeVst3Processor {
         let setup = ShellProcessSetup::default();
         let mut plugin = LamathTube::default();
         plugin.reset(setup);
+        let default_values = parameters::default_normalized_values();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_switches = plugin.model_switches();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_slots = plugin.articulation_slot_list_view();
         Self {
-            values: Vst3ParameterMirror::new(parameters::default_normalized_values()),
+            values: Vst3ParameterMirror::new(default_values),
+            pending_values: std::array::from_fn(|index| {
+                AtomicU32::new((default_values[index] as f32).to_bits())
+            }),
+            pending_dirty: std::array::from_fn(|_| AtomicBool::new(false)),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_switches: RwLock::new(editor_switches),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_slots: RwLock::new(editor_slots),
             plugin: RefCell::new(plugin),
             setup: Cell::new(setup),
             handler: Cell::new(ptr::null_mut()),
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn editor_knobs(&self) -> Vec<lindelion_ui::lamath_tube_vizia::LamathTubeKnob> {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.editor_knobs())
-            .unwrap_or_default()
+        self.knobs_from_values()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn model_switches(
         &self,
     ) -> Vec<lindelion_ui::lamath_tube_vizia::LamathTubeModelSwitch> {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.model_switches())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let switches = plugin.model_switches();
+            self.replace_editor_switches(switches.clone());
+            return switches;
+        }
+        self.cached_editor_switches()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn articulation_slot_list_view(
         &self,
     ) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.articulation_slot_list_view())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let slots = plugin.articulation_slot_list_view();
+            self.replace_editor_slots(slots.clone());
+            return slots;
+        }
+        self.cached_editor_slots()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn set_editor_parameter(&self, id: u32, normalized: f32) {
         let _ = self.set_value(id, f64::from(normalized));
         if let Some(handler) = unsafe { ComRef::from_raw(self.handler.get()) } {
@@ -116,6 +139,7 @@ impl LamathTubeVst3Processor {
             return;
         };
         plugin.set_model_switch(id, enabled);
+        self.replace_editor_switches(plugin.model_switches());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -125,6 +149,7 @@ impl LamathTubeVst3Processor {
             return;
         };
         plugin.select_articulation_slot(slot);
+        self.replace_editor_slots(plugin.articulation_slot_list_view());
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -135,6 +160,7 @@ impl LamathTubeVst3Processor {
         let _ = plugin.load_excitation_from_path(slot, path);
         self.values
             .replace(parameters::normalized_values_from_patch(plugin.patch()));
+        self.replace_editor_slots(plugin.articulation_slot_list_view());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -144,6 +170,7 @@ impl LamathTubeVst3Processor {
             return;
         };
         plugin.clear_excitation(slot);
+        self.replace_editor_slots(plugin.articulation_slot_list_view());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -188,9 +215,11 @@ impl LamathTubeVst3Processor {
             return kInvalidArgument;
         };
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return kResultFalse;
+            self.queue_pending_value(index, value as f32);
+            return kResultOk;
         };
         if plugin.set_parameter_normalized(ParameterId(id), value as f32) {
+            self.clear_pending_value(index, value as f32);
             kResultOk
         } else {
             kInvalidArgument
@@ -201,6 +230,85 @@ impl LamathTubeVst3Processor {
         if let Ok(plugin) = self.plugin.try_borrow() {
             self.values
                 .replace(parameters::normalized_values_from_patch(plugin.patch()));
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_switches(plugin.model_switches());
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_slots(plugin.articulation_slot_list_view());
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn knobs_from_values(&self) -> Vec<lindelion_ui::lamath_tube_vizia::LamathTubeKnob> {
+        let values = self.values.values();
+        parameters::PARAMETERS
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                let normalized = values[index] as f32;
+                lindelion_ui::lamath_tube_vizia::LamathTubeKnob {
+                    id: parameter.id.0,
+                    label: parameter.name,
+                    units: parameter.units,
+                    normalized,
+                    plain: parameter.range.denormalize(normalized),
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_switches(
+        &self,
+    ) -> Vec<lindelion_ui::lamath_tube_vizia::LamathTubeModelSwitch> {
+        self.editor_switches
+            .read()
+            .map(|switches| switches.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_switches(
+        &self,
+        switches: Vec<lindelion_ui::lamath_tube_vizia::LamathTubeModelSwitch>,
+    ) {
+        match self.editor_switches.write() {
+            Ok(mut cached) => *cached = switches,
+            Err(poisoned) => *poisoned.into_inner() = switches,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_slots(&self) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
+        self.editor_slots
+            .read()
+            .map(|slots| slots.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_slots(&self, slots: lindelion_ui::audio_file_slot::AudioFileSlotListView) {
+        match self.editor_slots.write() {
+            Ok(mut cached) => *cached = slots,
+            Err(poisoned) => *poisoned.into_inner() = slots,
+        }
+    }
+
+    fn queue_pending_value(&self, index: usize, normalized: f32) {
+        self.pending_values[index].store(normalized.to_bits(), Ordering::Release);
+        self.pending_dirty[index].store(true, Ordering::Release);
+    }
+
+    fn clear_pending_value(&self, index: usize, normalized: f32) {
+        self.pending_values[index].store(normalized.to_bits(), Ordering::Release);
+        self.pending_dirty[index].store(false, Ordering::Release);
+    }
+
+    fn apply_pending_values(&self, plugin: &mut LamathTube) {
+        for (index, parameter) in parameters::PARAMETERS.iter().enumerate() {
+            if self.pending_dirty[index].swap(false, Ordering::AcqRel) {
+                let normalized = f32::from_bits(self.pending_values[index].load(Ordering::Acquire));
+                let _ = plugin.set_parameter_normalized(parameter.id, normalized);
+            }
         }
     }
 }
@@ -365,6 +473,7 @@ impl IAudioProcessorTrait for LamathTubeVst3Processor {
             buffer.clear();
             return kResultFalse;
         };
+        self.apply_pending_values(&mut plugin);
         plugin.process(ShellProcessContext::new(
             self.setup.get(),
             buffer,
@@ -517,5 +626,42 @@ mod tests {
             unsafe { processor.getParameterCount() },
             parameters::PARAMETER_COUNT as i32
         );
+    }
+
+    #[test]
+    fn editor_state_does_not_collapse_while_plugin_is_borrowed() {
+        let processor = LamathTubeVst3Processor::new();
+        let _busy = processor.plugin.borrow_mut();
+
+        assert_eq!(processor.editor_knobs().len(), parameters::PARAMETER_COUNT);
+        assert!(!processor.model_switches().is_empty());
+        assert_eq!(
+            processor.articulation_slot_list_view().slots.len(),
+            crate::processor::ARTICULATION_SLOT_COUNT
+        );
+    }
+
+    #[test]
+    fn editor_parameter_change_queues_while_plugin_is_borrowed() {
+        let processor = LamathTubeVst3Processor::new();
+        let parameter = parameters::PARAMETERS[0];
+        let _busy = processor.plugin.borrow_mut();
+
+        processor.set_editor_parameter(parameter.id.0, 0.83);
+        let knob = processor
+            .editor_knobs()
+            .into_iter()
+            .find(|knob| knob.id == parameter.id.0)
+            .expect("queued parameter should remain visible in editor knobs");
+        assert!((knob.normalized - 0.83).abs() < 0.000_001);
+
+        drop(_busy);
+        let mut plugin = processor.plugin.borrow_mut();
+        crate::assert_no_allocations("lamath_tube_pending_editor_parameter", || {
+            processor.apply_pending_values(&mut plugin);
+        });
+        let normalized =
+            parameters::normalized_value(plugin.patch(), parameter.id.0).expect("known parameter");
+        assert!((normalized - 0.83).abs() < 0.000_001);
     }
 }

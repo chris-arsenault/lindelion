@@ -1,4 +1,9 @@
-use lindelion_dsp_utils::math;
+use lindelion_dsp_utils::{
+    filters::{Biquad, BiquadCoefficients},
+    math,
+};
+
+use super::DEFAULT_BIQUAD_Q;
 
 const REED_PRESSURE_FLOOR: f32 = 0.60;
 const REED_PRESSURE_CEIL: f32 = 0.76;
@@ -8,6 +13,7 @@ const REED_CLOSING_PRESSURE: f32 = 1.2;
 const REED_REST_OPENING: f32 = 1.0;
 const REED_MAX_OPENING: f32 = 1.5;
 const REED_FLOW_GAIN: f32 = 1.0;
+const REED_FLOW_PRESSURE_REGULARIZATION: f32 = 0.36;
 const REED_FEEDBACK_COUPLING: f32 = 1.0;
 const REED_EXCITATION_COUPLING: f32 = 0.5;
 const REED_OUTPUT_LIMIT: f32 = 1.5;
@@ -19,6 +25,14 @@ const REED_APERTURE_MAX_HZ: f32 = 3_200.0;
 const REED_APERTURE_DAMPING: f32 = 0.92;
 const REED_LOOP_PHASE_COUPLING: f32 = 1.25;
 const REED_EFFORT_PHASE_SLOPE: f32 = 0.35;
+const REED_TURBULENCE_VELOCITY_THRESHOLD: f32 = 0.42;
+const REED_TURBULENCE_VELOCITY_RANGE: f32 = 0.90;
+const REED_TURBULENT_LOSS_CUTOFF_HZ: f32 = 2_800.0;
+const REED_TURBULENT_LOSS_DEPTH: f32 = 0.70;
+const REED_TURBULENCE_LOW_CUTOFF_HZ: f32 = 3_200.0;
+const REED_TURBULENCE_HIGH_CUTOFF_HZ: f32 = 8_200.0;
+const REED_TURBULENCE_NOISE_GAIN: f32 = 0.95;
+const REED_TURBULENCE_PRESSURE_NOISE_GAIN: f32 = 0.045;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReedParams {
@@ -51,6 +65,17 @@ impl ReedParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ReedProcessTaps {
+    pub breath: f32,
+    pub feedback: f32,
+    pub delta_p: f32,
+    pub aperture: f32,
+    pub raw_flow: f32,
+    pub source_flow: f32,
+    pub output: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReedDriver {
     pressure_depth: f32,
@@ -63,6 +88,9 @@ pub struct ReedDriver {
     aperture_omega: f32,
     breath: f32,
     breath_coeff: f32,
+    turbulent_flow_lowpass: Biquad,
+    turbulence_highpass: Biquad,
+    turbulence_lowpass: Biquad,
     noise: u32,
     sample_rate: f32,
 }
@@ -82,6 +110,21 @@ impl ReedDriver {
             aperture_omega: aperture_omega(params, sample_rate),
             breath: 0.0,
             breath_coeff: 1.0 - (-1.0 / (REED_BREATH_RAMP_SECONDS * sample_rate)).exp(),
+            turbulent_flow_lowpass: Biquad::new(BiquadCoefficients::lowpass(
+                sample_rate,
+                REED_TURBULENT_LOSS_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
+            turbulence_highpass: Biquad::new(BiquadCoefficients::highpass(
+                sample_rate,
+                REED_TURBULENCE_LOW_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
+            turbulence_lowpass: Biquad::new(BiquadCoefficients::lowpass(
+                sample_rate,
+                REED_TURBULENCE_HIGH_CUTOFF_HZ,
+                DEFAULT_BIQUAD_Q,
+            )),
             noise: 0x9E37_79B9,
             sample_rate,
         }
@@ -98,6 +141,28 @@ impl ReedDriver {
     }
 
     pub fn process(&mut self, excitation: f32, effort: f32, feedback: f32, drive_gate: f32) -> f32 {
+        self.process_inner(excitation, effort, feedback, drive_gate, None)
+    }
+
+    pub fn process_with_taps(
+        &mut self,
+        excitation: f32,
+        effort: f32,
+        feedback: f32,
+        drive_gate: f32,
+        taps: &mut ReedProcessTaps,
+    ) -> f32 {
+        self.process_inner(excitation, effort, feedback, drive_gate, Some(taps))
+    }
+
+    fn process_inner(
+        &mut self,
+        excitation: f32,
+        effort: f32,
+        feedback: f32,
+        drive_gate: f32,
+        taps: Option<&mut ReedProcessTaps>,
+    ) -> f32 {
         let effort = math::finite_clamp(effort, 0.0, 1.0, 0.0);
         let drive_gate = math::finite_clamp(drive_gate, 0.0, 1.0, 1.0);
         let window = if effort <= REED_EFFORT_THRESHOLD {
@@ -120,10 +185,23 @@ impl ReedDriver {
             flow = 0.5 * flow + 0.5 * self.reed_flow(delta_p);
         }
         self.update_aperture(delta_p);
-        self.flow = flow;
+        let source_flow = self.turbulent_reed_flow(flow, delta_p);
+        self.flow = source_flow;
 
-        let output = p_minus + REED_FLOW_GAIN * flow;
-        math::finite_clamp(output, -REED_OUTPUT_LIMIT, REED_OUTPUT_LIMIT, 0.0)
+        let output = p_minus + REED_FLOW_GAIN * source_flow;
+        let output = math::finite_clamp(output, -REED_OUTPUT_LIMIT, REED_OUTPUT_LIMIT, 0.0);
+        if let Some(taps) = taps {
+            *taps = ReedProcessTaps {
+                breath,
+                feedback: p_minus,
+                delta_p,
+                aperture: self.aperture,
+                raw_flow: flow,
+                source_flow,
+                output,
+            };
+        }
+        output
     }
 
     pub fn reset(&mut self) {
@@ -131,6 +209,9 @@ impl ReedDriver {
         self.aperture = self.rest_opening.clamp(0.0, REED_MAX_OPENING);
         self.aperture_velocity = 0.0;
         self.breath = 0.0;
+        self.turbulent_flow_lowpass.reset();
+        self.turbulence_highpass.reset();
+        self.turbulence_lowpass.reset();
     }
 
     fn next_noise(&mut self) -> f32 {
@@ -148,7 +229,33 @@ impl ReedDriver {
         } else {
             self.aperture.clamp(0.0, REED_MAX_OPENING)
         };
-        opening * delta_p.signum() * delta_p.abs().sqrt()
+        opening * regularized_bernoulli_flow(delta_p)
+    }
+
+    fn turbulent_reed_flow(&mut self, flow: f32, delta_p: f32) -> f32 {
+        let opening = self.aperture.clamp(0.04, REED_MAX_OPENING);
+        let jet_velocity = (flow / opening).abs();
+        let velocity_drive = ((jet_velocity - REED_TURBULENCE_VELOCITY_THRESHOLD)
+            / REED_TURBULENCE_VELOCITY_RANGE)
+            .clamp(0.0, 1.0);
+        let pressure_drive = (delta_p.abs() / self.closing_pressure.max(0.1)).clamp(0.0, 1.0);
+        let drive = (velocity_drive * pressure_drive).sqrt();
+        if drive <= f32::EPSILON {
+            return flow;
+        }
+
+        let low_flow = self.turbulent_flow_lowpass.process(flow);
+        let high_flow = flow - low_flow;
+        let coherent_loss = (REED_TURBULENT_LOSS_DEPTH * drive).clamp(0.0, 0.94);
+        let shed_flow = high_flow * coherent_loss;
+        let coherent_flow = flow - shed_flow;
+
+        let shed_amplitude =
+            shed_flow.abs() + REED_TURBULENCE_PRESSURE_NOISE_GAIN * drive * delta_p.abs().sqrt();
+        let noise = self.next_noise() * REED_TURBULENCE_NOISE_GAIN * shed_amplitude;
+        let noise = self.turbulence_highpass.process(noise);
+        let noise = self.turbulence_lowpass.process(noise);
+        math::snap_to_zero(coherent_flow + noise)
     }
 
     fn update_aperture(&mut self, delta_p: f32) {
@@ -223,6 +330,10 @@ fn aperture_omega(params: ReedParams, sample_rate: f32) -> f32 {
         - (REED_APERTURE_MAX_HZ - REED_APERTURE_MIN_HZ) * params.aperture_inertia
         + 650.0 * params.stiffness;
     (std::f32::consts::TAU * frequency_hz / sample_rate.max(1.0)).clamp(0.0, 0.45)
+}
+
+fn regularized_bernoulli_flow(delta_p: f32) -> f32 {
+    delta_p / (delta_p.abs() + REED_FLOW_PRESSURE_REGULARIZATION).sqrt()
 }
 
 fn unit(value: f32, fallback: f32) -> f32 {

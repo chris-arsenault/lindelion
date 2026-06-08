@@ -108,6 +108,50 @@ pub(crate) fn write_catalog(
     })
 }
 
+/// Re-emit the manifest and index from the static catalog, reusing the metrics already stored for
+/// each rendered WAV. No audio is synthesized or written, so the WAV files (and their timestamps)
+/// are untouched — only `manifest.toml` and `index.md` are rewritten.
+pub(crate) fn regen_manifest(output_root: &Path) -> Result<RegenReport, WriteError> {
+    let manifest_path = output_root.join("manifest.toml");
+    let index_path = output_root.join("index.md");
+    let all_cases = catalog::catalog_cases();
+    let records = manifest::read_existing_records(&manifest_path, output_root, &all_cases)
+        .map_err(WriteError::Manifest)?;
+    if records.is_empty() {
+        return Err(WriteError::EmptySelection);
+    }
+    let manifest = manifest::manifest_toml(catalog::catalog_groups(), &records, "library");
+    let index = manifest::index_markdown(catalog::catalog_groups(), &records, "library");
+    write_text(&manifest_path, &manifest)?;
+    write_text(&index_path, &index)?;
+    Ok(RegenReport {
+        output_root: output_root.to_path_buf(),
+        cases: records.len(),
+        manifest_path,
+        index_path,
+    })
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RegenReport {
+    pub(crate) output_root: PathBuf,
+    pub(crate) cases: usize,
+    pub(crate) manifest_path: PathBuf,
+    pub(crate) index_path: PathBuf,
+}
+
+impl RegenReport {
+    pub(crate) fn summary(&self) -> String {
+        format!(
+            "Lamath manifest regen\noutput: {}\ncases: {}\nmanifest: {}\nindex: {}",
+            self.output_root.display(),
+            self.cases,
+            self.manifest_path.display(),
+            self.index_path.display()
+        )
+    }
+}
+
 fn merged_records(
     catalog_cases: &[CatalogCase],
     existing_records: Vec<ManifestRecord>,

@@ -12,7 +12,13 @@ pub(crate) struct CliOptions {
 pub(crate) enum Command {
     Help,
     List,
+    AnalyzeTubeTaps(String),
+    AnalyzeBowDiagnostic(String),
     Render(RenderSelection),
+    /// Re-emit `manifest.toml`/`index.md` from the static catalog, reusing the metrics already
+    /// stored for each rendered WAV. Writes no audio, so file timestamps are preserved — used to
+    /// upgrade the manifest to a new schema without a destructive re-render.
+    RegenManifest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +54,18 @@ fn parse_strings(args: Vec<String>, env_out: Option<PathBuf>) -> Result<CliOptio
         match args[index].as_str() {
             "-h" | "--help" => set_command(&mut command, Command::Help)?,
             "--list" => set_command(&mut command, Command::List)?,
+            "--tube-tap-analysis" => {
+                let case = value_after(&args, index, "--tube-tap-analysis")?;
+                index += 1;
+                set_command(&mut command, Command::AnalyzeTubeTaps(case))?;
+            }
+            "--bow-diagnostic" => {
+                let case = value_after(&args, index, "--bow-diagnostic")?;
+                index += 1;
+                set_command(&mut command, Command::AnalyzeBowDiagnostic(case))?;
+            }
             "--all" => set_command(&mut command, Command::Render(RenderSelection::All))?,
+            "--regen-manifest" => set_command(&mut command, Command::RegenManifest)?,
             "--group" => {
                 let group = value_after(&args, index, "--group")?;
                 index += 1;
@@ -103,7 +120,7 @@ impl fmt::Display for CliError {
             Self::MissingValue(flag) => write!(formatter, "{flag} requires a value"),
             Self::MultipleSelections => write!(
                 formatter,
-                "choose only one of --list, --all, --group, --tag, or --case"
+                "choose only one of --list, --tube-tap-analysis, --bow-diagnostic, --all, --group, --tag, or --case"
             ),
             Self::UnknownArgument(argument) => write!(formatter, "unknown argument: {argument}"),
         }
@@ -145,6 +162,12 @@ mod tests {
         assert_eq!(
             parse(&["--tag", "mesh"]).unwrap().command,
             Command::Render(RenderSelection::Tag("mesh".to_string()))
+        );
+        assert_eq!(
+            parse(&["--bow-diagnostic", "driver_string_bow_smooth_c4_v100"])
+                .unwrap()
+                .command,
+            Command::AnalyzeBowDiagnostic("driver_string_bow_smooth_c4_v100".to_string())
         );
     }
 

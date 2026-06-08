@@ -39,10 +39,13 @@ fn catalog_selection_handles_drivers_group() {
     validate_catalog(&cases).unwrap();
 
     let selected = select_group(&cases, "drivers");
-    assert_eq!(selected.len(), 7);
+    assert_eq!(selected.len(), 9);
     assert_all_paths_safe(&selected);
     assert_eq!(selected.first().unwrap().id, "driver_string_sample_c4_v100");
-    assert_eq!(selected.last().unwrap().id, "driver_tube_reed_hard_c4_v100");
+    assert_eq!(
+        selected.last().unwrap().id,
+        "driver_string_bow_alternating_scale_c4_c5_v100"
+    );
     assert_eq!(
         select_case(&cases, "driver_string_bow_scratch_c4_v100")
             .single()
@@ -81,7 +84,7 @@ fn catalog_selection_handles_source_body_balance_group() {
     validate_catalog(&cases).unwrap();
 
     let selected = select_group(&cases, "source_body_balance");
-    assert_eq!(selected.len(), 6);
+    assert_eq!(selected.len(), 9);
     assert_all_paths_safe(&selected);
     assert_eq!(
         selected.first().unwrap().id,
@@ -89,7 +92,7 @@ fn catalog_selection_handles_source_body_balance_group() {
     );
     assert_eq!(
         selected.last().unwrap().id,
-        "source_body_string_depth100_c4_v127"
+        "source_body_string_depth100_c4_repeated_v127"
     );
     assert_eq!(
         select_case(&cases, "source_body_string_depth050_c4_v127")
@@ -202,7 +205,7 @@ fn catalog_selection_handles_mesh_strikers_group() {
 fn catalog_selection_handles_edges_group() {
     let cases = catalog_cases();
     validate_catalog(&cases).unwrap();
-    assert_eq!(cases.len(), 105);
+    assert_eq!(cases.len(), 107);
 
     let selected = select_group(&cases, "edges");
     assert_eq!(selected.len(), 8);
