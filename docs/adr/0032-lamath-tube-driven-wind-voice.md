@@ -161,7 +161,7 @@ clarinet** and are not to be trusted for this — audition is the arbiter (the s
 energy-conserving open end (reflected = low-pass kept in the loop, radiated = the *complementary*
 high-pass to the output, unity gain) plus brightness generated at the reed source — then formant/body
 coloration so the result reads warm. A `bell_radiation` patch scale (`0..1`, default `1.0`) was added as
-the audition/diagnostic A/B handle for the current tap. Tracked in `LAMATH-TUBE-DEFICIENCIES.md`.
+the audition/diagnostic A/B handle for the current tap. Tracked in [the Lamath backlog](../plugins/lamath-backlog.md).
 
 - **Still deferred:** a fully formant-shaped (vs odd-harmonic-square) spectrum; the few-cents
   high-register flatness; an agile reed onset chiff and shaped (vs white-noise) breath.

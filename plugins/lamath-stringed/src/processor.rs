@@ -2,9 +2,10 @@ use lindelion_dsp_utils::{
     db_to_gain,
     energy::EnergyFollower,
     math::midi_note_to_hz,
+    phrase::{HostExpression, PhraseEngine},
     variance::{self, SmoothNoise},
 };
-use lindelion_plugin_shell::{MidiEvent, NoteEvent};
+use lindelion_plugin_shell::{ControlEvent, MidiEvent, NoteEvent};
 use lindelion_string::{
     BowParams, PickParams, StringBodyMode, StringDriver, StringDriverMode, StringModel,
     StringModelParams, StringModelProbe, StringModelSwitches,
@@ -14,8 +15,13 @@ use crate::patch::{BodySelection, DriverSelection, StringPatch};
 
 pub const ARTICULATION_SLOT_COUNT: usize = 8;
 
+mod excitation;
+mod phrasing;
 mod variance_source;
 
+pub use excitation::ExcitationSource;
+use excitation::Injector;
+use phrasing::{PHRASE_DEVELOPMENT_START, phrase_params_for_knobs};
 use variance_source::*;
 
 const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
@@ -63,89 +69,6 @@ pub const ARTICULATION_NAMES: [&str; ARTICULATION_SLOT_COUNT] = [
     "Soft",
 ];
 
-#[derive(Debug, Clone, Copy)]
-pub enum ExcitationSource<'a> {
-    BuiltIn {
-        slot: usize,
-    },
-    Loaded {
-        samples: &'a [f32],
-        sample_rate: f32,
-    },
-}
-
-impl<'a> ExcitationSource<'a> {
-    pub const fn builtin(slot: usize) -> Self {
-        Self::BuiltIn { slot }
-    }
-
-    pub fn from_samples(samples: &'a [f32], sample_rate: f32, fallback_slot: usize) -> Self {
-        if samples.is_empty() {
-            return Self::builtin(fallback_slot);
-        }
-        Self::Loaded {
-            samples,
-            sample_rate: sanitize_sample_rate(sample_rate),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Injector<'a> {
-    source: ExcitationSource<'a>,
-    position: f32,
-    step: f32,
-    gain: f32,
-}
-
-impl Default for Injector<'_> {
-    fn default() -> Self {
-        Self {
-            source: ExcitationSource::builtin(0),
-            position: 0.0,
-            step: 1.0,
-            gain: 0.0,
-        }
-    }
-}
-
-impl<'a> Injector<'a> {
-    fn trigger(&mut self, source: ExcitationSource<'a>, gain: f32, model_sample_rate: f32) {
-        self.source = source;
-        self.position = 0.0;
-        self.step = match source {
-            ExcitationSource::BuiltIn { .. } => {
-                BUILTIN_SAMPLE_RATE / sanitize_sample_rate(model_sample_rate)
-            }
-            ExcitationSource::Loaded { sample_rate, .. } => {
-                sample_rate / sanitize_sample_rate(model_sample_rate)
-            }
-        };
-        self.gain = gain.clamp(0.0, 2.0);
-    }
-
-    fn clear(&mut self) {
-        self.position = 0.0;
-        self.gain = 0.0;
-    }
-
-    fn process(&mut self) -> f32 {
-        if self.gain <= 0.0 {
-            return 0.0;
-        }
-        let sample = match self.source {
-            ExcitationSource::BuiltIn { slot } => builtin_sample(slot, self.position),
-            ExcitationSource::Loaded { samples, .. } => loaded_sample(samples, self.position),
-        };
-        let Some(sample) = sample else {
-            self.clear();
-            return 0.0;
-        };
-        self.position += self.step.max(0.000_001);
-        sample * self.gain
-    }
-}
-
 #[derive(Debug)]
 pub struct StringProcessor<'a> {
     sample_rate: f32,
@@ -167,6 +90,8 @@ pub struct StringProcessor<'a> {
     energy_value: f32,
     variance_source: StringVarianceSource,
     variance_offsets: StringVarianceOffsets,
+    phrase_engine: PhraseEngine,
+    host_expression: HostExpression,
     // Contact-position wander sampled at note-on: the pluck's per-note strike
     // scatter, held for the duration of the note (the bow reads the walk
     // continuously instead).
@@ -202,6 +127,8 @@ impl<'a> StringProcessor<'a> {
             energy: EnergyFollower::new(model_sample_rate),
             energy_value: 0.0,
             variance_source: StringVarianceSource::new(model_sample_rate),
+            phrase_engine: PhraseEngine::new(model_sample_rate),
+            host_expression: HostExpression::new(model_sample_rate),
             variance_offsets: StringVarianceOffsets::default(),
             note_strike_offset: 0.0,
         }
@@ -223,6 +150,8 @@ impl<'a> StringProcessor<'a> {
         self.energy = EnergyFollower::new(self.model_sample_rate);
         self.energy_value = 0.0;
         self.variance_source = StringVarianceSource::new(self.model_sample_rate);
+        self.phrase_engine = PhraseEngine::new(self.model_sample_rate);
+        self.host_expression = HostExpression::new(self.model_sample_rate);
         self.variance_offsets = StringVarianceOffsets::default();
         self.note_strike_offset = 0.0;
     }
@@ -295,8 +224,12 @@ impl<'a> StringProcessor<'a> {
 
     fn handle_events(&mut self, events: &[MidiEvent]) {
         for event in events {
-            let MidiEvent::Note(note) = *event else {
-                continue;
+            let note = match *event {
+                MidiEvent::Note(note) => note,
+                MidiEvent::Control(control) => {
+                    self.handle_control(control);
+                    continue;
+                }
             };
             match note {
                 NoteEvent::On { note, velocity, .. } if velocity > 0.0 => {
@@ -311,6 +244,26 @@ impl<'a> StringProcessor<'a> {
         }
     }
 
+    /// Host performance layer: the CC dynamics line (CC1/CC11) multiplies the
+    /// phrase intensity, channel pressure swells above it, pitch bend joins
+    /// the played-frequency rail. Inert until the host sends something.
+    fn handle_control(&mut self, control: ControlEvent) {
+        match control {
+            ControlEvent::ContinuousController {
+                controller: 1 | 11,
+                value,
+                ..
+            } => self.host_expression.set_expression(value),
+            ControlEvent::ChannelPressure { value, .. } => {
+                self.host_expression.set_aftertouch(value)
+            }
+            ControlEvent::PitchBend { semitones, .. } => {
+                self.host_expression.set_bend_semitones(semitones)
+            }
+            _ => {}
+        }
+    }
+
     fn select_slot(&mut self, slot: usize) {
         self.selected_slot = slot.min(ARTICULATION_SLOT_COUNT - 1);
         self.patch.selected_articulation = self.selected_slot;
@@ -321,9 +274,12 @@ impl<'a> StringProcessor<'a> {
         // another is held continues the current bow stroke (legato — only the
         // stopped length moves); a note from silence starts a fresh stroke in
         // the opposite direction.
-        if self.current_note.is_none() {
+        let legato = self.current_note.is_some();
+        if !legato {
             self.driver.flip_bow_stroke();
         }
+        self.phrase_engine
+            .note_on(velocity.clamp(0.0, 1.0), legato, PHRASE_DEVELOPMENT_START);
         // Sample the contact-position walk at the strike: per-note scatter of
         // where the pick lands, held for the note's duration.
         self.note_strike_offset = self.variance_offsets.position;
@@ -343,6 +299,7 @@ impl<'a> StringProcessor<'a> {
         if self.current_note == Some(note) {
             self.current_note = None;
             self.drive_target = 0.0;
+            self.phrase_engine.note_off();
         }
     }
 
@@ -355,19 +312,44 @@ impl<'a> StringProcessor<'a> {
             .variance_source
             .process(StringSteadyVariance::from_humanize(self.patch.humanize));
 
+        // Phrasing: the living intensity signal replaces the static note-on
+        // effort, vibrato joins the played-frequency rail, and the reactive
+        // release holds the gate open while the taper sounds. At knob zero the
+        // engine is bypassed entirely (bit-identical static behavior).
+        let phrasing = self.patch.phrasing;
+        let vibrato = self.patch.vibrato;
+        let (effort_signal, phrase_pitch_cents) =
+            if phrasing > f32::EPSILON || vibrato > f32::EPSILON {
+                let outputs = self
+                    .phrase_engine
+                    .process(phrase_params_for_knobs(phrasing, vibrato));
+                self.drive_target = if outputs.active { 1.0 } else { 0.0 };
+                (outputs.intensity, outputs.pitch_lean_cents)
+            } else {
+                (self.effort, 0.0)
+            };
+
+        let expression = self.host_expression.process();
+        let effort_signal = (effort_signal * expression.intensity_factor).clamp(0.0, 1.0);
+
         let excitation = self.injector.process();
-        let drive = self.driver.process_excitation(excitation, self.effort);
+        let drive = self.driver.process_excitation(excitation, effort_signal);
         let bow_contact = self.driver.bow_contact(
-            self.effort,
+            effort_signal,
             self.drive_gate,
             self.variance_offsets.position,
             self.variance_offsets.speed,
             self.variance_offsets.pressure,
         );
-        // Left-hand intonation wander moves the played target itself; the bowed
-        // intonation servo follows the wandered target instead of fighting it.
-        let frequency_hz =
-            self.frequency_hz * (1.0 + CENTS_TO_RATIO * self.variance_offsets.intonation_cents);
+        // Deliberate (vibrato) and involuntary (wander) pitch motion share the
+        // played-frequency rail; the bowed intonation servo follows the moving
+        // target instead of fighting it.
+        let frequency_hz = self.frequency_hz
+            * (1.0
+                + CENTS_TO_RATIO
+                    * (self.variance_offsets.intonation_cents
+                        + phrase_pitch_cents
+                        + expression.bend_cents));
         let params = string_params(&self.patch, frequency_hz, self.note_strike_offset);
         let (output, probe) = if collect_probe {
             self.string
@@ -503,56 +485,6 @@ fn articulation_gain(slot: usize, effort: f32) -> f32 {
         _ => 1.0,
     };
     accent * effort.clamp(0.0, 1.0).sqrt()
-}
-
-fn loaded_sample(samples: &[f32], position: f32) -> Option<f32> {
-    let index = position.floor() as usize;
-    if index >= samples.len() {
-        return None;
-    }
-    let next = (index + 1).min(samples.len() - 1);
-    let fraction = position - index as f32;
-    Some(samples[index] + (samples[next] - samples[index]) * fraction)
-}
-
-fn builtin_sample(slot: usize, position: f32) -> Option<f32> {
-    let index = position.floor() as usize;
-    let len = builtin_len(slot);
-    if index >= len {
-        return None;
-    }
-    let t = index as f32 / BUILTIN_SAMPLE_RATE;
-    let sample = match slot {
-        0 => decayed_ping(t, 0.0022, 0.0, 1.0),
-        1 => decayed_ping(t, 0.0038, 0.5, 1.55),
-        2 => decayed_ping(t, 0.0085, 0.15, 0.42),
-        3 => decayed_ping(t, 0.0013, 0.9, 1.2),
-        4 => decayed_ping(t, 0.0028, 0.35, 1.35),
-        5 => tremolo_burst(t),
-        6 => decayed_ping(t, 0.0017, 1.4, 0.72),
-        _ => decayed_ping(t, 0.0065, 0.05, 0.34),
-    };
-    Some(sample)
-}
-
-fn builtin_len(slot: usize) -> usize {
-    match slot {
-        2 | 5 | 7 => 720,
-        1 | 4 => 360,
-        _ => 220,
-    }
-}
-
-fn decayed_ping(t: f32, decay: f32, phase: f32, gain: f32) -> f32 {
-    let carrier = (std::f32::consts::TAU * (780.0 * t + phase)).sin();
-    let overtone = (std::f32::consts::TAU * (2_350.0 * t + phase * 0.37)).sin();
-    let envelope = (-t / decay.max(0.000_2)).exp();
-    gain * envelope * (0.72 * carrier + 0.28 * overtone)
-}
-
-fn tremolo_burst(t: f32) -> f32 {
-    let pulse = (std::f32::consts::TAU * 42.0 * t).sin().abs();
-    decayed_ping(t, 0.012, 0.2, 0.55 * pulse)
 }
 
 fn gate_coeff(sample_rate: f32) -> f32 {

@@ -2,6 +2,28 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.17.0 - 2026-06-10
+
+### Lamath Stringed
+
+- Rebuilt the **bow** as a velocity-wave friction contact ([ADR-0033](docs/adr/0033-lamath-bow-velocity-wave-contact.md)), audition-approved for both smooth and scratch. The contact solves the Friedlander stick/slip construction with a bracketed root solve and MSW hysteresis (the old fixed-point iteration diverged on the falling friction branch — part of the previous "scratch" was numerical chatter), reads its incoming waves upstream through a FIFO so it never re-observes its own writes (the self-read flattened the string's restoring echo and pinned the bow in a false equilibrium — no Helmholtz motion), and carries torsional contact loss with a low-frequency relief that stabilizes the raucous band across pitch. All contact constants are in normalized wave units (sample-rate independent), sized from the Schelleng cone.
+- Voiced the bowed sound against the **Iowa MIS violin arco reference**: slip-gated rosin noise gives the pitch-synchronous inter-harmonic noise bed a real bowed tone carries (the model previously rendered a numerically pure line spectrum that read as a bell), the violin body's mode overlap/bridge hill were re-voiced to the measured formant contrast, and the body's broadband radiation floor is high-passed below the lowest mode so bow drag no longer radiates sub-fundamental rumble in release tails.
+- Bowing now plays at **pitch parity**: a capture-interval intonation servo (the player's finger) measures the sounding Helmholtz period once per cycle and trims the tuning state to the played target — absorbing both the friction-hysteresis flattening and sustained-tension sharpening (±1 cent at defaults across C3–C5; it freezes during raucous playing instead of chasing chaos).
+- Added **bow strokes**: separated notes alternate up/down-bow with the speed passing through zero over a real bow change (weight rides exactly with stroke speed — any fixed weight floor at zero speed renders as an onset scratch); overlapping notes play legato on a continuous stroke.
+- Added a **Humanize** knob (host parameter, default 0.5): four physically-grounded random walks under one control — left-hand intonation wander and contact-position wander (shared by bow and pluck; the pluck samples the position walk at each strike), bow-arm speed and pressure drift. Knob law: 50% is the nominal intended motion, 100% approaches the unmusical (the Schelleng axes brush the crush boundary without residing in it).
+- Added **Phrasing** and **Vibrato** knobs (defaults 0.5) on the shared note-lifecycle engine ([ADR-0034](docs/adr/0034-shared-phrasing-engine.md)): attack development, sustain swell, delayed-bloom vibrato with natural rate/depth wander, and a reactive release taper that sounds past note-off instead of a gate cliff. Vibrato is a separate control because pitch motion masks the rest of the note shape.
+- Both instruments now respond to **host expression**: CC1/CC11 as the dynamics line multiplying the phrase intensity, channel pressure as an additive swell, and pitch bend on the pitch rail — inert until the host sends them.
+- New audition cases: humanize off/full and phrasing off/full A/B pairs on the smooth C4 sustain; the sustain schedules now end before the render so releases are audible.
+
+### Lamath Tube
+
+- Added **Phrasing** and **Vibrato** parameters on the shared engine, mapped to wind physics: no level development at the attack (the reed is a threshold oscillator with starting hysteresis — a breath ramping up from below speaking pressure never locks), swell and vibrato ride the breath-pressure rail (vibrato on a wind is breath, not bore pitch), and the release taper gates the breath. Ship at 0 like the Tube's `humanize` until the default voice is re-margined against the reed threshold; the `tube-phrasing` A/B cases audition the lifecycle on the reed-hard voice.
+- The Tube responds to the same host-expression layer (CC dynamics, channel-pressure swell, pitch bend on the bore).
+
+### Shared
+
+- `lindelion-dsp-utils` gains the shared expressive-control engines: `variance` (the humanize random-walk source and per-instance seeding, extracted from the Tube) and `phrase` (the note-lifecycle engine, knob law, and host-expression layer).
+
 ## v0.16.0 - 2026-06-10
 
 ### Lamath Tube

@@ -1,9 +1,9 @@
 use crate::catalog::{
     BowHumanizeDepth, CATALOG_BLOCK_SIZE, CATALOG_SAMPLE_RATE, CatalogCase, ContactRecipe,
-    DriverRecipe, EdgeRecipe, MeshStriker, MeshVoicing, PatchRecipe, ResonatorFamily,
-    ScheduledNote, SourceBodyDepth, SurroundingRecipe, TubeBellLevel, TubeBodyFormantLevel,
-    TubeRadiationShape, TubeReedAperture, TubeReferenceArticulation, TubeReferenceHumanize,
-    TubeReferenceMatchGain,
+    DriverRecipe, EdgeRecipe, MeshStriker, MeshVoicing, PatchRecipe, PhrasingDepth,
+    ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe, TubeBellLevel,
+    TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture, TubeReferenceArticulation,
+    TubeReferenceHumanize, TubeReferenceMatchGain,
 };
 use lamath::{ModalConfig, ModalPreset, ResonatorRouting, ResonatorSynth, ResonatorSynthPatch};
 use lamath_cymbal::{CymbalExcitationSource, CymbalPatch, CymbalProcessor};

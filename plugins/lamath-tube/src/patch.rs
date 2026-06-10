@@ -17,6 +17,14 @@ pub struct TubePatch {
     pub body_odd_mode_projection: f32,
     pub body_upper_odd_modes: f32,
     pub humanize: f32,
+    /// Note-lifecycle phrasing depth (shared engine; knob law: 0.5 nominal,
+    /// 1.0 theatrical, 0 static). Ships at 0 like `humanize`: the wind voice
+    /// sits near the reed's oscillation margin, so breath modulation is
+    /// opt-in until the voice is re-margined.
+    pub phrasing: f32,
+    /// Breath-vibrato depth, separate from the rest of the phrasing (knob
+    /// law). Wind vibrato is breath modulation, not pitch.
+    pub vibrato: f32,
     pub register_break_note: f32,
     pub brightness: f32,
     pub damping: f32,
@@ -39,6 +47,8 @@ impl Default for TubePatch {
             body_odd_mode_projection: 1.0,
             body_upper_odd_modes: 1.0,
             humanize: 0.0,
+            phrasing: 0.0,
+            vibrato: 0.0,
             register_break_note: 69.0,
             brightness: 0.52,
             damping: 0.28,
@@ -67,6 +77,8 @@ impl TubePatch {
         );
         self.body_upper_odd_modes = unit(self.body_upper_odd_modes, fallback.body_upper_odd_modes);
         self.humanize = unit(self.humanize, fallback.humanize);
+        self.phrasing = unit(self.phrasing, fallback.phrasing);
+        self.vibrato = unit(self.vibrato, fallback.vibrato);
         self.register_break_note = if self.register_break_note.is_finite() {
             self.register_break_note.clamp(48.0, 96.0).round()
         } else {

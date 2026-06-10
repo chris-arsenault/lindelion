@@ -3,11 +3,13 @@ use lindelion_dsp_utils::{
     filters::{Biquad, BiquadCoefficients},
     math::{self, midi_note_to_hz},
 };
-use lindelion_plugin_shell::{MidiEvent, NoteEvent};
+use lindelion_plugin_shell::{ControlEvent, MidiEvent, NoteEvent};
 use lindelion_wind::{
     ReedDriver, ReedParams, ReedProcessTaps, ReedTube, ReedTubeParams, ReedTubeSwitches,
     ReedTubeTaps,
 };
+
+use lindelion_dsp_utils::phrase::{self, HostExpression, PhraseEngine};
 
 use crate::patch::TubePatch;
 
@@ -16,9 +18,13 @@ use taps::{FINAL_OUTPUT_TAP_INDEX, FINAL_POST_GAIN_TAP_INDEX, FINAL_PRE_GAIN_TAP
 pub use taps::{TUBE_RENDER_TAP_COUNT, TUBE_RENDER_TAP_NAMES, TubeRenderTaps};
 
 mod excitation;
+mod params;
+mod phrasing;
 mod taps;
 mod variance_source;
 
+use params::*;
+use phrasing::{PHRASE_DEVELOPMENT_START, phrase_params_for_knobs};
 use variance_source::{SteadyVarianceSource, TubeSteadyVariance};
 
 pub use excitation::{ARTICULATION_NAMES, ExcitationSource};
@@ -85,6 +91,8 @@ pub struct TubeProcessor<'a> {
     frequency_hz: f32,
     effort: f32,
     drive_gate: f32,
+    phrase_engine: PhraseEngine,
+    host_expression: HostExpression,
     drive_target: f32,
     gate_coeff: f32,
     attack_envelope: f32,
@@ -121,6 +129,8 @@ impl<'a> TubeProcessor<'a> {
             frequency_hz: midi_note_to_hz(60.0),
             effort: 0.0,
             drive_gate: 0.0,
+            phrase_engine: PhraseEngine::new(model_sample_rate),
+            host_expression: HostExpression::new(model_sample_rate),
             drive_target: 0.0,
             gate_coeff: gate_coeff(model_sample_rate),
             attack_envelope: 0.0,
@@ -146,6 +156,8 @@ impl<'a> TubeProcessor<'a> {
         self.frequency_hz = midi_note_to_hz(60.0);
         self.effort = 0.0;
         self.drive_gate = 0.0;
+        self.phrase_engine = PhraseEngine::new(self.model_sample_rate);
+        self.host_expression = HostExpression::new(self.model_sample_rate);
         self.drive_target = 0.0;
         self.gate_coeff = gate_coeff(self.model_sample_rate);
         self.steady_variance_source.reset(self.model_sample_rate);
@@ -222,8 +234,12 @@ impl<'a> TubeProcessor<'a> {
 
     fn handle_events(&mut self, events: &[MidiEvent]) {
         for event in events {
-            let MidiEvent::Note(note) = *event else {
-                continue;
+            let note = match *event {
+                MidiEvent::Note(note) => note,
+                MidiEvent::Control(control) => {
+                    self.handle_control(control);
+                    continue;
+                }
             };
             match note {
                 NoteEvent::On { note, velocity, .. } if velocity > 0.0 => {
@@ -239,12 +255,38 @@ impl<'a> TubeProcessor<'a> {
         }
     }
 
+    /// Host performance layer: the CC dynamics line (CC1/CC11) multiplies the
+    /// breath intensity, channel pressure swells above it, pitch bend retunes
+    /// the bore. Inert until the host sends something.
+    fn handle_control(&mut self, control: ControlEvent) {
+        match control {
+            ControlEvent::ContinuousController {
+                controller: 1 | 11,
+                value,
+                ..
+            } => self.host_expression.set_expression(value),
+            ControlEvent::ChannelPressure { value, .. } => {
+                self.host_expression.set_aftertouch(value)
+            }
+            ControlEvent::PitchBend { semitones, .. } => {
+                self.host_expression.set_bend_semitones(semitones)
+            }
+            _ => {}
+        }
+    }
+
     fn select_slot(&mut self, slot: usize) {
         self.selected_slot = slot.min(ARTICULATION_SLOT_COUNT - 1);
         self.patch.selected_articulation = self.selected_slot;
     }
 
     fn note_on(&mut self, note: u8, velocity: f32) {
+        // Note overlap is the legato/rearticulation seam: an overlapping note
+        // keeps the developed breath and blooming vibrato (slurred); a note
+        // from silence is a fresh tongued attack.
+        let legato = self.current_note.is_some();
+        self.phrase_engine
+            .note_on(velocity.clamp(0.0, 1.0), legato, PHRASE_DEVELOPMENT_START);
         self.current_note = Some(note);
         self.sounding_note = Some(note);
         self.frequency_hz = midi_note_to_hz(note as f32);
@@ -263,6 +305,7 @@ impl<'a> TubeProcessor<'a> {
     fn note_off(&mut self, note: u8) {
         if self.current_note == Some(note) {
             self.current_note = None;
+            self.phrase_engine.note_off();
             self.drive_target = 0.0;
         }
     }
@@ -312,28 +355,55 @@ impl<'a> TubeProcessor<'a> {
         coherent_amount
     }
 
+    /// Phrasing: living breath intensity + breath vibrato on the pressure
+    /// rail; the release taper holds the gate open while it sounds. At both
+    /// knobs zero the engine is bypassed (bit-identical static behavior).
+    /// A reed is a threshold oscillator with starting hysteresis: it cannot
+    /// take multiplicative level modulation near the speaking threshold (a
+    /// swell dip kills a soft note for good). Effort therefore stays at the
+    /// played velocity, gated by the release taper; the swell and the breath
+    /// vibrato ride the pressure rail the humanize walks already proved safe.
+    fn phrase_drive(&mut self) -> (f32, f32) {
+        let phrasing = self.patch.phrasing;
+        let vibrato = self.patch.vibrato;
+        if phrasing > f32::EPSILON || vibrato > f32::EPSILON {
+            let outputs = self
+                .phrase_engine
+                .process(phrase_params_for_knobs(phrasing, vibrato));
+            self.drive_target = if outputs.active { 1.0 } else { 0.0 };
+            (
+                (self.effort * outputs.release_multiplier).clamp(0.0, 1.0),
+                outputs.sustain_swell
+                    + outputs.pitch_lean_cents * phrasing::PHRASE_VIBRATO_BREATH_PER_CENT,
+            )
+        } else {
+            (self.effort, 0.0)
+        }
+    }
+
     fn process_model_sample_with_taps(&mut self, taps: Option<&mut TubeRenderTaps>) -> f32 {
+        let (effort_signal, phrase_breath_mod) = self.phrase_drive();
+        let expression = self.host_expression.process();
+        let effort_signal = (effort_signal * expression.intensity_factor).clamp(0.0, 1.0);
+        let frequency_hz = self.frequency_hz * phrase::cents_ratio(expression.bend_cents);
         self.drive_gate += (self.drive_target - self.drive_gate) * self.gate_coeff;
         let excitation = self.injector.process();
-        self.tube.set_brightness_effort(self.effort);
+        self.tube.set_brightness_effort(effort_signal);
         let variance = TubeSteadyVariance::from_humanize(self.patch.humanize).sanitized();
-        let (pressure_mod, embouchure_mod, voicing_mod) =
+        let (humanize_pressure_mod, embouchure_mod, voicing_mod) =
             self.steady_variance_source.process(variance);
-        let mut params = tube_params_with_mod(
-            &self.patch,
-            self.sounding_note,
-            self.frequency_hz,
-            voicing_mod,
-        );
+        let pressure_mod = humanize_pressure_mod + phrase_breath_mod;
+        let mut params =
+            tube_params_with_mod(&self.patch, self.sounding_note, frequency_hz, voicing_mod);
         let coherent_amount = self.apply_register_performance(pressure_mod, embouchure_mod);
         params.reed_phase_delay_samples = self
             .reed
-            .aperture_phase_delay_samples(self.frequency_hz, self.effort);
+            .aperture_phase_delay_samples(frequency_hz, effort_signal);
         let feedback = self.tube.driven_feedback();
         let mut reed_taps = ReedProcessTaps::default();
         let mouth_wave = self.reed.process_with_taps(
             excitation,
-            self.effort,
+            effort_signal,
             feedback,
             self.drive_gate,
             &mut reed_taps,
@@ -414,110 +484,6 @@ impl<'a> TubeProcessor<'a> {
             0.0,
         )
     }
-}
-
-fn tube_params_with_mod(
-    patch: &TubePatch,
-    current_note: Option<u8>,
-    frequency_hz: f32,
-    body_formant_shift: f32,
-) -> ReedTubeParams {
-    let register = register_key_state(patch, current_note);
-    ReedTubeParams {
-        frequency_hz,
-        loop_filter_cutoff_hz: brightness_hz(patch.brightness),
-        loop_filter_resonance: 0.0,
-        loop_gain: loop_gain_from_damping(patch.damping),
-        loop_nonlinearity: 0.0,
-        boundary_reflection: -0.75,
-        pickup_position: 0.82,
-        bell_radiation: bell_radiation_from_mix(patch.bell),
-        bell_radiation_shape: patch.bell_radiation_shape,
-        body_formant: patch.body_formant,
-        body_formant_shift: math::finite_clamp(body_formant_shift, -2.0, 2.0, 0.0),
-        register_mode_ratio: register.mode_ratio,
-        register_vent_admittance: register.vent_admittance,
-        register_vent_position: REGISTER_VENT_POSITION,
-        body_odd_mode_projection: patch.body_odd_mode_projection,
-        body_upper_odd_modes: patch.body_upper_odd_modes,
-        reed_phase_delay_samples: 0.0,
-        switches: ReedTubeSwitches {
-            reed_enabled: true,
-            bell_enabled: patch.switches.bell_enabled,
-            bore_steepening_enabled: patch.switches.bore_steepening_enabled,
-            body_enabled: patch.switches.body_enabled,
-            clarinet_contour_enabled: patch.switches.clarinet_contour_enabled,
-        },
-    }
-}
-
-fn reed_params(patch: &TubePatch) -> ReedParams {
-    reed_params_with_mod(patch, 0.0, 0.0, 1.0, 0.0)
-}
-
-fn reed_params_with_mod(
-    patch: &TubePatch,
-    pressure_mod: f32,
-    embouchure_mod: f32,
-    breath_noise: f32,
-    tracking_frequency_hz: f32,
-) -> ReedParams {
-    ReedParams {
-        pressure_depth: math::finite_clamp(
-            patch.pressure * (1.0 + pressure_mod),
-            0.0,
-            1.0,
-            patch.pressure,
-        ),
-        stiffness: patch.reed_stiffness,
-        embouchure: math::finite_clamp(
-            patch.embouchure + embouchure_mod,
-            0.0,
-            1.0,
-            patch.embouchure,
-        ),
-        aperture_inertia: patch.reed_aperture_inertia,
-        breath_noise,
-        tracking_frequency_hz,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct RegisterKeyState {
-    mode_ratio: f32,
-    vent_admittance: f32,
-}
-
-fn register_key_state(patch: &TubePatch, current_note: Option<u8>) -> RegisterKeyState {
-    let break_note = math::finite_clamp(patch.register_break_note, 48.0, 96.0, 69.0).round();
-    let active = current_note
-        .map(|note| note as f32 >= break_note)
-        .unwrap_or(false);
-    if active {
-        RegisterKeyState {
-            mode_ratio: REGISTER_MODE_RATIO,
-            vent_admittance: REGISTER_VENT_ADMITTANCE,
-        }
-    } else {
-        RegisterKeyState {
-            mode_ratio: 1.0,
-            vent_admittance: 0.0,
-        }
-    }
-}
-
-fn brightness_hz(brightness: f32) -> f32 {
-    let brightness = brightness.clamp(0.0, 1.0);
-    MIN_BRIGHTNESS_HZ * (MAX_BRIGHTNESS_HZ / MIN_BRIGHTNESS_HZ).powf(brightness)
-}
-
-fn loop_gain_from_damping(damping: f32) -> f32 {
-    let damping = damping.clamp(0.0, 1.0);
-    MAX_LOOP_GAIN + (MIN_LOOP_GAIN - MAX_LOOP_GAIN) * damping
-}
-
-fn bell_radiation_from_mix(mix: f32) -> f32 {
-    mix.clamp(0.0, 1.0).powf(BELL_MIX_EXPONENT)
 }
 
 fn gate_coeff(sample_rate: f32) -> f32 {

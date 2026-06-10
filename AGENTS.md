@@ -56,7 +56,7 @@ Agent guide for sessions in the Lindelion repository.
 | Path | Purpose |
 | ---- | ---- |
 | `crates/lindelion-plugin-shell` | Shared plugin boundary, parameters, process context, MIDI/control events, state, typed VST3 messages, patch I/O, voice allocation. |
-| `crates/lindelion-dsp-utils` | DSP support: analysis, delay/interpolation, envelopes, filters, math, smoothing, saturation, and the shared lock-free realtime hand-off primitives (`handoff`: `AtomicF32` + the SPSC `SampleRing`) used by the analysis workers. |
+| `crates/lindelion-dsp-utils` | DSP support: analysis, delay/interpolation, envelopes, filters, math, smoothing, saturation, the shared lock-free realtime hand-off primitives (`handoff`: `AtomicF32` + the SPSC `SampleRing`) used by the analysis workers, and the shared expressive-control engines — `variance` (humanize random walks + seeding) and `phrase` (note-lifecycle phrasing, knob law, host expression; [ADR-0034](docs/adr/0034-shared-phrasing-engine.md)). |
 | `crates/lindelion-test-allocator` | Counting allocator and `assert_no_allocations!` macro for realtime-path tests. |
 | `crates/lindelion-capture` | Host-synced audio capture state, scratchpad audio, capture settings, sync modes. |
 | `crates/lindelion-sample-library` | Sample references, loaded-audio ownership, hashing, ingest, previews, moved-file recovery. |

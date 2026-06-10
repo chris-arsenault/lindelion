@@ -12,6 +12,7 @@ pub mod math;
 pub mod ola;
 pub mod params;
 pub mod phase;
+pub mod phrase;
 pub mod playback;
 pub mod reassign;
 pub mod resampling;

@@ -47,6 +47,16 @@ pub(crate) enum PatchRecipe {
     StringBowHumanize {
         depth: BowHumanizeDepth,
     },
+    /// Smooth bow with an explicit phrasing depth — the A/B pair around the
+    /// shipped default (knob law: 0.5 nominal, 1.0 theatrical).
+    StringBowPhrasing {
+        depth: PhrasingDepth,
+    },
+    /// Driven wind voice with an explicit phrasing depth (vibrato and
+    /// humanize silenced so the breath lifecycle is audible on its own).
+    TubeWindPhrasing {
+        depth: PhrasingDepth,
+    },
     Surrounding {
         family: ResonatorFamily,
         surrounding: SurroundingRecipe,
@@ -135,6 +145,12 @@ pub(crate) enum MeshStriker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BowHumanizeDepth {
+    Off,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PhrasingDepth {
     Off,
     Full,
 }

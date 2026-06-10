@@ -164,6 +164,9 @@ fn brightness_and_body_balance_are_audible_axes() {
     let dark = render_held_note(
         StringPatch {
             brightness: 0.15,
+            humanize: 0.0,
+            phrasing: 0.0,
+            vibrato: 0.0,
             ..StringPatch::default()
         },
         60,
@@ -173,6 +176,9 @@ fn brightness_and_body_balance_are_audible_axes() {
     let bright = render_held_note(
         StringPatch {
             brightness: 0.95,
+            humanize: 0.0,
+            phrasing: 0.0,
+            vibrato: 0.0,
             ..StringPatch::default()
         },
         60,
@@ -182,6 +188,9 @@ fn brightness_and_body_balance_are_audible_axes() {
     let pickup = render_held_note(
         StringPatch {
             body_balance: 0.0,
+            humanize: 0.0,
+            phrasing: 0.0,
+            vibrato: 0.0,
             ..StringPatch::default()
         },
         60,
@@ -191,6 +200,9 @@ fn brightness_and_body_balance_are_audible_axes() {
     let body = render_held_note(
         StringPatch {
             body_balance: 1.0,
+            humanize: 0.0,
+            phrasing: 0.0,
+            vibrato: 0.0,
             ..StringPatch::default()
         },
         60,
@@ -456,6 +468,10 @@ fn repeated_c4_plucks(
         .collect()
 }
 
+// Humanize/phrasing pinned to zero: the variance walks are instance-seeded
+// from a global counter, so renders with them active depend on test execution
+// order. Regime/contact tests need deterministic physics; the dedicated
+// humanize/phrasing tests opt back in with seed-robust loose bounds.
 fn bow_smooth_patch() -> StringPatch {
     StringPatch {
         driver: DriverSelection::Bow,
@@ -467,6 +483,9 @@ fn bow_smooth_patch() -> StringPatch {
         bow_pressure: 0.50,
         bow_speed: 0.38,
         bow_friction: 0.34,
+        humanize: 0.0,
+        phrasing: 0.0,
+        vibrato: 0.0,
         ..StringPatch::default()
     }
 }
@@ -485,9 +504,15 @@ fn bow_scratch_patch() -> StringPatch {
         damping: 0.40,
         stiffness: 0.42,
         bow_position: 0.20,
-        bow_pressure: 0.48,
+        // Deterministic over-boundary point (knobs pinned, no walk nudges):
+        // the shipped recipe sits lower because the default humanize walks
+        // help trigger the raucous regime.
+        bow_pressure: 0.56,
         bow_speed: 0.32,
         bow_friction: 0.70,
+        humanize: 0.0,
+        phrasing: 0.0,
+        vibrato: 0.0,
         ..StringPatch::default()
     }
 }

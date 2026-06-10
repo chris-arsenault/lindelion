@@ -39,12 +39,12 @@ fn catalog_selection_handles_drivers_group() {
     validate_catalog(&cases).unwrap();
 
     let selected = select_group(&cases, "drivers");
-    assert_eq!(selected.len(), 13);
+    assert_eq!(selected.len(), 17);
     assert_all_paths_safe(&selected);
     assert_eq!(selected.first().unwrap().id, "driver_string_sample_c4_v100");
     assert_eq!(
         selected.last().unwrap().id,
-        "driver_string_bow_smooth_c4_humanize_full"
+        "driver_tube_reed_c4_phrasing_full"
     );
     assert_eq!(
         select_case(&cases, "driver_string_bow_scratch_c4_v100")
@@ -205,7 +205,7 @@ fn catalog_selection_handles_mesh_strikers_group() {
 fn catalog_selection_handles_edges_group() {
     let cases = catalog_cases();
     validate_catalog(&cases).unwrap();
-    assert_eq!(cases.len(), 184);
+    assert_eq!(cases.len(), 188);
 
     let selected = select_group(&cases, "edges");
     assert_eq!(selected.len(), 8);

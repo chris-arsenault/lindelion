@@ -27,6 +27,36 @@ pub(crate) fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             };
             RenderTarget::Stringed(patch)
         }
+        PatchRecipe::StringBowPhrasing { depth } => {
+            // Vibrato and humanize are silenced in the phrasing A/B so the
+            // note shape (attack development, swell, release taper) is
+            // audible on its own — pitch motion and the humanize walks mask
+            // it otherwise.
+            let patch = StringPatch {
+                phrasing: match depth {
+                    PhrasingDepth::Off => 0.0,
+                    PhrasingDepth::Full => 1.0,
+                },
+                vibrato: 0.0,
+                humanize: 0.0,
+                ..string_driver_patch(DriverRecipe::BowSmooth)
+            };
+            RenderTarget::Stringed(patch)
+        }
+        PatchRecipe::TubeWindPhrasing { depth } => {
+            // Based on the accepted reed-hard audition voice; vibrato and
+            // humanize silenced so the breath lifecycle is audible alone.
+            let patch = TubePatch {
+                phrasing: match depth {
+                    PhrasingDepth::Off => 0.0,
+                    PhrasingDepth::Full => 1.0,
+                },
+                vibrato: 0.0,
+                humanize: 0.0,
+                ..tube_driver_patch(DriverRecipe::ReedHard)
+            };
+            RenderTarget::Tube(patch)
+        }
         PatchRecipe::Surrounding {
             family,
             surrounding,

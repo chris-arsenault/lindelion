@@ -100,9 +100,15 @@ and a placeholder excitation. These make those constraints explicit, playable, a
   is a Tube, the polyphony control is **locked to 1 (mono)** and the driver is **locked to the reed**
   in the UI, with a tooltip explaining why, rather than the patch quietly rewriting the values on
   load. (Today `normalize_drivers_for_resonator_models` overrides both without user-visible feedback.)
-- Make wind articulation a bound, playable control: a **key-switch range and/or an automatable
-  parameter** selects tongued vs slurred phrasing (and any future articulations) so a player can
-  change articulation live, rather than it being implicit in note timing only.
+- Add a **key-switch or automatable override** for tongued vs slurred phrasing on top of the
+  note-overlap rule the shared phrasing engine established ([ADR-0034](../adr/0034-shared-phrasing-engine.md):
+  overlapping notes slur, separated notes tongue), for players who want articulation decoupled
+  from note timing.
+- Re-margin the **default wind voice against the reed's oscillation threshold** so breath
+  modulation (humanize, phrasing swell, vibrato) can ship enabled by default: today the soft end
+  of the velocity range sits close enough to the threshold that the Tube ships its expressive
+  knobs at zero, and the soft high-register sweep (`sweep_stays_finite_bounded_and_audible`,
+  note 72 at velocity 0.31) is below the audibility floor even with them off.
 - Ship a **better default reed excitation layer** than the generic builtin impulse: a tuned breath/
   tongue onset sample (or shaped noise burst) so a fresh Tube patch has a musical chiff out of the
   box rather than the shared struck-instrument builtin.
@@ -135,21 +141,32 @@ and a placeholder excitation. These make those constraints explicit, playable, a
 
 ## Bowed String (post-P7)
 
-The velocity-wave bow contact ([ADR-0033](../adr/0033-lamath-bow-velocity-wave-contact.md))
-shipped the accepted smooth and scratch voices. These extend it from a correct mechanism into a
-played instrument.
+The velocity-wave bow contact ([ADR-0033](../adr/0033-lamath-bow-velocity-wave-contact.md)), the
+humanize variance knob, and the shared phrasing engine with host expression
+([ADR-0034](../adr/0034-shared-phrasing-engine.md)) are audition-approved and shipped.
 
-- ~~Add a **bow humanization model**.~~ **Done (audition-approved 2026-06-10):** one `humanize`
-  knob (host parameter + patch, default 0.5) drives four physically-grounded walks from the shared
-  `lindelion-dsp-utils::variance` source — left-hand intonation wander and contact-position wander
-  (both drivers; the pluck samples the position walk at each strike), bow-arm speed and pressure
-  drift (bow only). Knob law: 0.5 is the nominal intended motion, 1.0 approaches the unmusical
-  (Schelleng axes brush the crush boundary, intonation to ±8 cents). Catalog A/B:
-  `driver_string_bow_smooth_c4_humanize_off`/`_full`.
-- Add a **phrasing engine shared between the String bow and the Tube wind voice**: a common
-  note-lifecycle layer that shapes the driver's continuous physical inputs (bow speed/pressure,
-  blowing pressure) over attacks, sustains, crescendi/diminuendi, and releases, exposed through the
-  same control style as the humanize model and fed by host expression (velocity, CC, aftertouch).
-  Per-instrument code maps the shared phrase contours onto each driver's physical targets.
 - Voice the remaining bowed-spectrum fine structure against the Iowa reference (H3/H5 support and
-  the H6–H7 valley, 1.3–1.8 kHz) once humanization lands, if audition still flags that register.
+  the H6–H7 valley, 1.3–1.8 kHz) if audition flags that register.
+- Add per-note pluck scatter beyond the strike-position sample (pick hardness and level
+  variation note-to-note) as a humanize extension, if plucked phrases read as too uniform.
+
+## String render-audition follow-ups
+
+Remaining defects from the Lamath render-catalog audition program (P5/P7/P8 fixed and approved;
+the Tube items resolved by the driven-wind and register-key threads).
+
+- Make the String **pick driver color audible**: pick hardness/contact-time reach the patch but
+  read as only "slightly louder" — same energy-reference miscalibration class as M11 P8.
+- Make the String **contact model audible**: `ContactConfig` spread/contact-time produce no
+  audible difference between tight/wide and short/long.
+- Make **sympathetic resonance audible**: the shared sympathetic bank at depth 0.90 is inaudible
+  while its mechanical and radiation siblings work; likely not fed the mix or output gain is
+  negligible.
+- Audition the **low-register String** fix (loop gain → T60 mapping) against the render catalog:
+  the fix is code-complete and guarded across C2–C6, with the focused listening pass still open.
+
+## Live-host validation
+
+- Validate the **host expression layer** (CC1/CC11 dynamics line, channel-pressure swell, pitch
+  bend) by live playing in Galad on both the String and the Tube; offline renders cannot exercise
+  host controller streams.

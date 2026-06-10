@@ -11,6 +11,8 @@ pub const BELL_ID: u32 = 6;
 pub const OUTPUT_GAIN_ID: u32 = 7;
 pub const HUMANIZE_ID: u32 = 8;
 pub const REGISTER_BREAK_ID: u32 = 9;
+pub const PHRASING_ID: u32 = 10;
+pub const VIBRATO_ID: u32 = 11;
 
 pub const PARAMETERS: &[ParameterInfo] = &[
     ParameterInfo::continuous(
@@ -43,6 +45,18 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         "MIDI",
         ParameterRange::linear(48.0, 96.0, 69.0),
         48,
+    ),
+    ParameterInfo::continuous(
+        PHRASING_ID,
+        "Phrasing",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.0),
+    ),
+    ParameterInfo::continuous(
+        VIBRATO_ID,
+        "Vibrato",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.0),
     ),
     ParameterInfo::continuous(
         BRIGHTNESS_ID,
@@ -93,6 +107,8 @@ pub fn plain_value(patch: &TubePatch, id: u32) -> Option<f32> {
         REED_STIFFNESS_ID => Some(patch.reed_stiffness),
         EMBOUCHURE_ID => Some(patch.embouchure),
         HUMANIZE_ID => Some(patch.humanize),
+        PHRASING_ID => Some(patch.phrasing),
+        VIBRATO_ID => Some(patch.vibrato),
         REGISTER_BREAK_ID => Some(patch.register_break_note),
         BRIGHTNESS_ID => Some(patch.brightness),
         DAMPING_ID => Some(patch.damping),
@@ -116,6 +132,8 @@ pub fn apply_plain(patch: &mut TubePatch, id: u32, plain: f32) -> bool {
         REED_STIFFNESS_ID => patch.reed_stiffness = unit(plain),
         EMBOUCHURE_ID => patch.embouchure = unit(plain),
         HUMANIZE_ID => patch.humanize = unit(plain),
+        PHRASING_ID => patch.phrasing = unit(plain),
+        VIBRATO_ID => patch.vibrato = unit(plain),
         REGISTER_BREAK_ID => {
             patch.register_break_note = if plain.is_finite() {
                 plain.clamp(48.0, 96.0).round()

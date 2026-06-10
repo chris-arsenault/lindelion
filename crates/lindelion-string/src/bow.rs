@@ -79,13 +79,14 @@ pub(crate) const BOW_SPEED_MAX: f32 = 0.32;
 pub(crate) const BOW_SMOOTH_SLIP_VELOCITY: f32 = 0.10;
 pub(crate) const BOW_SHARP_SLIP_VELOCITY: f32 = 0.015;
 /// Bow weight at zero stroke speed, as a fraction of the full normal force.
-/// A player's arm weight arrives *with* the moving bow: full force on a
-/// stationary bow is deep over-pressure by construction (the Schelleng
-/// maximum collapses as the speed passes zero), which renders every stroke
-/// start and direction change as a hard scrape. Scaling the force with
-/// stroke engagement keeps contact through the change (the bite consonant
-/// survives) without the stationary crush.
-pub(crate) const BOW_STROKE_WEIGHT_FLOOR: f32 = 0.3;
+/// Zero: the arm's weight rides *exactly* with the stroke speed, which keeps
+/// the Schelleng overpressure ratio invariant through stroke starts and
+/// direction changes (force and speed scale together, so the ratio's stroke
+/// factor cancels). Any positive floor guarantees a crush instant at every
+/// stroke start — the maximum bow force collapses as the speed passes zero
+/// while the floored weight stays on the string, which renders as an onset
+/// scratch on every separated note.
+pub(crate) const BOW_STROKE_WEIGHT_FLOOR: f32 = 0.0;
 /// Dynamics floor: played effort scales bow velocity and normal force together
 /// by `FLOOR + (1−FLOOR)·effort`. Loudness rides primarily on bow speed
 /// (Helmholtz amplitude ∝ v_b), and scaling the force by the same factor keeps

@@ -10,8 +10,8 @@
 
 use crate::catalog::{
     BowHumanizeDepth, CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe, MeshStriker,
-    MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe,
-    TubeBellLevel, TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture,
+    MeshVoicing, PatchRecipe, PhrasingDepth, ResonatorFamily, ScheduledNote, SourceBodyDepth,
+    SurroundingRecipe, TubeBellLevel, TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture,
     TubeReferenceArticulation, TubeReferenceHumanize, TubeReferenceMatchGain,
 };
 
@@ -110,9 +110,10 @@ fn resonator_family(recipe: &PatchRecipe) -> ResonatorFamily {
         | PatchRecipe::Contact { family, .. }
         | PatchRecipe::Surrounding { family, .. } => *family,
         PatchRecipe::SourceBodyBalance { .. } => ResonatorFamily::String,
-        PatchRecipe::StringBowAlternatingScale | PatchRecipe::StringBowHumanize { .. } => {
-            ResonatorFamily::String
-        }
+        PatchRecipe::StringBowAlternatingScale
+        | PatchRecipe::StringBowHumanize { .. }
+        | PatchRecipe::StringBowPhrasing { .. } => ResonatorFamily::String,
+        PatchRecipe::TubeWindPhrasing { .. } => ResonatorFamily::Tube,
         PatchRecipe::Edge(edge) => edge_family(*edge),
         PatchRecipe::ReferenceWav { .. }
         | PatchRecipe::TubePhrase { .. }
@@ -156,6 +157,12 @@ fn recipe_axes(recipe: &PatchRecipe) -> Vec<AxisCoord> {
             BowHumanizeDepth::Off => AxisCoord::new("humanize", "off", "Humanize off"),
             BowHumanizeDepth::Full => AxisCoord::new("humanize", "full", "Humanize full"),
         }],
+        PatchRecipe::StringBowPhrasing { depth } | PatchRecipe::TubeWindPhrasing { depth } => {
+            vec![match depth {
+                PhrasingDepth::Off => AxisCoord::new("phrasing", "off", "Phrasing off"),
+                PhrasingDepth::Full => AxisCoord::new("phrasing", "full", "Phrasing full"),
+            }]
+        }
         PatchRecipe::Surrounding { surrounding, .. } => vec![surrounding_axis(*surrounding)],
         PatchRecipe::ReferenceWav { path } => vec![reference_source_axis(path)],
         PatchRecipe::Edge(edge) => vec![edge_axis(*edge)],

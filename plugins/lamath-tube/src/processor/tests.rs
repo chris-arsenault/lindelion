@@ -221,7 +221,7 @@ fn scale_notes_are_tuned_well_enough_for_audition() {
 }
 
 #[test]
-#[ignore = "tone guard parked during audition-driven register-voice revision (LAMATH-TUBE-DEFICIENCIES.md); re-derive against the audition-approved model"]
+#[ignore = "tone guard parked during audition-driven register-voice revision (docs/plugins/lamath-backlog.md); re-derive against the audition-approved model"]
 fn phrase_onsets_do_not_click() {
     let held = max_adjacent_delta(&render_held_note(
         TubePatch::default(),
@@ -335,4 +335,43 @@ fn note_off(note: u8) -> MidiEvent {
         note,
         velocity: 0.0,
     })
+}
+
+#[test]
+fn host_expression_line_ducks_the_breath() {
+    use lindelion_plugin_shell::ControlEvent;
+    let patch = TubePatch {
+        phrasing: 0.0,
+        vibrato: 0.0,
+        ..TubePatch::default()
+    };
+    let frames = 48_000;
+    let render = |events_at_half: &[MidiEvent]| {
+        let mut processor = TubeProcessor::new(SAMPLE_RATE, patch.clone(), default_sources());
+        let mut left = vec![0.0; frames / 2];
+        let mut right = vec![0.0; frames / 2];
+        processor.process(&[note_on(60, 1.0)], &mut left, &mut right);
+        let mut left_tail = vec![0.0; frames / 2];
+        let mut right_tail = vec![0.0; frames / 2];
+        processor.process(events_at_half, &mut left_tail, &mut right_tail);
+        left.extend_from_slice(&left_tail);
+        left
+    };
+    let window = |samples: &[f32]| {
+        let start = (0.8 * SAMPLE_RATE) as usize;
+        let end = (0.95 * SAMPLE_RATE) as usize;
+        rms(&samples[start..end])
+    };
+    let plain = render(&[]);
+    let ducked = render(&[MidiEvent::Control(ControlEvent::ContinuousController {
+        channel: 0,
+        controller: 11,
+        value: 0.25,
+    })]);
+    assert!(
+        window(&ducked) < window(&plain) * 0.8,
+        "CC11 should duck the breath line: plain={} ducked={}",
+        window(&plain),
+        window(&ducked)
+    );
 }

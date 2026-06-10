@@ -35,6 +35,7 @@
 | [0031](0031-shared-body-idiophone-mode.md) | Shared-body idiophone mode (re-strikable persistent resonator) | Accepted | 2026-06-01 |
 | [0032](0032-lamath-tube-driven-wind-voice.md) | Lamath Tube is a driven wind voice (no struck/silent tube) | Accepted | 2026-06-02 |
 | [0033](0033-lamath-bow-velocity-wave-contact.md) | Lamath Stringed bow is a velocity-wave friction contact | Accepted | 2026-06-10 |
+| [0034](0034-shared-phrasing-engine.md) | Shared note-lifecycle phrasing engine (String + Tube) | Accepted | 2026-06-10 |
 | [0040](0040-cenedril-analysis-and-editor-delivery.md) | Cenedril analysis and editor delivery | Accepted | 2026-06-02 |
 | [0048](0048-lumedir-single-component.md) | Lúmedir is a single-component VST3 | Accepted | 2026-06-02 |
 | [0049](0049-lamath-tube-register-key-voice.md) | Lamath Tube register-key voice: mode-choked vent, source-fed body, tracked embouchure | Accepted | 2026-06-10 |
@@ -49,7 +50,7 @@ unused tail once that stream is merged and done.
 
 | Range | Workstream |
 | ----- | ---------- |
-| 0032–0039 | Lamath resonator / shared-body idiophone (M2–M8) — **0032 used (tube driven-wind voice), 0033 used (bow velocity-wave contact)** |
+| 0032–0039 | Lamath resonator / shared-body idiophone (M2–M8) — **0032 used (tube driven-wind voice), 0033 used (bow velocity-wave contact), 0034 used (shared phrasing engine)** |
 | 0040 | Cenedril visualizer — **done (M0–M6); used only 0040, 0041–0047 reclaimed** |
 | 0048 | Lúmedir speech-coach — **done (M0–M6); used only 0048, 0049–0055 reclaimed (0049 since used by the Lamath Tube register voice)** |
 | 0041–0047, 0050+ | Unreserved — next new workstream |

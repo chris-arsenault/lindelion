@@ -1,6 +1,7 @@
 use super::{CatalogCase, PatchRecipe, RenderSchedule, ResonatorFamily, ScheduledNote};
 
 mod articulation;
+mod bow_phrases;
 mod chords;
 mod dynamic_response;
 mod edges;
@@ -337,7 +338,7 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(dynamic_response::SOURCE_BODY_CASE_SPECS.iter())
         .copied()
         .map(CatalogCaseSpec::catalog_case)
-        .chain(dynamic_response::BOW_DRIVER_PHRASE_CASES.iter().cloned())
+        .chain(bow_phrases::BOW_DRIVER_PHRASE_CASES.iter().cloned())
         .chain(dynamic_response::SOURCE_BODY_REPEAT_CASES.iter().cloned())
         .chain(surrounding::SURROUNDING_CASES.iter().cloned())
         .chain(chords::CHORD_CASES.iter().cloned())

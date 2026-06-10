@@ -23,6 +23,16 @@ pub struct StringPatch {
     /// is never machine-still); 1.0 approaches the unmusical (Schelleng axes
     /// brush the crush boundary, intonation wanders to +/-8 cents).
     pub humanize: f32,
+    /// One knob for the note-lifecycle phrasing engine (see
+    /// `processor`): attack development, sustain swell, delayed-onset
+    /// vibrato, and the reactive release taper. Knob law: 0.5 is the nominal
+    /// musical phrasing (the shipped default); 1.0 approaches the theatrical;
+    /// 0 is the static, lifecycle-free instrument.
+    pub phrasing: f32,
+    /// Vibrato depth, separated from the rest of the phrasing so the note
+    /// shape can be auditioned and played without pitch motion. Knob law:
+    /// 0.5 nominal, 1.0 theatrical, 0 none.
+    pub vibrato: f32,
     pub driver: DriverSelection,
     pub body: BodySelection,
     pub switches: ModelSwitches,
@@ -45,6 +55,8 @@ impl Default for StringPatch {
             bow_speed: 0.45,
             bow_friction: 0.45,
             humanize: 0.5,
+            phrasing: 0.5,
+            vibrato: 0.5,
             driver: DriverSelection::Pick,
             body: BodySelection::Guitar,
             switches: ModelSwitches::default(),
@@ -68,6 +80,8 @@ impl StringPatch {
         self.bow_speed = unit(self.bow_speed, defaults.bow_speed);
         self.bow_friction = unit(self.bow_friction, defaults.bow_friction);
         self.humanize = unit(self.humanize, defaults.humanize);
+        self.phrasing = unit(self.phrasing, defaults.phrasing);
+        self.vibrato = unit(self.vibrato, defaults.vibrato);
         self.output_gain_db = if self.output_gain_db.is_finite() {
             self.output_gain_db.clamp(-24.0, 12.0)
         } else {
