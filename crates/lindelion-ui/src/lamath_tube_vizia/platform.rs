@@ -4,8 +4,8 @@ use vizia::{ParentWindow, WindowHandle, WindowScalePolicy, prelude::*};
 
 use super::{
     LAMATH_TUBE_EDITOR_HEIGHT, LAMATH_TUBE_EDITOR_WIDTH, LamathTubeControlSurface,
-    LamathTubeEditorHost, LamathTubeEditorSize, LamathTubeKnob, LamathTubeModelSwitch,
-    LamathTubeSwitchId,
+    LamathTubeEditorHost, LamathTubeEditorSize, LamathTubeKnob, LamathTubeKnobGroup,
+    LamathTubeModelSwitch, LamathTubeSwitchId,
 };
 use crate::{
     audio_file_slot::{
@@ -22,6 +22,14 @@ const STYLE: &str = r#"
         padding: 16px;
         vertical-gap: 12px;
     }
+    .tube-header { horizontal-gap: 12px; }
+    .tube-header-text { width: 1s; vertical-gap: 2px; }
+    .tube-card-row { horizontal-gap: 12px; }
+    .tube-reed-card { width: 1s; }
+    .tube-bore-card { width: auto; }
+    .tube-player-card { width: 1s; }
+    .tube-model-card { width: auto; vertical-gap: 6px; }
+    .tube-hint { color: #7e887e; font-size: 10px; }
     .tube-title { color: #e3e7e2; font-size: 22px; }
     .tube-subtitle { color: #91a19b; font-size: 12px; }
     .tube-panel {
@@ -186,35 +194,88 @@ impl Model for TubeModel {
     }
 }
 
+/// The layout tells the instrument's physical story: a player's breath drives
+/// the reed, the reed speaks through the bore. Each card is one stage.
 fn build_editor(cx: &mut Context, signals: TubeSignals) {
     VStack::new(cx, move |cx| {
-        Label::new(cx, "Lamath Tube").class("tube-title");
-        Label::new(cx, "Reed driven bore").class("tube-subtitle");
-
-        VStack::new(cx, move |cx| {
-            Label::new(cx, "Tube").class("tube-section");
-            HStack::new(cx, move |cx| {
-                for index in 0..8 {
-                    knob_cell(cx, signals, index);
-                }
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "Lamath Tube").class("tube-title");
+                Label::new(cx, "a reed-driven bore, breathed through a register key")
+                    .class("tube-subtitle");
             })
-            .class("tube-knob-row");
+            .class("tube-header-text");
+            group_knob_cell(cx, signals, LamathTubeKnobGroup::Output, 0);
         })
-        .class("tube-panel");
+        .class("tube-header");
 
-        VStack::new(cx, move |cx| {
-            Label::new(cx, "Model").class("tube-section");
-            HStack::new(cx, move |cx| {
-                for index in 0..4 {
-                    switch_cell(cx, signals, index);
-                }
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "REED").class("tube-section");
+                HStack::new(cx, move |cx| {
+                    for slot in 0..4 {
+                        group_knob_cell(cx, signals, LamathTubeKnobGroup::Reed, slot);
+                    }
+                })
+                .class("tube-knob-row");
             })
-            .class("tube-switch-row");
+            .class("tube-panel")
+            .class("tube-reed-card");
+
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "BORE").class("tube-section");
+                HStack::new(cx, move |cx| {
+                    for slot in 0..3 {
+                        group_knob_cell(cx, signals, LamathTubeKnobGroup::Bore, slot);
+                    }
+                })
+                .class("tube-knob-row");
+            })
+            .class("tube-panel")
+            .class("tube-bore-card");
         })
-        .class("tube-panel");
+        .class("tube-card-row");
+
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "PLAYER").class("tube-section");
+                HStack::new(cx, move |cx| {
+                    for slot in 0..3 {
+                        group_knob_cell(cx, signals, LamathTubeKnobGroup::Player, slot);
+                    }
+                })
+                .class("tube-knob-row");
+                Label::new(
+                    cx,
+                    "Half way is a steady player; beyond it gets theatrical.",
+                )
+                .class("tube-hint");
+            })
+            .class("tube-panel")
+            .class("tube-player-card");
+
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "MODEL").class("tube-section");
+                HStack::new(cx, move |cx| {
+                    for index in 0..2 {
+                        switch_cell(cx, signals, index);
+                    }
+                })
+                .class("tube-switch-row");
+                HStack::new(cx, move |cx| {
+                    for index in 2..4 {
+                        switch_cell(cx, signals, index);
+                    }
+                })
+                .class("tube-switch-row");
+            })
+            .class("tube-panel")
+            .class("tube-model-card");
+        })
+        .class("tube-card-row");
 
         VStack::new(cx, move |cx| {
-            Label::new(cx, "Articulations").class("tube-section");
+            Label::new(cx, "ARTICULATIONS").class("tube-section");
             HStack::new(cx, move |cx| {
                 for index in 0..8 {
                     slot_cell(cx, signals, index);
@@ -228,24 +289,32 @@ fn build_editor(cx: &mut Context, signals: TubeSignals) {
     .class("tube-root");
 }
 
-fn knob_cell(cx: &mut Context, signals: TubeSignals, index: usize) {
+/// The `slot`-th knob of a group, in host-parameter order.
+fn group_knob_cell(
+    cx: &mut Context,
+    signals: TubeSignals,
+    group: LamathTubeKnobGroup,
+    slot: usize,
+) {
+    let knob = move || {
+        signals
+            .knobs
+            .get()
+            .iter()
+            .copied()
+            .filter(|knob| knob.group == group)
+            .nth(slot)
+    };
     VStack::new(cx, move |cx| {
         Knob::new(
             cx,
             0.5,
-            Memo::new(move |_| {
-                signals
-                    .knobs
-                    .get()
-                    .get(index)
-                    .map(|knob| knob.normalized)
-                    .unwrap_or(0.0)
-            }),
+            Memo::new(move |_| knob().map(|knob| knob.normalized).unwrap_or(0.0)),
             false,
         )
         .class("tube-knob")
         .on_change(move |cx, normalized| {
-            if let Some(knob) = signals.knobs.get().get(index) {
+            if let Some(knob) = knob() {
                 cx.emit(TubeEvent::SetKnob {
                     id: knob.id,
                     normalized,
@@ -255,10 +324,7 @@ fn knob_cell(cx: &mut Context, signals: TubeSignals, index: usize) {
         Label::new(
             cx,
             Memo::new(move |_| {
-                signals
-                    .knobs
-                    .get()
-                    .get(index)
+                knob()
                     .map(|knob| knob.label.to_string())
                     .unwrap_or_default()
             }),
@@ -267,10 +333,7 @@ fn knob_cell(cx: &mut Context, signals: TubeSignals, index: usize) {
         Label::new(
             cx,
             Memo::new(move |_| {
-                signals
-                    .knobs
-                    .get()
-                    .get(index)
+                knob()
                     .map(|knob| format!("{:.2} {}", knob.plain, knob.units))
                     .unwrap_or_default()
             }),
@@ -278,7 +341,7 @@ fn knob_cell(cx: &mut Context, signals: TubeSignals, index: usize) {
         .class("tube-knob-value");
     })
     .class("tube-knob-cell")
-    .display(Memo::new(move |_| signals.knobs.get().len() > index));
+    .display(Memo::new(move |_| knob().is_some()));
 }
 
 fn switch_cell(cx: &mut Context, signals: TubeSignals, index: usize) {

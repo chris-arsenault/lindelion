@@ -5,8 +5,8 @@ use vizia::{ParentWindow, WindowHandle, WindowScalePolicy, prelude::*};
 use super::{
     LAMATH_STRINGED_EDITOR_HEIGHT, LAMATH_STRINGED_EDITOR_WIDTH, LamathStringedBodyId,
     LamathStringedControlSurface, LamathStringedDriverId, LamathStringedEditorHost,
-    LamathStringedEditorSize, LamathStringedKnob, LamathStringedModelSwitch,
-    LamathStringedSwitchId,
+    LamathStringedEditorSize, LamathStringedKnob, LamathStringedKnobGroup,
+    LamathStringedModelSwitch, LamathStringedSwitchId,
 };
 use crate::{
     audio_file_slot::{
@@ -15,93 +15,8 @@ use crate::{
     vizia_file_dialogs::{PendingFileDialog, wav_audio_dialog},
 };
 
-const STYLE: &str = r#"
-    .stringed-root {
-        background-color: #101214;
-        width: 1s;
-        height: 1s;
-        padding: 16px;
-        vertical-gap: 12px;
-    }
-    .stringed-title { color: #e6e3d6; font-size: 22px; }
-    .stringed-subtitle { color: #9da69c; font-size: 12px; }
-    .stringed-strip {
-        background-color: #171a1d;
-        border-color: #34383c;
-        border-width: 1px;
-        border-radius: 6px;
-        padding: 10px;
-        vertical-gap: 8px;
-    }
-    .stringed-section { color: #bbc0b8; font-size: 12px; }
-    .stringed-path { horizontal-gap: 10px; }
-    .stringed-choice {
-        background-color: #23272b;
-        border-color: #44494e;
-        border-width: 1px;
-        border-radius: 5px;
-        color: #cbd1c8;
-        width: 96px;
-        height: 30px;
-    }
-    .stringed-choice-on { border-color: #c68b4a; color: #f2dfc4; }
-    .stringed-knobs { horizontal-gap: 10px; }
-    .stringed-knob-cell { width: 82px; vertical-gap: 4px; alignment: center; }
-    .stringed-knob { width: 44px; height: 44px; }
-    .stringed-knob .knob-track { color: #c68b4a; background-color: #2b3033; }
-    .stringed-knob .knob-head {
-        background-color: #202427;
-        border-color: #6a7068;
-        border-width: 1px;
-        color: #f3e2ca;
-    }
-    .stringed-knob .knob-tick {
-        background-color: #f3e2ca;
-        width: 2px;
-        height: 9px;
-        corner-radius: 1px;
-    }
-    .stringed-label { color: #d9ddd2; font-size: 11px; text-align: center; }
-    .stringed-value { color: #919890; font-size: 10px; text-align: center; }
-    .stringed-switch-row { horizontal-gap: 8px; }
-    .stringed-switch {
-        background-color: #22262a;
-        border-color: #42484d;
-        border-width: 1px;
-        border-radius: 5px;
-        color: #bec5bc;
-        width: 132px;
-        height: 30px;
-    }
-    .stringed-switch-on { border-color: #8eb782; color: #d8ead0; }
-    .stringed-slot-row { horizontal-gap: 6px; }
-    .stringed-slot {
-        background-color: #202428;
-        border-color: #3d4448;
-        border-width: 1px;
-        border-radius: 5px;
-        width: 72px;
-        height: 58px;
-        padding: 5px;
-        vertical-gap: 2px;
-    }
-    .stringed-slot-on { border-color: #c68b4a; }
-    .stringed-slot-key { color: #9ba39b; font-size: 10px; text-align: center; }
-    .stringed-slot-name { color: #e0e4d8; font-size: 10px; text-align: center; }
-    .stringed-slot-source { color: #858f86; font-size: 10px; text-align: center; }
-    .stringed-actions { horizontal-gap: 8px; alignment: center; }
-    .stringed-current { color: #d9ddd2; width: 330px; }
-    .stringed-button {
-        background-color: #24282c;
-        border-color: #42484d;
-        border-width: 1px;
-        border-radius: 5px;
-        color: #dce2d8;
-        width: 76px;
-        padding: 6px;
-    }
-    .stringed-button:hover { border-color: #c68b4a; }
-"#;
+mod style;
+use style::STYLE;
 
 #[derive(Clone, Copy)]
 struct Signals {
@@ -204,57 +119,107 @@ impl Model for UiModel {
     }
 }
 
+/// The layout tells the instrument's physical story: a player drives the
+/// string through a pick or bow, the string speaks through a body. Each card
+/// is one stage of that chain; the driver card shows only the controls the
+/// selected driver actually has.
 fn build_editor(cx: &mut Context, signals: Signals) {
     VStack::new(cx, move |cx| {
-        Label::new(cx, "Lamath Stringed").class("stringed-title");
-        Label::new(cx, "single string body and articulation slots").class("stringed-subtitle");
-
-        VStack::new(cx, move |cx| {
-            Label::new(cx, "Driver").class("stringed-section");
-            HStack::new(cx, move |cx| {
-                driver_button(cx, signals, LamathStringedDriverId::None, "None");
-                driver_button(cx, signals, LamathStringedDriverId::Pick, "Pick");
-                driver_button(cx, signals, LamathStringedDriverId::Bow, "Bow");
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "Lamath Stringed").class("stringed-title");
+                Label::new(
+                    cx,
+                    "a single string, bowed or picked, voiced through a body",
+                )
+                .class("stringed-subtitle");
             })
-            .class("stringed-path");
+            .class("stringed-header-text");
+            knob_cell_by_id(cx, signals, knob_id_for(signals, KnobRole::Output));
         })
-        .class("stringed-strip");
+        .class("stringed-header");
+
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "DRIVER").class("stringed-section");
+                HStack::new(cx, move |cx| {
+                    driver_button(cx, signals, LamathStringedDriverId::None, "None");
+                    driver_button(cx, signals, LamathStringedDriverId::Pick, "Pick");
+                    driver_button(cx, signals, LamathStringedDriverId::Bow, "Bow");
+                })
+                .class("stringed-path");
+                HStack::new(cx, move |cx| {
+                    for slot in 0..4 {
+                        group_knob_cell(cx, signals, LamathStringedKnobGroup::Bow, slot);
+                    }
+                    switch_cell_by_id(cx, signals, LamathStringedSwitchId::BowDrive);
+                })
+                .class("stringed-knobs")
+                .display(Memo::new(move |_| {
+                    signals.driver.get() == LamathStringedDriverId::Bow
+                }));
+                Label::new(
+                    cx,
+                    "Pick hardness and contact follow Brightness and Stiffness.",
+                )
+                .class("stringed-hint")
+                .display(Memo::new(move |_| {
+                    signals.driver.get() == LamathStringedDriverId::Pick
+                }));
+                Label::new(cx, "Articulation samples excite the string directly.")
+                    .class("stringed-hint")
+                    .display(Memo::new(move |_| {
+                        signals.driver.get() == LamathStringedDriverId::None
+                    }));
+            })
+            .class("stringed-strip")
+            .class("stringed-driver-card");
+
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "PLAYER").class("stringed-section");
+                HStack::new(cx, move |cx| {
+                    for slot in 0..3 {
+                        group_knob_cell(cx, signals, LamathStringedKnobGroup::Player, slot);
+                    }
+                })
+                .class("stringed-knobs");
+                Label::new(
+                    cx,
+                    "Half way is a steady player; beyond it gets theatrical.",
+                )
+                .class("stringed-hint");
+            })
+            .class("stringed-strip")
+            .class("stringed-player-card");
+        })
+        .class("stringed-card-row");
 
         VStack::new(cx, move |cx| {
-            Label::new(cx, "String").class("stringed-section");
+            Label::new(cx, "STRING").class("stringed-section");
             HStack::new(cx, move |cx| {
-                for index in 0..7 {
-                    knob_cell(cx, signals, index);
+                for slot in 0..6 {
+                    group_knob_cell(cx, signals, LamathStringedKnobGroup::String, slot);
                 }
+                switch_cell_by_id(cx, signals, LamathStringedSwitchId::Tension);
             })
             .class("stringed-knobs");
         })
         .class("stringed-strip");
 
         VStack::new(cx, move |cx| {
-            Label::new(cx, "Body").class("stringed-section");
+            Label::new(cx, "BODY").class("stringed-section");
             HStack::new(cx, move |cx| {
                 body_button(cx, signals, LamathStringedBodyId::Disabled, "Disabled");
                 body_button(cx, signals, LamathStringedBodyId::Guitar, "Guitar");
                 body_button(cx, signals, LamathStringedBodyId::Violin, "Violin");
+                switch_cell_by_id(cx, signals, LamathStringedSwitchId::BodyContact);
             })
             .class("stringed-path");
         })
         .class("stringed-strip");
 
         VStack::new(cx, move |cx| {
-            Label::new(cx, "Physical switches").class("stringed-section");
-            HStack::new(cx, move |cx| {
-                for index in 0..3 {
-                    switch_cell(cx, signals, index);
-                }
-            })
-            .class("stringed-switch-row");
-        })
-        .class("stringed-strip");
-
-        VStack::new(cx, move |cx| {
-            Label::new(cx, "Articulations").class("stringed-section");
+            Label::new(cx, "ARTICULATIONS").class("stringed-section");
             HStack::new(cx, move |cx| {
                 for index in 0..8 {
                     slot_cell(cx, signals, index);
@@ -266,6 +231,49 @@ fn build_editor(cx: &mut Context, signals: Signals) {
         .class("stringed-strip");
     })
     .class("stringed-root");
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KnobRole {
+    Output,
+}
+
+fn knob_id_for(signals: Signals, role: KnobRole) -> u32 {
+    let group = match role {
+        KnobRole::Output => LamathStringedKnobGroup::Output,
+    };
+    signals
+        .knobs
+        .get()
+        .iter()
+        .find(|knob| knob.group == group)
+        .map(|knob| knob.id)
+        .unwrap_or(u32::MAX)
+}
+
+/// The `slot`-th knob of a group, in host-parameter order.
+fn group_knob_cell(
+    cx: &mut Context,
+    signals: Signals,
+    group: LamathStringedKnobGroup,
+    slot: usize,
+) {
+    let id = Memo::new(move |_| {
+        signals
+            .knobs
+            .get()
+            .iter()
+            .filter(|knob| knob.group == group)
+            .nth(slot)
+            .map(|knob| knob.id)
+            .unwrap_or(u32::MAX)
+    });
+    knob_cell_by_memo_id(cx, signals, id);
+}
+
+fn knob_cell_by_id(cx: &mut Context, signals: Signals, id: u32) {
+    let id = Memo::new(move |_| id);
+    knob_cell_by_memo_id(cx, signals, id);
 }
 
 fn driver_button(
@@ -293,21 +301,26 @@ fn body_button(cx: &mut Context, signals: Signals, id: LamathStringedBodyId, lab
         .on_press(move |cx| cx.emit(UiEvent::SetBody(id)));
 }
 
-fn knob_cell(cx: &mut Context, signals: Signals, index: usize) {
+fn knob_cell_by_memo_id(cx: &mut Context, signals: Signals, id: Memo<u32>) {
+    let knob = move || {
+        let wanted = id.get();
+        signals
+            .knobs
+            .get()
+            .iter()
+            .copied()
+            .find(|knob| knob.id == wanted)
+    };
     VStack::new(cx, move |cx| {
         Knob::new(
             cx,
             0.5,
-            Memo::new(move |_| {
-                knob_at(signals, index)
-                    .map(|knob| knob.normalized)
-                    .unwrap_or(0.0)
-            }),
+            Memo::new(move |_| knob().map(|knob| knob.normalized).unwrap_or(0.0)),
             false,
         )
         .class("stringed-knob")
         .on_change(move |cx, normalized| {
-            if let Some(knob) = knob_at(signals, index) {
+            if let Some(knob) = knob() {
                 cx.emit(UiEvent::SetKnob {
                     id: knob.id,
                     normalized,
@@ -317,7 +330,7 @@ fn knob_cell(cx: &mut Context, signals: Signals, index: usize) {
         Label::new(
             cx,
             Memo::new(move |_| {
-                knob_at(signals, index)
+                knob()
                     .map(|knob| knob.label.to_string())
                     .unwrap_or_default()
             }),
@@ -325,23 +338,28 @@ fn knob_cell(cx: &mut Context, signals: Signals, index: usize) {
         .class("stringed-label");
         Label::new(
             cx,
-            Memo::new(move |_| knob_at(signals, index).map(format_knob).unwrap_or_default()),
+            Memo::new(move |_| knob().map(format_knob).unwrap_or_default()),
         )
         .class("stringed-value");
     })
     .class("stringed-knob-cell")
-    .display(Memo::new(move |_| signals.knobs.get().len() > index));
+    .display(Memo::new(move |_| knob().is_some()));
 }
 
-fn switch_cell(cx: &mut Context, signals: Signals, index: usize) {
+fn switch_cell_by_id(cx: &mut Context, signals: Signals, id: LamathStringedSwitchId) {
+    let switch = move || {
+        signals
+            .switches
+            .get()
+            .iter()
+            .copied()
+            .find(|switch| switch.id == id)
+    };
     Button::new(cx, move |cx| {
         Label::new(
             cx,
             Memo::new(move |_| {
-                signals
-                    .switches
-                    .get()
-                    .get(index)
+                switch()
                     .map(|switch| switch.label.to_string())
                     .unwrap_or_default()
             }),
@@ -350,18 +368,11 @@ fn switch_cell(cx: &mut Context, signals: Signals, index: usize) {
     .class("stringed-switch")
     .toggle_class(
         "stringed-switch-on",
-        Memo::new(move |_| {
-            signals
-                .switches
-                .get()
-                .get(index)
-                .map(|switch| switch.enabled)
-                .unwrap_or(false)
-        }),
+        Memo::new(move |_| switch().map(|switch| switch.enabled).unwrap_or(false)),
     )
-    .display(Memo::new(move |_| signals.switches.get().len() > index))
+    .display(Memo::new(move |_| switch().is_some()))
     .on_press(move |cx| {
-        if let Some(switch) = signals.switches.get().get(index)
+        if let Some(switch) = switch()
             && switch.editable
         {
             cx.emit(UiEvent::SetSwitch {
@@ -435,10 +446,6 @@ fn slot_actions(cx: &mut Context, signals: Signals) {
             .on_press(move |cx| cx.emit(UiEvent::ClearSlot(signals.slots.get().selected)));
     })
     .class("stringed-actions");
-}
-
-fn knob_at(signals: Signals, index: usize) -> Option<LamathStringedKnob> {
-    signals.knobs.get().get(index).copied()
 }
 
 fn format_knob(knob: LamathStringedKnob) -> String {

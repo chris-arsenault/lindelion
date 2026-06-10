@@ -92,6 +92,14 @@ render-lamath-audio:
 		cargo run -q --release -p lamath --bin lamath-render-catalog -- \
 		--out "$(LAMATH_REVIEW_DIR)" $(LAMATH_RENDER_ARGS)
 
+# Song demo render: a 32-bar multi-track piece for the four Lamath instrument
+# families. Renders each track to its own stem WAV, then sums them into a mix.
+# Release build routed to LINDELION_RELEASE_TARGET_DIR like render-lamath-audio.
+render-lamath-song:
+	CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
+		cargo run -q --release -p lamath --bin lamath-song -- \
+		--out "$(REPO_ROOT)/review/lamath-song"
+
 compress-review-audio:
 	cargo run -p xtask -- compress-review-audio --source "$(REVIEW_AUDIO_SOURCE_DIR)" --out "$(REVIEW_AUDIO_PREVIEW_DIR)" --encoder "$(REVIEW_AUDIO_ENCODER)" --bitrate "$(REVIEW_AUDIO_BITRATE)" $(REVIEW_AUDIO_ARGS)
 

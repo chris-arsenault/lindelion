@@ -144,6 +144,7 @@ impl LamathStringed {
                 id: parameter.id.0,
                 label: parameter.name,
                 units: parameter.units,
+                group: knob_group(parameter.id.0),
                 normalized: parameters::normalized_value(&self.patch, parameter.id.0)
                     .unwrap_or_else(|| parameter.range.normalize(parameter.range.default)),
                 plain: parameters::plain_value(&self.patch, parameter.id.0)
@@ -294,6 +295,21 @@ impl AudioPlugin for LamathStringed {
 
 fn builtin_sources() -> [ExcitationSource<'static>; ARTICULATION_SLOT_COUNT] {
     std::array::from_fn(ExcitationSource::builtin)
+}
+
+/// Editor card for each host parameter: the editor lays out by the
+/// instrument's physical story rather than parameter order.
+pub(crate) fn knob_group(id: u32) -> lindelion_ui::lamath_stringed_vizia::LamathStringedKnobGroup {
+    use lindelion_ui::lamath_stringed_vizia::LamathStringedKnobGroup as Group;
+    match id {
+        parameters::HUMANIZE_ID | parameters::PHRASING_ID | parameters::VIBRATO_ID => Group::Player,
+        parameters::BOW_POSITION_ID
+        | parameters::BOW_PRESSURE_ID
+        | parameters::BOW_SPEED_ID
+        | parameters::BOW_FRICTION_ID => Group::Bow,
+        parameters::OUTPUT_GAIN_ID => Group::Output,
+        _ => Group::String,
+    }
 }
 
 #[cfg(test)]

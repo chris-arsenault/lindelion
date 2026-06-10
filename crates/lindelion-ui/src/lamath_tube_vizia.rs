@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::audio_file_slot::AudioFileSlotListHost;
 
-pub const LAMATH_TUBE_EDITOR_WIDTH: i32 = 640;
-pub const LAMATH_TUBE_EDITOR_HEIGHT: i32 = 540;
+pub const LAMATH_TUBE_EDITOR_WIDTH: i32 = 700;
+pub const LAMATH_TUBE_EDITOR_HEIGHT: i32 = 656;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LamathTubeEditorSize {
@@ -13,11 +13,21 @@ pub struct LamathTubeEditorSize {
     pub height: i32,
 }
 
+/// Which editor card a knob belongs to (reed → bore, played by a player).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LamathTubeKnobGroup {
+    Reed,
+    Bore,
+    Player,
+    Output,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LamathTubeKnob {
     pub id: u32,
     pub label: &'static str,
     pub units: &'static str,
+    pub group: LamathTubeKnobGroup,
     pub normalized: f32,
     pub plain: f32,
 }
@@ -85,6 +95,7 @@ mod tests {
                 id: 1,
                 label: "Pressure",
                 units: "",
+                group: LamathTubeKnobGroup::Reed,
                 normalized: 0.5,
                 plain: 0.5,
             }]

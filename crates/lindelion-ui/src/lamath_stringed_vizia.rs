@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::audio_file_slot::AudioFileSlotListHost;
 
-pub const LAMATH_STRINGED_EDITOR_WIDTH: i32 = 680;
-pub const LAMATH_STRINGED_EDITOR_HEIGHT: i32 = 560;
+pub const LAMATH_STRINGED_EDITOR_WIDTH: i32 = 720;
+pub const LAMATH_STRINGED_EDITOR_HEIGHT: i32 = 716;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LamathStringedEditorSize {
@@ -13,11 +13,24 @@ pub struct LamathStringedEditorSize {
     pub height: i32,
 }
 
+/// Which editor card a knob belongs to. The editor lays controls out by the
+/// instrument's physical story (driver → string → body, played by a player),
+/// so the plugin names each knob's home instead of the editor guessing from
+/// positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LamathStringedKnobGroup {
+    String,
+    Bow,
+    Player,
+    Output,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LamathStringedKnob {
     pub id: u32,
     pub label: &'static str,
     pub units: &'static str,
+    pub group: LamathStringedKnobGroup,
     pub normalized: f32,
     pub plain: f32,
 }
@@ -104,6 +117,7 @@ mod tests {
                 id: 1,
                 label: "Brightness",
                 units: "",
+                group: LamathStringedKnobGroup::String,
                 normalized: 0.5,
                 plain: 0.5,
             }]

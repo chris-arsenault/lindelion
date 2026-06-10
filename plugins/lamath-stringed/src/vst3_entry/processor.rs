@@ -305,6 +305,7 @@ impl LamathStringedVst3Processor {
                     id: parameter.id.0,
                     label: parameter.name,
                     units: parameter.units,
+                    group: crate::plugin::knob_group(parameter.id.0),
                     normalized,
                     plain: parameter.range.denormalize(normalized),
                 }

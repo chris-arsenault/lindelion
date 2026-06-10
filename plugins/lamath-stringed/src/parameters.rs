@@ -12,6 +12,10 @@ pub const OUTPUT_GAIN_ID: u32 = 7;
 pub const HUMANIZE_ID: u32 = 8;
 pub const PHRASING_ID: u32 = 9;
 pub const VIBRATO_ID: u32 = 10;
+pub const BOW_POSITION_ID: u32 = 11;
+pub const BOW_PRESSURE_ID: u32 = 12;
+pub const BOW_SPEED_ID: u32 = 13;
+pub const BOW_FRICTION_ID: u32 = 14;
 
 pub const PARAMETERS: &[ParameterInfo] = &[
     ParameterInfo::continuous(
@@ -74,6 +78,30 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         "",
         ParameterRange::linear(0.0, 1.0, 0.5),
     ),
+    ParameterInfo::continuous(
+        BOW_POSITION_ID,
+        "Position",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.12),
+    ),
+    ParameterInfo::continuous(
+        BOW_PRESSURE_ID,
+        "Pressure",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.48),
+    ),
+    ParameterInfo::continuous(
+        BOW_SPEED_ID,
+        "Speed",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.45),
+    ),
+    ParameterInfo::continuous(
+        BOW_FRICTION_ID,
+        "Friction",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.45),
+    ),
 ];
 
 pub const PARAMETER_COUNT: usize = PARAMETERS.len();
@@ -105,6 +133,10 @@ pub fn plain_value(patch: &StringPatch, id: u32) -> Option<f32> {
         HUMANIZE_ID => Some(patch.humanize),
         PHRASING_ID => Some(patch.phrasing),
         VIBRATO_ID => Some(patch.vibrato),
+        BOW_POSITION_ID => Some(patch.bow_position),
+        BOW_PRESSURE_ID => Some(patch.bow_pressure),
+        BOW_SPEED_ID => Some(patch.bow_speed),
+        BOW_FRICTION_ID => Some(patch.bow_friction),
         _ => None,
     }
 }
@@ -139,6 +171,10 @@ pub fn apply_plain(patch: &mut StringPatch, id: u32, plain: f32) -> bool {
         HUMANIZE_ID => patch.humanize = unit(plain),
         PHRASING_ID => patch.phrasing = unit(plain),
         VIBRATO_ID => patch.vibrato = unit(plain),
+        BOW_POSITION_ID => patch.bow_position = unit(plain),
+        BOW_PRESSURE_ID => patch.bow_pressure = unit(plain),
+        BOW_SPEED_ID => patch.bow_speed = unit(plain),
+        BOW_FRICTION_ID => patch.bow_friction = unit(plain),
         _ => return false,
     }
     true

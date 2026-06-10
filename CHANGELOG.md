@@ -2,6 +2,20 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.18.0 - 2026-06-10
+
+### Lamath song demo
+
+- Added "Olórelindë (The Dream Ascending)" — a 32-bar piece for the four Lamath instrument families, rendered by the new `lamath-song` bin (`make render-lamath-song`): ten separately rendered stems (tube lead/harmony, three bowed-string chord voices, picked bass, modal arpeggio/bells, ride/crash) summed through a mixer with per-stem cleanup highpass, active-RMS or peak leveling, constant-power panning, per-section fader rides, and master peak normalization. Documented with the release title and cover art in [docs/lamath-song.md](docs/lamath-song.md).
+
+### Lamath Stringed
+
+- Exposed the four bow controls — Position, Pressure, Speed, Friction — as host parameters.
+
+### Editors
+
+- Grouped the Lamath Stringed editor knobs into String / Bow / Player / Output cards and the Lamath Tube editor knobs into Reed / Bore / Player / Output cards; both editors resized to fit.
+
 ## v0.17.0 - 2026-06-10
 
 ### Lamath Stringed
