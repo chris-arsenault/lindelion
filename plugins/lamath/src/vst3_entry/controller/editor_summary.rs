@@ -269,16 +269,46 @@ impl EditorPatchSummary {
 impl EditorSampleSummary {
     fn from_metadata(metadata: &SampleMetadata) -> Self {
         let duration = metadata.duration_ms as f32 / 1_000.0;
-        let detail = format!(
+        let mut detail = format!(
             "{duration:.2}s  {} Hz  {}ch",
             metadata.sample_rate, metadata.channels
         );
+        if let Some(created) = metadata.created_at_ms.map(format_created_date) {
+            detail.push_str("  ·  added ");
+            detail.push_str(&created);
+        }
         Self {
             label: metadata.filename.clone(),
             detail,
             preview: waveform_points(&metadata.waveform_preview),
         }
     }
+}
+
+/// Format Unix epoch milliseconds (UTC) as a `YYYY-MM-DD` calendar date.
+///
+/// Uses Howard Hinnant's `civil_from_days` algorithm so no date-library
+/// dependency or timezone database is needed; the date is reported in UTC.
+fn format_created_date(epoch_ms: u64) -> String {
+    let days = (epoch_ms / 86_400_000) as i64;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// Convert a count of days since the Unix epoch (1970-01-01) into a
+/// `(year, month, day)` civil date. See Hinnant, "chrono-Compatible Low-Level
+/// Date Algorithms".
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (year + i64::from(month <= 2), month, day)
 }
 
 fn waveform_points(preview: &SampleWaveformPreview) -> Vec<EditorWaveformPoint> {
@@ -342,6 +372,7 @@ impl EditorSlotSummary {
     }
 }
 
+
 fn layer_detail(name: &str, slot: &crate::ExcitationSlot) -> String {
     let pitch = if slot.pitch_track { "pitch" } else { "fixed" };
     let loop_mode = if slot.looping { "loop" } else { "one-shot" };
@@ -354,3 +385,20 @@ fn layer_detail(name: &str, slot: &crate::ExcitationSlot) -> String {
         slot.gain_db, slot.velocity_low, slot.velocity_high
     )
 }
+
+#[cfg(test)]
+mod created_date_tests {
+    use super::format_created_date;
+
+    #[test]
+    fn formats_known_utc_dates() {
+        assert_eq!(format_created_date(0), "1970-01-01");
+        // 1_000_000_000 s after the epoch is 2001-09-09T01:46:40Z.
+        assert_eq!(format_created_date(1_000_000_000_000), "2001-09-09");
+        // 1_700_000_000 s after the epoch is 2023-11-14T22:13:20Z.
+        assert_eq!(format_created_date(1_700_000_000_000), "2023-11-14");
+        // Leap day: 2020-02-29T00:00:00Z.
+        assert_eq!(format_created_date(1_582_934_400_000), "2020-02-29");
+    }
+}
+

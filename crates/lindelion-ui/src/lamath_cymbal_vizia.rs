@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::audio_file_slot::AudioFileSlotListHost;
 
-pub const LAMATH_CYMBAL_EDITOR_WIDTH: i32 = 560;
-pub const LAMATH_CYMBAL_EDITOR_HEIGHT: i32 = 420;
+pub const LAMATH_CYMBAL_EDITOR_WIDTH: i32 = 700;
+pub const LAMATH_CYMBAL_EDITOR_HEIGHT: i32 = 560;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LamathCymbalEditorSize {
@@ -26,9 +26,40 @@ pub struct LamathCymbalKnob {
     pub plain: f32,
 }
 
+/// A named cymbal voice exposed to the editor's Basic tab. The plugin owns the parameter values; the
+/// UI only needs a label and a one-line description to render the picker.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LamathCymbalPreset {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+/// Audio-thread health, surfaced so a player can tell a bad-sounding voice apart from a dropout: if
+/// the load is low and the sound is still wrong, it's the voice, not the buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LamathCymbalPerformance {
+    /// Smoothed processing time as a fraction of the realtime block budget (`1.0` == the whole
+    /// budget; `> 1.0` means the block overran and the host will drop audio).
+    pub load: f32,
+    /// Sticky worst-case load since the last reset.
+    pub peak_load: f32,
+    /// Count of blocks whose processing time exceeded the realtime budget (guaranteed dropouts).
+    pub xruns: u32,
+}
+
 pub trait LamathCymbalControlSurface: Send + Sync {
     fn knobs(&self) -> Vec<LamathCymbalKnob>;
     fn set_knob_normalized(&self, id: u32, normalized: f32);
+    /// The ordered list of selectable voices for the Basic-tab picker.
+    fn presets(&self) -> Vec<LamathCymbalPreset>;
+    /// Load the voice at `index`, leaving the striker slots and loaded samples untouched.
+    fn apply_preset(&self, index: usize);
+    /// The index of the voice whose parameters match the current patch, if any.
+    fn active_preset(&self) -> Option<usize>;
+    /// A snapshot of audio-thread load for the editor's performance indicator.
+    fn performance(&self) -> LamathCymbalPerformance;
+    /// Clear the peak-load hold and the dropout counter.
+    fn reset_performance(&self);
 }
 
 #[derive(Clone)]
@@ -74,6 +105,29 @@ mod tests {
         }
 
         fn set_knob_normalized(&self, _id: u32, _normalized: f32) {}
+
+        fn presets(&self) -> Vec<LamathCymbalPreset> {
+            vec![LamathCymbalPreset {
+                name: "Default",
+                description: "Stub voice",
+            }]
+        }
+
+        fn apply_preset(&self, _index: usize) {}
+
+        fn active_preset(&self) -> Option<usize> {
+            Some(0)
+        }
+
+        fn performance(&self) -> LamathCymbalPerformance {
+            LamathCymbalPerformance {
+                load: 0.25,
+                peak_load: 0.4,
+                xruns: 0,
+            }
+        }
+
+        fn reset_performance(&self) {}
     }
 
     struct StubSlot;
@@ -100,6 +154,9 @@ mod tests {
             AudioFileSlotListHost::new(Arc::new(StubSlot)),
         );
         assert_eq!(host.controls.knobs().len(), 1);
+        assert_eq!(host.controls.presets().len(), 1);
+        assert_eq!(host.controls.active_preset(), Some(0));
+        assert_eq!(host.controls.performance().xruns, 0);
         assert_eq!(host.strikers.surface.slot_list_view().slots.len(), 4);
     }
 }

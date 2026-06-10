@@ -7,6 +7,7 @@ use lindelion_dsp_utils::{
     math::cents_between,
 };
 
+mod bow;
 mod tension;
 
 #[derive(Debug, Clone, Copy)]

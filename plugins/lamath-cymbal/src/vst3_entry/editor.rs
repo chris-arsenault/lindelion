@@ -12,7 +12,10 @@ use lindelion_ui::lamath_cymbal_vizia::{LAMATH_CYMBAL_EDITOR_HEIGHT, LAMATH_CYMB
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use lindelion_ui::{
     audio_file_slot::{AudioFileSlotId, AudioFileSlotListSurface, AudioFileSlotListView},
-    lamath_cymbal_vizia::{LamathCymbalControlSurface, LamathCymbalEditorHost, LamathCymbalKnob},
+    lamath_cymbal_vizia::{
+        LamathCymbalControlSurface, LamathCymbalEditorHost, LamathCymbalKnob,
+        LamathCymbalPerformance, LamathCymbalPreset,
+    },
 };
 use vst3::{ComWrapper, Steinberg::*};
 
@@ -115,6 +118,26 @@ impl LamathCymbalControlSurface for EditorSurface {
 
     fn set_knob_normalized(&self, id: u32, normalized: f32) {
         self.component().set_editor_parameter(id, normalized);
+    }
+
+    fn presets(&self) -> Vec<LamathCymbalPreset> {
+        self.component().editor_presets()
+    }
+
+    fn apply_preset(&self, index: usize) {
+        self.component().apply_editor_preset(index);
+    }
+
+    fn active_preset(&self) -> Option<usize> {
+        self.component().active_editor_preset()
+    }
+
+    fn performance(&self) -> LamathCymbalPerformance {
+        self.component().editor_performance()
+    }
+
+    fn reset_performance(&self) {
+        self.component().reset_editor_performance();
     }
 }
 

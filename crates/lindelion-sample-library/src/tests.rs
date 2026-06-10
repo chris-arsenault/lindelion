@@ -239,6 +239,7 @@ fn file_library_ingests_hashes_indexes_and_previews_wav_samples() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].reference, metadata.reference);
     assert!(!listed[0].waveform_preview.points.is_empty());
+    assert_eq!(listed[0].created_at_ms, metadata.created_at_ms);
 }
 
 fn assert_ingested_metadata(paths: &LibraryPaths, metadata: &SampleMetadata) {
@@ -250,6 +251,7 @@ fn assert_ingested_metadata(paths: &LibraryPaths, metadata: &SampleMetadata) {
     assert!(metadata.peak_db.unwrap() <= 0.0);
     assert!(metadata.rms_db.unwrap() < 0.0);
     assert!(!metadata.waveform_preview.points.is_empty());
+    assert!(metadata.created_at_ms.is_some());
 }
 
 fn assert_resolves_existing_sample(library: &FileSampleLibrary, metadata: &SampleMetadata) {

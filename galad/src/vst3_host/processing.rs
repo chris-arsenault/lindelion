@@ -79,7 +79,9 @@ pub(super) unsafe fn drive_process(
 /// VST3 requires `ProcessData.inputs`/`outputs` to contain an `AudioBusBuffers` entry for every
 /// audio bus the component declares, including inactive sidechain/aux busses. Galad maps its stereo
 /// chain signal to main bus 0 and gives all other channels valid silent/sink buffers so commercial
-/// plugins that inspect the complete bus topology see a host-shaped process call.
+/// plugins that inspect the complete bus topology see a host-shaped process call. Instruments may
+/// declare no audio input buses at all; Galad still drives them with `numInputs = 0` and uses their
+/// main output as the next chain signal.
 pub(super) struct ProcessBusScratch {
     label: String,
     input_buses: Vec<AudioBusBuffers>,
@@ -229,8 +231,16 @@ impl ProcessBusScratch {
             numSamples: frames as i32,
             numInputs: self.input_buses.len() as i32,
             numOutputs: self.output_buses.len() as i32,
-            inputs: self.input_buses.as_mut_ptr(),
-            outputs: self.output_buses.as_mut_ptr(),
+            inputs: if self.input_buses.is_empty() {
+                ptr::null_mut()
+            } else {
+                self.input_buses.as_mut_ptr()
+            },
+            outputs: if self.output_buses.is_empty() {
+                ptr::null_mut()
+            } else {
+                self.output_buses.as_mut_ptr()
+            },
             inputParameterChanges: self.input_parameter_changes_ptr.as_ptr(),
             outputParameterChanges: ptr::null_mut(),
             inputEvents: self.input_events_ptr.as_ptr(),
@@ -308,11 +318,11 @@ impl ProcessBusScratch {
 
     fn update_process_context(&mut self, _frames: usize) {
         const TEMPO: f64 = 120.0;
-        self.context.state = (ProcessContext_::StatesAndFlags_::kPlaying
+        self.context.state = ProcessContext_::StatesAndFlags_::kPlaying
             | ProcessContext_::StatesAndFlags_::kContTimeValid
             | ProcessContext_::StatesAndFlags_::kProjectTimeMusicValid
             | ProcessContext_::StatesAndFlags_::kTempoValid
-            | ProcessContext_::StatesAndFlags_::kTimeSigValid) as u32;
+            | ProcessContext_::StatesAndFlags_::kTimeSigValid;
         self.context.sampleRate = self.sample_rate;
         self.context.projectTimeSamples = self.project_time_samples;
         self.context.continousTimeSamples = self.project_time_samples;
@@ -334,6 +344,7 @@ struct ProcessDebugState {
 
 #[cfg(not(test))]
 impl ProcessBusScratch {
+    #[allow(clippy::too_many_arguments)] // diagnostic logger: each slice is a distinct bus tap
     fn maybe_log_process_result(
         &mut self,
         result: tresult,
@@ -564,8 +575,9 @@ unsafe fn configure_stereo_main_buses(
     processor: &ComPtr<IAudioProcessor>,
 ) -> Result<(), HostError> {
     let audio = MediaTypes_::kAudio as MediaType;
-    let input_count = audio_bus_count(component, audio, BusDirections_::kInput as BusDirection)?;
-    let output_count = audio_bus_count(component, audio, BusDirections_::kOutput as BusDirection)?;
+    let input_count = audio_bus_count(component, audio, BusDirections_::kInput as BusDirection);
+    let output_count =
+        required_audio_bus_count(component, audio, BusDirections_::kOutput as BusDirection)?;
     let mut inputs = arrangements_for_buses(
         component,
         processor,
@@ -586,11 +598,18 @@ unsafe fn configure_stereo_main_buses(
         arrangements_summary(&outputs)
     ));
 
-    inputs[MAIN_BUS_INDEX as usize] = SpeakerArr::kStereo;
+    if let Some(input) = inputs.get_mut(MAIN_BUS_INDEX as usize) {
+        *input = SpeakerArr::kStereo;
+    }
     outputs[MAIN_BUS_INDEX as usize] = SpeakerArr::kStereo;
 
+    let input_ptr = if inputs.is_empty() {
+        ptr::null_mut()
+    } else {
+        inputs.as_mut_ptr()
+    };
     let result = processor.setBusArrangements(
-        inputs.as_mut_ptr(),
+        input_ptr,
         input_count as i32,
         outputs.as_mut_ptr(),
         output_count as i32,
@@ -607,7 +626,13 @@ unsafe fn configure_stereo_main_buses(
     // Some correct plugins reject the host's requested arrangement and expect the host to use the
     // arrangement they report back. Accept that path when the reported main I/O is already stereo,
     // because Galad's internal chain is currently stereo.
-    if reported_main_bus_is_stereo(component, processor, BusDirections_::kInput as BusDirection)
+    let input_ok = input_count == 0
+        || reported_main_bus_is_stereo(
+            component,
+            processor,
+            BusDirections_::kInput as BusDirection,
+        );
+    if input_ok
         && reported_main_bus_is_stereo(
             component,
             processor,
@@ -623,13 +648,13 @@ unsafe fn configure_stereo_main_buses(
     Err(HostError::SetupFailed("setBusArrangements"))
 }
 
-unsafe fn audio_bus_count(
+unsafe fn required_audio_bus_count(
     component: &ComPtr<IComponent>,
     audio: MediaType,
     direction: BusDirection,
 ) -> Result<usize, HostError> {
-    let count = component.getBusCount(audio, direction);
-    if count <= 0 {
+    let count = audio_bus_count(component, audio, direction);
+    if count == 0 {
         return Err(HostError::SetupFailed(
             if direction == BusDirections_::kInput as BusDirection {
                 "main audio input bus"
@@ -638,7 +663,15 @@ unsafe fn audio_bus_count(
             },
         ));
     }
-    Ok(count as usize)
+    Ok(count)
+}
+
+unsafe fn audio_bus_count(
+    component: &ComPtr<IComponent>,
+    audio: MediaType,
+    direction: BusDirection,
+) -> usize {
+    component.getBusCount(audio, direction).max(0) as usize
 }
 
 unsafe fn arrangements_for_buses(
@@ -715,7 +748,11 @@ unsafe fn activate_main_bus_only(
     audio: MediaType,
     direction: BusDirection,
 ) -> Result<(), HostError> {
-    let count = audio_bus_count(component, audio, direction)?;
+    let count = if direction == BusDirections_::kOutput as BusDirection {
+        required_audio_bus_count(component, audio, direction)?
+    } else {
+        audio_bus_count(component, audio, direction)
+    };
     for index in 0..count {
         let active = if index as i32 == MAIN_BUS_INDEX { 1 } else { 0 };
         let result = component.activateBus(audio, direction, index as i32, active);
@@ -742,7 +779,11 @@ unsafe fn bus_buffers_for(
     direction: BusDirection,
 ) -> Result<Vec<AudioBusBuffers>, HostError> {
     let audio = MediaTypes_::kAudio as MediaType;
-    let count = audio_bus_count(component, audio, direction)?;
+    let count = if direction == BusDirections_::kOutput as BusDirection {
+        required_audio_bus_count(component, audio, direction)?
+    } else {
+        audio_bus_count(component, audio, direction)
+    };
     let mut buses = Vec::with_capacity(count);
     for index in 0..count {
         let channels = bus_channel_count(component, processor, direction, index as i32);
@@ -821,7 +862,8 @@ mod tests {
     use super::*;
     use crate::vst3_host::HostContext;
     use crate::vst3_host::fixture::{
-        fixed_stereo_rejects_arrangement_factory, fixture_factory, sidechain_fixture_factory,
+        fixed_stereo_rejects_arrangement_factory, fixture_factory,
+        output_only_midi_note_fixture_factory, sidechain_fixture_factory,
     };
 
     fn fixture_instance() -> PluginInstance {
@@ -857,6 +899,17 @@ mod tests {
         driver
             .prepare(&instance)
             .expect("prepare sidechain fixture");
+    }
+
+    #[test]
+    fn prepare_accepts_output_only_instruments() {
+        let factory = output_only_midi_note_fixture_factory();
+        let instance = instance_from_factory(&factory);
+        let driver = ProcessDriver::new(48_000.0, 512);
+
+        driver
+            .prepare(&instance)
+            .expect("prepare output-only fixture");
     }
 
     #[test]

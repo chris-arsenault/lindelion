@@ -29,7 +29,36 @@ mapping in `plugins/lamath/src/bin/lamath-render-catalog/` and the DSP defaults 
   [ADR-0032](docs/adr/0032-lamath-tube-driven-wind-voice.md), the [Lamath spec](docs/plugins/lamath.md)
   §4.2, CHANGELOG v0.14.0, and the [Lamath backlog](docs/plugins/lamath-backlog.md) (deferred:
   stronger brassiness, formant spectrum, UI-locked mono/driver, bound articulation, better default
-  excitation). The completed working plan has been removed; this tracker now covers only **P3–P8 + T1**.
+  excitation). The completed working plan has been removed; this tracker now carries the remaining
+  Stringed/surrounding/test-suite rows.
+- **P5 (Lamath Stringed source-body balance): ✅ DONE — accepted after focused audition.**
+  The previous output crossfade exposed narrow modal color ("nylon guitar with Asian
+  influences") rather than acoustic body bloom. Candidate fix: the guitar body now has stronger broad
+  soundboard radiation with less loop loading, broader/lower-Q body modes, and `body_balance` now
+  moves from pickup-forward source to radiated-body-forward output with a smaller hard-strike bloom.
+  After audition feedback that depth 1 was still only barely audible, the body-forward endpoint was
+  recalibrated stronger while leaving depth 0's baseline weights unchanged. The source/body group
+  includes repeated-pluck depth cases; final audition result: depth 1 is perceptible and slightly
+  better/more body, but still intentionally subtle enough to move on to higher-impact items.
+- **P8 (Lamath Stringed low register): ✅ DONE — fixed during the Stringed extraction.**
+  The shared string core now maps the user decay control to a target T60, converts that
+  to a per-round-trip gain from the played period length, and compensates the loop
+  filter at the fundamental before applying a stability cap. The extracted processor
+  has an integration guard across C2–C6 and soft/medium/full velocities. Focused
+  render-audition is still pending because the current tree's Lamath render binary is
+  blocked by unrelated `lindelion-wind` compile errors.
+- **P7 (Lamath Stringed bow driver): ✅ DONE — ACCEPTED BY AUDITION (2026-06-10).**
+  Final form (see `LAMATH-P7-BOW-DRIVER-PLAN.md` history for the full record): the
+  bow is a velocity-wave friction contact (`lindelion-string::bow`) — exact discrete
+  contact admittance `1/(2·Z₀)`, bracketed Friedlander solve with MSW hysteresis,
+  upstream-read FIFO so the contact never observes its own outgoing writes, and
+  slip-gated rosin noise. The bowed voice is carried by the calibrated body
+  radiation (Iowa MIS arco-referenced voicing; background radiation high-passed
+  below the lowest body mode). Smooth accepted ("sounds correct"); scratch sits at
+  the measured chaos boundary (pitched, periodicity ≈ 0.7, 3.6× roughness) and was
+  accepted as done. Known follow-up (separate work): the chaos boundary is
+  pitch-dependent, so the alternating scale's scratch notes vary in character;
+  torsional contact loss is the physical lever if that is revisited.
 
 ## Status legend
 
@@ -45,10 +74,10 @@ mapping in `plugins/lamath/src/bin/lamath-render-catalog/` and the DSP defaults 
 | **P1** | Tube has no audible struck/plucked voice — total silence | `baseline_tube_*` (all vel), `register_tube_*` (all reg), `contact_tube_*` (all), `driver_tube_sample` | Closed-tube waveguide (`boundary_reflection=-0.75`, `constants.rs:154`) given only an impulse strike with no sustained driver; no internal self-excitation path. **No tube test renders the default −0.75/0.97 operating point** — every tube test overrides to +0.8/0.85 & loop_gain 0.985+ (`tube_1d/tests.rs`); calibration battery passes it on `rms>0.0`. | DSP | ✅ | ⬜ | ⬜ | ⬜ |
 | **P3** | String driver/excitation does not color the sound | `driver_string_pick_soft/hard`, `driver_string_sample` | Pick hardness/contact-time (`render.rs:189–195`) reach the patch but are inaudible — "just slightly louder." Excitation shaping washed out by the dominant Karplus loop; same class as the M11-P8 energy-reference miscalibration (15–60× off). | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
 | **P4** | Contact model inert | `contact_string_tight/wide × short/long` | `ContactConfig` spread/contact-time (`render.rs:220–239`) produce no audible difference. | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
-| **P5** | Source-body balance inert (flagship M9/M11 feature) | `source_body_string_depth000/050/100` (v020 & v127) | `source_body_balance` depth 0.0→1.0 (`render.rs:241–255`, default `0.5` `patch.rs:300`) produces no audible change. **Test gap:** the A/B test (`balance_tests.rs:47`) sweeps *energy* at fixed depth=0.85 via direct `set_balance_drive`, never sweeps *depth* through the energy follower at a played velocity — the catalog's actual axis is untested. | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
+| **P5** | Source-body balance inert / wrong timbre | `source_body_string_depth000/050/100` (v020 & v127) plus repeated C4 plucks | **Fixed/accepted.** Decoupled broad body radiation from small body loading, broadened/rebalanced guitar body modes, changed depth from output replacement crossfade to a stronger pickup-forward ↔ radiated-body-forward balance, tightened the repeated-pluck processor guard, and refreshed the source/body review artifacts. Human audition: perceptible, slightly better/more body at depth 1; subtle but good enough to close. | DSP | ✅ | ✅ | ✅ | ✅ |
 | **P6** | Sympathetic resonance does nothing | `surrounding_modal_sympathetic`, `*_mechanical_sympathetic`, `*_radiation_sympathetic`, `*_all`; `chord_modal_*_sympathetic_on` | Shared sympathetic bank at depth `0.90` (`render.rs:268`) inaudible while its siblings (mechanical, radiation) work. Likely not fed the mix or output gain negligible. | DSP? (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
-| **P7** | Bow driver broken — runaway crescendo / silent scratch | `driver_string_bow_smooth` ("crescendos, no decay, too much feedback"), `driver_string_bow_scratch` ("no audible sound") | Stick-slip friction model (`render.rs:197–206`) unstable/uncalibrated; behaves as feedback loop, not a bow. | DSP | ✅ | ⬜ | ⬜ | ⬜ |
-| **P8** | Low-register string dies at default loop gain | `register_string_c2_v100` ("no sound, glitched") vs `edge_string_source_body_low_c2` ("made a sound this time") | Default `WAVEGUIDE_LOOP_GAIN=0.97` (`constants.rs:141`) doesn't sustain the long C2 delay line; edge case rings only because it bumps to `0.985`. Needs frequency-compensated loop gain. | param→DSP (confirm) | ✅ | ⬜ | ⬜ | ⬜ |
+| **P7** | Bow driver broken — runaway crescendo / silent scratch | `driver_string_bow_smooth` ("crescendos, no decay, too much feedback"), `driver_string_bow_scratch` ("no audible sound") | **Fixed & accepted:** velocity-wave friction contact (`lindelion-string::bow`) with bracketed Friedlander/MSW solve, uncontaminated upstream history reads, slip-gated rosin noise, and Iowa-referenced body radiation calibration. Smooth accepted by audition; scratch accepted at the measured chaos boundary. Guards: bowed audibility floor + pitch, stick-slip alternation, restoring-echo factor, solver convergence/hysteresis, release, scratch roughness, pluck-path preservation. | DSP | ✅ | ✅ | ✅ | ✅ |
+| **P8** | Low-register string dies at default loop gain | `register_string_c2_v100` ("no sound, glitched") vs `edge_string_source_body_low_c2` ("made a sound this time") | **Fixed in extracted Lamath Stringed.** `lindelion-string::core::loop_damping` now maps loop gain → target T60 → period-aware round-trip gain, compensates loop-filter loss at the played fundamental, and clamps against the measured filter peak. Guard: `lamath-stringed::processor::tests::register_sweep_stays_finite_bounded_and_audible` covers C2–C6 at low/medium/full velocities. Focused render-audition is pending until unrelated `lindelion-wind` compile errors stop blocking the Lamath render binary. | DSP | ✅ | ✅ | ✅ | ⬜ |
 | **P9** | Reed driver is fuzz/scream, not a reed | `driver_tube_reed_soft` ("high-pitched scream, no reed, just fuzz"), `driver_tube_reed_hard` ("super bit-smashed") | Self-oscillating reed driver (`render.rs:207–216`) uncalibrated; the only tube excitation that makes sound, and it's distortion. Related to but distinct from P1. | DSP | ✅ | ⬜ | ⬜ | ⬜ |
 | **T1** | **Audio-quality suite let all of the above through** | n/a (meta) | **Investigated (not absence of A/B-decay tests — those exist).** Root causes: "audible"=`rms>0.0`; ring=`Option`-gated (vacuous on no-ring); A/B="not bit-identical" (1e-6); strict perceptual tests sample non-default operating points; perceptual targets deferred & never backfilled; thin register coverage. Strict tests run on isolated cores, full-synth tests carry loose asserts — bugs live in the integration neither covers. See notes below. | process | ✅ | — | ⬜ | — |
 

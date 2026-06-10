@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::RwLock;
 use std::{
     cell::{Cell, RefCell},
-    ffi::c_char,
     mem::MaybeUninit,
     ptr,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
@@ -16,12 +15,10 @@ use lindelion_plugin_shell::{
     AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
     ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
     vst3::{
-        Vst3BusInfo, Vst3ParameterInfo, Vst3ParameterMirror, can_process_32_bit_sample_size,
-        clear_vst_outputs, fill_vst3_bus_info, fill_vst3_parameter_info,
-        for_each_vst3_parameter_change, parse_vst3_plain_value_string, process_setup_from_vst,
+        Vst3BusInfo, Vst3ParameterMirror, can_process_32_bit_sample_size, clear_vst_outputs,
+        fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst,
         read_plugin_state_from_stream, stereo_output_buffers_from_vst_process_data,
         vst_event_to_midi, vst3_bus_count, write_plugin_state_to_stream,
-        write_vst3_parameter_string,
     },
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -30,7 +27,7 @@ use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{LamathTube, parameters};
 
-use super::{MAX_BLOCK_EVENTS, editor};
+use super::MAX_BLOCK_EVENTS;
 
 const TUBE_BUSES: [Vst3BusInfo; 2] = [
     Vst3BusInfo::audio_output(2, "Output"),
@@ -40,14 +37,14 @@ const TUBE_BUSES: [Vst3BusInfo; 2] = [
 pub(crate) struct LamathTubeVst3Processor {
     plugin: RefCell<LamathTube>,
     setup: Cell<ShellProcessSetup>,
-    values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
+    pub(super) values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
     pending_values: [AtomicU32; parameters::PARAMETER_COUNT],
     pending_dirty: [AtomicBool; parameters::PARAMETER_COUNT],
     #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     editor_switches: RwLock<Vec<lindelion_ui::lamath_tube_vizia::LamathTubeModelSwitch>>,
     #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     editor_slots: RwLock<lindelion_ui::audio_file_slot::AudioFileSlotListView>,
-    handler: Cell<*mut IComponentHandler>,
+    pub(super) handler: Cell<*mut IComponentHandler>,
 }
 
 impl Class for LamathTubeVst3Processor {
@@ -203,7 +200,7 @@ impl LamathTubeVst3Processor {
         }
     }
 
-    fn set_value(&self, id: u32, normalized: f64) -> tresult {
+    pub(super) fn set_value(&self, id: u32, normalized: f64) -> tresult {
         let Some(index) = parameters::parameter_index(id) else {
             return kInvalidArgument;
         };
@@ -490,100 +487,6 @@ impl IAudioProcessorTrait for LamathTubeVst3Processor {
 impl IProcessContextRequirementsTrait for LamathTubeVst3Processor {
     unsafe fn getProcessContextRequirements(&self) -> u32 {
         0
-    }
-}
-
-impl IEditControllerTrait for LamathTubeVst3Processor {
-    unsafe fn setComponentState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::setState(self, state)
-    }
-
-    unsafe fn setState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::setState(self, state)
-    }
-
-    unsafe fn getState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::getState(self, state)
-    }
-
-    unsafe fn getParameterCount(&self) -> i32 {
-        parameters::PARAMETER_COUNT as i32
-    }
-
-    unsafe fn getParameterInfo(&self, param_index: i32, info: *mut ParameterInfo) -> tresult {
-        if info.is_null() || param_index < 0 {
-            return kInvalidArgument;
-        }
-        let Some(parameter) = parameters::parameter_by_index(param_index as usize) else {
-            return kInvalidArgument;
-        };
-        fill_vst3_parameter_info(Vst3ParameterInfo::from_parameter(parameter), info)
-    }
-
-    unsafe fn getParamStringByValue(
-        &self,
-        id: u32,
-        value_normalized: f64,
-        string: *mut String128,
-    ) -> tresult {
-        if string.is_null() {
-            return kInvalidArgument;
-        }
-        let Some(parameter) = parameters::parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
-        let plain = parameter.range.denormalize(value_normalized as f32);
-        write_vst3_parameter_string(&parameters::format_plain_value(id, plain), string)
-    }
-
-    unsafe fn getParamValueByString(
-        &self,
-        id: u32,
-        string: *mut TChar,
-        value_normalized: *mut f64,
-    ) -> tresult {
-        if string.is_null() || value_normalized.is_null() {
-            return kInvalidArgument;
-        }
-        let Some(plain) = parse_vst3_plain_value_string(string) else {
-            return kInvalidArgument;
-        };
-        let Some(parameter) = parameters::parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
-        *value_normalized = f64::from(parameter.range.normalize(plain));
-        kResultOk
-    }
-
-    unsafe fn normalizedParamToPlain(&self, id: u32, value_normalized: f64) -> f64 {
-        parameters::parameter_by_id(id)
-            .map(|parameter| f64::from(parameter.range.denormalize(value_normalized as f32)))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn plainParamToNormalized(&self, id: u32, plain_value: f64) -> f64 {
-        parameters::parameter_by_id(id)
-            .map(|parameter| f64::from(parameter.range.normalize(plain_value as f32)))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn getParamNormalized(&self, id: u32) -> f64 {
-        parameters::parameter_index(id)
-            .and_then(|index| self.values.value(index))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn setParamNormalized(&self, id: u32, value: f64) -> tresult {
-        self.set_value(id, value)
-    }
-
-    unsafe fn setComponentHandler(&self, handler: *mut IComponentHandler) -> tresult {
-        self.handler.set(handler);
-        kResultOk
-    }
-
-    unsafe fn createView(&self, _name: *const c_char) -> *mut IPlugView {
-        editor::create_editor_view(self)
     }
 }
 

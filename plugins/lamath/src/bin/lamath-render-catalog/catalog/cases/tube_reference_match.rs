@@ -4,7 +4,7 @@
 
 use super::super::{
     CatalogCase, PatchRecipe, RenderSchedule, ScheduledNote, TubeReferenceArticulation,
-    TubeReferenceHumanize, TubeReferenceMatchGain, TubeReferenceRegisterKey,
+    TubeReferenceHumanize, TubeReferenceMatchGain,
 };
 
 const EMPTY: [ScheduledNote; 0] = [];
@@ -226,7 +226,7 @@ const TUBE_LOW_HIGH_ARTICULATION: [ScheduledNote; 32] = [
     },
 ];
 
-pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 13] = [
+pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 12] = [
     reference_case(
         "tube_ref_low_e_sustain_reference",
         "Reference Clarinet Low E Sustain",
@@ -262,13 +262,7 @@ pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 13] = [
         "tube_ref_low_e_sustain_no_reed",
         "Tube Low E Sustain - Reed Radiation Disabled",
         "19_tube_reference_match/tube_ref_low_e_sustain_no_reed.wav",
-        &[
-            "tube",
-            "reference-match",
-            "no-reed",
-            "low-e",
-            "sustain",
-        ],
+        &["tube", "reference-match", "no-reed", "low-e", "sustain"],
         TubeReferenceArticulation::Legato,
         TubeReferenceMatchGain::LowESustainPhysical,
         TubeReferenceHumanize::Off,
@@ -305,24 +299,6 @@ pub(super) const TUBE_REFERENCE_MATCH_CASES: [CatalogCase; 13] = [
         TubeReferenceArticulation::Legato,
         TubeReferenceMatchGain::RegisterKeyHighSustainVented,
         TubeReferenceHumanize::Off,
-        REGISTER_KEY_HIGH_DURATION_SECONDS,
-        &TUBE_REGISTER_KEY_HIGH_SUSTAIN,
-    ),
-    tube_case_with_register_key(
-        "tube_ref_register_key_high_no_register_vent",
-        "Tube Register-Key High Sustain - No Register Vent",
-        "19_tube_reference_match/tube_ref_register_key_high_no_register_vent.wav",
-        &[
-            "tube",
-            "reference-match",
-            "no-register-vent",
-            "register-key",
-            "sustain",
-        ],
-        TubeReferenceArticulation::Legato,
-        TubeReferenceMatchGain::RegisterKeyHighSustain,
-        TubeReferenceHumanize::Off,
-        TubeReferenceRegisterKey::Disabled,
         REGISTER_KEY_HIGH_DURATION_SECONDS,
         &TUBE_REGISTER_KEY_HIGH_SUSTAIN,
     ),
@@ -449,6 +425,7 @@ const fn reference_case(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // case constructor: each axis is a distinct recipe field
 const fn tube_case(
     id: &'static str,
     title: &'static str,
@@ -468,7 +445,6 @@ const fn tube_case(
         articulation,
         gain,
         humanize,
-        TubeReferenceRegisterKey::Default,
         true,
         true,
         duration_seconds,
@@ -476,34 +452,7 @@ const fn tube_case(
     )
 }
 
-const fn tube_case_with_register_key(
-    id: &'static str,
-    title: &'static str,
-    relative_wav: &'static str,
-    tags: &'static [&'static str],
-    articulation: TubeReferenceArticulation,
-    gain: TubeReferenceMatchGain,
-    humanize: TubeReferenceHumanize,
-    register_key: TubeReferenceRegisterKey,
-    duration_seconds: f32,
-    notes: &'static [ScheduledNote],
-) -> CatalogCase {
-    tube_case_with_register_key_and_body(
-        id,
-        title,
-        relative_wav,
-        tags,
-        articulation,
-        gain,
-        humanize,
-        register_key,
-        true,
-        true,
-        duration_seconds,
-        notes,
-    )
-}
-
+#[allow(clippy::too_many_arguments)] // case constructor: each axis is a distinct recipe field
 const fn tube_case_with_body(
     id: &'static str,
     title: &'static str,
@@ -524,7 +473,6 @@ const fn tube_case_with_body(
         articulation,
         gain,
         humanize,
-        TubeReferenceRegisterKey::Default,
         body_enabled,
         true,
         duration_seconds,
@@ -532,6 +480,7 @@ const fn tube_case_with_body(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // case constructor: each axis is a distinct recipe field
 const fn tube_case_with_body_and_reed_radiation(
     id: &'static str,
     title: &'static str,
@@ -553,7 +502,6 @@ const fn tube_case_with_body_and_reed_radiation(
         articulation,
         gain,
         humanize,
-        TubeReferenceRegisterKey::Default,
         body_enabled,
         reed_radiation_enabled,
         duration_seconds,
@@ -561,6 +509,7 @@ const fn tube_case_with_body_and_reed_radiation(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // case constructor: each axis is a distinct recipe field
 const fn tube_case_with_register_key_and_body(
     id: &'static str,
     title: &'static str,
@@ -569,7 +518,6 @@ const fn tube_case_with_register_key_and_body(
     articulation: TubeReferenceArticulation,
     gain: TubeReferenceMatchGain,
     humanize: TubeReferenceHumanize,
-    register_key: TubeReferenceRegisterKey,
     body_enabled: bool,
     reed_radiation_enabled: bool,
     duration_seconds: f32,
@@ -585,7 +533,6 @@ const fn tube_case_with_register_key_and_body(
             articulation,
             gain,
             humanize,
-            register_key,
             body_enabled,
             reed_radiation_enabled,
         },

@@ -108,12 +108,6 @@ impl TubeSignals {
             slots: Signal::new(host.articulations.surface.slot_list_view()),
         }
     }
-
-    fn sync(self, host: &LamathTubeEditorHost) {
-        self.knobs.set(host.controls.knobs());
-        self.switches.set(host.controls.model_switches());
-        self.slots.set(host.articulations.surface.slot_list_view());
-    }
 }
 
 enum TubeEvent {
@@ -157,6 +151,9 @@ impl Model for TubeModel {
             }
             TubeEvent::OpenSlotDialog(slot) => {
                 self.articulations.surface.select_slot(*slot);
+                self.signals
+                    .slots
+                    .set(self.articulations.surface.slot_list_view());
                 self.pending_dialog = Some((
                     *slot,
                     PendingFileDialog::pick_file(wav_audio_dialog(Path::new("."), None)),
@@ -173,17 +170,17 @@ impl Model for TubeModel {
                     match dialog.poll_path() {
                         Poll::Ready(Some(path)) => {
                             self.articulations.surface.load_audio_file(*slot, &path);
+                            self.signals
+                                .slots
+                                .set(self.articulations.surface.slot_list_view());
+                            self.signals.knobs.set(self.controls.knobs());
+                            self.signals.switches.set(self.controls.model_switches());
                             self.pending_dialog = None;
                         }
                         Poll::Ready(None) => self.pending_dialog = None,
                         Poll::Pending => {}
                     }
                 }
-                let host = LamathTubeEditorHost {
-                    controls: Arc::clone(&self.controls),
-                    articulations: self.articulations.clone(),
-                };
-                self.signals.sync(&host);
             }
         });
     }
@@ -364,7 +361,7 @@ fn slot_cell(cx: &mut Context, signals: TubeSignals, index: usize) {
                 }),
             )
             .class("tube-slot-source");
-        });
+        })
     })
     .class("tube-slot")
     .toggle_class(

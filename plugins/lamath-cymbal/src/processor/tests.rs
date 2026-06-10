@@ -251,6 +251,37 @@ fn crash_voicing_keeps_dense_bloom() {
     );
 }
 
+#[test]
+fn every_shipped_preset_is_finite_bounded_and_audible() {
+    // Audibility invariant guard (ADR-0032, "don't ship silent configs"): each Basic-tab voice must
+    // produce a sustained, in-bounds signal from a single mid-velocity strike. Stays in `make ci`.
+    for preset in crate::presets::CYMBAL_PRESETS {
+        let mut patch = CymbalPatch::default();
+        preset.apply_to(&mut patch);
+        let rendered = render_strikes(patch, &[(60, 0, 0.9)], 12_000);
+
+        assert_all_finite(&rendered);
+        assert!(
+            peak_abs(&rendered) < 1.0,
+            "preset '{}' should stay in bounds: peak={}",
+            preset.name,
+            peak_abs(&rendered)
+        );
+        assert!(
+            peak_abs(&rendered) > 0.03,
+            "preset '{}' should have an audible onset: peak={}",
+            preset.name,
+            peak_abs(&rendered)
+        );
+        assert!(
+            rms(&rendered[2_048..]) > 0.000_01,
+            "preset '{}' should sustain past the attack: rms={}",
+            preset.name,
+            rms(&rendered[2_048..])
+        );
+    }
+}
+
 #[cfg_attr(
     not(feature = "integration-tests"),
     ignore = "see make test-integration"

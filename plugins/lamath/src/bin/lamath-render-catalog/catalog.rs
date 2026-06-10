@@ -42,6 +42,11 @@ pub(crate) enum PatchRecipe {
         depth: SourceBodyDepth,
     },
     StringBowAlternatingScale,
+    /// Smooth bow with an explicit humanize depth — the A/B pair around the
+    /// shipped default (the patch default is gently nonzero).
+    StringBowHumanize {
+        depth: BowHumanizeDepth,
+    },
     Surrounding {
         family: ResonatorFamily,
         surrounding: SurroundingRecipe,
@@ -85,7 +90,6 @@ pub(crate) enum PatchRecipe {
         articulation: TubeReferenceArticulation,
         gain: TubeReferenceMatchGain,
         humanize: TubeReferenceHumanize,
-        register_key: TubeReferenceRegisterKey,
         body_enabled: bool,
         reed_radiation_enabled: bool,
     },
@@ -127,6 +131,12 @@ pub(crate) enum MeshStriker {
     SoftMallet,
     JazzBrush,
     BellStick,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BowHumanizeDepth {
+    Off,
+    Full,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +186,6 @@ pub(crate) enum TubeReferenceArticulation {
 pub(crate) enum TubeReferenceMatchGain {
     LowESustainPhysical,
     LowESustainBodyOff,
-    RegisterKeyHighSustain,
     RegisterKeyHighSustainVented,
     LowHighArticulation,
 }
@@ -186,12 +195,6 @@ pub(crate) enum TubeReferenceHumanize {
     Off,
     Medium,
     Full,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TubeReferenceRegisterKey {
-    Default,
-    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,7 +268,7 @@ pub(crate) enum CatalogError {
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 19] = [
+const GROUPS: [CatalogGroup; 21] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -379,6 +382,18 @@ const GROUPS: [CatalogGroup; 19] = [
         directory: "19_tube_reference_match",
         title: "Tube Reference Match",
         question: "How does current Tube compare directly against owner clarinet reference gestures for low sustain, register-key sustain, and articulation?",
+    },
+    CatalogGroup {
+        id: "tube_low_register_pitch",
+        directory: "20_tube_low_register_pitch",
+        title: "Tube Low-Register Pitch",
+        question: "Is the current low-register Tube tuning flat or sharp across sustained notes below the register break?",
+    },
+    CatalogGroup {
+        id: "tube_register_key_pitch",
+        directory: "21_tube_register_key_pitch",
+        title: "Tube Register-Key Pitch",
+        question: "Is the vented register tuning on target across sustained notes at and above the register break?",
     },
 ];
 

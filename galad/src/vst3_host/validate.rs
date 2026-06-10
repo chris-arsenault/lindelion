@@ -173,7 +173,8 @@ mod tests {
     use super::*;
     use crate::vst3_host::fixture::{
         context_fixture_factory, gain_fixture_factory, no_audio_class_factory,
-        process_error_factory, single_component_fixture_factory, strict_sidechain_fixture_factory,
+        output_only_midi_note_fixture_factory, process_error_factory,
+        single_component_fixture_factory, strict_sidechain_fixture_factory,
     };
     use std::ffi::c_void;
     use std::ptr;
@@ -199,6 +200,11 @@ mod tests {
     #[test]
     fn plugin_with_declared_sidechain_validates() {
         assert!(validate_factory(&strict_sidechain_fixture_factory(), &host()).is_ok());
+    }
+
+    #[test]
+    fn output_only_instrument_validates() {
+        assert!(validate_factory(&output_only_midi_note_fixture_factory(), &host()).is_ok());
     }
 
     #[test]

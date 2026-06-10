@@ -103,6 +103,9 @@ Galad contains the misbehaving-plugin failure modes it can reach **in process**
 - **Device-fault recovery**: the realtime thread publishes an `EngineStatus` (`audio/engine_status.rs`);
   on a device-invalidated fault the engine exits, the meter timer observes it, and the host stops and
   shows a notice so the user can re-select a device and restart.
+- **Crash diagnostics** (`diagnostics.rs`): startup installs a Rust panic hook and, on Windows, an
+  unhandled native-exception filter. Fatal panics and SEH crashes write a final reason line to
+  `%LOCALAPPDATA%\Galad\galad.log` before Windows terminates the process.
 
 A plugin that aborts, corrupts memory, or hangs in its own code can still bring the in-process host
 down; full crash isolation is out of scope. Real-plugin validation and the stability/leak soak are

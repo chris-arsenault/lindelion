@@ -83,19 +83,16 @@ impl TravelingWavePair {
         }
     }
 
-    pub fn junction_samples(
-        &self,
-        one_way_delay_samples: f32,
-        position: f32,
-    ) -> JunctionSamples {
+    pub fn junction_samples(&self, one_way_delay_samples: f32, position: f32) -> JunctionSamples {
         JunctionSamples {
             from_bell: self.leftward.read(complementary_position_delay_samples(
                 one_way_delay_samples,
                 position,
             )),
-            from_mouth: self
-                .rightward
-                .read(core::position_delay_samples(one_way_delay_samples, position)),
+            from_mouth: self.rightward.read(core::position_delay_samples(
+                one_way_delay_samples,
+                position,
+            )),
         }
     }
 

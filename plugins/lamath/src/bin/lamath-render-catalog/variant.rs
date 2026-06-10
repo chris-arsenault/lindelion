@@ -9,10 +9,16 @@
 //! axes are written verbatim into `manifest.toml` (schema v2) so the server never guesses.
 
 use crate::catalog::{
-    CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe, MeshStriker, MeshVoicing, PatchRecipe,
-    ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe, TubeBellLevel,
-    TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture, TubeReferenceArticulation,
-    TubeReferenceHumanize, TubeReferenceMatchGain, TubeReferenceRegisterKey,
+    BowHumanizeDepth, CatalogCase, ContactRecipe, DriverRecipe, EdgeRecipe, MeshStriker,
+    MeshVoicing, PatchRecipe, ResonatorFamily, ScheduledNote, SourceBodyDepth, SurroundingRecipe,
+    TubeBellLevel, TubeBodyFormantLevel, TubeRadiationShape, TubeReedAperture,
+    TubeReferenceArticulation, TubeReferenceHumanize, TubeReferenceMatchGain,
+};
+
+mod tube_gestures;
+
+use tube_gestures::{
+    tube_low_register_pitch_axes, tube_reference_gesture_axes, tube_register_key_pitch_axes,
 };
 
 /// One coordinate of a case along a named axis. `value` is a stable lowercase token used for
@@ -40,7 +46,13 @@ impl AxisCoord {
 /// velocity. Order is stable per recipe so cases in the same row present their selectors
 /// consistently.
 pub(crate) fn case_axes(case: &CatalogCase) -> Vec<AxisCoord> {
-    if let Some(axes) = tube_reference_low_e_axes(case) {
+    if let Some(axes) = tube_reference_gesture_axes(case) {
+        return axes;
+    }
+    if let Some(axes) = tube_low_register_pitch_axes(case) {
+        return axes;
+    }
+    if let Some(axes) = tube_register_key_pitch_axes(case) {
         return axes;
     }
 
@@ -98,7 +110,9 @@ fn resonator_family(recipe: &PatchRecipe) -> ResonatorFamily {
         | PatchRecipe::Contact { family, .. }
         | PatchRecipe::Surrounding { family, .. } => *family,
         PatchRecipe::SourceBodyBalance { .. } => ResonatorFamily::String,
-        PatchRecipe::StringBowAlternatingScale => ResonatorFamily::String,
+        PatchRecipe::StringBowAlternatingScale | PatchRecipe::StringBowHumanize { .. } => {
+            ResonatorFamily::String
+        }
         PatchRecipe::Edge(edge) => edge_family(*edge),
         PatchRecipe::ReferenceWav { .. }
         | PatchRecipe::TubePhrase { .. }
@@ -138,6 +152,10 @@ fn recipe_axes(recipe: &PatchRecipe) -> Vec<AxisCoord> {
             "bow_alternating",
             "Bow (smooth/scratch)",
         )],
+        PatchRecipe::StringBowHumanize { depth } => vec![match depth {
+            BowHumanizeDepth::Off => AxisCoord::new("humanize", "off", "Humanize off"),
+            BowHumanizeDepth::Full => AxisCoord::new("humanize", "full", "Humanize full"),
+        }],
         PatchRecipe::Surrounding { surrounding, .. } => vec![surrounding_axis(*surrounding)],
         PatchRecipe::ReferenceWav { path } => vec![reference_source_axis(path)],
         PatchRecipe::Edge(edge) => vec![edge_axis(*edge)],
@@ -183,14 +201,12 @@ fn recipe_axes(recipe: &PatchRecipe) -> Vec<AxisCoord> {
             articulation,
             gain,
             humanize,
-            register_key,
             body_enabled,
             reed_radiation_enabled: _,
         } => vec![
             reference_articulation_axis(*articulation),
             reference_gain_axis(*gain),
             reference_humanize_axis(*humanize),
-            reference_register_key_axis(*register_key),
             bool_axis("body", *body_enabled, "On", "Off"),
         ],
         PatchRecipe::MeshPhrase {
@@ -331,9 +347,6 @@ fn reference_gain_axis(gain: TubeReferenceMatchGain) -> AxisCoord {
         TubeReferenceMatchGain::LowESustainBodyOff => {
             ("low_e_sustain_body_off", "Low-E sustain body off")
         }
-        TubeReferenceMatchGain::RegisterKeyHighSustain => {
-            ("register_key_high_sustain", "Register-key high sustain")
-        }
         TubeReferenceMatchGain::RegisterKeyHighSustainVented => (
             "register_key_high_sustain_vented",
             "Register-key high sustain (vented)",
@@ -352,30 +365,6 @@ fn reference_humanize_axis(humanize: TubeReferenceHumanize) -> AxisCoord {
         TubeReferenceHumanize::Full => ("full", "Full"),
     };
     AxisCoord::new("humanize", value, label)
-}
-
-fn reference_register_key_axis(register_key: TubeReferenceRegisterKey) -> AxisCoord {
-    let (value, label) = match register_key {
-        TubeReferenceRegisterKey::Default => ("default", "Default"),
-        TubeReferenceRegisterKey::Disabled => ("disabled", "Disabled"),
-    };
-    AxisCoord::new("register_key", value, label)
-}
-
-fn tube_reference_low_e_axes(case: &CatalogCase) -> Option<Vec<AxisCoord>> {
-    let variant = match case.id {
-        "tube_ref_low_e_sustain_reference" => ("reference", "Reference"),
-        "tube_ref_low_e_sustain_current" => ("full", "Full sim"),
-        "tube_ref_low_e_sustain_body_off" => ("no_body", "No body"),
-        "tube_ref_low_e_sustain_no_reed" => ("no_reed", "No reed"),
-        _ => return None,
-    };
-
-    Some(vec![
-        family_axis(ResonatorFamily::Tube),
-        AxisCoord::new("reference_gesture", "low_e_sustain", "Low E sustain"),
-        AxisCoord::new("reference_variant", variant.0, variant.1),
-    ])
 }
 
 fn mesh_voicing_axis(voicing: MeshVoicing) -> AxisCoord {

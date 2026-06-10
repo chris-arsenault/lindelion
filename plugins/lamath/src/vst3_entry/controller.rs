@@ -31,6 +31,8 @@ use super::{
 };
 
 include!("controller/core.rs");
-include!("controller/editor_summary.rs");
 include!("controller/interfaces.rs");
 include!("controller/parameters.rs");
+// Included last: `editor_summary.rs` ends with a `#[cfg(test)]` module, and items may not
+// follow a test module within the textually-composed controller module.
+include!("controller/editor_summary.rs");

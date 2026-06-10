@@ -159,7 +159,8 @@ mod tests {
     use crate::midi::MidiMessage;
     use crate::vst3_host::fixture::{
         context_fixture_factory, gain_fixture_factory, midi_note_fixture_factory,
-        nan_fixture_factory, parameter_fixture_factory, strict_sidechain_fixture_factory,
+        nan_fixture_factory, output_only_midi_note_fixture_factory, parameter_fixture_factory,
+        strict_sidechain_fixture_factory,
     };
     use crate::vst3_host::{HostContext, ProcessDriver};
     use vst3::ComPtr;
@@ -284,6 +285,23 @@ mod tests {
     }
 
     #[test]
+    fn output_only_instruments_receive_midi_and_generate_audio() {
+        let mut chain = ChainProcessor::new(
+            vec![prepared_from_factory(
+                output_only_midi_note_fixture_factory(),
+            )],
+            vec![false],
+            512,
+            TEST_SAMPLE_RATE,
+        );
+        let mut stereo = vec![0.0f32; 4];
+
+        chain.process_in_place_with_midi(&mut stereo, &[MidiMessage::from_bytes(0x90, 60, 100)]);
+
+        assert_eq!(stereo, vec![0.25, 0.25, 0.25, 0.25]);
+    }
+
+    #[test]
     fn parameter_edits_are_delivered_to_live_chain_plugins() {
         let instance = prepared_from_factory(parameter_fixture_factory());
         let mut chain =
@@ -372,6 +390,24 @@ mod tests {
         let midi = [MidiMessage::from_bytes(0x90, 60, 100)];
         let mut stereo = vec![0.0f32; 256];
         lindelion_test_allocator::assert_no_allocations("chain process with midi", || {
+            chain.process_in_place_with_midi(&mut stereo, &midi);
+        });
+        assert!(stereo.iter().all(|&sample| sample == 0.25));
+    }
+
+    #[test]
+    fn process_output_only_instrument_is_allocation_free() {
+        let mut chain = ChainProcessor::new(
+            vec![prepared_from_factory(
+                output_only_midi_note_fixture_factory(),
+            )],
+            vec![false],
+            512,
+            TEST_SAMPLE_RATE,
+        );
+        let midi = [MidiMessage::from_bytes(0x90, 60, 100)];
+        let mut stereo = vec![0.0f32; 256];
+        lindelion_test_allocator::assert_no_allocations("output-only instrument process", || {
             chain.process_in_place_with_midi(&mut stereo, &midi);
         });
         assert!(stereo.iter().all(|&sample| sample == 0.25));

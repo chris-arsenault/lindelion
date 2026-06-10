@@ -4,61 +4,18 @@ use super::sanitize_sample_rate;
 
 #[path = "boundary.rs"]
 mod boundary;
+mod constants;
+
+use constants::*;
 #[path = "runtime.rs"]
 mod runtime;
 #[path = "mesh/spatial.rs"]
 mod spatial;
-use boundary::{BoundaryLowpass, DEFAULT_BOUNDARY_HF_LOSS, boundary_lowpass_step};
+use boundary::{
+    BoundaryLowpass, DEFAULT_BOUNDARY_HF_LOSS, MeshBoundaryEdge, boundary_lowpass_step,
+};
 pub use runtime::{MeshResonator, MeshVoiceParams};
 use spatial::{SpatialNormalization, SpatialWeights};
-
-const MIN_MESH_SIZE: usize = 3;
-/// Maximum active grid the mesh can be configured to. Buffers are allocated once at
-/// this size; `size`/`tension` select a smaller active sub-region (no reallocation).
-/// Grid cell count is the timbral density lever in a unit-delay waveguide mesh — a
-/// large grid carries a dense, inharmonic, cymbal-like spectrum, a small one a sparse,
-/// near-pitched triangle. CPU is `O(width·height)` per sample; ample for a single
-/// idiophone voice.
-const MAX_MESH_WIDTH: usize = 64;
-const MAX_MESH_HEIGHT: usize = 48;
-const MAX_MESH_CELLS: usize = MAX_MESH_WIDTH * MAX_MESH_HEIGHT;
-
-/// Measured-energy (RMS) at which the geometric (von Kármán) coupling reaches its
-/// target depth; the squared, normalized drive `(energy/REF)^2` keeps soft strikes
-/// linear and concentrates the bloom on hard ones. Calibrated to the measured per-voice
-/// energy bus so a full-velocity Mesh strike sits near ≈0.7 drive (the upward modal
-/// bloom a hard gong/cymbal makes). The larger active grid spreads the strike energy
-/// over more cells, lowering the measured RMS, so this REF was dropped from the old
-/// 14×10-grid value (0.013) to keep the bloom engaging at musical strike levels.
-const GEOMETRIC_ENERGY_REF: f32 = 0.003;
-/// Clamp on the normalized squared energy term (the coupling depth at peak energy).
-const GEOMETRIC_MAX_DRIVE: f32 = 1.0;
-/// Maximum rotation `sin` factor at full coupling: the fraction of the low mode's
-/// amplitude rotated up into the high-spatial-frequency mode each junction.
-/// Bounded below 1 so the per-junction transfer stays gentle and the scheme stays
-/// stable. Specified as `sin` (not an angle) so the rotation needs only a `sqrt`,
-/// not `sin_cos` — cheap enough for the per-junction inner loop while staying
-/// exactly energy-conserving (`cos = sqrt(1 - sin^2)`, so `sin^2 + cos^2 = 1`).
-const GEOMETRIC_MAX_SIN: f32 = 0.3;
-/// Maps the local junction displacement to the [0,1] amplitude factor: high-
-/// pressure junctions couple most (the large-deflection geometric nonlinearity).
-const GEOMETRIC_AMPLITUDE_SENS: f32 = 6.0;
-/// Blend from pure aperture pressure toward a bending/curvature radiation term.
-/// Cymbals do not radiate only by summing signed displacement over a broad area:
-/// high-spatial-frequency bending also couples to air. The curvature tap keeps
-/// dense plates from collapsing into a dark low-mode area integral after the
-/// source/pickup normalization fix.
-const CURVATURE_RADIATION_GAIN: f32 = 4.0;
-/// Dense cymbal meshes need a separate high-spatial-frequency radiation path:
-/// a broad signed aperture carries body level, while this density-scaled narrow
-/// tap lets shimmer/bloom radiate without adding a family output gain stage.
-const SHIMMER_RADIATION_GAIN: f32 = 12.0;
-const SHIMMER_RADIATION_DENSITY_EXP: f32 = 1.5;
-const SHIMMER_PICKUP_WIDTH_SCALE: f32 = 0.45;
-const SHIMMER_PICKUP_WIDTH_MIN: f32 = 0.012;
-const STRIKE_CONTACT_MAX_LOSS_FRACTION: f32 = 0.35;
-const STRIKE_CONTACT_MOTION_DAMPING: f32 = 0.62;
-const STRIKE_CONTACT_PRESSURE_DAMPING: f32 = 0.10;
 
 /// Squared, normalized energy term in `[0, GEOMETRIC_MAX_DRIVE]` setting how
 /// strongly the mesh couples at the current playing energy.
@@ -67,37 +24,17 @@ fn drive_term(energy: f32) -> f32 {
     math::finite_clamp(normalized * normalized, 0.0, GEOMETRIC_MAX_DRIVE, 0.0)
 }
 
-/// Energy-conserving geometric coupling at a junction (von Kármán large-deflection
-/// nonlinearity). Rotates the outgoing wave by `angle` in the plane spanning the
-/// locally-uniform mode `u = (1,1,1,1)/2` (low spatial frequency) and the
-/// alternating mode `v = (1,-1,1,-1)/2` (high spatial frequency), transferring
-/// energy from `u` to `v` — upward into higher modes. The rotation preserves
-/// `cu^2 + cv^2`, so the junction (and the mesh) never gains energy.
-fn geometric_couple(
-    outgoing: (f32, f32, f32, f32),
-    pressure: f32,
-    drive: f32,
-) -> (f32, f32, f32, f32) {
+/// Per-sample geometric coupling coefficient `GEOMETRIC_MAX_SIN * drive`, conditioned once before
+/// the junction loop. `0.0` means the coupling is inert this sample (no drive). `drive` is already
+/// in `[0, GEOMETRIC_MAX_DRIVE]` and finite (it comes from [`drive_term`]), so the clamp here is a
+/// belt-and-braces guard that runs once per sample rather than once per junction.
+fn geometric_sin_coeff(drive: f32) -> f32 {
     let drive = math::finite_clamp(drive, 0.0, GEOMETRIC_MAX_DRIVE, 0.0);
     if drive <= f32::EPSILON {
-        return outgoing;
+        0.0
+    } else {
+        GEOMETRIC_MAX_SIN * drive
     }
-    let amplitude = math::finite_clamp(pressure.abs() * GEOMETRIC_AMPLITUDE_SENS, 0.0, 1.0, 0.0);
-    // Energy-exact rotation with no transcendental: pick `sin` directly, derive
-    // `cos = sqrt(1 - sin^2)` so the (cu, cv) transfer preserves cu^2 + cv^2.
-    let sin = GEOMETRIC_MAX_SIN * drive * amplitude;
-    let cos = (1.0 - sin * sin).max(0.0).sqrt();
-    let (left, right, top, bottom) = outgoing;
-    let cu = 0.5 * (left + right + top + bottom);
-    let cv = 0.5 * (left - right + top - bottom);
-    let du = 0.5 * ((cu * cos - cv * sin) - cu);
-    let dv = 0.5 * ((cu * sin + cv * cos) - cv);
-    (
-        left + du + dv,
-        right + du - dv,
-        top + du + dv,
-        bottom + du - dv,
-    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -112,42 +49,6 @@ impl MeshPoint {
             x: math::finite_clamp(x, 0.0, 1.0, 0.5),
             y: math::finite_clamp(y, 0.0, 1.0, 0.5),
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MeshBoundaryKind {
-    Fixed,
-    Free,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct MeshBoundaryEdge {
-    kind: MeshBoundaryKind,
-    damping: f32,
-}
-
-impl MeshBoundaryEdge {
-    fn fixed(damping: f32) -> Self {
-        Self {
-            kind: MeshBoundaryKind::Fixed,
-            damping,
-        }
-    }
-
-    fn free(damping: f32) -> Self {
-        Self {
-            kind: MeshBoundaryKind::Free,
-            damping,
-        }
-    }
-
-    fn reflection(self) -> f32 {
-        let sign = match self.kind {
-            MeshBoundaryKind::Fixed => -1.0,
-            MeshBoundaryKind::Free => 1.0,
-        };
-        sign * (1.0 - math::finite_clamp(self.damping, 0.0, 1.0, 0.0))
     }
 }
 
@@ -265,13 +166,29 @@ impl DirectionalWaves {
         self.from_bottom.fill(0.0);
     }
 
+    /// Zero the half-open cell range `[start, end)`. Used when the active grid grows, to reset the
+    /// newly exposed cells (which may hold stale data from an earlier larger grid) without touching
+    /// the live ring in `[0, start)`.
+    fn clear_range(&mut self, start: usize, end: usize) {
+        let end = end.min(self.from_left.len());
+        if start >= end {
+            return;
+        }
+        self.from_left[start..end].fill(0.0);
+        self.from_right[start..end].fill(0.0);
+        self.from_top[start..end].fill(0.0);
+        self.from_bottom[start..end].fill(0.0);
+    }
+
     fn pressure(&self, index: usize) -> f32 {
-        math::snap_to_zero(
-            0.5 * (self.from_left[index]
-                + self.from_right[index]
-                + self.from_top[index]
-                + self.from_bottom[index]),
-        )
+        // No software denormal/NaN snap here: this is the per-junction hot path, and the audio
+        // thread runs in hardware flush-to-zero (see `flush_denormals_on_this_thread`). The mesh is
+        // energy-bounded, so finite inputs stay finite; dropping the `is_finite` branch lets the
+        // scatter pass auto-vectorize. The once-per-sample output is still snapped at the boundary.
+        0.5 * (self.from_left[index]
+            + self.from_right[index]
+            + self.from_top[index]
+            + self.from_bottom[index])
     }
 
     fn add_uniform(&mut self, index: usize, component: f32) {
@@ -324,6 +241,20 @@ struct RectangularMesh2d {
     // Per-edge boundary loss filter (M11 P2 step 3): frequency-shaped reflections
     // so high plate modes die first.
     boundary_lowpass: BoundaryLowpass,
+    // Per-cell outgoing waves for the current sample, filled by the scatter pass and consumed by the
+    // gather pass (allocated once at the max grid). Splitting scatter into a compute-outgoing pass and
+    // a gather-into-next pass removes the neighbor write-conflicts, so both passes are branchless and
+    // data-parallel (auto-vectorizable) instead of a scatter with per-cell boundary branches.
+    out_left: Vec<f32>,
+    out_right: Vec<f32>,
+    out_top: Vec<f32>,
+    out_bottom: Vec<f32>,
+    // Per-cell junction pressure for the current sample, shared between the linear scatter pass and
+    // the geometric-coupling pass (so the coupling loop is a branchless, vectorizable kernel).
+    pressure_buf: Vec<f32>,
+    // Number of active grid cells (`width * height`). The scatter/gather passes only touch this
+    // prefix of the max-sized buffers; tracked so `reconfigure` can zero newly grown cells.
+    active_cells: usize,
     // Measured resonator energy (M2 bus) driving the geometric (von Kármán)
     // coupling; set per host sample, constant across the 2x sub-samples. 0.0 => inert.
     geometric_drive: f32,
@@ -383,6 +314,12 @@ impl RectangularMesh2d {
                 MAX_MESH_HEIGHT,
                 config.sample_rate,
             ),
+            out_left: vec![0.0; MAX_MESH_CELLS],
+            out_right: vec![0.0; MAX_MESH_CELLS],
+            out_top: vec![0.0; MAX_MESH_CELLS],
+            out_bottom: vec![0.0; MAX_MESH_CELLS],
+            pressure_buf: vec![0.0; MAX_MESH_CELLS],
+            active_cells: config.width * config.height,
             geometric_drive: 0.0,
             level_compensation: mesh_level_compensation(config.width, config.height),
         }
@@ -402,6 +339,15 @@ impl RectangularMesh2d {
         // The active grid (`width`/`height`) may change here — buffers are already
         // allocated at the maximum, so re-tuning the live grid stays allocation-free.
         let config = config.sanitized();
+        let new_cells = config.width * config.height;
+        // The active region is always the contiguous prefix `[0, cells)`. When the grid grows, the
+        // newly exposed cells may hold stale data from an earlier larger grid; zero just those so the
+        // first read after the grow sees a fresh (silent) plate area while the live ring is preserved.
+        if new_cells > self.active_cells {
+            self.current.clear_range(self.active_cells, new_cells);
+            self.next.clear_range(self.active_cells, new_cells);
+        }
+        self.active_cells = new_cells;
         self.config = config;
         self.level_compensation = mesh_level_compensation(config.width, config.height);
         self.boundary_lowpass.set_sample_rate(config.sample_rate);
@@ -471,105 +417,155 @@ impl RectangularMesh2d {
         self.geometric_drive = 0.0;
     }
 
+    /// Energy-conserving rotation in the plane of the locally-uniform mode `u=(1,1,1,1)/2` and
+    /// the alternating mode `v=(1,-1,1,-1)/2`, steering energy from `u` up into `v` (higher
+    /// modes). `cos = sqrt(1-sin^2)` keeps `cu^2+cv^2` exact. Hoisting the per-sample
+    /// `sin_coeff` gate out of the loop leaves an unconditional body, so the sqrt vectorizes
+    /// (packed `sqrtps`) instead of running scalar.
+    #[inline]
+    fn geometric_coupling_pass(&mut self, sin_coeff: f32, active: usize) {
+        let RectangularMesh2d {
+            out_left,
+            out_right,
+            out_top,
+            out_bottom,
+            pressure_buf,
+            ..
+        } = self;
+        // Iterate via zipped iterators over distinct slices: this hands LLVM the non-aliasing
+        // guarantee (and elides bounds checks) it needs to vectorize the sqrt to packed `sqrtps`.
+        let left = &mut out_left[..active];
+        let right = &mut out_right[..active];
+        let top = &mut out_top[..active];
+        let bottom = &mut out_bottom[..active];
+        let pressure = &pressure_buf[..active];
+        for ((((l, r), t), b), &p) in left
+            .iter_mut()
+            .zip(right.iter_mut())
+            .zip(top.iter_mut())
+            .zip(bottom.iter_mut())
+            .zip(pressure.iter())
+        {
+            let amplitude = (p.abs() * GEOMETRIC_AMPLITUDE_SENS).clamp(0.0, 1.0);
+            let sin = sin_coeff * amplitude;
+            let cos = (1.0 - sin * sin).max(0.0).sqrt();
+            let cu = 0.5 * (*l + *r + *t + *b);
+            let cv = 0.5 * (*l - *r + *t - *b);
+            let du = 0.5 * ((cu * cos - cv * sin) - cu);
+            let dv = 0.5 * ((cu * sin + cv * cos) - cv);
+            *l = *l + du + dv;
+            *r = *r + du - dv;
+            *t = *t + du + dv;
+            *b = *b + du - dv;
+        }
+    }
+
     fn scatter_and_propagate(&mut self) {
-        self.next.clear();
-        for y in 0..self.config.height {
-            for x in 0..self.config.width {
-                self.scatter_junction(x, y);
+        let sin_coeff = geometric_sin_coeff(self.geometric_drive);
+        let width = self.config.width;
+        let height = self.config.height;
+        let active = self.active_cells;
+
+        // Pass 1a — linear scatter: each cell's junction pressure and four outgoing waves, computed
+        // independently (no neighbor writes). Branchless, contiguous SoA → auto-vectorizes.
+        {
+            let RectangularMesh2d {
+                current,
+                out_left,
+                out_right,
+                out_top,
+                out_bottom,
+                pressure_buf,
+                ..
+            } = self;
+            // Bind distinct length-`active` slices so LLVM sees non-aliasing reads/writes (and elides
+            // bounds checks), letting this linear pass vectorize to packed adds/subtracts.
+            let fl = &current.from_left[..active];
+            let fr = &current.from_right[..active];
+            let ft = &current.from_top[..active];
+            let fb = &current.from_bottom[..active];
+            let ol = &mut out_left[..active];
+            let or_ = &mut out_right[..active];
+            let ot = &mut out_top[..active];
+            let ob = &mut out_bottom[..active];
+            let pb = &mut pressure_buf[..active];
+            for i in 0..active {
+                let pressure = 0.5 * (fl[i] + fr[i] + ft[i] + fb[i]);
+                pb[i] = pressure;
+                ol[i] = pressure - fl[i];
+                or_[i] = pressure - fr[i];
+                ot[i] = pressure - ft[i];
+                ob[i] = pressure - fb[i];
+            }
+        }
+
+        // Pass 1b — geometric (von Kármán) coupling, only when the bloom is engaged.
+        if sin_coeff > 0.0 {
+            self.geometric_coupling_pass(sin_coeff, active);
+        }
+
+        // Pass 2 — gather: each cell's next incoming wave on an edge is the neighbor's outgoing wave
+        // toward it (a shifted read), or, at the grid edge, its own outgoing wave reflected through
+        // the per-edge boundary low-pass. Every active cell is assigned exactly once per direction,
+        // so no pre-clear is needed.
+        let refl_left = self.config.boundary.left.reflection();
+        let refl_right = self.config.boundary.right.reflection();
+        let refl_top = self.config.boundary.top.reflection();
+        let refl_bottom = self.config.boundary.bottom.reflection();
+        let hf_loss = self.config.boundary_hf_loss;
+        let coeff = self.boundary_lowpass.coeff;
+        {
+            let RectangularMesh2d {
+                next,
+                out_left,
+                out_right,
+                out_top,
+                out_bottom,
+                boundary_lowpass,
+                ..
+            } = self;
+            // Horizontal neighbors: `from_left[i] = out_right[i - 1]`, `from_right[i] = out_left[i + 1]`,
+            // with the left/right columns reflecting their own outgoing wave.
+            for y in 0..height {
+                let row = y * width;
+                next.from_left[row] = boundary_lowpass_step(
+                    &mut boundary_lowpass.left[y],
+                    coeff,
+                    hf_loss,
+                    out_left[row],
+                ) * refl_left;
+                for x in 1..width {
+                    next.from_left[row + x] = out_right[row + x - 1];
+                }
+                for x in 0..width - 1 {
+                    next.from_right[row + x] = out_left[row + x + 1];
+                }
+                next.from_right[row + width - 1] = boundary_lowpass_step(
+                    &mut boundary_lowpass.right[y],
+                    coeff,
+                    hf_loss,
+                    out_right[row + width - 1],
+                ) * refl_right;
+            }
+            // Vertical neighbors: `from_top[i] = out_bottom[i - width]`, `from_bottom[i] = out_top[i + width]`,
+            // with the top/bottom rows reflecting their own outgoing wave.
+            for (x, &out) in out_top.iter().enumerate().take(width) {
+                next.from_top[x] =
+                    boundary_lowpass_step(&mut boundary_lowpass.top[x], coeff, hf_loss, out)
+                        * refl_top;
+            }
+            next.from_top[width..active].copy_from_slice(&out_bottom[..active - width]);
+            next.from_bottom[..active - width].copy_from_slice(&out_top[width..active]);
+            let last_row = (height - 1) * width;
+            for x in 0..width {
+                next.from_bottom[last_row + x] = boundary_lowpass_step(
+                    &mut boundary_lowpass.bottom[x],
+                    coeff,
+                    hf_loss,
+                    out_bottom[last_row + x],
+                ) * refl_bottom;
             }
         }
         std::mem::swap(&mut self.current, &mut self.next);
-    }
-
-    fn scatter_junction(&mut self, x: usize, y: usize) {
-        let index = self.index(x, y);
-        let pressure = self.current.pressure(index);
-        let left = pressure - self.current.from_left[index];
-        let right = pressure - self.current.from_right[index];
-        let top = pressure - self.current.from_top[index];
-        let bottom = pressure - self.current.from_bottom[index];
-
-        // Geometric (von Kármán) coupling: at high amplitude the energy-conserving
-        // junction rotation steers energy from the low mode up into higher modes
-        // (the gong bloom). Inert at zero drive.
-        let (left, right, top, bottom) =
-            geometric_couple((left, right, top, bottom), pressure, self.geometric_drive);
-
-        self.propagate_left(x, y, left);
-        self.propagate_right(x, y, right);
-        self.propagate_top(x, y, top);
-        self.propagate_bottom(x, y, bottom);
-    }
-
-    fn propagate_left(&mut self, x: usize, y: usize, sample: f32) {
-        let index = self.index(x, y);
-        if x == 0 {
-            let coeff = self.boundary_lowpass.coeff;
-            let filtered = boundary_lowpass_step(
-                &mut self.boundary_lowpass.left[y],
-                coeff,
-                self.config.boundary_hf_loss,
-                sample,
-            );
-            self.next.from_left[index] += filtered * self.config.boundary.left.reflection();
-        } else {
-            let neighbor = self.index(x - 1, y);
-            self.next.from_right[neighbor] += sample;
-        }
-    }
-
-    fn propagate_right(&mut self, x: usize, y: usize, sample: f32) {
-        let index = self.index(x, y);
-        if x + 1 == self.config.width {
-            let coeff = self.boundary_lowpass.coeff;
-            let filtered = boundary_lowpass_step(
-                &mut self.boundary_lowpass.right[y],
-                coeff,
-                self.config.boundary_hf_loss,
-                sample,
-            );
-            self.next.from_right[index] += filtered * self.config.boundary.right.reflection();
-        } else {
-            let neighbor = self.index(x + 1, y);
-            self.next.from_left[neighbor] += sample;
-        }
-    }
-
-    fn propagate_top(&mut self, x: usize, y: usize, sample: f32) {
-        let index = self.index(x, y);
-        if y == 0 {
-            let coeff = self.boundary_lowpass.coeff;
-            let filtered = boundary_lowpass_step(
-                &mut self.boundary_lowpass.top[x],
-                coeff,
-                self.config.boundary_hf_loss,
-                sample,
-            );
-            self.next.from_top[index] += filtered * self.config.boundary.top.reflection();
-        } else {
-            let neighbor = self.index(x, y - 1);
-            self.next.from_bottom[neighbor] += sample;
-        }
-    }
-
-    fn propagate_bottom(&mut self, x: usize, y: usize, sample: f32) {
-        let index = self.index(x, y);
-        if y + 1 == self.config.height {
-            let coeff = self.boundary_lowpass.coeff;
-            let filtered = boundary_lowpass_step(
-                &mut self.boundary_lowpass.bottom[x],
-                coeff,
-                self.config.boundary_hf_loss,
-                sample,
-            );
-            self.next.from_bottom[index] += filtered * self.config.boundary.bottom.reflection();
-        } else {
-            let neighbor = self.index(x, y + 1);
-            self.next.from_top[neighbor] += sample;
-        }
-    }
-
-    fn index(&self, x: usize, y: usize) -> usize {
-        y * self.config.width + x
     }
 }

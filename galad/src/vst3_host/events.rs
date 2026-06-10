@@ -120,6 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn event_list_maps_midi_note_messages() {
         let events = HostEventList::new();
         let iface = events.to_com_ptr::<IEventList>().expect("IEventList");

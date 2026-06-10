@@ -77,10 +77,14 @@ impl FileSampleLibrary {
                 sample_rate INTEGER NOT NULL,
                 channels INTEGER NOT NULL,
                 rms_db REAL,
-                peak_db REAL
+                peak_db REAL,
+                created_at_ms INTEGER
             );
             ",
         )?;
+        // Migrate databases created before the `created_at_ms` column existed.
+        // The error when the column is already present is expected and ignored.
+        let _ = connection.execute("ALTER TABLE samples ADD COLUMN created_at_ms INTEGER", []);
 
         Ok(Self { paths, connection })
     }
@@ -113,7 +117,8 @@ impl FileSampleLibrary {
                 sample_rate,
                 channels,
                 rms_db,
-                peak_db
+                peak_db,
+                created_at_ms
             FROM samples
             ORDER BY filename COLLATE NOCASE
             ",
@@ -130,6 +135,9 @@ impl FileSampleLibrary {
                 channels: row.get::<_, i64>(5)?.max(0) as u16,
                 rms_db: row.get(6)?,
                 peak_db: row.get(7)?,
+                created_at_ms: row
+                    .get::<_, Option<i64>>(8)?
+                    .map(|millis| millis.max(0) as u64),
                 waveform_preview: SampleWaveformPreview { points: Vec::new() },
             })
         })?;
@@ -182,8 +190,9 @@ impl FileSampleLibrary {
                 sample_rate,
                 channels,
                 rms_db,
-                peak_db
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                peak_db,
+                created_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(blake3_hash) DO UPDATE SET
                 relative_path = excluded.relative_path,
                 filename = excluded.filename,
@@ -202,6 +211,7 @@ impl FileSampleLibrary {
                 metadata.channels,
                 metadata.rms_db,
                 metadata.peak_db,
+                metadata.created_at_ms.map(|millis| millis as i64),
             ],
         )?;
         Ok(())
@@ -288,10 +298,18 @@ impl SampleLibrary for FileSampleLibrary {
         fs::copy(&path, &target)?;
 
         let relative = relative_to_root(&self.paths.root, &target);
-        let metadata = self.metadata_for_path(hash, relative, &target)?;
+        let mut metadata = self.metadata_for_path(hash, relative, &target)?;
+        metadata.created_at_ms = Some(now_epoch_millis());
         self.insert_metadata(&metadata)?;
         Ok(metadata)
     }
+}
+
+fn now_epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn file_hash(path: &Path) -> Result<SampleHash, SampleLibraryError> {

@@ -217,10 +217,10 @@ impl HostSession {
 
 /// Write `bytes` to `path` via a temp file + rename (mirrors `patch_io::write_atomic`).
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     let temp = temp_path_for(path);
     fs::write(&temp, bytes)?;

@@ -232,6 +232,7 @@ mod tests {
     const BINARY_KEY: &[u8] = b"binary\0";
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn attribute_list_round_trips_supported_value_types() {
         let attributes = ComWrapper::new(HostAttributeList::new())
             .to_com_ptr::<IAttributeList>()

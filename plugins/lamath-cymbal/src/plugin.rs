@@ -11,7 +11,7 @@ use lindelion_sample_library::{
 use lindelion_ui::{
     WaveformPoint,
     audio_file_slot::{AudioFileSlotId, AudioFileSlotListView, AudioFileSlotView, AudioFileSource},
-    lamath_cymbal_vizia::LamathCymbalKnob,
+    lamath_cymbal_vizia::{LamathCymbalKnob, LamathCymbalPreset},
     waveform_points_from_samples,
 };
 
@@ -19,6 +19,7 @@ use crate::{
     parameters,
     patch::CymbalPatch,
     patch_io,
+    presets::{self, CYMBAL_PRESETS},
     processor::{CymbalProcessor, ExcitationSource, STRIKER_NAMES, STRIKER_SLOT_COUNT},
 };
 
@@ -110,6 +111,31 @@ impl LamathCymbal {
         self.loaded_buffers[slot] = None;
         self.patch.selected_striker = slot;
         self.rebuild_processor();
+    }
+
+    pub fn presets(&self) -> Vec<LamathCymbalPreset> {
+        CYMBAL_PRESETS
+            .iter()
+            .map(|preset| LamathCymbalPreset {
+                name: preset.name,
+                description: preset.description,
+            })
+            .collect()
+    }
+
+    /// Apply the preset at `index` to the tonal parameters, preserving the striker slots, loaded
+    /// samples, and selected striker. No-op for an out-of-range index.
+    pub fn apply_preset(&mut self, index: usize) {
+        let Some(preset) = CYMBAL_PRESETS.get(index) else {
+            return;
+        };
+        preset.apply_to(&mut self.patch);
+        self.patch = self.patch.clone().sanitized();
+        self.rebuild_processor();
+    }
+
+    pub fn active_preset(&self) -> Option<usize> {
+        presets::active_preset_index(&self.patch)
     }
 
     pub fn editor_knobs(&self) -> Vec<LamathCymbalKnob> {

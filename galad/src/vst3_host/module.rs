@@ -61,10 +61,10 @@ pub fn load_module(path: &Path) -> Result<LoadedModule, HostError> {
             }
         })?;
 
-        if let Ok(init) = library.get::<InitDllFn>(b"InitDll\0") {
-            if !init() {
-                return Err(HostError::ModuleLoad("InitDll returned false".to_string()));
-            }
+        if let Ok(init) = library.get::<InitDllFn>(b"InitDll\0")
+            && !init()
+        {
+            return Err(HostError::ModuleLoad("InitDll returned false".to_string()));
         }
 
         let raw = {

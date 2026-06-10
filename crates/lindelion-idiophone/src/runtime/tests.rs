@@ -299,3 +299,64 @@ fn default_mesh_rings_with_metallic_shimmer_and_stays_stable() {
         "mesh tail should decay, not grow: early={early}, late={late}"
     );
 }
+
+// Local perf-pass harness (run with `cargo test -p lindelion-idiophone -- --ignored
+// --nocapture mesh_crash_perf`): times a Crash-scale mesh and prints a checksum so a
+// refactor can be confirmed output-identical. Not a make-ci gate.
+#[ignore = "local perf measurement; see optimization pass"]
+#[test]
+fn mesh_crash_perf() {
+    let crash = MeshVoiceParams {
+        frequency_hz: midi_note_hz(60),
+        material: 0.40,
+        size: 0.95,
+        damping: 0.10,
+        tension: 0.88,
+        strike_position: 0.90,
+        pickup_spread: 0.42,
+    };
+    let ride = MeshVoiceParams {
+        frequency_hz: midi_note_hz(60),
+        material: 0.60,
+        size: 0.50,
+        damping: 0.35,
+        tension: 0.45,
+        strike_position: 0.72,
+        pickup_spread: 0.42,
+    };
+    measure_mesh("crash drive=0.5", crash, 0.5);
+    measure_mesh("crash drive=0.0", crash, 0.0);
+    measure_mesh("ride  drive=0.5", ride, 0.5);
+    measure_mesh("ride  drive=0.0", ride, 0.0);
+}
+
+fn measure_mesh(label: &str, params: MeshVoiceParams, drive: f32) {
+    lindelion_dsp_utils::denormal::flush_denormals_on_this_thread();
+    let sample_rate = 48_000.0;
+    let mut mesh = MeshResonator::new(sample_rate);
+    mesh.configure(params);
+    let frames = 96_000usize;
+    let mut checksum: u64 = 0;
+    let mut out_buf = Vec::with_capacity(frames);
+    let start = std::time::Instant::now();
+    for i in 0..frames {
+        // Brief strike impulse, then free ring with a constant geometric drive so the
+        // von Karman path runs every block (as it does for a sounding voice).
+        let excitation = if i < 64 { 0.9 } else { 0.0 };
+        mesh.set_geometric_drive(drive);
+        let out = mesh.process_sample(excitation);
+        checksum = checksum
+            .wrapping_mul(1_000_003)
+            .wrapping_add(out.to_bits() as u64);
+        out_buf.push(out);
+    }
+    let elapsed = start.elapsed();
+    let realtime = frames as f64 / sample_rate as f64;
+    eprintln!(
+        "mesh_perf [{label}]: {:.3} ms  ({:.1}% of realtime)  checksum={checksum:#018x}  rms={:.6} peak={:.6}",
+        elapsed.as_secs_f64() * 1e3,
+        elapsed.as_secs_f64() / realtime * 100.0,
+        rms(&out_buf),
+        peak_abs(&out_buf),
+    );
+}

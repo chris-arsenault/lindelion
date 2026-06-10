@@ -1,6 +1,6 @@
 use lindelion_dsp_utils::{delay::FirstOrderAllpass, math};
 
-use crate::{DISPERSION, core, model::String1dParams};
+use crate::{DISPERSION, core};
 
 /// Number of cascaded first-order allpass sections in the stiffness dispersion
 /// filter. A stiff string disperses high partials forward (sharp), and a single
@@ -83,14 +83,18 @@ impl WaveguideDispersion {
     }
 }
 
-pub(super) fn dispersion_profile(sample_rate: f32, params: String1dParams) -> DispersionProfile {
-    let amount = DISPERSION.clamp(params.dispersion);
+pub(super) fn dispersion_profile_for_frequency(
+    sample_rate: f32,
+    frequency_hz: f32,
+    dispersion: f32,
+) -> DispersionProfile {
+    let amount = DISPERSION.clamp(dispersion);
     if amount <= f32::EPSILON {
         return DispersionProfile::bypass();
     }
 
     let sample_rate = core::sanitize_sample_rate(sample_rate);
-    let frequency_hz = core::sanitize_frequency(sample_rate, params.frequency_hz);
+    let frequency_hz = core::sanitize_frequency(sample_rate, frequency_hz);
     // The cascade's compensation must fit inside the one-way delay line, else the
     // loop can't stay in tune. Short loops (high notes) therefore disperse less —
     // physically a thin, short string. Scale the stiffness so the compensation

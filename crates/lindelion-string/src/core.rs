@@ -45,6 +45,12 @@ pub(super) struct LoopDamping {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct LoopMaterial {
+    pub coefficients: BiquadCoefficients,
+    filter_peak: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct PositionTap {
     pub position: f32,
     pub gain: f32,
@@ -109,13 +115,26 @@ pub(super) fn sanitize_sample_rate(sample_rate: f32) -> f32 {
     }
 }
 
-pub(super) fn loop_damping(sample_rate: f32, params: String1dParams) -> LoopDamping {
+pub(super) fn loop_material(sample_rate: f32, params: String1dParams) -> LoopMaterial {
     let sample_rate = sanitize_sample_rate(sample_rate);
     let coefficients = loop_filter_coefficients(
         sample_rate,
         params.loop_filter_cutoff,
         params.loop_filter_resonance,
     );
+    LoopMaterial {
+        coefficients,
+        filter_peak: measured_filter_peak(coefficients),
+    }
+}
+
+pub(super) fn loop_damping_from_material(
+    sample_rate: f32,
+    params: String1dParams,
+    material: LoopMaterial,
+) -> LoopDamping {
+    let sample_rate = sanitize_sample_rate(sample_rate);
+    let coefficients = material.coefficients;
     let filter_delay_samples =
         filter_group_delay_samples(coefficients, sample_rate, params.frequency_hz);
     let frequency_hz = sanitize_frequency(sample_rate, params.frequency_hz);
@@ -123,16 +142,14 @@ pub(super) fn loop_damping(sample_rate: f32, params: String1dParams) -> LoopDamp
     let decay_seconds = decay_seconds_from_loop_gain(params.loop_gain);
     let fundamental_gain = gain_for_t60(period_samples, sample_rate, decay_seconds);
     // Calibrate the loop gain so the played pitch decays in the requested T60,
-    // dividing out the loop filter's own attenuation at the fundamental. The
     // filter's roll-off then gives higher partials an explicit, calibrated
     // frequency-dependent T60(f) — they decay measurably faster than the
     // fundamental — instead of the fundamental and partials sharing one
     // untargeted decay time that the loop lowpass only approximates.
     let fundamental_omega = std::f32::consts::TAU * frequency_hz / sample_rate;
     let fundamental_magnitude = biquad_magnitude_at(coefficients, fundamental_omega).max(1.0e-4);
-    let filter_peak = measured_filter_peak(coefficients);
     // Keep the worst-case round-trip magnitude below unity across every partial.
-    let stability_limit = 0.999 / filter_peak.max(1.0);
+    let stability_limit = 0.999 / material.filter_peak.max(1.0);
     let loop_gain = math::finite_clamp(
         fundamental_gain / fundamental_magnitude,
         0.0,

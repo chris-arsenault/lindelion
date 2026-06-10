@@ -5,8 +5,9 @@ use crate::{
     LOOP_GAIN_DEFAULT, LOWEST_STRING_FREQUENCY_HZ, PICKUP_POSITION_DEFAULT,
     STRIKE_POSITION_DEFAULT,
     body::{BodyFamily, ReducedBody, StringBodyMode},
-    core, dispersion,
-    traveling::{BoundaryFilters, BoundarySide, TravelingWavePair},
+    bow, core, dispersion,
+    driver::BowContactDrive,
+    traveling::{BoundaryFilters, BoundarySamples, BoundarySide, TravelingWavePair},
 };
 
 /// String output blend. The String output is the body's radiated motion summed with
@@ -20,38 +21,32 @@ use crate::{
 /// `STRING_OUTPUT_TRIM` then matches the summed level to the pre-M7 String, keeping
 /// the same peak headroom (loud plucks do not clip any more than before).
 const STRING_PICKUP_MIX: f32 = 1.0;
-const STRING_BODY_MIX: f32 = 3.0;
+const STRING_BODY_MIX: f32 = 1.0;
 const STRING_OUTPUT_TRIM: f32 = 0.85;
+/// A bowed acoustic string is heard through bridge/body radiation only: the
+/// pickup tap is a useful direct-string/electric observation for plucks, but
+/// during active bowing it exposes the contact discontinuity as a dry signal a
+/// violin body would not radiate directly, so it is muted while the bow driver
+/// is engaged. The body's modal admittance is calibrated as *coloration on top
+/// of the pickup* (`BODY_GAIN_SCALE`), roughly 1/10 of instrument level, so the
+/// radiated path needs its own absolute calibration when it carries the whole
+/// bowed voice. This weight replaces the pluck-path balance crossfade while the
+/// bow is engaged and is calibrated so the default bowed violin sustains at
+/// instrument level (guarded by the bowed-audibility test). If no body is
+/// enabled the pickup tap remains the fallback, so valid bow configurations
+/// never go silent.
+const BOW_BODY_RADIATION_WEIGHT: f32 = 20.0;
 
-/// Energy-dependent source↔body balance (M9). The fixed pickup/body weights above
-/// are replaced — when the balance depth is non-zero — by an **equal-power** crossfade
-/// between the direct pickup tap and a **level-matched** body radiation, steered by
-/// measured energy. In this voicing the loop-damped pickup tap is the *warm/rounded*
-/// sustain voice and the body radiation — carrying its presence formant — is the
-/// *bright/blooming* one, so the perceptually correct mapping (M11 P8) is **soft →
-/// pickup (warm), loud → body (bright)**: harder playing drives the body's radiating
-/// resonances and blooms brighter. The crossfade position `p ∈ [0,1]` (`p = 1` all
-/// pickup, `p = 0` all body) maps to gains `S·sin(pπ/2)` (pickup) and
-/// `S·cos(pπ/2)·LEVEL_MATCH` (body). Equal power (`sin² + cos² = 1`) on the
-/// *level-matched* signals holds output level, so the change is timbral, not gain.
-///
-/// The body radiation is ~15–20× quieter than the pickup tap (ADR-0021), so it is
-/// scaled up by `LEVEL_MATCH` before the crossfade — otherwise leaning to the body
-/// would just go quiet instead of warm. `BASE_POSITION = atan(LEVEL_MATCH·PICKUP/BODY)
-/// /(π/2)` and `WEIGHT_SCALE = 1/sin(BASE_POSITION·π/2)` are chosen so that at
-/// `p = BASE_POSITION` the gains are exactly the pre-M9 `(1.0, 3.0)` blend; depth `0`
-/// collapses to that fixed blend (identity guard).
-///
-/// `LEVEL_MATCH` is a first-principles value; the exact body/pickup level ratio (and
-/// thus the crossfade calibration) is an M11 calibration target (ADR-0021, deferred
-/// cross-resonator level / coupling-strength work).
-const STRING_BODY_LEVEL_MATCH: f32 = 15.0;
-const STRING_BALANCE_BASE_POSITION: f32 = 0.874_3; // atan(15·1/3)/(π/2)
-const STRING_BALANCE_WEIGHT_SCALE: f32 = 1.019_9; // 1/sin(BASE_POSITION·π/2)
-/// How far full energy swings the crossfade position around the base (at full depth):
-/// `p = BASE + (0.5 − e)·SPAN·depth`, clamped to `[0, 1]`. Sized so a soft note settles
-/// onto the warm pickup tap while a loud note blooms into the bright body radiation.
-const STRING_BALANCE_SPAN: f32 = 1.0;
+/// Energy-dependent source↔body balance (M9). Depth does not replace the direct
+/// string with a separate resonator; it changes how much of the already-coupled
+/// system is heard from the pickup/source tap versus the radiated soundboard.
+/// Depth 0 is pickup-forward with a light body contribution. Depth 1 is body-
+/// forward but keeps part of the source tap so the note stays string-like. A
+/// smaller measured-energy term adds extra soundboard bloom on hard strikes.
+const STRING_BODY_BALANCE_GAIN: f32 = 18.0;
+const STRING_PICKUP_BALANCE_DUCK: f32 = 0.68;
+const STRING_BODY_BLOOM_GAIN: f32 = 3.5;
+const STRING_PICKUP_BLOOM_DUCK: f32 = 0.08;
 /// Measured-energy (RMS) that maps to the bright (body) end of the balance crossfade
 /// (`e = 1`); the linear, clamped `energy/REF` keeps soft/medium dynamics on the warm
 /// pickup tap and reserves the blooming body-radiation end for loud playing. M11 P8:
@@ -60,15 +55,20 @@ const STRING_BALANCE_SPAN: f32 = 1.0;
 /// left the crossfade pinned at its base position for all real playing (inaudible).
 const STRING_BALANCE_ENERGY_REF: f32 = 0.012;
 
-/// Measured-energy (RMS) at which the tension bloom reaches its target depth; the
-/// squared, normalized drive `(energy/REF)^2` keeps low/medium dynamics in tune
-/// and concentrates the sharpening on hard hits. M11 P8: calibrated to the measured
-/// per-voice energy bus — a full-velocity String pluck peaks near RMS 0.010, so this
-/// REF puts a hard hit at ≈0.7 drive (≈28 cents, approaching the +40 the depth allows)
-/// and lets sustained bowing saturate; the old 0.15 left a hard pluck at 0.4% drive
-/// (inaudible). The effect was always designed to reach drive 1.0 — only the REF kept
-/// it from getting there.
-const STRING_TENSION_ENERGY_REF: f32 = 0.012;
+/// Half-width of the finite bow ribbon as a fraction of the speaking length.
+const BOW_CONTACT_HALF_WIDTH: f32 = 0.012;
+
+/// Mean-square wave amplitude at which tension modulation reaches full drive.
+/// Tension rise is quadratic in vibration amplitude (mean-square string slope),
+/// and by equipartition the time-averaged square of the boundary samples tracks
+/// the string's stored energy, so the drive is *linear* in this estimator.
+/// Calibrated so a full-velocity pluck peaks near the M11 P8 target (≈0.6–0.8
+/// drive, ≈25–30 cents) and decays back to nominal as the note rings down: a
+/// full shaped pluck measures ≈0.24 mean-square at the boundaries.
+const STRING_TENSION_WAVE_ENERGY_REF: f32 = 0.30;
+/// Smoothing time of the string-energy estimator: a few fundamental periods, so
+/// the tension drive follows the note envelope rather than individual waves.
+const STRING_ENERGY_SMOOTHING_SECONDS: f32 = 0.05;
 /// Fractional one-way-delay shortening at full drive. `2^(40/1200) - 1 ≈ 0.0234`
 /// gives ≈ +40 cents of transient pitch-sharpening at a hard pluck's peak energy.
 const STRING_TENSION_DEPTH: f32 = 0.0234;
@@ -76,104 +76,18 @@ const STRING_TENSION_DEPTH: f32 = 0.0234;
 /// cents and keeping the modulated delay bounded well within the wave buffer.
 const STRING_TENSION_MAX_DRIVE: f32 = 1.0;
 
-/// Shorten the effective one-way delay as a function of measured energy
-/// (tension modulation; Bank/Sujbert, Tolonen/Välimäki). The delay only ever
-/// shortens (`drive >= 0`) and never below `one_way_delay / (1 + DEPTH*MAX)`, so
-/// it stays bounded and within the fixed traveling-wave capacity; at `drive == 0`
-/// it returns the nominal delay (tuning unaffected).
-fn tension_modulated_delay(one_way_delay: f32, energy: f32) -> f32 {
-    let normalized = math::finite_or(energy, 0.0).max(0.0) / STRING_TENSION_ENERGY_REF;
-    let drive = math::finite_clamp(normalized * normalized, 0.0, STRING_TENSION_MAX_DRIVE, 0.0);
-    one_way_delay / (1.0 + STRING_TENSION_DEPTH * drive)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct String1dParams {
-    pub(crate) frequency_hz: f32,
-    pub(crate) loop_filter_cutoff: f32,
-    pub(crate) loop_filter_resonance: f32,
-    pub(crate) loop_gain: f32,
-    pub(crate) loop_nonlinearity: f32,
-    pub(crate) dispersion: f32,
-    pub(crate) strike_position: f32,
-    pub(crate) pickup_position: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StringModelSwitches {
-    pub body_contact_enabled: bool,
-    pub tension_modulation_enabled: bool,
-    pub source_body_balance_enabled: bool,
-}
-
-impl Default for StringModelSwitches {
-    fn default() -> Self {
-        Self {
-            body_contact_enabled: true,
-            tension_modulation_enabled: true,
-            source_body_balance_enabled: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StringModelParams {
-    pub frequency_hz: f32,
-    pub loop_filter_cutoff_hz: f32,
-    pub loop_filter_resonance: f32,
-    pub loop_gain: f32,
-    pub loop_nonlinearity: f32,
-    pub dispersion: f32,
-    pub strike_position: f32,
-    pub pickup_position: f32,
-    pub excitation_spread: f32,
-    pub source_body_balance: f32,
-    pub body_mode: StringBodyMode,
-    pub switches: StringModelSwitches,
-}
-
-impl Default for StringModelParams {
-    fn default() -> Self {
-        Self {
-            frequency_hz: 220.0,
-            loop_filter_cutoff_hz: LOOP_FILTER_CUTOFF_DEFAULT_HZ,
-            loop_filter_resonance: LOOP_FILTER_RESONANCE_DEFAULT,
-            loop_gain: LOOP_GAIN_DEFAULT,
-            loop_nonlinearity: 0.0,
-            dispersion: DISPERSION_DEFAULT,
-            strike_position: STRIKE_POSITION_DEFAULT,
-            pickup_position: PICKUP_POSITION_DEFAULT,
-            excitation_spread: 0.0,
-            source_body_balance: 0.0,
-            body_mode: StringBodyMode::default(),
-            switches: StringModelSwitches::default(),
-        }
-    }
-}
-
-impl StringModelParams {
-    fn string_params(self) -> String1dParams {
-        String1dParams {
-            frequency_hz: self.frequency_hz,
-            loop_filter_cutoff: self.loop_filter_cutoff_hz,
-            loop_filter_resonance: self.loop_filter_resonance,
-            loop_gain: self.loop_gain,
-            loop_nonlinearity: self.loop_nonlinearity,
-            dispersion: self.dispersion,
-            strike_position: self.strike_position,
-            pickup_position: self.pickup_position,
-        }
-    }
-}
-
-/// Per-sample-invariant string operators derived from `String1dParams`. Cached
-/// behind a params dirty-check so the heavy derivations (loop damping incl. the
-/// filter-peak scan, dispersion profile, geometry, delay tuning) run at control
-/// rate, not per sample. Candidate extraction (ADR-0003): single consumer today.
+/// Material operators derived from non-note identity controls. Normal played
+/// pitch moves the waveguide's current physical length, so it is intentionally
+/// kept out of this cache key.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PreparedStringModel {
-    dispersion_profile: dispersion::DispersionProfile,
+    loop_material: core::LoopMaterial,
     geometry: core::WaveguideGeometry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CurrentStringOperators {
+    dispersion_profile: dispersion::DispersionProfile,
     one_way_delay: f32,
     reflection_gain: f32,
 }
@@ -194,17 +108,23 @@ pub struct StringModel {
     /// radiates but does not load the loop) to isolate the two-way effect from the
     /// body's output coloration.
     body_coupling_scale: f32,
-    prepared: Option<(String1dParams, PreparedStringModel)>,
-    // Per-sample smoothing of the continuous physical inputs so a control-rate
-    // jump de-zippers; frequency and positions stay un-smoothed to keep tuning
-    // and excitation timing exact.
+    prepared: Option<(StringMaterialParams, PreparedStringModel)>,
+    // Per-sample smoothing of continuous physical inputs so a control-rate jump
+    // de-zippers without replacing the persistent waveguide.
     loop_gain: core::ScalarSmoother,
     loop_filter_cutoff: core::ScalarSmoother,
     loop_filter_resonance: core::ScalarSmoother,
     dispersion: core::ScalarSmoother,
-    // Measured resonator energy (M2 bus) driving tension modulation; set per host
-    // sample, constant across the 2x oversampled sub-samples. 0.0 => inert.
-    tension_drive: f32,
+    // Current speaking length/tuning of the persistent string, represented as
+    // uncompensated one-way delay. Note events move this state toward a target;
+    // they do not rebuild the waveguide.
+    tuning_delay: core::ScalarSmoother,
+    // Smoothed mean-square of the boundary wave samples: the string's own stored
+    // energy, driving tension modulation. Internal physical state (replaces the
+    // old output-RMS energy bus, which was pluck-calibrated and detuned any
+    // sustained driver); updated every (oversampled) sample.
+    string_energy: f32,
+    string_energy_coefficient: f32,
     // Strike-position spread (M9 contact stage), `0..1`; set each (oversampled)
     // sample from `StringModelParams::excitation_spread`. 0.0 => the narrow pre-M9
     // contact (cached taps); positive widens the injection toward a strum.
@@ -220,9 +140,42 @@ pub struct StringModel {
     // The string's returning wave at the bridge (driven end), cached each sample so
     // a physical driver (M8) can read the input-end wave it couples to.
     bridge_incident: f32,
+    // Bowed-contact branch memory for the Friedlander/MSW hysteresis rule (see
+    // `bow`): whether the contact stuck last sample and the slide direction.
+    // `bow_force` is the probe/diagnostic value of the last solved contact force.
+    bow_force: f32,
+    bow_sticking: bool,
+    bow_slip_direction: f32,
+    // FIFO delaying the upstream incoming-wave reads to the contact (see
+    // `bow::BOW_READ_ADVANCE_SAMPLES`): per-rail ring of the advanced reads.
+    bow_incoming_left: [f32; bow::BOW_READ_ADVANCE_SAMPLES],
+    bow_incoming_right: [f32; bow::BOW_READ_ADVANCE_SAMPLES],
+    bow_incoming_index: usize,
+    // Rosin-noise source for the sliding friction (see `bow::BOW_SLIP_NOISE_*`):
+    // a deterministic xorshift32 state and a one-pole lowpass, seeded at
+    // construction/reset so renders and tests are reproducible.
+    bow_noise_state: u32,
+    bow_noise_lp: f32,
+    bow_noise_coefficient: f32,
+    // Slow mean of the contact force for the torsional low-frequency relief
+    // (see `bow::BOW_TORSION_RELIEF_SECONDS`).
+    bow_torsion_mean_force: f32,
+    bow_torsion_coefficient: f32,
+    // Intonation servo state (see `bow::BOW_TUNE_SERVO_SECONDS`): capture
+    // intervals measure the sounding period; the delay correction trims the
+    // tuning state toward the played target like a player's finger.
+    bow_samples_since_capture: f32,
+    bow_last_capture_interval: f32,
+    bow_tune_target: f32,
+    bow_tune_correction: f32,
+    bow_tune_coefficient: f32,
+    bow_tune_release_coefficient: f32,
     #[cfg(test)]
     recompute_count: u32,
 }
+
+/// Deterministic xorshift seed for the rosin-noise source.
+const BOW_NOISE_SEED: u32 = 0x9E37_79B9;
 
 impl StringModel {
     pub fn new(sample_rate: f32) -> Self {
@@ -241,12 +194,57 @@ impl StringModel {
             loop_filter_cutoff: core::ScalarSmoother::new(sample_rate),
             loop_filter_resonance: core::ScalarSmoother::new(sample_rate),
             dispersion: core::ScalarSmoother::new(sample_rate),
-            tension_drive: 0.0,
+            tuning_delay: core::ScalarSmoother::new(sample_rate),
+            string_energy: 0.0,
+            string_energy_coefficient: math::finite_clamp(
+                1.0 / (STRING_ENERGY_SMOOTHING_SECONDS * sample_rate),
+                0.0,
+                1.0,
+                1.0,
+            ),
             excitation_spread: 0.0,
             balance_depth: 0.0,
             balance_energy_target: 0.0,
             balance_energy: core::ScalarSmoother::new(sample_rate),
             bridge_incident: 0.0,
+            bow_force: 0.0,
+            bow_sticking: false,
+            bow_slip_direction: 0.0,
+            bow_incoming_left: [0.0; bow::BOW_READ_ADVANCE_SAMPLES],
+            bow_incoming_right: [0.0; bow::BOW_READ_ADVANCE_SAMPLES],
+            bow_incoming_index: 0,
+            bow_noise_state: BOW_NOISE_SEED,
+            bow_noise_lp: 0.0,
+            bow_noise_coefficient: math::finite_clamp(
+                1.0 - (-std::f32::consts::TAU * bow::BOW_SLIP_NOISE_BANDWIDTH_HZ / sample_rate)
+                    .exp(),
+                0.0,
+                1.0,
+                1.0,
+            ),
+            bow_torsion_mean_force: 0.0,
+            bow_torsion_coefficient: math::finite_clamp(
+                1.0 / (bow::BOW_TORSION_RELIEF_SECONDS * sample_rate),
+                0.0,
+                1.0,
+                1.0,
+            ),
+            bow_samples_since_capture: 0.0,
+            bow_last_capture_interval: 0.0,
+            bow_tune_target: 1.0,
+            bow_tune_correction: 1.0,
+            bow_tune_coefficient: math::finite_clamp(
+                1.0 / (bow::BOW_TUNE_SERVO_SECONDS * sample_rate),
+                0.0,
+                1.0,
+                1.0,
+            ),
+            bow_tune_release_coefficient: math::finite_clamp(
+                1.0 / (bow::BOW_TUNE_RELEASE_SECONDS * sample_rate),
+                0.0,
+                1.0,
+                1.0,
+            ),
             #[cfg(test)]
             recompute_count: 0,
         }
@@ -256,13 +254,6 @@ impl StringModel {
     /// Cached from the previous `process_sample`; 0.0 before the first sample.
     pub fn driven_feedback(&self) -> f32 {
         self.bridge_incident
-    }
-
-    /// Set the measured-energy drive for tension modulation (M2 energy bus).
-    /// Called once per host sample by the resonator engine; defaults to 0.0 so
-    /// callers that never set it render the linear string unchanged.
-    pub fn set_tension_drive(&mut self, drive: f32) {
-        self.tension_drive = math::finite_or(drive, 0.0).max(0.0);
     }
 
     /// Set the measured-energy drive for the source↔body balance (M9 energy bus),
@@ -286,17 +277,69 @@ impl StringModel {
         self.loop_filter_cutoff.reset();
         self.loop_filter_resonance.reset();
         self.dispersion.reset();
-        self.tension_drive = 0.0;
+        self.tuning_delay.reset();
+        self.string_energy = 0.0;
         self.excitation_spread = 0.0;
         self.balance_depth = 0.0;
         self.balance_energy_target = 0.0;
         self.balance_energy.reset();
         self.bridge_incident = 0.0;
+        self.clear_bow_contact_state();
+        self.bow_tune_target = 1.0;
+        self.bow_tune_correction = 1.0;
         self.body_mode = StringBodyMode::Guitar;
+    }
+
+    /// Next rosin-noise sample: deterministic xorshift32 white noise through a
+    /// one-pole lowpass (`bow::BOW_SLIP_NOISE_BANDWIDTH_HZ`), roughly ±0.5.
+    fn next_bow_noise(&mut self) -> f32 {
+        let mut state = self.bow_noise_state;
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        self.bow_noise_state = state;
+        let white = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;
+        self.bow_noise_lp += self.bow_noise_coefficient * (white - self.bow_noise_lp);
+        self.bow_noise_lp
     }
 
     /// Production entry point for the shared two-rail string model.
     pub fn process(&mut self, excitation: f32, params: StringModelParams) -> f32 {
+        self.process_with_bow_contact(excitation, params, None)
+    }
+
+    pub fn process_with_bow_contact(
+        &mut self,
+        excitation: f32,
+        params: StringModelParams,
+        bow_contact: Option<BowContactDrive>,
+    ) -> f32 {
+        self.process_with_bow_contact_and_probe(excitation, params, bow_contact, None)
+    }
+
+    pub fn process_with_bow_contact_probe(
+        &mut self,
+        excitation: f32,
+        params: StringModelParams,
+        bow_contact: Option<BowContactDrive>,
+    ) -> (f32, StringModelProbe) {
+        let mut probe = StringModelProbe::default();
+        let output = self.process_with_bow_contact_and_probe(
+            excitation,
+            params,
+            bow_contact,
+            Some(&mut probe),
+        );
+        (output, probe)
+    }
+
+    fn process_with_bow_contact_and_probe(
+        &mut self,
+        excitation: f32,
+        params: StringModelParams,
+        bow_contact: Option<BowContactDrive>,
+        probe: Option<&mut StringModelProbe>,
+    ) -> f32 {
         // `excitation_spread` (M9 contact stage) is consumed only at injection, so it
         // is stashed here rather than carried in `String1dParams` (the prepared-model
         // cache key) — a per-sample spread change never busts the heavy derivations.
@@ -306,51 +349,35 @@ impl StringModel {
         } else {
             0.0
         };
-        self.process_sample(excitation, params.string_params(), params)
+        self.process_sample_with_bow_contact(
+            excitation,
+            params.string_params(),
+            params,
+            bow_contact,
+            probe,
+        )
     }
 
+    #[cfg(test)]
     fn process_sample(
         &mut self,
         excitation: f32,
         params: String1dParams,
         model_params: StringModelParams,
     ) -> f32 {
-        let params = self.smoothed_params(params);
-        let prepared = self.prepared_model(params);
-        // Energy-dependent tension modulation: a hard pluck raises string tension,
-        // shortening the effective delay and sharpening pitch transiently; as the
-        // measured energy decays the delay returns to nominal (the "bloom").
-        let tension_drive = if model_params.switches.tension_modulation_enabled {
-            self.tension_drive
-        } else {
-            0.0
-        };
-        let one_way_delay = tension_modulated_delay(prepared.one_way_delay, tension_drive);
+        self.process_sample_with_bow_contact(excitation, params, model_params, None, None)
+    }
 
-        let boundary = self.waves.boundary_samples(one_way_delay);
-        // Expose the string's returning wave at the bridge for the M8 driver feedback.
-        self.bridge_incident = boundary.left;
-
-        let left_reflection = self.reflected_sample(
-            boundary.left,
-            prepared.reflection_gain,
-            BoundarySide::Left,
-            params,
-            prepared.dispersion_profile,
-        );
-        let right_reflection = self.reflected_sample(
-            boundary.right,
-            prepared.reflection_gain,
-            BoundarySide::Right,
-            params,
-            prepared.dispersion_profile,
-        );
-
-        // Two-way bridge coupling (passive wave-digital termination): the body
-        // admittance loads the bridge reflection (|R| <= 1, dips at body modes, so
-        // those partials lose energy and decay faster — the loop loading a post-EQ
-        // cannot reproduce), and the body radiates the absorbed motion = output.
-        let (coupled_left, radiated) = match model_params.body_mode.family() {
+    /// Two-way bridge coupling (passive wave-digital termination): the body admittance loads the
+    /// bridge reflection (|R| <= 1, dips at body modes, so those partials lose energy and decay
+    /// faster — the loop loading a post-EQ cannot reproduce), and the body radiates the absorbed
+    /// motion = output.
+    fn coupled_bridge_reflection(
+        &mut self,
+        left_reflection: f32,
+        model_params: StringModelParams,
+    ) -> (f32, f32) {
+        match model_params.body_mode.family() {
             Some(family) => {
                 if self.body_mode != model_params.body_mode {
                     self.body.configure(family);
@@ -373,7 +400,81 @@ impl StringModel {
                 self.body_mode = StringBodyMode::Disabled;
                 (left_reflection, 0.0)
             }
+        }
+    }
+
+    /// String-energy estimator: smoothed mean square of the boundary samples. The waves passing
+    /// the endpoints sample the whole string each round trip, so this tracks stored energy
+    /// without an O(length) scan.
+    fn track_string_energy(&mut self, boundary: BoundarySamples) {
+        let boundary_square = boundary.left * boundary.left + boundary.right * boundary.right;
+        self.string_energy = math::snap_to_zero(
+            self.string_energy
+                + self.string_energy_coefficient * (boundary_square - self.string_energy),
+        );
+    }
+
+    fn process_sample_with_bow_contact(
+        &mut self,
+        excitation: f32,
+        params: String1dParams,
+        model_params: StringModelParams,
+        bow_contact: Option<BowContactDrive>,
+        probe: Option<&mut StringModelProbe>,
+    ) -> f32 {
+        let params = self.smoothed_params(params);
+        let prepared = self.prepared_model(params.material_params());
+        let current_frequency_hz = self.current_tuning_frequency(params.frequency_hz);
+        let current_params = params.with_frequency(current_frequency_hz);
+        let operators = self.current_operators(current_params, prepared);
+        // Energy-dependent tension modulation: hard playing raises string tension,
+        // shortening the effective delay and sharpening pitch transiently; as the
+        // string's stored energy decays the delay returns to nominal (the
+        // "bloom"). The drive reads the previous sample's energy state, one
+        // sample behind the waves it modulates — negligible against the 50 ms
+        // estimator smoothing.
+        let tension_drive = if model_params.switches.tension_modulation_enabled {
+            math::finite_clamp(
+                self.string_energy / STRING_TENSION_WAVE_ENERGY_REF,
+                0.0,
+                STRING_TENSION_MAX_DRIVE,
+                0.0,
+            )
+        } else {
+            0.0
         };
+        // The bowed-intonation servo trims the speaking length like a player's
+        // finger (neutral 1.0 whenever the bow is not engaged).
+        let one_way_delay = tension_modulated_delay(operators.one_way_delay, tension_drive)
+            * math::finite_clamp(
+                self.bow_tune_correction,
+                bow::BOW_TUNE_FACTOR_MIN,
+                bow::BOW_TUNE_FACTOR_MAX,
+                1.0,
+            );
+
+        let boundary = self.waves.boundary_samples(one_way_delay);
+        // Expose the string's returning wave at the bridge for the M8 driver feedback.
+        self.bridge_incident = boundary.left;
+        self.track_string_energy(boundary);
+
+        let left_reflection = self.reflected_sample(
+            boundary.left,
+            operators.reflection_gain,
+            BoundarySide::Left,
+            current_params,
+            operators.dispersion_profile,
+        );
+        let right_reflection = self.reflected_sample(
+            boundary.right,
+            operators.reflection_gain,
+            BoundarySide::Right,
+            current_params,
+            operators.dispersion_profile,
+        );
+
+        let (coupled_left, radiated) =
+            self.coupled_bridge_reflection(left_reflection, model_params);
 
         // Pickup tap of the string at the pickup position (read before the loop is
         // advanced, mirroring the pre-M7 timing). The loop it samples is already
@@ -382,8 +483,21 @@ impl StringModel {
             .waves
             .pickup_samples(one_way_delay, prepared.geometry.pickup_position);
         let pickup_tap = pickup.average();
+        let bow_active = bow_contact.is_some();
+        let expected_period = self.sample_rate / current_frequency_hz.max(1.0);
+        let bow_correction = bow_contact
+            .and_then(|drive| self.bow_contact_excitation(one_way_delay, expected_period, drive));
+        let bow_wave_correction = bow_correction
+            .as_ref()
+            .map(|contact| contact.wave_correction)
+            .unwrap_or(0.0);
+        if bow_contact.is_none() {
+            self.clear_bow_contact_state();
+            self.relax_bow_tuning();
+        }
 
         self.waves.push(right_reflection, coupled_left);
+        self.apply_bow_correction(one_way_delay, bow_correction);
         // Strike-position spread (M9): a wide strum injects over a broader region
         // than a tight pick. Spread 0 uses the cached narrow taps (the pre-M9 fast
         // path); a positive spread rebuilds the wider window from the (cheap)
@@ -402,118 +516,75 @@ impl StringModel {
             math::snap_to_zero(excitation),
         );
 
-        // Energy-dependent source↔body balance (M9). At depth 0 the weights are the
-        // pre-M9 fixed (pickup, body) blend (bit-exact identity); otherwise an
-        // equal-power crossfade steered by the smoothed measured energy leans the
-        // output to the warm, loop-damped pickup tap at low dynamics and the bright,
-        // formant-bearing body radiation at high dynamics — so harder playing blooms
-        // brighter (M11 P8 polarity fix), holding level (the change is timbral, not gain).
+        let (pickup_weight, body_weight) =
+            self.output_weights(bow_active && model_params.body_mode.family().is_some());
+        let weighted_pickup = STRING_OUTPUT_TRIM * pickup_weight * pickup_tap;
+        let weighted_body = STRING_OUTPUT_TRIM * body_weight * radiated;
+        let output = weighted_pickup + weighted_body;
+        let output = math::snap_to_zero(output);
+        if let Some(probe) = probe {
+            *probe = StringModelProbe {
+                pickup_tap,
+                body_radiated: radiated,
+                weighted_pickup,
+                weighted_body,
+                pickup_weight,
+                body_weight,
+                output,
+                bow_force: self.bow_force,
+                bow_wave_correction,
+                current_frequency_hz,
+                one_way_delay_samples: one_way_delay,
+            };
+        }
+        output
+    }
+
+    /// Pickup/body output weights for this sample.
+    ///
+    /// Pluck path — source/body balance (M9): depth moves the listening point
+    /// from a pickup-forward source tap toward the radiated soundboard output.
+    /// Measured bridge energy adds transient bloom, but the static depth term
+    /// carries the tail and repeated-strike body memory so the control remains
+    /// audible after the attack.
+    ///
+    /// Bowed path: the radiated body carries the whole voice at its own
+    /// calibration (see `BOW_BODY_RADIATION_WEIGHT`); the pluck-path balance
+    /// crossfade does not apply while the bow is engaged.
+    fn output_weights(&mut self, bow_radiated: bool) -> (f32, f32) {
         let energy = self.balance_energy.next(self.balance_energy_target);
-        let (pickup_weight, body_weight) = if self.balance_depth > 0.0 {
-            let position = (STRING_BALANCE_BASE_POSITION
-                + self.balance_depth * (0.5 - energy) * STRING_BALANCE_SPAN)
-                .clamp(0.0, 1.0);
-            let angle = position * std::f32::consts::FRAC_PI_2;
-            (
-                STRING_BALANCE_WEIGHT_SCALE * angle.sin(),
-                STRING_BALANCE_WEIGHT_SCALE * angle.cos() * STRING_BODY_LEVEL_MATCH,
-            )
+        if bow_radiated {
+            return (0.0, BOW_BODY_RADIATION_WEIGHT);
+        }
+        if self.balance_depth > 0.0 {
+            let bloom = self.balance_depth * energy;
+            let pickup_weight = STRING_PICKUP_MIX
+                * (1.0
+                    - STRING_PICKUP_BALANCE_DUCK * self.balance_depth
+                    - STRING_PICKUP_BLOOM_DUCK * bloom);
+            let body_weight = STRING_BODY_MIX
+                * (1.0
+                    + STRING_BODY_BALANCE_GAIN * self.balance_depth
+                    + STRING_BODY_BLOOM_GAIN * bloom);
+            (pickup_weight, body_weight)
         } else {
             (STRING_PICKUP_MIX, STRING_BODY_MIX)
-        };
-        let output = STRING_OUTPUT_TRIM * (pickup_weight * pickup_tap + body_weight * radiated);
-        math::snap_to_zero(output)
+        }
     }
 
     pub fn set_body_coupling_scale(&mut self, scale: f32) {
         self.body_coupling_scale = scale;
     }
-
-    /// Smooth the continuous physical inputs toward their targets, leaving
-    /// frequency and the strike/pickup positions untouched so tuning and
-    /// excitation timing track the requested values exactly.
-    fn smoothed_params(&mut self, params: String1dParams) -> String1dParams {
-        String1dParams {
-            loop_gain: self.loop_gain.next(params.loop_gain),
-            loop_filter_cutoff: self.loop_filter_cutoff.next(params.loop_filter_cutoff),
-            loop_filter_resonance: self
-                .loop_filter_resonance
-                .next(params.loop_filter_resonance),
-            dispersion: self.dispersion.next(params.dispersion),
-            ..params
-        }
-    }
-
-    /// Return the cached string operators, re-deriving them (and re-arming the
-    /// termination filter coefficients) only when the incoming params have moved.
-    fn prepared_model(&mut self, params: String1dParams) -> PreparedStringModel {
-        if let Some((cached_params, prepared)) = self.prepared
-            && cached_params == params
-        {
-            return prepared;
-        }
-
-        let damping = core::loop_damping(self.sample_rate, params);
-        let dispersion_profile = dispersion::dispersion_profile(self.sample_rate, params);
-        let geometry = core::waveguide_geometry(params.strike_position, params.pickup_position);
-        let tuning = core::delay_tuning(
-            self.sample_rate,
-            self.waves.capacity(),
-            params.frequency_hz,
-            2.0,
-            // The loop filter is applied at one termination only (once per round
-            // trip), so it contributes half its group delay per one-way pass.
-            1.0 + 0.5 * damping.filter_delay_samples
-                + dispersion_profile.delay_compensation_samples,
-        );
-        let one_way_delay = tuning.integer_delay + tuning.fractional_delay;
-
-        // Apply the loop filter at a single termination (once per round trip): the
-        // gain compensation in `loop_damping` divides out one filter peak, so a
-        // second pass would make the resonant round-trip gain exceed unity.
-        self.terminations
-            .set_coefficients(damping.coefficients, BiquadCoefficients::identity());
-
-        let prepared = PreparedStringModel {
-            dispersion_profile,
-            geometry,
-            one_way_delay,
-            reflection_gain: core::endpoint_reflection_gain(damping.loop_gain),
-        };
-        self.prepared = Some((params, prepared));
-        #[cfg(test)]
-        {
-            self.recompute_count += 1;
-        }
-        prepared
-    }
-
-    fn reflected_sample(
-        &mut self,
-        input: f32,
-        reflection_gain: f32,
-        side: BoundarySide,
-        params: String1dParams,
-        dispersion_profile: dispersion::DispersionProfile,
-    ) -> f32 {
-        let filtered = self.terminations.process(side, input);
-        let loop_nonlinearity = math::finite_clamp(params.loop_nonlinearity, 0.0, 1.0, 0.0);
-        let nonlinear = if loop_nonlinearity > 0.0 {
-            soft_saturate(filtered, loop_nonlinearity)
-        } else {
-            filtered
-        };
-        let dispersed = match side {
-            BoundarySide::Left => self
-                .left_dispersion
-                .process_sample(nonlinear, dispersion_profile),
-            BoundarySide::Right => self
-                .right_dispersion
-                .process_sample(nonlinear, dispersion_profile),
-        };
-        math::snap_to_zero(-dispersed * reflection_gain)
-    }
 }
+
+mod bow_contact;
+mod operators;
+mod params;
+
+use operators::tension_modulated_delay;
+pub(crate) use params::String1dParams;
+use params::StringMaterialParams;
+pub use params::{StringModelParams, StringModelProbe, StringModelSwitches};
 
 #[cfg(test)]
 mod tests;

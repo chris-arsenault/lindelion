@@ -54,6 +54,8 @@ pub(super) enum FixtureBusShape {
     /// Reports fixed stereo I/O but rejects `setBusArrangements`, which a host must tolerate by
     /// falling back to the reported arrangement.
     FixedStereoRejectsSet,
+    /// No audio input bus and one stereo output bus, matching MIDI instruments.
+    OutputOnly,
 }
 
 /// A stereo processor that scales by `gain` and reports `latency` (gain 1.0 / latency 0 = verbatim
@@ -131,6 +133,7 @@ impl IComponentTrait for FixtureProcessor {
         if dir == BusDirections_::kInput as BusDirection {
             match self.bus_shape {
                 FixtureBusShape::StereoWithExtraInput => 2,
+                FixtureBusShape::OutputOnly => 0,
                 _ => 1,
             }
         } else if dir == BusDirections_::kOutput as BusDirection {
@@ -161,7 +164,7 @@ impl IComponentTrait for FixtureProcessor {
             bus.channelCount = 1;
             fill_utf16(&mut bus.name, "MIDI Input");
             bus.busType = BusTypes_::kMain as BusType;
-            bus.flags = BusInfo_::BusFlags_::kDefaultActive as u32;
+            bus.flags = BusInfo_::BusFlags_::kDefaultActive;
             return kResultOk;
         }
         if media_type != MediaTypes_::kAudio as MediaType {
@@ -185,7 +188,7 @@ impl IComponentTrait for FixtureProcessor {
             BusTypes_::kAux as BusType
         };
         bus.flags = if is_main {
-            BusInfo_::BusFlags_::kDefaultActive as u32
+            BusInfo_::BusFlags_::kDefaultActive
         } else {
             0
         };
@@ -262,9 +265,20 @@ impl IAudioProcessorTrait for FixtureProcessor {
         }
         let expected_ins = match self.bus_shape {
             FixtureBusShape::StereoWithExtraInput => 2,
+            FixtureBusShape::OutputOnly => 0,
             _ => 1,
         };
-        if inputs.is_null() || outputs.is_null() || num_ins != expected_ins || num_outs != 1 {
+        if outputs.is_null() || num_ins != expected_ins || num_outs != 1 {
+            return kResultFalse;
+        }
+        if expected_ins == 0 {
+            return if *outputs == SpeakerArr::kStereo {
+                kResultTrue
+            } else {
+                kResultFalse
+            };
+        }
+        if inputs.is_null() {
             return kResultFalse;
         }
         let input_arrangements = slice::from_raw_parts(inputs, num_ins as usize);
@@ -344,7 +358,7 @@ impl IAudioProcessorTrait for FixtureProcessor {
             }
             let context = &*data.processContext;
             if context.sampleRate <= 0.0
-                || context.state & ProcessContext_::StatesAndFlags_::kPlaying as u32 == 0
+                || context.state & ProcessContext_::StatesAndFlags_::kPlaying == 0
             {
                 return kResultFalse;
             }
@@ -1028,7 +1042,7 @@ impl IPluginFactory2Trait for FixtureFactory {
         }
         let info = &mut *info;
         info.cardinality = PClassInfo_::ClassCardinality_::kManyInstances as i32;
-        info.classFlags = ComponentFlags_::kDistributable as u32;
+        info.classFlags = ComponentFlags_::kDistributable;
         fill_cstr(&mut info.subCategories, "Fx");
         fill_cstr(&mut info.vendor, "Ahara");
         fill_cstr(&mut info.version, "1.0.0");
@@ -1120,6 +1134,15 @@ pub(super) fn context_fixture_factory() -> ComPtr<IPluginFactory> {
 
 pub(super) fn midi_note_fixture_factory() -> ComPtr<IPluginFactory> {
     behaving_fixture_factory(1.0, 0, FixtureBehavior::MidiNoteTriggersOutput)
+}
+
+pub(super) fn output_only_midi_note_fixture_factory() -> ComPtr<IPluginFactory> {
+    shaped_fixture_factory(
+        1.0,
+        0,
+        FixtureBehavior::MidiNoteTriggersOutput,
+        FixtureBusShape::OutputOnly,
+    )
 }
 
 pub(super) fn parameter_fixture_factory() -> ComPtr<IPluginFactory> {

@@ -6,7 +6,7 @@ use std::{
 
 #[cfg(target_os = "macos")]
 use dispatch2::DispatchQueue;
-use rfd::FileDialog;
+pub use rfd::FileDialog;
 
 #[derive(Clone, Copy)]
 pub struct DialogParent;

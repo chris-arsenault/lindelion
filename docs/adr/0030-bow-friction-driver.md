@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0033](0033-lamath-bow-velocity-wave-contact.md)
 
 ## Date
 

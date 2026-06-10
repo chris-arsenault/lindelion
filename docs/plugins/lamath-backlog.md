@@ -110,6 +110,46 @@ and a placeholder excitation. These make those constraints explicit, playable, a
   bell radiation are now driven by blowing pressure (effort), so a louder note blooms into the cuivré
   (centroid ≈2460→3900 Hz at C4 mf→ff) and odd-harmonic richness rises ff>mf register-wide; guarded by
   `driven_tube_brightens_with_effort`. See the [ADR-0032 item-B update](../adr/0032-lamath-tube-driven-wind-voice.md#update--item-b-dynamics-and-brightness-with-effort-2026-06-03).
-- Give the Tube a more **formant-shaped, clarinet-like spectrum** rather than the current odd-harmonic
-  square — bore resonances coloring the output into formants, so register and termination read as
-  bigger timbral changes — if downstream filtering proves insufficient.
+- ~~Give the Tube a more **formant-shaped, clarinet-like spectrum**.~~ **Done (register voice,
+  2026-06-10):** both registers are reference-matched against owner clarinet fixtures — the low
+  register via the physical body/radiation model, the vented register via [ADR-0049](../adr/0049-lamath-tube-register-key-voice.md).
+- Make **soft-blown vented notes speak**: at low velocity (≈40) the register mode sits below the
+  oscillation threshold (the unvented registers speak at all velocities). Extend the register
+  margin work (reed gain at low pressure) so the vented register plays at every velocity; the
+  `sweep_stays_finite_bounded_and_audible` integration guard covers it.
+- Make the **wind-crate default-params upper notes sustain** in `lindelion-wind`'s own sweep
+  (`tube_stays_finite_bounded_and_audible_across_register` fails at note 72 with crate-default
+  params); align the crate defaults with the plugin's proven operating point.
+- Tune the **pre-break top notes onto the grid**: G4/G#4 sustain −5/−8 cents on the long unvented
+  bore right below the break.
+- Re-derive the **parked tone guards** against the audition-approved register voice:
+  `bell_radiation_does_not_depend_on_effort`, `driven_onsets_are_continuous_against_held_reference`,
+  and `phrase_onsets_do_not_click` are `#[ignore]`-parked with stale assumptions.
+- Voice the remaining **register line contour** if audition asks: sounding h2 ≈9 dB hot, h7 ≈13 dB
+  shy, h9 ≈10 dB hot against the register-key reference.
+- Add **deliberate shaped breath** as a source-side mechanism (band/formant-shaped air or a
+  recorded breath layer) — the register's radiated paths are now coherent by design, so audible
+  breath character is an explicit future component, not reintroduced dither.
+- Tune **altissimo pitch** (concert C6 and above) if that range ever matters; it speaks but sits
+  ~−38 cents.
+
+## Bowed String (post-P7)
+
+The velocity-wave bow contact ([ADR-0033](../adr/0033-lamath-bow-velocity-wave-contact.md))
+shipped the accepted smooth and scratch voices. These extend it from a correct mechanism into a
+played instrument.
+
+- ~~Add a **bow humanization model**.~~ **Done (audition-approved 2026-06-10):** one `humanize`
+  knob (host parameter + patch, default 0.5) drives four physically-grounded walks from the shared
+  `lindelion-dsp-utils::variance` source — left-hand intonation wander and contact-position wander
+  (both drivers; the pluck samples the position walk at each strike), bow-arm speed and pressure
+  drift (bow only). Knob law: 0.5 is the nominal intended motion, 1.0 approaches the unmusical
+  (Schelleng axes brush the crush boundary, intonation to ±8 cents). Catalog A/B:
+  `driver_string_bow_smooth_c4_humanize_off`/`_full`.
+- Add a **phrasing engine shared between the String bow and the Tube wind voice**: a common
+  note-lifecycle layer that shapes the driver's continuous physical inputs (bow speed/pressure,
+  blowing pressure) over attacks, sustains, crescendi/diminuendi, and releases, exposed through the
+  same control style as the humanize model and fed by host expression (velocity, CC, aftertouch).
+  Per-instrument code maps the shared phrase contours onto each driver's physical targets.
+- Voice the remaining bowed-spectrum fine structure against the Iowa reference (H3/H5 support and
+  the H6–H7 valley, 1.3–1.8 kHz) once humanization lands, if audition still flags that register.

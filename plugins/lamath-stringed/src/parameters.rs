@@ -9,6 +9,7 @@ pub const STRIKE_POSITION_ID: u32 = 4;
 pub const PICKUP_POSITION_ID: u32 = 5;
 pub const BODY_BALANCE_ID: u32 = 6;
 pub const OUTPUT_GAIN_ID: u32 = 7;
+pub const HUMANIZE_ID: u32 = 8;
 
 pub const PARAMETERS: &[ParameterInfo] = &[
     ParameterInfo::continuous(
@@ -53,6 +54,12 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         "dB",
         ParameterRange::linear(-24.0, 12.0, -8.0),
     ),
+    ParameterInfo::continuous(
+        HUMANIZE_ID,
+        "Humanize",
+        "",
+        ParameterRange::linear(0.0, 1.0, 0.5),
+    ),
 ];
 
 pub const PARAMETER_COUNT: usize = PARAMETERS.len();
@@ -81,6 +88,7 @@ pub fn plain_value(patch: &StringPatch, id: u32) -> Option<f32> {
         PICKUP_POSITION_ID => Some(patch.pickup_position),
         BODY_BALANCE_ID => Some(patch.body_balance),
         OUTPUT_GAIN_ID => Some(patch.output_gain_db),
+        HUMANIZE_ID => Some(patch.humanize),
         _ => None,
     }
 }
@@ -112,6 +120,7 @@ pub fn apply_plain(patch: &mut StringPatch, id: u32, plain: f32) -> bool {
                 -8.0
             };
         }
+        HUMANIZE_ID => patch.humanize = unit(plain),
         _ => return false,
     }
     true

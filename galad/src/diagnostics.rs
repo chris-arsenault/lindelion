@@ -6,12 +6,16 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static INIT: Once = Once::new();
 static LOG_LOCK: Mutex<()> = Mutex::new(());
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+#[cfg(windows)]
+static NATIVE_CRASH_LOGGED: AtomicBool = AtomicBool::new(false);
 
 /// Initialize startup diagnostics and the panic hook.
 pub fn init() {
@@ -27,8 +31,9 @@ pub fn init() {
             std::process::id()
         ));
         log_launch_context();
+        install_crash_handler();
         std::panic::set_hook(Box::new(|panic| {
-            log(format!("panic: {panic}"));
+            log_panic(panic);
         }));
     });
 }
@@ -41,6 +46,158 @@ pub fn log(message: impl AsRef<str>) {
 /// The per-user Galad diagnostic log file.
 pub fn log_path() -> PathBuf {
     LOG_PATH.get_or_init(default_log_path).clone()
+}
+
+#[cfg(windows)]
+fn install_crash_handler() {
+    use windows::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
+
+    let previous = unsafe { SetUnhandledExceptionFilter(Some(unhandled_exception_filter)) };
+    log(format!(
+        "crash-handler: installed unhandled-exception-filter previous={}",
+        if previous.is_some() { "some" } else { "none" }
+    ));
+}
+
+#[cfg(not(windows))]
+fn install_crash_handler() {}
+
+fn log_panic(panic: &std::panic::PanicHookInfo<'_>) {
+    let thread = std::thread::current();
+    let thread_name = thread.name().unwrap_or("<unnamed>");
+    let location = panic
+        .location()
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
+        .unwrap_or_else(|| "<unknown>".to_string());
+    append_crash_line(&format!(
+        "crash: rust panic thread_id={:?} thread_name={thread_name:?} location={location} payload={}",
+        thread.id(),
+        panic_payload(panic)
+    ));
+}
+
+fn panic_payload(panic: &std::panic::PanicHookInfo<'_>) -> String {
+    if let Some(message) = panic.payload().downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = panic.payload().downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn unhandled_exception_filter(
+    exception_info: *const windows::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+) -> i32 {
+    use windows::Win32::System::Diagnostics::Debug::EXCEPTION_EXECUTE_HANDLER;
+
+    log_native_crash(exception_info);
+    EXCEPTION_EXECUTE_HANDLER
+}
+
+#[cfg(windows)]
+fn log_native_crash(
+    exception_info: *const windows::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+) {
+    if NATIVE_CRASH_LOGGED.swap(true, Ordering::SeqCst) {
+        append_crash_line("crash: duplicate native exception while terminating");
+        return;
+    }
+
+    let Some(exception_info) = (unsafe { exception_info.as_ref() }) else {
+        append_crash_line("crash: unhandled native exception exception_info=null");
+        return;
+    };
+    let Some(record) = (unsafe { exception_info.ExceptionRecord.as_ref() }) else {
+        append_crash_line("crash: unhandled native exception record=null");
+        return;
+    };
+
+    let code = record.ExceptionCode.0 as u32;
+    let address = record.ExceptionAddress as usize;
+    let flags = record.ExceptionFlags;
+    let parameter_count = (record.NumberParameters as usize).min(record.ExceptionInformation.len());
+    let parameters = &record.ExceptionInformation[..parameter_count];
+    let reason = native_exception_reason(code);
+    let access = native_exception_access_detail(code, parameters);
+
+    append_crash_line(&format!(
+        "crash: unhandled native exception code=0x{code:08x} reason={reason} flags=0x{flags:08x} address=0x{address:x} pid={} thread_id={:?}{access}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    append_crash_line(&format!(
+        "crash: native exception parameters={}",
+        exception_parameters(parameters)
+    ));
+}
+
+#[cfg(windows)]
+fn native_exception_access_detail(code: u32, parameters: &[usize]) -> String {
+    if code != 0xc000_0005 || parameters.len() < 2 {
+        return String::new();
+    }
+
+    let operation = match parameters[0] {
+        0 => "read",
+        1 => "write",
+        8 => "execute",
+        _ => "unknown-access",
+    };
+    format!(" access={operation} target=0x{:x}", parameters[1])
+}
+
+#[cfg(windows)]
+fn exception_parameters(parameters: &[usize]) -> String {
+    if parameters.is_empty() {
+        return "[]".to_string();
+    }
+
+    let mut rendered = String::from("[");
+    for (index, parameter) in parameters.iter().enumerate() {
+        if index > 0 {
+            rendered.push_str(", ");
+        }
+        rendered.push_str(&format!("0x{parameter:x}"));
+    }
+    rendered.push(']');
+    rendered
+}
+
+#[cfg(windows)]
+fn native_exception_reason(code: u32) -> &'static str {
+    match code {
+        0x8000_0003 => "breakpoint",
+        0xc000_0005 => "access-violation",
+        0xc000_0008 => "invalid-handle",
+        0xc000_001d => "illegal-instruction",
+        0xc000_0025 => "noncontinuable-exception",
+        0xc000_008c => "array-bounds-exceeded",
+        0xc000_008d => "floating-point-denormal",
+        0xc000_008e => "floating-point-divide-by-zero",
+        0xc000_008f => "floating-point-inexact-result",
+        0xc000_0090 => "floating-point-invalid-operation",
+        0xc000_0091 => "floating-point-overflow",
+        0xc000_0092 => "floating-point-stack-check",
+        0xc000_0093 => "floating-point-underflow",
+        0xc000_0094 => "integer-divide-by-zero",
+        0xc000_0095 => "integer-overflow",
+        0xc000_0096 => "privileged-instruction",
+        0xc000_00fd => "stack-overflow",
+        0xc000_0135 => "dll-not-found",
+        0xc000_0139 => "entry-point-not-found",
+        0xc000_0374 => "heap-corruption",
+        0xe06d_7363 => "c-plus-plus-exception",
+        _ => "unknown",
+    }
 }
 
 /// Probe this process's top-level windows shortly after the event loop starts.
@@ -56,6 +213,7 @@ pub fn spawn_window_probe(label: &'static str) {
 
 /// Non-Windows builds have no HWNDs to inspect.
 #[cfg(not(windows))]
+#[allow(dead_code)] // call sites are Windows-gated; the stub keeps the API total
 pub fn spawn_window_probe(_label: &'static str) {}
 
 /// Relaunch Explorer-started UI processes with a clean Win32 startup context.
@@ -199,6 +357,7 @@ fn quote_windows_arg(arg: &str) -> String {
 
 /// Non-Windows builds have no Win32 startup context.
 #[cfg(not(windows))]
+#[allow(dead_code)] // call sites are Windows-gated; the stub keeps the API total
 pub fn relaunch_without_explorer_startup(_already_relaunched: bool) -> bool {
     false
 }
@@ -211,6 +370,7 @@ pub fn log_window_probe(label: &str) {
 
 /// Non-Windows builds have no HWNDs to inspect.
 #[cfg(not(windows))]
+#[allow(dead_code)] // call sites are Windows-gated; the stub keeps the API total
 pub fn log_window_probe(_label: &str) {}
 
 #[cfg(windows)]
@@ -350,6 +510,15 @@ fn utf16_array_to_string(buffer: &[u16]) -> String {
 
 fn append_line(path: &PathBuf, message: &str) {
     let _guard = LOG_LOCK.lock().ok();
+    append_line_unlocked(path, message);
+}
+
+fn append_crash_line(message: &str) {
+    let path = LOG_PATH.get().cloned().unwrap_or_else(default_log_path);
+    append_line_unlocked(&path, message);
+}
+
+fn append_line_unlocked(path: &PathBuf, message: &str) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }

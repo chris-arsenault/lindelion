@@ -2,7 +2,7 @@
 
 **Name:** Lamath Tube
 **Target:** VST3 instrument bundle on the Lamath-family build paths; Linux validates the library and DSP tests.
-**Status:** Extracted reed-driven tube product with eight articulation slots, nine host parameters, model-switch UI scaffolding, and a sparse Vizia editor.
+**Status:** Reed-driven tube product with a reference-matched two-register clarinet voice, eight articulation slots, nine host parameters, model-switch UI scaffolding, and a sparse Vizia editor.
 
 ---
 
@@ -12,13 +12,9 @@ Lamath Tube is the focused extraction of Lamath's reed-driven wind tube model. I
 
 The reusable physical model lives in `lindelion-wind` as `ReedDriver` plus `ReedTube`. The product crate owns patch serialization, the nine-parameter host surface, MIDI/key-switch policy, articulation-slot state, VST3 entry points, and editor plumbing.
 
-Non-goals in this product:
-
-- no dual resonator A/B design;
-- no modal/mesh/string selector;
-- no sidechain or streamed live excitation;
-- no Lamath modulation matrix;
-- no polyphonic wind body.
+The product boundary is a single monophonic wind voice: one reed, one bore, one register
+mechanism. Resonator selection, sidechain/streamed excitation, the Lamath modulation matrix, and
+polyphony stay in the original Lamath product.
 
 ---
 
@@ -56,20 +52,31 @@ The patch stores nine sound controls, three applied model switches, a selected a
 | `Register Break` | `register_break_note` | `48..96 MIDI note` | `69` |
 | `Brightness` | `brightness` | `0..1` | `0.52` |
 | `Damping` | `damping` | `0..1` | `0.28` |
-| `Bell` | `bell` | `0..1` | `1.0` |
+| `Bell` | `bell` | `0..1` | `0.5` |
 | `Output` | `output_gain_db` | `-24..12 dB` | `-8.0 dB` |
 
 The model-switch patch fields are:
 
 - `bell_enabled`;
 - `bore_steepening_enabled`;
-- `body_enabled`.
+- `body_enabled`;
+- `reed_radiation_enabled`;
+- `clarinet_contour_enabled` (internal legacy comparator, off in the shipped model).
 
 The editor also shows a `Reed` switch as physical-model scaffolding, but the current DSP keeps the reed enabled because this product is specifically a reed-driven tube.
 
 `Humanize` drives independent steady-state random walks for reed pressure, embouchure, and vocal-tract/body-formant voicing. `0.0` disables variance; `1.0` reaches an intentionally unmusical boundary for auditioning.
 
-`Register Break` sets the MIDI note where the Tube opens its register vent. Notes below the break use the sounding pitch as the bore fundamental. Notes at or above the break keep the sounding pitch but tune the bore as a third-mode pipe and open a side-hole shunt near one third of the bore length, mimicking the clarinet register key.
+`Register Break` sets the MIDI note where the Tube opens its register vent. Notes below the break use the sounding pitch as the bore fundamental. Notes at or above the break keep the sounding pitch but tune the bore as a third-mode pipe (sounding-to-bore ratio 2.994) and open a side-hole shunt near one third of the bore length, mimicking the clarinet register key. The vented register is a coordinated set of register-scoped mechanisms ([ADR-0049](../adr/0049-lamath-tube-register-key-voice.md)), all inert below the break:
+
+- the vent shunt is resistive everywhere except a zero-phase notch at the played mode (the register chimney's anti-resonance), so the bore fundamental stays suppressed while the played mode keeps its oscillation margin;
+- the register body color radiates from the reed's coherent source spectrum (a fourth-order h3 extraction plus an h4–h7 band window), because the vented bore's standing wave does not carry the sounding h3;
+- the in-loop breath dither and shed-jet turbulence stay out of the radiated paths above the break;
+- the reed aperture resonance tracks three times the sounding pitch (embouchure firming), keeping the reed's pumping gain constant up the register;
+- each vented note-on applies a tongue-release overpressure transient (toward 0.75 effective pressure, 70 ms decay, ceilinged at 0.78) so attacks bloom in ~70 ms;
+- the register fingering persists through release, so the vented bore rings down without retuning.
+
+The supported vented range is concert A4–G5 within ±2.4 cents at consistent levels; concert C6 and above speaks at altissimo-grade tuning.
 
 ---
 

@@ -424,6 +424,7 @@ mod tests {
                 channels: 1,
                 rms_db: None,
                 peak_db: None,
+                created_at_ms: None,
                 waveform_preview: SampleWaveformPreview { points: Vec::new() },
             },
             audio: RuntimeMonoAudioBuffer::from_owned(owned_audio),

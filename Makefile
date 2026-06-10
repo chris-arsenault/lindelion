@@ -231,6 +231,7 @@ build-windows: cache-dir
 		CARGO_TARGET_DIR="$(LINDELION_CARGO_TARGET_DIR)" \
 		CARGO_INCREMENTAL=1 \
 		XWIN_ACCEPT_LICENSE=1 \
+		CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$(CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS) -C link-arg=/FORCE:MULTIPLE" \
 		LINDELION_BUNDLE_DIR="$(VST3_STAGING_DIR)" \
 		cargo run -p xtask -- bundle "$$plugin" --target "$(WINDOWS_TARGET)" || exit 1; \
 		echo "Staged Windows VST3 bundle: $$staged_bundle"; \
@@ -306,6 +307,7 @@ release-windows: host-windows-release
 		CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
 		CARGO_INCREMENTAL=0 \
 		XWIN_ACCEPT_LICENSE=1 \
+		CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$(CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS) -C link-arg=/FORCE:MULTIPLE" \
 		LINDELION_BUNDLE_DIR="$(LINDELION_RELEASE_TARGET_DIR)/bundles" \
 		cargo run -p xtask -- bundle "$$plugin" --target "$(WINDOWS_TARGET)" || exit 1; \
 		echo "Staged Windows release VST3 bundle: $(LINDELION_RELEASE_TARGET_DIR)/bundles/$$bundle_name"; \

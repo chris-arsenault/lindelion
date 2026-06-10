@@ -9,6 +9,8 @@
 
 mod audio;
 mod diagnostics;
+// The MIDI ring's consumer is the Windows WinMM backend; the neutral build only compiles it.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod midi;
 mod session;
 mod ui;

@@ -5,6 +5,7 @@ pub mod patch;
 pub mod patch_io;
 #[cfg(feature = "vst3-entry")]
 pub mod plugin;
+pub mod presets;
 pub mod processor;
 #[cfg(feature = "vst3-entry")]
 mod vst3_entry;
@@ -14,6 +15,7 @@ pub use lindelion_plugin_metadata::LAMATH_CYMBAL_VST3_BUNDLE_METADATA as VST3_BU
 pub use patch::{CymbalPatch, CymbalStrikerPatch};
 #[cfg(feature = "vst3-entry")]
 pub use plugin::{DESCRIPTOR, LamathCymbal};
+pub use presets::{CYMBAL_PRESETS, CymbalPreset, active_preset_index};
 pub use processor::{
     CymbalProcessor, ExcitationSource as CymbalExcitationSource, STRIKER_NAMES, STRIKER_SLOT_COUNT,
 };

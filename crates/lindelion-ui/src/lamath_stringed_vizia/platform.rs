@@ -122,14 +122,6 @@ impl Signals {
             slots: Signal::new(host.articulations.surface.slot_list_view()),
         }
     }
-
-    fn refresh(self, host: &LamathStringedEditorHost) {
-        self.knobs.set(host.controls.knobs());
-        self.driver.set(host.controls.selected_driver());
-        self.body.set(host.controls.selected_body());
-        self.switches.set(host.controls.model_switches());
-        self.slots.set(host.articulations.surface.slot_list_view());
-    }
 }
 
 enum UiEvent {
@@ -181,6 +173,7 @@ impl Model for UiModel {
             }
             UiEvent::OpenSlot(slot) => {
                 self.slots.surface.select_slot(*slot);
+                self.signals.slots.set(self.slots.surface.slot_list_view());
                 self.pending_dialog = Some((
                     *slot,
                     PendingFileDialog::pick_file(wav_audio_dialog(Path::new("."), None)),
@@ -195,17 +188,17 @@ impl Model for UiModel {
                     match dialog.poll_path() {
                         Poll::Ready(Some(path)) => {
                             self.slots.surface.load_audio_file(*slot, &path);
+                            self.signals.slots.set(self.slots.surface.slot_list_view());
+                            self.signals.knobs.set(self.controls.knobs());
+                            self.signals.driver.set(self.controls.selected_driver());
+                            self.signals.body.set(self.controls.selected_body());
+                            self.signals.switches.set(self.controls.model_switches());
                             self.pending_dialog = None;
                         }
                         Poll::Ready(None) => self.pending_dialog = None,
                         Poll::Pending => {}
                     }
                 }
-                let host = LamathStringedEditorHost {
-                    controls: Arc::clone(&self.controls),
-                    articulations: self.slots.clone(),
-                };
-                self.signals.refresh(&host);
             }
         });
     }
@@ -409,7 +402,7 @@ fn slot_cell(cx: &mut Context, signals: Signals, index: usize) {
                 }),
             )
             .class("stringed-slot-source");
-        });
+        })
     })
     .class("stringed-slot")
     .toggle_class(

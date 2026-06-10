@@ -1,10 +1,12 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::path::Path;
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+use std::sync::RwLock;
 use std::{
     cell::{Cell, RefCell},
-    ffi::c_char,
     mem::MaybeUninit,
     ptr,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -13,23 +15,21 @@ use lindelion_plugin_shell::{
     AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
     ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
     vst3::{
-        Vst3BusInfo, Vst3ParameterInfo, Vst3ParameterMirror, can_process_32_bit_sample_size,
-        clear_vst_outputs, fill_vst3_bus_info, fill_vst3_parameter_info,
-        for_each_vst3_parameter_change, parse_vst3_plain_value_string, process_setup_from_vst,
+        Vst3BusInfo, Vst3ParameterMirror, can_process_32_bit_sample_size, clear_vst_outputs,
+        fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst,
         read_plugin_state_from_stream, stereo_output_buffers_from_vst_process_data,
         vst_event_to_midi, vst3_bus_count, write_plugin_state_to_stream,
-        write_vst3_parameter_string,
     },
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use lindelion_ui::lamath_stringed_vizia::{
-    LamathStringedBodyId, LamathStringedDriverId, LamathStringedSwitchId,
-};
+use lindelion_ui::lamath_stringed_vizia::LamathStringedSwitchId;
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+use lindelion_ui::lamath_stringed_vizia::{LamathStringedBodyId, LamathStringedDriverId};
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{LamathStringed, parameters};
 
-use super::{MAX_BLOCK_EVENTS, editor};
+use super::MAX_BLOCK_EVENTS;
 
 const STRINGED_BUSES: [Vst3BusInfo; 2] = [
     Vst3BusInfo::audio_output(2, "Output"),
@@ -39,8 +39,18 @@ const STRINGED_BUSES: [Vst3BusInfo; 2] = [
 pub(crate) struct LamathStringedVst3Processor {
     plugin: RefCell<LamathStringed>,
     setup: Cell<ShellProcessSetup>,
-    values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
-    handler: Cell<*mut IComponentHandler>,
+    pub(super) values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
+    pending_values: [AtomicU32; parameters::PARAMETER_COUNT],
+    pending_dirty: [AtomicBool; parameters::PARAMETER_COUNT],
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_driver: RwLock<LamathStringedDriverId>,
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_body: RwLock<LamathStringedBodyId>,
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_switches: RwLock<Vec<lindelion_ui::lamath_stringed_vizia::LamathStringedModelSwitch>>,
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_slots: RwLock<lindelion_ui::audio_file_slot::AudioFileSlotListView>,
+    pub(super) handler: Cell<*mut IComponentHandler>,
 }
 
 impl Class for LamathStringedVst3Processor {
@@ -64,61 +74,87 @@ impl LamathStringedVst3Processor {
         let setup = ShellProcessSetup::default();
         let mut plugin = LamathStringed::default();
         plugin.reset(setup);
+        let default_values = parameters::default_normalized_values();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_driver = plugin.selected_driver();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_body = plugin.selected_body();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_switches = plugin.model_switches();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_slots = plugin.articulation_slot_list_view();
         Self {
-            values: Vst3ParameterMirror::new(parameters::default_normalized_values()),
+            values: Vst3ParameterMirror::new(default_values),
+            pending_values: std::array::from_fn(|index| {
+                AtomicU32::new((default_values[index] as f32).to_bits())
+            }),
+            pending_dirty: std::array::from_fn(|_| AtomicBool::new(false)),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_driver: RwLock::new(editor_driver),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_body: RwLock::new(editor_body),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_switches: RwLock::new(editor_switches),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_slots: RwLock::new(editor_slots),
             plugin: RefCell::new(plugin),
             setup: Cell::new(setup),
             handler: Cell::new(ptr::null_mut()),
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn editor_knobs(
         &self,
     ) -> Vec<lindelion_ui::lamath_stringed_vizia::LamathStringedKnob> {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.editor_knobs())
-            .unwrap_or_default()
+        self.knobs_from_values()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn selected_driver(&self) -> LamathStringedDriverId {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.selected_driver())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let driver = plugin.selected_driver();
+            self.replace_editor_driver(driver);
+            return driver;
+        }
+        self.cached_editor_driver()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn selected_body(&self) -> LamathStringedBodyId {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.selected_body())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let body = plugin.selected_body();
+            self.replace_editor_body(body);
+            return body;
+        }
+        self.cached_editor_body()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn model_switches(
         &self,
     ) -> Vec<lindelion_ui::lamath_stringed_vizia::LamathStringedModelSwitch> {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.model_switches())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let switches = plugin.model_switches();
+            self.replace_editor_switches(switches.clone());
+            return switches;
+        }
+        self.cached_editor_switches()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn articulation_slot_list_view(
         &self,
     ) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.articulation_slot_list_view())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let slots = plugin.articulation_slot_list_view();
+            self.replace_editor_slots(slots.clone());
+            return slots;
+        }
+        self.cached_editor_slots()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn set_editor_parameter(&self, id: u32, normalized: f32) {
         let _ = self.set_value(id, f64::from(normalized));
         if let Some(handler) = unsafe { ComRef::from_raw(self.handler.get()) } {
@@ -136,6 +172,7 @@ impl LamathStringedVst3Processor {
             return;
         };
         plugin.set_driver(driver);
+        self.replace_editor_driver(plugin.selected_driver());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -145,6 +182,7 @@ impl LamathStringedVst3Processor {
             return;
         };
         plugin.set_body(body);
+        self.replace_editor_body(plugin.selected_body());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -154,6 +192,7 @@ impl LamathStringedVst3Processor {
             return;
         };
         plugin.set_model_switch(id, enabled);
+        self.replace_editor_switches(plugin.model_switches());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -161,6 +200,7 @@ impl LamathStringedVst3Processor {
     pub(super) fn select_articulation_slot(&self, slot: usize) {
         if let Ok(mut plugin) = self.plugin.try_borrow_mut() {
             plugin.select_articulation_slot(slot);
+            self.replace_editor_slots(plugin.articulation_slot_list_view());
         }
     }
 
@@ -172,6 +212,7 @@ impl LamathStringedVst3Processor {
         let _ = plugin.load_excitation_from_path(slot, path);
         self.values
             .replace(parameters::normalized_values_from_patch(plugin.patch()));
+        self.replace_editor_slots(plugin.articulation_slot_list_view());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -181,6 +222,7 @@ impl LamathStringedVst3Processor {
             return;
         };
         plugin.clear_excitation(slot);
+        self.replace_editor_slots(plugin.articulation_slot_list_view());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -213,7 +255,7 @@ impl LamathStringedVst3Processor {
         }
     }
 
-    fn set_value(&self, id: u32, normalized: f64) -> tresult {
+    pub(super) fn set_value(&self, id: u32, normalized: f64) -> tresult {
         let Some(index) = parameters::parameter_index(id) else {
             return kInvalidArgument;
         };
@@ -225,9 +267,11 @@ impl LamathStringedVst3Processor {
             return kInvalidArgument;
         };
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return kResultFalse;
+            self.queue_pending_value(index, value as f32);
+            return kResultOk;
         };
         if plugin.set_parameter_normalized(ParameterId(id), value as f32) {
+            self.clear_pending_value(index, value as f32);
             kResultOk
         } else {
             kInvalidArgument
@@ -238,6 +282,121 @@ impl LamathStringedVst3Processor {
         if let Ok(plugin) = self.plugin.try_borrow() {
             self.values
                 .replace(parameters::normalized_values_from_patch(plugin.patch()));
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_driver(plugin.selected_driver());
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_body(plugin.selected_body());
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_switches(plugin.model_switches());
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_slots(plugin.articulation_slot_list_view());
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn knobs_from_values(&self) -> Vec<lindelion_ui::lamath_stringed_vizia::LamathStringedKnob> {
+        let values = self.values.values();
+        parameters::PARAMETERS
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                let normalized = values[index] as f32;
+                lindelion_ui::lamath_stringed_vizia::LamathStringedKnob {
+                    id: parameter.id.0,
+                    label: parameter.name,
+                    units: parameter.units,
+                    normalized,
+                    plain: parameter.range.denormalize(normalized),
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_driver(&self) -> LamathStringedDriverId {
+        self.editor_driver
+            .read()
+            .map(|driver| *driver)
+            .unwrap_or_else(|poisoned| *poisoned.into_inner())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_driver(&self, driver: LamathStringedDriverId) {
+        match self.editor_driver.write() {
+            Ok(mut cached) => *cached = driver,
+            Err(poisoned) => *poisoned.into_inner() = driver,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_body(&self) -> LamathStringedBodyId {
+        self.editor_body
+            .read()
+            .map(|body| *body)
+            .unwrap_or_else(|poisoned| *poisoned.into_inner())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_body(&self, body: LamathStringedBodyId) {
+        match self.editor_body.write() {
+            Ok(mut cached) => *cached = body,
+            Err(poisoned) => *poisoned.into_inner() = body,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_switches(
+        &self,
+    ) -> Vec<lindelion_ui::lamath_stringed_vizia::LamathStringedModelSwitch> {
+        self.editor_switches
+            .read()
+            .map(|switches| switches.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_switches(
+        &self,
+        switches: Vec<lindelion_ui::lamath_stringed_vizia::LamathStringedModelSwitch>,
+    ) {
+        match self.editor_switches.write() {
+            Ok(mut cached) => *cached = switches,
+            Err(poisoned) => *poisoned.into_inner() = switches,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_slots(&self) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
+        self.editor_slots
+            .read()
+            .map(|slots| slots.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_slots(&self, slots: lindelion_ui::audio_file_slot::AudioFileSlotListView) {
+        match self.editor_slots.write() {
+            Ok(mut cached) => *cached = slots,
+            Err(poisoned) => *poisoned.into_inner() = slots,
+        }
+    }
+
+    fn queue_pending_value(&self, index: usize, normalized: f32) {
+        self.pending_values[index].store(normalized.to_bits(), Ordering::Release);
+        self.pending_dirty[index].store(true, Ordering::Release);
+    }
+
+    fn clear_pending_value(&self, index: usize, normalized: f32) {
+        self.pending_values[index].store(normalized.to_bits(), Ordering::Release);
+        self.pending_dirty[index].store(false, Ordering::Release);
+    }
+
+    fn apply_pending_values(&self, plugin: &mut LamathStringed) {
+        for (index, parameter) in parameters::PARAMETERS.iter().enumerate() {
+            if self.pending_dirty[index].swap(false, Ordering::AcqRel) {
+                let normalized = f32::from_bits(self.pending_values[index].load(Ordering::Acquire));
+                let _ = plugin.set_parameter_normalized(parameter.id, normalized);
+            }
         }
     }
 }
@@ -402,6 +561,7 @@ impl IAudioProcessorTrait for LamathStringedVst3Processor {
             buffer.clear();
             return kResultFalse;
         };
+        self.apply_pending_values(&mut plugin);
         plugin.process(ShellProcessContext::new(
             self.setup.get(),
             buffer,
@@ -421,100 +581,6 @@ impl IProcessContextRequirementsTrait for LamathStringedVst3Processor {
     }
 }
 
-impl IEditControllerTrait for LamathStringedVst3Processor {
-    unsafe fn setComponentState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::setState(self, state)
-    }
-
-    unsafe fn setState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::setState(self, state)
-    }
-
-    unsafe fn getState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::getState(self, state)
-    }
-
-    unsafe fn getParameterCount(&self) -> i32 {
-        parameters::PARAMETER_COUNT as i32
-    }
-
-    unsafe fn getParameterInfo(&self, param_index: i32, info: *mut ParameterInfo) -> tresult {
-        if info.is_null() || param_index < 0 {
-            return kInvalidArgument;
-        }
-        let Some(parameter) = parameters::parameter_by_index(param_index as usize) else {
-            return kInvalidArgument;
-        };
-        fill_vst3_parameter_info(Vst3ParameterInfo::from_parameter(parameter), info)
-    }
-
-    unsafe fn getParamStringByValue(
-        &self,
-        id: u32,
-        value_normalized: f64,
-        string: *mut String128,
-    ) -> tresult {
-        if string.is_null() {
-            return kInvalidArgument;
-        }
-        let Some(parameter) = parameters::parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
-        let plain = parameter.range.denormalize(value_normalized as f32);
-        write_vst3_parameter_string(&parameters::format_plain_value(id, plain), string)
-    }
-
-    unsafe fn getParamValueByString(
-        &self,
-        id: u32,
-        string: *mut TChar,
-        value_normalized: *mut f64,
-    ) -> tresult {
-        if string.is_null() || value_normalized.is_null() {
-            return kInvalidArgument;
-        }
-        let Some(plain) = parse_vst3_plain_value_string(string) else {
-            return kInvalidArgument;
-        };
-        let Some(parameter) = parameters::parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
-        *value_normalized = f64::from(parameter.range.normalize(plain));
-        kResultOk
-    }
-
-    unsafe fn normalizedParamToPlain(&self, id: u32, value_normalized: f64) -> f64 {
-        parameters::parameter_by_id(id)
-            .map(|parameter| f64::from(parameter.range.denormalize(value_normalized as f32)))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn plainParamToNormalized(&self, id: u32, plain_value: f64) -> f64 {
-        parameters::parameter_by_id(id)
-            .map(|parameter| f64::from(parameter.range.normalize(plain_value as f32)))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn getParamNormalized(&self, id: u32) -> f64 {
-        parameters::parameter_index(id)
-            .and_then(|index| self.values.value(index))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn setParamNormalized(&self, id: u32, value: f64) -> tresult {
-        self.set_value(id, value)
-    }
-
-    unsafe fn setComponentHandler(&self, handler: *mut IComponentHandler) -> tresult {
-        self.handler.set(handler);
-        kResultOk
-    }
-
-    unsafe fn createView(&self, _name: *const c_char) -> *mut IPlugView {
-        editor::create_editor_view(self)
-    }
-}
-
 fn empty_midi_event() -> MidiEvent {
     MidiEvent::Note(lindelion_plugin_shell::NoteEvent::Off {
         channel: 0,
@@ -524,35 +590,4 @@ fn empty_midi_event() -> MidiEvent {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reports_output_and_midi_buses() {
-        assert_eq!(
-            vst3_bus_count(
-                &STRINGED_BUSES,
-                MediaTypes_::kAudio as MediaType,
-                BusDirections_::kOutput as BusDirection,
-            ),
-            1
-        );
-        assert_eq!(
-            vst3_bus_count(
-                &STRINGED_BUSES,
-                MediaTypes_::kEvent as MediaType,
-                BusDirections_::kInput as BusDirection,
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn exposes_sparse_parameter_count() {
-        let processor = LamathStringedVst3Processor::new();
-        assert_eq!(
-            unsafe { processor.getParameterCount() },
-            parameters::PARAMETER_COUNT as i32
-        );
-    }
-}
+mod tests;

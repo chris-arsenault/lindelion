@@ -89,6 +89,10 @@ impl BiquadCoefficients {
         rbj(sample_rate, cutoff_hz, q, BiquadKind::Bandpass)
     }
 
+    pub fn notch(sample_rate: f32, cutoff_hz: f32, q: f32) -> Self {
+        rbj(sample_rate, cutoff_hz, q, BiquadKind::Notch)
+    }
+
     pub fn low_shelf(sample_rate: f32, cutoff_hz: f32, gain_db: f32) -> Self {
         rbj_shelf_peak(
             sample_rate,
@@ -127,6 +131,7 @@ enum BiquadKind {
     Lowpass,
     Highpass,
     Bandpass,
+    Notch,
 }
 
 fn rbj(sample_rate: f32, cutoff_hz: f32, q: f32, kind: BiquadKind) -> BiquadCoefficients {
@@ -142,6 +147,7 @@ fn rbj(sample_rate: f32, cutoff_hz: f32, q: f32, kind: BiquadKind) -> BiquadCoef
         BiquadKind::Lowpass => ((1.0 - cos) * 0.5, 1.0 - cos, (1.0 - cos) * 0.5),
         BiquadKind::Highpass => ((1.0 + cos) * 0.5, -(1.0 + cos), (1.0 + cos) * 0.5),
         BiquadKind::Bandpass => (alpha, 0.0, -alpha),
+        BiquadKind::Notch => (1.0, -2.0 * cos, 1.0),
     };
 
     let a0 = 1.0 + alpha;

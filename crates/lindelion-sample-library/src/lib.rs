@@ -265,6 +265,10 @@ pub struct SampleMetadata {
     pub channels: u16,
     pub rms_db: Option<f32>,
     pub peak_db: Option<f32>,
+    /// Unix epoch milliseconds (UTC) when this sample was first ingested into
+    /// the library. `None` for freshly decoded samples not yet stored, and for
+    /// legacy rows recorded before the column existed.
+    pub created_at_ms: Option<u64>,
     pub waveform_preview: SampleWaveformPreview,
 }
 
@@ -311,6 +315,7 @@ impl SampleMetadata {
             channels: audio.channels,
             rms_db: amplitude_db(rms),
             peak_db: amplitude_db(peak),
+            created_at_ms: None,
             waveform_preview: SampleWaveformPreview::from_samples(&audio.samples, preview_points),
         }
     }

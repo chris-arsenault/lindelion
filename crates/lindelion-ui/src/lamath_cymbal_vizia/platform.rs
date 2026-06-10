@@ -1,110 +1,61 @@
 use std::{ffi::c_void, path::Path, sync::Arc, task::Poll, time::Duration};
 
-use vizia::{ParentWindow, WindowHandle, WindowScalePolicy, prelude::*};
+use vizia::{WindowScalePolicy, prelude::*};
 
 use super::{
     LAMATH_CYMBAL_EDITOR_HEIGHT, LAMATH_CYMBAL_EDITOR_WIDTH, LamathCymbalControlSurface,
-    LamathCymbalEditorHost, LamathCymbalEditorSize, LamathCymbalKnob,
+    LamathCymbalEditorHost, LamathCymbalEditorSize, LamathCymbalKnob, LamathCymbalPerformance,
+    LamathCymbalPreset,
 };
 use crate::{
     audio_file_slot::{
         AudioFileSlotId, AudioFileSlotListHost, AudioFileSlotListView, AudioFileSource,
     },
     vizia_file_dialogs::{PendingFileDialog, wav_audio_dialog},
+    vizia_window::ViziaWindowEditor,
 };
 
-const STYLE: &str = r#"
-    .cymbal-root {
-        background-color: #101418;
-        width: 1s;
-        height: 1s;
-        padding: 16px;
-        vertical-gap: 14px;
-    }
-    .cymbal-title { color: #dce2e0; font-size: 22px; }
-    .cymbal-subtitle { color: #8e9a98; font-size: 12px; }
-    .cymbal-panel {
-        background-color: #171d20;
-        border-width: 1px;
-        border-color: #30383a;
-        border-radius: 6px;
-        padding: 10px;
-        vertical-gap: 8px;
-    }
-    .cymbal-section { color: #9aa8a4; font-size: 13px; }
-    .cymbal-knob-grid { horizontal-gap: 12px; vertical-gap: 10px; }
-    .cymbal-knob-cell { width: 70px; vertical-gap: 4px; alignment: center; }
-    .cymbal-knob { width: 44px; height: 44px; }
-    .cymbal-knob .knob-track { color: #c99c45; background-color: #2b3032; }
-    .cymbal-knob .knob-head {
-        background-color: #1e2426;
-        border-width: 1px;
-        border-color: #65706d;
-        color: #f1e8d4;
-    }
-    .cymbal-knob:hover .knob-head { border-color: #e2d6be; }
-    .cymbal-knob .knob-tick {
-        background-color: #f1e8d4;
-        width: 2px;
-        height: 9px;
-        corner-radius: 1px;
-    }
-    .cymbal-knob-label { color: #cbd3d0; font-size: 11px; text-align: center; }
-    .cymbal-knob-value { color: #8e9a98; font-size: 10px; text-align: center; }
-    .cymbal-slot-row { horizontal-gap: 8px; }
-    .cymbal-slot {
-        background-color: #202729;
-        border-width: 1px;
-        border-color: #3a4446;
-        border-radius: 5px;
-        width: 92px;
-        height: 58px;
-        padding: 5px;
-        vertical-gap: 2px;
-    }
-    .cymbal-slot-selected { border-color: #c99c45; }
-    .cymbal-slot-key { color: #92a09c; font-size: 10px; text-align: center; }
-    .cymbal-slot-label { color: #dde5e0; font-size: 10px; text-align: center; }
-    .cymbal-slot-source { color: #7f908a; font-size: 10px; text-align: center; }
-    .cymbal-action-row { horizontal-gap: 8px; alignment: center; }
-    .cymbal-selected-label { color: #d3ded8; width: 300px; }
-    .cymbal-button {
-        background-color: #232a2d;
-        border-radius: 5px;
-        border-width: 1px;
-        border-color: #3a4446;
-        color: #dce2e0;
-        padding: 6px;
-        width: 72px;
-    }
-    .cymbal-button:hover { border-color: #c99c45; }
-"#;
+mod theme;
+
+use theme::{CYMBAL_SVG, STYLE};
 
 #[derive(Clone, Copy)]
 struct CymbalSignals {
     knobs: Signal<Vec<LamathCymbalKnob>>,
     slots: Signal<AudioFileSlotListView>,
+    presets: Signal<Vec<LamathCymbalPreset>>,
+    preset_names: Signal<Vec<String>>,
+    active_preset: Signal<Option<usize>>,
+    performance: Signal<LamathCymbalPerformance>,
+    tab: Signal<usize>,
 }
 
 impl CymbalSignals {
     fn from_host(host: &LamathCymbalEditorHost) -> Self {
+        let presets = host.controls.presets();
+        let preset_names = presets
+            .iter()
+            .map(|preset| preset.name.to_string())
+            .collect();
         Self {
             knobs: Signal::new(host.controls.knobs()),
             slots: Signal::new(host.strikers.surface.slot_list_view()),
+            presets: Signal::new(presets),
+            preset_names: Signal::new(preset_names),
+            active_preset: Signal::new(host.controls.active_preset()),
+            performance: Signal::new(host.controls.performance()),
+            tab: Signal::new(0),
         }
-    }
-
-    fn sync(self, host: &LamathCymbalEditorHost) {
-        self.knobs.set(host.controls.knobs());
-        self.slots.set(host.strikers.surface.slot_list_view());
     }
 }
 
 enum CymbalEvent {
     SetKnob { id: u32, normalized: f32 },
+    ApplyPreset(usize),
     SelectSlot(AudioFileSlotId),
     OpenSlotDialog(AudioFileSlotId),
     ClearSlot(AudioFileSlotId),
+    ResetPerformance,
     Sync,
 }
 
@@ -121,6 +72,16 @@ impl Model for CymbalModel {
             CymbalEvent::SetKnob { id, normalized } => {
                 self.controls.set_knob_normalized(*id, *normalized);
                 self.signals.knobs.set(self.controls.knobs());
+                self.signals
+                    .active_preset
+                    .set(self.controls.active_preset());
+            }
+            CymbalEvent::ApplyPreset(index) => {
+                self.controls.apply_preset(*index);
+                self.signals.knobs.set(self.controls.knobs());
+                self.signals
+                    .active_preset
+                    .set(self.controls.active_preset());
             }
             CymbalEvent::SelectSlot(slot) => {
                 self.strikers.surface.select_slot(*slot);
@@ -130,6 +91,9 @@ impl Model for CymbalModel {
             }
             CymbalEvent::OpenSlotDialog(slot) => {
                 self.strikers.surface.select_slot(*slot);
+                self.signals
+                    .slots
+                    .set(self.strikers.surface.slot_list_view());
                 self.pending_dialog = Some((
                     *slot,
                     PendingFileDialog::pick_file(wav_audio_dialog(Path::new("."), None)),
@@ -141,22 +105,34 @@ impl Model for CymbalModel {
                     .slots
                     .set(self.strikers.surface.slot_list_view());
             }
+            CymbalEvent::ResetPerformance => {
+                self.controls.reset_performance();
+                self.signals.performance.set(self.controls.performance());
+            }
             CymbalEvent::Sync => {
+                // The audio-thread load changes independently of UI events, so the performance
+                // signal is the one thing that must be polled every tick.
+                let performance = self.controls.performance();
+                if self.signals.performance.get() != performance {
+                    self.signals.performance.set(performance);
+                }
                 if let Some((slot, dialog)) = self.pending_dialog.as_mut() {
                     match dialog.poll_path() {
                         Poll::Ready(Some(path)) => {
                             self.strikers.surface.load_audio_file(*slot, &path);
+                            self.signals
+                                .slots
+                                .set(self.strikers.surface.slot_list_view());
+                            self.signals.knobs.set(self.controls.knobs());
+                            self.signals
+                                .active_preset
+                                .set(self.controls.active_preset());
                             self.pending_dialog = None;
                         }
                         Poll::Ready(None) => self.pending_dialog = None,
                         Poll::Pending => {}
                     }
                 }
-                let host = LamathCymbalEditorHost {
-                    controls: Arc::clone(&self.controls),
-                    strikers: self.strikers.clone(),
-                };
-                self.signals.sync(&host);
             }
         });
     }
@@ -164,9 +140,154 @@ impl Model for CymbalModel {
 
 fn build_editor(cx: &mut Context, signals: CymbalSignals) {
     VStack::new(cx, move |cx| {
-        Label::new(cx, "Lamath Cymbal").class("cymbal-title");
-        Label::new(cx, "Shared body idiophone").class("cymbal-subtitle");
+        header(cx, signals);
+        basic_pane(cx, signals);
+        advanced_pane(cx, signals);
+    })
+    .class("cymbal-root");
+}
 
+fn header(cx: &mut Context, signals: CymbalSignals) {
+    HStack::new(cx, move |cx| {
+        VStack::new(cx, |cx| {
+            Label::new(cx, "Lamath Cymbal").class("cymbal-title");
+            Label::new(cx, "Shared body idiophone").class("cymbal-subtitle");
+        })
+        .class("cymbal-title-block");
+        performance_indicator(cx, signals);
+        tab_strip(cx, signals);
+    })
+    .class("cymbal-header")
+    .alignment(Alignment::Center);
+}
+
+/// Audio-thread load meter. A low bar with sound problems points at the voice; a full bar or a
+/// rising xrun count points at buffer underruns. Severity classes recolor the bar/text.
+fn performance_indicator(cx: &mut Context, signals: CymbalSignals) {
+    let perf = signals.performance;
+    HStack::new(cx, move |cx| {
+        VStack::new(cx, move |cx| {
+            Label::new(cx, "DSP LOAD").class("cymbal-perf-cap");
+            HStack::new(cx, move |cx| {
+                Element::new(cx)
+                    .class("cymbal-perf-fill")
+                    .toggle_class(
+                        "cymbal-perf-warn",
+                        Memo::new(move |_| perf_level(perf) == 1),
+                    )
+                    .toggle_class("cymbal-perf-bad", Memo::new(move |_| perf_level(perf) == 2))
+                    .width(Memo::new(move |_| {
+                        Units::Percentage((perf.get().load * 100.0).clamp(0.0, 100.0))
+                    }));
+            })
+            .class("cymbal-perf-track");
+            Label::new(cx, Memo::new(move |_| perf_text(perf.get())))
+                .class("cymbal-perf-text")
+                .toggle_class(
+                    "cymbal-perf-warn",
+                    Memo::new(move |_| perf_level(perf) == 1),
+                )
+                .toggle_class("cymbal-perf-bad", Memo::new(move |_| perf_level(perf) == 2));
+        })
+        .class("cymbal-perf-readout");
+        Button::new(cx, |cx| {
+            Label::new(cx, "Reset").alignment(Alignment::Center)
+        })
+        .class("cymbal-perf-reset")
+        .on_press(|cx| cx.emit(CymbalEvent::ResetPerformance));
+    })
+    .class("cymbal-perf")
+    .alignment(Alignment::Center);
+}
+
+/// Severity of the current load reading: 0 healthy, 1 tight, 2 overrunning. Any recorded dropout
+/// latches the worst level so a transient xrun stays visible.
+fn perf_level(perf: Signal<LamathCymbalPerformance>) -> u32 {
+    let perf = perf.get();
+    if perf.xruns > 0 || perf.peak_load >= 1.0 {
+        2
+    } else if perf.load >= 0.7 || perf.peak_load >= 0.85 {
+        1
+    } else {
+        0
+    }
+}
+
+fn perf_text(perf: LamathCymbalPerformance) -> String {
+    format!(
+        "{:.0}%  ·  pk {:.0}%  ·  xruns {}",
+        perf.load * 100.0,
+        perf.peak_load * 100.0,
+        perf.xruns
+    )
+}
+
+fn tab_strip(cx: &mut Context, signals: CymbalSignals) {
+    HStack::new(cx, move |cx| {
+        tab_button(cx, signals, 0, "Basic");
+        tab_button(cx, signals, 1, "Advanced");
+    })
+    .class("cymbal-tabs")
+    .alignment(Alignment::Center);
+}
+
+fn tab_button(cx: &mut Context, signals: CymbalSignals, index: usize, label: &'static str) {
+    Button::new(cx, move |cx| {
+        Label::new(cx, label).alignment(Alignment::Center)
+    })
+    .class("cymbal-tab")
+    .toggle_class(
+        "cymbal-tab-active",
+        Memo::new(move |_| signals.tab.get() == index),
+    )
+    .on_press(move |_| signals.tab.set(index));
+}
+
+fn basic_pane(cx: &mut Context, signals: CymbalSignals) {
+    VStack::new(cx, move |cx| {
+        HStack::new(cx, move |cx| {
+            VStack::new(cx, |cx| {
+                Svg::new(cx, CYMBAL_SVG).class("cymbal-image");
+            })
+            .class("cymbal-image-frame");
+
+            VStack::new(cx, move |cx| {
+                Label::new(cx, "Voice").class("cymbal-section");
+                Select::new(cx, signals.preset_names, signals.active_preset, true)
+                    .class("cymbal-select")
+                    .placeholder("Custom")
+                    .on_select(move |cx, index| cx.emit(CymbalEvent::ApplyPreset(index)));
+                Label::new(cx, preset_description_memo(signals)).class("cymbal-voice-desc");
+                Label::new(
+                    cx,
+                    "Pick a cymbal voice, then fine-tune it on the Advanced tab.",
+                )
+                .class("cymbal-voice-hint");
+            })
+            .class("cymbal-voice-col");
+        })
+        .class("cymbal-basic-top");
+
+        strikers_panel(cx, signals);
+    })
+    .class("cymbal-pane")
+    .display(Memo::new(move |_| signals.tab.get() == 0));
+}
+
+fn preset_description_memo(signals: CymbalSignals) -> impl Res<String> + Clone {
+    Memo::new(move |_| match signals.active_preset.get() {
+        Some(index) => signals
+            .presets
+            .get()
+            .get(index)
+            .map(|preset| preset.description.to_string())
+            .unwrap_or_default(),
+        None => "Custom voice — adjust the controls on the Advanced tab.".to_string(),
+    })
+}
+
+fn advanced_pane(cx: &mut Context, signals: CymbalSignals) {
+    VStack::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
             Label::new(cx, "Body").class("cymbal-section");
             HStack::new(cx, move |cx| {
@@ -178,19 +299,26 @@ fn build_editor(cx: &mut Context, signals: CymbalSignals) {
         })
         .class("cymbal-panel");
 
-        VStack::new(cx, move |cx| {
-            Label::new(cx, "Sticks / Mallets").class("cymbal-section");
-            HStack::new(cx, move |cx| {
-                for index in 0..4 {
-                    slot_cell(cx, signals, index);
-                }
-            })
-            .class("cymbal-slot-row");
-            selected_slot_actions(cx, signals);
-        })
-        .class("cymbal-panel");
+        strikers_panel(cx, signals);
     })
-    .class("cymbal-root");
+    .class("cymbal-pane")
+    .display(Memo::new(move |_| signals.tab.get() == 1));
+}
+
+/// The shared striker/mallet panel. It lives on both tabs: a preset only changes the body knobs, so
+/// the player should always be able to pick and load strikers.
+fn strikers_panel(cx: &mut Context, signals: CymbalSignals) {
+    VStack::new(cx, move |cx| {
+        Label::new(cx, "Sticks / Mallets").class("cymbal-section");
+        HStack::new(cx, move |cx| {
+            for index in 0..4 {
+                slot_cell(cx, signals, index);
+            }
+        })
+        .class("cymbal-slot-row");
+        selected_slot_actions(cx, signals);
+    })
+    .class("cymbal-panel");
 }
 
 fn knob_cell(cx: &mut Context, signals: CymbalSignals, index: usize) {
@@ -276,7 +404,7 @@ fn slot_cell(cx: &mut Context, signals: CymbalSignals, index: usize) {
                 }),
             )
             .class("cymbal-slot-source");
-        });
+        })
     })
     .class("cymbal-slot")
     .toggle_class(
@@ -301,14 +429,17 @@ fn selected_slot_actions(cx: &mut Context, signals: CymbalSignals) {
             }),
         )
         .class("cymbal-selected-label");
-        Button::new(cx, |cx| Label::new(cx, "Load"))
+        Button::new(cx, |cx| Label::new(cx, "Load").alignment(Alignment::Center))
             .class("cymbal-button")
             .on_press(move |cx| cx.emit(CymbalEvent::OpenSlotDialog(signals.slots.get().selected)));
-        Button::new(cx, |cx| Label::new(cx, "Clear"))
-            .class("cymbal-button")
-            .on_press(move |cx| cx.emit(CymbalEvent::ClearSlot(signals.slots.get().selected)));
+        Button::new(cx, |cx| {
+            Label::new(cx, "Clear").alignment(Alignment::Center)
+        })
+        .class("cymbal-button")
+        .on_press(move |cx| cx.emit(CymbalEvent::ClearSlot(signals.slots.get().selected)));
     })
-    .class("cymbal-action-row");
+    .class("cymbal-action-row")
+    .alignment(Alignment::Center);
 }
 
 fn source_label(source: AudioFileSource) -> String {
@@ -358,9 +489,7 @@ fn build_application(
     .with_scale_policy(WindowScalePolicy::ScaleFactor(1.0))
 }
 
-pub struct LamathCymbalViziaEditor {
-    window: WindowHandle,
-}
+pub struct LamathCymbalViziaEditor(#[allow(dead_code)] ViziaWindowEditor);
 
 impl LamathCymbalViziaEditor {
     /// # Safety
@@ -370,16 +499,12 @@ impl LamathCymbalViziaEditor {
         host: LamathCymbalEditorHost,
         size: LamathCymbalEditorSize,
     ) -> Self {
-        let parent = ParentWindow(parent);
-        let window = build_application(host, size).open_parented(&parent);
-        Self { window }
-    }
-}
-
-impl Drop for LamathCymbalViziaEditor {
-    fn drop(&mut self) {
-        if self.window.is_open() {
-            self.window.close();
-        }
+        crate::vizia_window::debug_log(format!(
+            "lamath-cymbal-vizia: attach begin parent=0x{:x} size={}x{}",
+            parent as usize, size.width, size.height
+        ));
+        let application = build_application(host, size);
+        crate::vizia_window::debug_log("lamath-cymbal-vizia: application built");
+        Self(unsafe { ViziaWindowEditor::attach(parent, application) })
     }
 }

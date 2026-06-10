@@ -4,6 +4,7 @@
 //! validated plucked/bowed string waveguide, body coupling, and driver kernels.
 
 mod body;
+mod bow;
 mod core;
 mod dispersion;
 mod driver;
@@ -11,8 +12,8 @@ mod model;
 mod traveling;
 
 pub use body::StringBodyMode;
-pub use driver::{BowParams, PickParams, StringDriver, StringDriverMode};
-pub use model::{StringModel, StringModelParams, StringModelSwitches};
+pub use driver::{BowContactDrive, BowParams, PickParams, StringDriver, StringDriverMode};
+pub use model::{StringModel, StringModelParams, StringModelProbe, StringModelSwitches};
 
 pub(crate) const DSP_FALLBACK_SAMPLE_RATE: f32 = 48_000.0;
 pub(crate) const LOWEST_STRING_FREQUENCY_HZ: f32 = 20.0;

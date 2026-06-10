@@ -1,13 +1,22 @@
-use lindelion_dsp_utils::{db_to_gain, energy::EnergyFollower, math::midi_note_to_hz};
+use lindelion_dsp_utils::{
+    db_to_gain,
+    energy::EnergyFollower,
+    math::midi_note_to_hz,
+    variance::{self, SmoothNoise},
+};
 use lindelion_plugin_shell::{MidiEvent, NoteEvent};
 use lindelion_string::{
     BowParams, PickParams, StringBodyMode, StringDriver, StringDriverMode, StringModel,
-    StringModelParams, StringModelSwitches,
+    StringModelParams, StringModelProbe, StringModelSwitches,
 };
 
 use crate::patch::{BodySelection, DriverSelection, StringPatch};
 
 pub const ARTICULATION_SLOT_COUNT: usize = 8;
+
+mod variance_source;
+
+use variance_source::*;
 
 const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
 const BUILTIN_SAMPLE_RATE: f32 = 48_000.0;
@@ -20,6 +29,29 @@ const MIN_LOOP_GAIN: f32 = 0.90;
 const MAX_LOOP_GAIN: f32 = 0.996;
 const STRING_OUTPUT_LIMIT: f32 = 1.0;
 
+// Humanization: the player's inputs drift, the physics stays untouched. Each
+// axis is a slow random walk (`lindelion-dsp-utils::variance::SmoothNoise`)
+// with its own individually-tuned full-depth range; the single `humanize`
+// patch knob scales all of them linked (the Tube's humanize pattern).
+//
+// Left hand (both drivers): intonation wander — the finger never lands or
+// holds perfectly still; it offsets the played target frequency, which the
+// bowed intonation servo then *follows* (it pulls the sounding pitch to the
+// wandered target rather than fighting it). Contact-position wander — where
+// the bow rides or the pick strikes drifts along the string; the bow reads
+// the walk continuously, the pluck samples it at each note-on (per-note
+// scatter from the same source).
+//
+// Right hand (bow only): bow-speed and bow-pressure drift — the arm never
+// holds constant velocity or weight. Depths keep the default smooth bow well
+// inside the Schelleng cone at full humanize (guarded by test).
+// Knob law: 50% is the nominal, intended humanization; 100% approaches the
+// unmusical. The NOMINAL_* depths below are the 50% sound (audition-approved).
+// Above 50% the three Schelleng axes (pressure/speed/position) grow to
+// 1.5x nominal, putting the *worst-case* simultaneous walk corner right at
+// the crush boundary (N/N_max ~ 1.0; the effort scale cancels out of the
+// ratio) — rare brushes of crunch, not residence in it. Intonation grows
+// linearly to 2x nominal (+/-8 cents) at full.
 pub const ARTICULATION_NAMES: [&str; ARTICULATION_SLOT_COUNT] = [
     "Pick",
     "Sforzando",
@@ -133,6 +165,12 @@ pub struct StringProcessor<'a> {
     gate_coeff: f32,
     energy: EnergyFollower,
     energy_value: f32,
+    variance_source: StringVarianceSource,
+    variance_offsets: StringVarianceOffsets,
+    // Contact-position wander sampled at note-on: the pluck's per-note strike
+    // scatter, held for the duration of the note (the bow reads the walk
+    // continuously instead).
+    note_strike_offset: f32,
 }
 
 impl<'a> StringProcessor<'a> {
@@ -163,6 +201,9 @@ impl<'a> StringProcessor<'a> {
             gate_coeff: gate_coeff(model_sample_rate),
             energy: EnergyFollower::new(model_sample_rate),
             energy_value: 0.0,
+            variance_source: StringVarianceSource::new(model_sample_rate),
+            variance_offsets: StringVarianceOffsets::default(),
+            note_strike_offset: 0.0,
         }
     }
 
@@ -181,19 +222,46 @@ impl<'a> StringProcessor<'a> {
         self.gate_coeff = gate_coeff(self.model_sample_rate);
         self.energy = EnergyFollower::new(self.model_sample_rate);
         self.energy_value = 0.0;
+        self.variance_source = StringVarianceSource::new(self.model_sample_rate);
+        self.variance_offsets = StringVarianceOffsets::default();
+        self.note_strike_offset = 0.0;
     }
 
     pub fn set_patch(&mut self, patch: StringPatch) {
         self.patch = patch.sanitized();
         self.selected_slot = self.patch.selected_articulation;
         let next_mode = active_driver_mode(&self.patch);
-        if next_mode != self.driver_mode {
+        if next_mode == self.driver_mode {
+            self.driver
+                .set_params(pick_params(&self.patch), bow_params(&self.patch));
+        } else {
             self.driver = string_driver(next_mode, &self.patch, self.model_sample_rate);
             self.driver_mode = next_mode;
         }
     }
 
     pub fn process(&mut self, events: &[MidiEvent], left: &mut [f32], right: &mut [f32]) {
+        self.process_internal(events, left, right, None);
+    }
+
+    pub fn process_with_probe(
+        &mut self,
+        events: &[MidiEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        probes: &mut [StringModelProbe],
+    ) {
+        probes.fill(StringModelProbe::default());
+        self.process_internal(events, left, right, Some(probes));
+    }
+
+    fn process_internal(
+        &mut self,
+        events: &[MidiEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        mut probes: Option<&mut [StringModelProbe]>,
+    ) {
         left.fill(0.0);
         right.fill(0.0);
         self.handle_events(events);
@@ -201,12 +269,22 @@ impl<'a> StringProcessor<'a> {
         let len = left.len().min(right.len());
         for frame in 0..len {
             let mut sample = 0.0;
+            let mut probe_sum = StringModelProbe::default();
             for _ in 0..OVERSAMPLE_FACTOR {
-                sample += self.process_model_sample();
+                let (model_sample, model_probe) =
+                    self.process_model_sample_with_probe(probes.is_some());
+                sample += model_sample;
+                add_probe(&mut probe_sum, model_probe);
             }
             sample = soft_limit(sample * output_gain / OVERSAMPLE_FACTOR as f32);
             left[frame] = sample;
             right[frame] = sample;
+            if let Some(probe_buffer) = probes.as_deref_mut()
+                && let Some(probe) = probe_buffer.get_mut(frame)
+            {
+                scale_probe(&mut probe_sum, 1.0 / OVERSAMPLE_FACTOR as f32);
+                *probe = probe_sum;
+            }
         }
     }
 
@@ -239,6 +317,16 @@ impl<'a> StringProcessor<'a> {
     }
 
     fn note_on(&mut self, note: u8, velocity: f32) {
+        // Note overlap is the legato/rearticulation seam: a note arriving while
+        // another is held continues the current bow stroke (legato — only the
+        // stopped length moves); a note from silence starts a fresh stroke in
+        // the opposite direction.
+        if self.current_note.is_none() {
+            self.driver.flip_bow_stroke();
+        }
+        // Sample the contact-position walk at the strike: per-note scatter of
+        // where the pick lands, held for the note's duration.
+        self.note_strike_offset = self.variance_offsets.position;
         self.current_note = Some(note);
         self.frequency_hz = midi_note_to_hz(note as f32);
         self.effort = velocity.clamp(0.0, 1.0);
@@ -258,25 +346,73 @@ impl<'a> StringProcessor<'a> {
         }
     }
 
-    fn process_model_sample(&mut self) -> f32 {
+    fn process_model_sample_with_probe(&mut self, collect_probe: bool) -> (f32, StringModelProbe) {
         self.drive_gate += (self.drive_target - self.drive_gate) * self.gate_coeff;
-        self.string.set_tension_drive(self.energy_value);
+        // Tension modulation reads the string's own stored energy inside the
+        // model; only the source↔body balance still rides the output-energy bus.
         self.string.set_balance_drive(self.energy_value);
+        self.variance_offsets = self
+            .variance_source
+            .process(StringSteadyVariance::from_humanize(self.patch.humanize));
 
         let excitation = self.injector.process();
-        let feedback = self.string.driven_feedback();
-        let drive = self
-            .driver
-            .process(excitation, self.effort, feedback, self.drive_gate);
-        let output = self
-            .string
-            .process(drive, string_params(&self.patch, self.frequency_hz));
+        let drive = self.driver.process_excitation(excitation, self.effort);
+        let bow_contact = self.driver.bow_contact(
+            self.effort,
+            self.drive_gate,
+            self.variance_offsets.position,
+            self.variance_offsets.speed,
+            self.variance_offsets.pressure,
+        );
+        // Left-hand intonation wander moves the played target itself; the bowed
+        // intonation servo follows the wandered target instead of fighting it.
+        let frequency_hz =
+            self.frequency_hz * (1.0 + CENTS_TO_RATIO * self.variance_offsets.intonation_cents);
+        let params = string_params(&self.patch, frequency_hz, self.note_strike_offset);
+        let (output, probe) = if collect_probe {
+            self.string
+                .process_with_bow_contact_probe(drive, params, bow_contact)
+        } else {
+            (
+                self.string
+                    .process_with_bow_contact(drive, params, bow_contact),
+                StringModelProbe::default(),
+            )
+        };
         self.energy_value = self.energy.observe(output);
-        output
+        (output, probe)
     }
 }
 
-fn string_params(patch: &StringPatch, frequency_hz: f32) -> StringModelParams {
+fn add_probe(accumulator: &mut StringModelProbe, probe: StringModelProbe) {
+    accumulator.pickup_tap += probe.pickup_tap;
+    accumulator.body_radiated += probe.body_radiated;
+    accumulator.weighted_pickup += probe.weighted_pickup;
+    accumulator.weighted_body += probe.weighted_body;
+    accumulator.pickup_weight += probe.pickup_weight;
+    accumulator.body_weight += probe.body_weight;
+    accumulator.output += probe.output;
+    accumulator.bow_force += probe.bow_force;
+    accumulator.bow_wave_correction += probe.bow_wave_correction;
+    accumulator.current_frequency_hz += probe.current_frequency_hz;
+    accumulator.one_way_delay_samples += probe.one_way_delay_samples;
+}
+
+fn scale_probe(probe: &mut StringModelProbe, scale: f32) {
+    probe.pickup_tap *= scale;
+    probe.body_radiated *= scale;
+    probe.weighted_pickup *= scale;
+    probe.weighted_body *= scale;
+    probe.pickup_weight *= scale;
+    probe.body_weight *= scale;
+    probe.output *= scale;
+    probe.bow_force *= scale;
+    probe.bow_wave_correction *= scale;
+    probe.current_frequency_hz *= scale;
+    probe.one_way_delay_samples *= scale;
+}
+
+fn string_params(patch: &StringPatch, frequency_hz: f32, strike_offset: f32) -> StringModelParams {
     StringModelParams {
         frequency_hz,
         loop_filter_cutoff_hz: brightness_hz(patch.brightness),
@@ -284,7 +420,9 @@ fn string_params(patch: &StringPatch, frequency_hz: f32) -> StringModelParams {
         loop_gain: loop_gain_from_damping(patch.damping),
         loop_nonlinearity: 0.0,
         dispersion: patch.stiffness,
-        strike_position: patch.strike_position,
+        // Held constant per note (sampled at note-on), so the prepared-model
+        // cache re-derives at most once per strike.
+        strike_position: (patch.strike_position + strike_offset).clamp(0.001, 0.999),
         pickup_position: patch.pickup_position,
         excitation_spread: 0.0,
         source_body_balance: patch.body_balance,
@@ -304,17 +442,26 @@ fn string_driver(mode: DriverSelection, patch: &StringPatch, sample_rate: f32) -
             DriverSelection::Pick => StringDriverMode::Pick,
             DriverSelection::Bow => StringDriverMode::Bow,
         },
-        PickParams {
-            hardness: 0.25 + 0.75 * patch.brightness,
-            contact_time: 0.15 + 0.55 * (1.0 - patch.stiffness),
-        },
-        BowParams {
-            pressure_depth: 0.25 + 0.65 * patch.body_balance,
-            speed: 0.25 + 0.65 * patch.brightness,
-            friction: 0.75 - 0.45 * patch.damping,
-        },
+        pick_params(patch),
+        bow_params(patch),
         sample_rate,
     )
+}
+
+fn pick_params(patch: &StringPatch) -> PickParams {
+    PickParams {
+        hardness: 0.25 + 0.75 * patch.brightness,
+        contact_time: 0.15 + 0.55 * (1.0 - patch.stiffness),
+    }
+}
+
+fn bow_params(patch: &StringPatch) -> BowParams {
+    BowParams {
+        position: patch.bow_position,
+        pressure: patch.bow_pressure,
+        speed: patch.bow_speed,
+        friction: patch.bow_friction,
+    }
 }
 
 fn active_driver_mode(patch: &StringPatch) -> DriverSelection {

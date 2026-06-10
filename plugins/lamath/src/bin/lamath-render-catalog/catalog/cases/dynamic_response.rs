@@ -1,6 +1,6 @@
 use super::super::{
-    CatalogCase, ContactRecipe, DriverRecipe, PatchRecipe, RenderSchedule, ResonatorFamily,
-    ScheduledNote, SourceBodyDepth,
+    BowHumanizeDepth, CatalogCase, ContactRecipe, DriverRecipe, PatchRecipe, RenderSchedule,
+    ResonatorFamily, ScheduledNote, SourceBodyDepth,
 };
 use super::CatalogCaseSpec;
 
@@ -231,7 +231,7 @@ pub(super) const DRIVER_CASE_SPECS: [CatalogCaseSpec; 6] = [
     ),
 ];
 
-pub(super) const BOW_DRIVER_PHRASE_CASES: [CatalogCase; 5] = [
+pub(super) const BOW_DRIVER_PHRASE_CASES: [CatalogCase; 7] = [
     CatalogCase {
         id: "driver_string_bow_smooth_c4_v100",
         title: "Driver String Bow Smooth C4 Velocity 100",
@@ -342,6 +342,50 @@ pub(super) const BOW_DRIVER_PHRASE_CASES: [CatalogCase; 5] = [
         schedule: RenderSchedule {
             duration_seconds: BOW_SCALE_DURATION_SECONDS,
             notes: &BOW_SCALE_C4_C5_V100,
+        },
+    },
+    CatalogCase {
+        id: "driver_string_bow_smooth_c4_humanize_off",
+        title: "Driver String Bow Smooth C4 Humanize Off",
+        group_id: "drivers",
+        relative_wav: "03_drivers/driver_string_bow_smooth_c4_humanize_off.wav",
+        tags: &[
+            "drivers",
+            "string",
+            "bow-smooth",
+            "C4",
+            "velocity-100",
+            "sustain",
+            "bow-humanize",
+        ],
+        patch_recipe: PatchRecipe::StringBowHumanize {
+            depth: BowHumanizeDepth::Off,
+        },
+        schedule: RenderSchedule {
+            duration_seconds: BOW_SMOOTH_SUSTAIN_DURATION_SECONDS,
+            notes: &BOW_SMOOTH_SUSTAIN_C4_V100,
+        },
+    },
+    CatalogCase {
+        id: "driver_string_bow_smooth_c4_humanize_full",
+        title: "Driver String Bow Smooth C4 Humanize Full",
+        group_id: "drivers",
+        relative_wav: "03_drivers/driver_string_bow_smooth_c4_humanize_full.wav",
+        tags: &[
+            "drivers",
+            "string",
+            "bow-smooth",
+            "C4",
+            "velocity-100",
+            "sustain",
+            "bow-humanize",
+        ],
+        patch_recipe: PatchRecipe::StringBowHumanize {
+            depth: BowHumanizeDepth::Full,
+        },
+        schedule: RenderSchedule {
+            duration_seconds: BOW_SMOOTH_SUSTAIN_DURATION_SECONDS,
+            notes: &BOW_SMOOTH_SUSTAIN_C4_V100,
         },
     },
 ];

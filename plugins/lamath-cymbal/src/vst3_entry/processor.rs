@@ -1,10 +1,12 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::path::Path;
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+use std::sync::RwLock;
 use std::{
     cell::{Cell, RefCell},
-    ffi::c_char,
     mem::MaybeUninit,
     ptr,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -13,30 +15,96 @@ use lindelion_plugin_shell::{
     AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
     ProcessContext as ShellProcessContext, ProcessSetup as ShellProcessSetup,
     vst3::{
-        Vst3BusInfo, Vst3ParameterInfo, Vst3ParameterMirror, can_process_32_bit_sample_size,
-        clear_vst_outputs, fill_vst3_bus_info, fill_vst3_parameter_info,
-        for_each_vst3_parameter_change, parse_vst3_plain_value_string, process_setup_from_vst,
+        Vst3BusInfo, Vst3ParameterMirror, can_process_32_bit_sample_size, clear_vst_outputs,
+        fill_vst3_bus_info, for_each_vst3_parameter_change, process_setup_from_vst,
         read_plugin_state_from_stream, stereo_output_buffers_from_vst_process_data,
         vst_event_to_midi, vst3_bus_count, write_plugin_state_to_stream,
-        write_vst3_parameter_string,
     },
 };
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
 use crate::{LamathCymbal, parameters};
 
-use super::{MAX_BLOCK_EVENTS, editor};
+use super::MAX_BLOCK_EVENTS;
 
 const CYMBAL_BUSES: [Vst3BusInfo; 2] = [
     Vst3BusInfo::audio_output(2, "Output"),
     Vst3BusInfo::event_input(1, "MIDI Input"),
 ];
 
+/// Smoothing applied to the per-block load reading so the editor's indicator is readable rather than
+/// jittery. A low weight on each new block keeps the bar steady while still tracking trends.
+const PERF_EMA_WEIGHT: f32 = 0.1;
+
+/// Lock-free audio-thread load meter. `process` records each block's wall-clock time as a fraction
+/// of the realtime budget; the editor polls `snapshot` from the UI thread. All state is plain atomics
+/// (f32 stored as bits), so recording stays allocation- and lock-free on the audio thread.
+struct PerfMeter {
+    load_ema_bits: AtomicU32,
+    load_peak_bits: AtomicU32,
+    xruns: AtomicU32,
+}
+
+impl PerfMeter {
+    fn new() -> Self {
+        Self {
+            load_ema_bits: AtomicU32::new(0),
+            load_peak_bits: AtomicU32::new(0),
+            xruns: AtomicU32::new(0),
+        }
+    }
+
+    fn record(&self, elapsed_secs: f64, budget_secs: f64) {
+        if budget_secs.is_nan() || budget_secs <= 0.0 || !elapsed_secs.is_finite() {
+            return;
+        }
+        let load = (elapsed_secs / budget_secs) as f32;
+        let prev_ema = f32::from_bits(self.load_ema_bits.load(Ordering::Relaxed));
+        // Seed directly on the first block so the bar doesn't crawl up from zero.
+        let ema = if prev_ema <= 0.0 {
+            load
+        } else {
+            prev_ema + (load - prev_ema) * PERF_EMA_WEIGHT
+        };
+        self.load_ema_bits.store(ema.to_bits(), Ordering::Relaxed);
+        let peak = f32::from_bits(self.load_peak_bits.load(Ordering::Relaxed));
+        if load > peak {
+            self.load_peak_bits.store(load.to_bits(), Ordering::Relaxed);
+        }
+        if load >= 1.0 {
+            self.xruns.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn snapshot(&self) -> lindelion_ui::lamath_cymbal_vizia::LamathCymbalPerformance {
+        lindelion_ui::lamath_cymbal_vizia::LamathCymbalPerformance {
+            load: f32::from_bits(self.load_ema_bits.load(Ordering::Relaxed)),
+            peak_load: f32::from_bits(self.load_peak_bits.load(Ordering::Relaxed)),
+            xruns: self.xruns.load(Ordering::Relaxed),
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn reset(&self) {
+        self.load_peak_bits.store(
+            self.load_ema_bits.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.xruns.store(0, Ordering::Relaxed);
+    }
+}
+
 pub(crate) struct LamathCymbalVst3Processor {
     plugin: RefCell<LamathCymbal>,
     setup: Cell<ShellProcessSetup>,
-    values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
-    handler: Cell<*mut IComponentHandler>,
+    pub(super) values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
+    pending_values: [AtomicU32; parameters::PARAMETER_COUNT],
+    pending_dirty: [AtomicBool; parameters::PARAMETER_COUNT],
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    editor_slots: RwLock<lindelion_ui::audio_file_slot::AudioFileSlotListView>,
+    perf: PerfMeter,
+    pub(super) handler: Cell<*mut IComponentHandler>,
 }
 
 impl Class for LamathCymbalVst3Processor {
@@ -60,30 +128,39 @@ impl LamathCymbalVst3Processor {
         let setup = ShellProcessSetup::default();
         let mut plugin = LamathCymbal::default();
         plugin.reset(setup);
+        let default_values = parameters::default_normalized_values();
+        #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+        let editor_slots = plugin.striker_slot_list_view();
         Self {
-            values: Vst3ParameterMirror::new(parameters::default_normalized_values()),
+            values: Vst3ParameterMirror::new(default_values),
+            pending_values: std::array::from_fn(|index| {
+                AtomicU32::new((default_values[index] as f32).to_bits())
+            }),
+            pending_dirty: std::array::from_fn(|_| AtomicBool::new(false)),
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            editor_slots: RwLock::new(editor_slots),
+            perf: PerfMeter::new(),
             plugin: RefCell::new(plugin),
             setup: Cell::new(setup),
             handler: Cell::new(ptr::null_mut()),
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn editor_knobs(&self) -> Vec<lindelion_ui::lamath_cymbal_vizia::LamathCymbalKnob> {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.editor_knobs())
-            .unwrap_or_default()
+        self.knobs_from_values()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn striker_slot_list_view(
         &self,
     ) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
-        self.plugin
-            .try_borrow()
-            .map(|plugin| plugin.striker_slot_list_view())
-            .unwrap_or_default()
+        if let Ok(plugin) = self.plugin.try_borrow() {
+            let slots = plugin.striker_slot_list_view();
+            self.replace_editor_slots(slots.clone());
+            return slots;
+        }
+        self.cached_editor_slots()
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -92,9 +169,10 @@ impl LamathCymbalVst3Processor {
             return;
         };
         plugin.select_striker_slot(slot);
+        self.replace_editor_slots(plugin.striker_slot_list_view());
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn set_editor_parameter(&self, id: u32, normalized: f32) {
         let _ = self.set_value(id, f64::from(normalized));
         if let Some(handler) = unsafe { ComRef::from_raw(self.handler.get()) } {
@@ -106,6 +184,78 @@ impl LamathCymbalVst3Processor {
         }
     }
 
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    pub(super) fn editor_presets(
+        &self,
+    ) -> Vec<lindelion_ui::lamath_cymbal_vizia::LamathCymbalPreset> {
+        crate::presets::CYMBAL_PRESETS
+            .iter()
+            .map(
+                |preset| lindelion_ui::lamath_cymbal_vizia::LamathCymbalPreset {
+                    name: preset.name,
+                    description: preset.description,
+                },
+            )
+            .collect()
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    pub(super) fn active_editor_preset(&self) -> Option<usize> {
+        self.active_preset_from_values()
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    pub(super) fn apply_editor_preset(&self, index: usize) {
+        // Apply the voice, then push each tonal parameter to the host as an edit gesture so
+        // automation and the host's own controls follow the change.
+        let Some(preset) = crate::presets::CYMBAL_PRESETS.get(index) else {
+            return;
+        };
+        let mut patch = self.patch_from_values();
+        preset.apply_to(&mut patch);
+        let values = parameters::normalized_values_from_patch(&patch);
+        self.values.replace(values);
+        for (index, value) in values.iter().enumerate() {
+            self.queue_pending_value(index, *value as f32);
+        }
+
+        if let Ok(mut plugin) = self.plugin.try_borrow_mut() {
+            plugin.apply_preset(index);
+            self.values
+                .replace(parameters::normalized_values_from_patch(plugin.patch()));
+            for (index, value) in self.values.values().iter().enumerate() {
+                self.clear_pending_value(index, *value as f32);
+            }
+        }
+
+        let pushes: Vec<(u32, f32)> = parameters::PARAMETERS
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| (parameter.id.0, values[index] as f32))
+            .collect();
+        if let Some(handler) = unsafe { ComRef::from_raw(self.handler.get()) } {
+            for (id, normalized) in pushes {
+                unsafe {
+                    handler.beginEdit(id);
+                    handler.performEdit(id, f64::from(normalized.clamp(0.0, 1.0)));
+                    handler.endEdit(id);
+                }
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(super) fn editor_performance(
+        &self,
+    ) -> lindelion_ui::lamath_cymbal_vizia::LamathCymbalPerformance {
+        self.perf.snapshot()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(super) fn reset_editor_performance(&self) {
+        self.perf.reset();
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(super) fn load_excitation_from_path(&self, slot: usize, path: &Path) {
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
@@ -114,6 +264,7 @@ impl LamathCymbalVst3Processor {
         let _ = plugin.load_excitation_from_path(slot, path);
         self.values
             .replace(parameters::normalized_values_from_patch(plugin.patch()));
+        self.replace_editor_slots(plugin.striker_slot_list_view());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -123,6 +274,7 @@ impl LamathCymbalVst3Processor {
             return;
         };
         plugin.clear_excitation(slot);
+        self.replace_editor_slots(plugin.striker_slot_list_view());
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
@@ -155,7 +307,7 @@ impl LamathCymbalVst3Processor {
         }
     }
 
-    fn set_value(&self, id: u32, normalized: f64) -> tresult {
+    pub(super) fn set_value(&self, id: u32, normalized: f64) -> tresult {
         let Some(index) = parameters::parameter_index(id) else {
             return kInvalidArgument;
         };
@@ -167,9 +319,11 @@ impl LamathCymbalVst3Processor {
             return kInvalidArgument;
         };
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return kResultFalse;
+            self.queue_pending_value(index, value as f32);
+            return kResultOk;
         };
         if plugin.set_parameter_normalized(ParameterId(id), value as f32) {
+            self.clear_pending_value(index, value as f32);
             kResultOk
         } else {
             kInvalidArgument
@@ -180,6 +334,77 @@ impl LamathCymbalVst3Processor {
         if let Ok(plugin) = self.plugin.try_borrow() {
             self.values
                 .replace(parameters::normalized_values_from_patch(plugin.patch()));
+            #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+            self.replace_editor_slots(plugin.striker_slot_list_view());
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn patch_from_values(&self) -> crate::CymbalPatch {
+        let values = self.values.values();
+        let mut patch = crate::CymbalPatch::default();
+        for (index, parameter) in parameters::PARAMETERS.iter().enumerate() {
+            let _ = parameters::apply_normalized(&mut patch, parameter.id, values[index] as f32);
+        }
+        patch
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn active_preset_from_values(&self) -> Option<usize> {
+        crate::presets::active_preset_index(&self.patch_from_values())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn knobs_from_values(&self) -> Vec<lindelion_ui::lamath_cymbal_vizia::LamathCymbalKnob> {
+        let values = self.values.values();
+        parameters::PARAMETERS
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                let normalized = values[index] as f32;
+                lindelion_ui::lamath_cymbal_vizia::LamathCymbalKnob {
+                    id: parameter.id.0,
+                    label: parameter.name,
+                    units: parameter.units,
+                    normalized,
+                    plain: parameter.range.denormalize(normalized),
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn cached_editor_slots(&self) -> lindelion_ui::audio_file_slot::AudioFileSlotListView {
+        self.editor_slots
+            .read()
+            .map(|slots| slots.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
+    fn replace_editor_slots(&self, slots: lindelion_ui::audio_file_slot::AudioFileSlotListView) {
+        match self.editor_slots.write() {
+            Ok(mut cached) => *cached = slots,
+            Err(poisoned) => *poisoned.into_inner() = slots,
+        }
+    }
+
+    fn queue_pending_value(&self, index: usize, normalized: f32) {
+        self.pending_values[index].store(normalized.to_bits(), Ordering::Release);
+        self.pending_dirty[index].store(true, Ordering::Release);
+    }
+
+    fn clear_pending_value(&self, index: usize, normalized: f32) {
+        self.pending_values[index].store(normalized.to_bits(), Ordering::Release);
+        self.pending_dirty[index].store(false, Ordering::Release);
+    }
+
+    fn apply_pending_values(&self, plugin: &mut LamathCymbal) {
+        for (index, parameter) in parameters::PARAMETERS.iter().enumerate() {
+            if self.pending_dirty[index].swap(false, Ordering::AcqRel) {
+                let normalized = f32::from_bits(self.pending_values[index].load(Ordering::Acquire));
+                let _ = plugin.set_parameter_normalized(parameter.id, normalized);
+            }
         }
     }
 }
@@ -337,18 +562,24 @@ impl IAudioProcessorTrait for LamathCymbalVst3Processor {
             clear_vst_outputs(&mut *data_ptr);
             return kResultOk;
         };
-        let mut events = [empty_midi_event(); MAX_BLOCK_EVENTS];
+        let mut events = [super::empty_midi_event(); MAX_BLOCK_EVENTS];
         let event_count = self.process_events((*data_ptr).inputEvents, &mut events);
         let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
             let mut buffer = buffer;
             buffer.clear();
             return kResultFalse;
         };
+        self.apply_pending_values(&mut plugin);
+        let frames = (*data_ptr).numSamples.max(0) as f64;
+        let sample_rate = self.setup.get().sample_rate;
+        let started = std::time::Instant::now();
         plugin.process(ShellProcessContext::new(
             self.setup.get(),
             buffer,
             &events[..event_count],
         ));
+        self.perf
+            .record(started.elapsed().as_secs_f64(), frames / sample_rate);
         kResultOk
     }
 
@@ -363,138 +594,5 @@ impl IProcessContextRequirementsTrait for LamathCymbalVst3Processor {
     }
 }
 
-impl IEditControllerTrait for LamathCymbalVst3Processor {
-    unsafe fn setComponentState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::setState(self, state)
-    }
-
-    unsafe fn setState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::setState(self, state)
-    }
-
-    unsafe fn getState(&self, state: *mut IBStream) -> tresult {
-        IComponentTrait::getState(self, state)
-    }
-
-    unsafe fn getParameterCount(&self) -> i32 {
-        parameters::PARAMETER_COUNT as i32
-    }
-
-    unsafe fn getParameterInfo(&self, param_index: i32, info: *mut ParameterInfo) -> tresult {
-        if info.is_null() || param_index < 0 {
-            return kInvalidArgument;
-        }
-        let Some(parameter) = parameters::parameter_by_index(param_index as usize) else {
-            return kInvalidArgument;
-        };
-        fill_vst3_parameter_info(Vst3ParameterInfo::from_parameter(parameter), info)
-    }
-
-    unsafe fn getParamStringByValue(
-        &self,
-        id: u32,
-        value_normalized: f64,
-        string: *mut String128,
-    ) -> tresult {
-        if string.is_null() {
-            return kInvalidArgument;
-        }
-        let Some(parameter) = parameters::parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
-        let plain = parameter.range.denormalize(value_normalized as f32);
-        write_vst3_parameter_string(&parameters::format_plain_value(id, plain), string)
-    }
-
-    unsafe fn getParamValueByString(
-        &self,
-        id: u32,
-        string: *mut TChar,
-        value_normalized: *mut f64,
-    ) -> tresult {
-        if string.is_null() || value_normalized.is_null() {
-            return kInvalidArgument;
-        }
-        let Some(plain) = parse_vst3_plain_value_string(string) else {
-            return kInvalidArgument;
-        };
-        let Some(parameter) = parameters::parameter_by_id(id) else {
-            return kInvalidArgument;
-        };
-        *value_normalized = f64::from(parameter.range.normalize(plain));
-        kResultOk
-    }
-
-    unsafe fn normalizedParamToPlain(&self, id: u32, value_normalized: f64) -> f64 {
-        parameters::parameter_by_id(id)
-            .map(|parameter| f64::from(parameter.range.denormalize(value_normalized as f32)))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn plainParamToNormalized(&self, id: u32, plain_value: f64) -> f64 {
-        parameters::parameter_by_id(id)
-            .map(|parameter| f64::from(parameter.range.normalize(plain_value as f32)))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn getParamNormalized(&self, id: u32) -> f64 {
-        parameters::parameter_index(id)
-            .and_then(|index| self.values.value(index))
-            .unwrap_or(0.0)
-    }
-
-    unsafe fn setParamNormalized(&self, id: u32, value: f64) -> tresult {
-        self.set_value(id, value)
-    }
-
-    unsafe fn setComponentHandler(&self, handler: *mut IComponentHandler) -> tresult {
-        self.handler.set(handler);
-        kResultOk
-    }
-
-    unsafe fn createView(&self, _name: *const c_char) -> *mut IPlugView {
-        editor::create_editor_view(self)
-    }
-}
-
-fn empty_midi_event() -> MidiEvent {
-    MidiEvent::Note(lindelion_plugin_shell::NoteEvent::Off {
-        channel: 0,
-        note: 0,
-        velocity: 0.0,
-    })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reports_output_and_midi_buses() {
-        assert_eq!(
-            vst3_bus_count(
-                &CYMBAL_BUSES,
-                MediaTypes_::kAudio as MediaType,
-                BusDirections_::kOutput as BusDirection,
-            ),
-            1
-        );
-        assert_eq!(
-            vst3_bus_count(
-                &CYMBAL_BUSES,
-                MediaTypes_::kEvent as MediaType,
-                BusDirections_::kInput as BusDirection,
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn exposes_sparse_parameter_count() {
-        let processor = LamathCymbalVst3Processor::new();
-        assert_eq!(
-            unsafe { processor.getParameterCount() },
-            parameters::PARAMETER_COUNT as i32
-        );
-    }
-}
+mod tests;

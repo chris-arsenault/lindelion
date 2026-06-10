@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod delay;
+pub mod denormal;
 pub mod energy;
 pub mod envelope;
 pub mod envelope_follower;
@@ -17,6 +18,7 @@ pub mod resampling;
 pub mod saturation;
 pub mod smoothing;
 pub mod stft;
+pub mod variance;
 pub mod window;
 
 #[cfg(test)]

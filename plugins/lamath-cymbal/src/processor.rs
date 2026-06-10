@@ -8,6 +8,11 @@ const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
 const BUILTIN_EXCITATION_SAMPLE_RATE: f32 = 48_000.0;
 const INJECTOR_POOL_SIZE: usize = 16;
 const CHOKE_RAMP_MS: f32 = 60.0;
+/// Mesh energy (raw-body RMS) below which a non-excited voice is treated as silent and the scatter is
+/// skipped. ~-100 dBFS after output gain — far below audibility and below every sustain test window.
+const MESH_ENERGY_GATE: f32 = 1.0e-5;
+/// Excitation magnitude under which the mesh is considered un-driven for gating purposes.
+const GATE_EXCITATION: f32 = 1.0e-9;
 const STRIKER_KEYSWITCH_BASE_NOTE: u8 = 0;
 const DAMP_KEY_LOW: u8 = 4;
 const DAMP_KEY_HIGH: u8 = 11;
@@ -198,6 +203,9 @@ impl<'a> CymbalProcessor<'a> {
     }
 
     pub fn process(&mut self, events: &[MidiEvent], left: &mut [f32], right: &mut [f32]) {
+        // Put the audio thread's FPU in flush-to-zero mode so the mesh's decaying ring never pays the
+        // denormal penalty; the hot loop then needs no per-sample software denormal guard.
+        lindelion_dsp_utils::denormal::flush_denormals_on_this_thread();
         left.fill(0.0);
         right.fill(0.0);
         self.handle_events(events);
@@ -209,8 +217,16 @@ impl<'a> CymbalProcessor<'a> {
                 .iter_mut()
                 .map(Injector::process)
                 .sum::<f32>();
-            self.mesh.set_geometric_drive(self.body_energy);
-            let body = self.mesh.process_sample(excitation);
+            // Energy gate: once the ring has decayed below audibility and nothing is exciting the
+            // mesh, skip the whole O(cells) scatter and emit silence. The follower keeps decaying on
+            // the zero output, so it stays gated until the next strike re-enters with excitation.
+            let body = if self.body_energy < MESH_ENERGY_GATE && excitation.abs() <= GATE_EXCITATION
+            {
+                0.0
+            } else {
+                self.mesh.set_geometric_drive(self.body_energy);
+                self.mesh.process_sample(excitation)
+            };
             self.body_energy = self.energy.observe(body);
             let choke = self.next_choke_gain();
             let sample = soft_limit(body * output_gain * choke);

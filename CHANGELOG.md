@@ -2,6 +2,26 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.16.0 - 2026-06-10
+
+### Lamath Tube
+
+- Voiced the Tube's **register-key (clarion) register** into a reference-matched clarinet voice, auditioned against owner clarinet recordings ([ADR-0049](docs/adr/0049-lamath-tube-register-key-voice.md)). The vented register now carries the clarinet's defining h3 body color and the h4–h7 reed-character lines (radiated from the reed's source spectrum — the vented bore's standing wave cannot carry them), at the reference's voiced-to-breath balance.
+- Fixed the vented register's **attack**: notes bloomed over ~1.3 s (and fast passages chirped like bird calls) because the frequency-flat vent shunt ate the register mode's oscillation margin. The vent now chokes in a narrow zero-phase band at the played mode (the register chimney's anti-resonance) and every vented attack applies a tongue-release overpressure transient, so notes bloom in ~70 ms — matching the reference player — and lock their pitch within even 170 ms notes.
+- Fixed the vented register's **range and tuning**: notes above C5 were silent (the reed's pumping gain collapsed with the fixed aperture resonance — the model now firms its embouchure with pitch like a player), and the register's chronic flatness was the old shunt's drag (the choked vent speaks the bore's natural third mode, ratio 2.994). Concert A4–G5 now plays within ±2.4 cents of the A440 grid at consistent levels.
+- Fixed an abrupt **release step** on vented notes: the register fingering (vent, bore ratio) snapped closed at note-off, retuning the still-ringing bore in one sample. The fingering now persists through release and the bore rings down naturally.
+- The breath wash that buried the register's voiced lines is gone: the reed's in-loop stability dither and shed-jet turbulence stay in the bore (where the bore filters them) instead of radiating raw through the slot and register-color paths.
+- Added a **register-key pitch-probe audition group** (`21_tube_register_key_pitch`, concert A4–C6) alongside the low-register probes, and removed the interim register A/B comparator cases and patch switches now that the model is audition-approved.
+
+## v0.15.3 - 2026-06-04
+
+### Lamath
+
+- Rebuilt the **Lamath Cymbal** editor. The window is now wide enough for the full control row (the seven body knobs were previously clipped), and the controls are split across two tabs: a **Basic** tab with a cymbal illustration and a voice picker, and an **Advanced** tab with the body knobs. The striker/mallet slots appear on both tabs, since a voice only changes the body knobs.
+- Added named cymbal **voices** selectable from a dropdown on the Basic tab — Default, Ride, Kit Ride, Crash, Kit Crash, Splash, China, Gong, and Triangle — mirroring the render-catalog audition voicings. Selecting a voice sets the seven tonal parameters (leaving the striker slots and loaded samples untouched) and pushes them to the host as automatable edits; hand-editing a knob shows the voice as "Custom". A full-instrument test guards that every shipped voice produces audible, in-bounds output.
+- Optimized the Mesh resonator's audio-thread hot loop ~2× for the dense, bright voices (Crash/Kit Crash/China/Gong) that were over the realtime budget — Crash's loud ring went from ~297% to ~132% of realtime in the offline harness, Ride from ~114% to ~46%, output **bit-identical** (checksum-verified across Crash/Ride with and without the bloom). The neighbor-writing scatter (per-cell boundary branches + full-grid clear) was reformulated into a two-pass compute-outgoing / gather-incoming form over the active grid only; the audio thread runs in hardware flush-to-zero (`lindelion_dsp_utils::denormal`) so the per-junction software denormal/NaN snap and `is_finite` clamps are gone; and the linear scatter and the von Kármán coupling are now branchless kernels over non-aliasing slices, which the compiler auto-vectorizes to packed SSE (`sqrtps`/`addps`/`mulps`) instead of scalar ops. Also adds an energy gate: a voice whose ring has decayed below ~−100 dBFS and isn't being struck skips the whole scatter and emits silence, reclaiming long-tail and idle CPU.
+- Added a **DSP-load indicator** to the editor header: a meter showing the audio thread's per-block processing time as a fraction of the realtime budget, a peak hold, and a dropout (xrun) counter, with a reset button. It turns amber as the budget fills and red on an overrun, so a bad-sounding voice can be told apart from a buffer underrun — a low meter means the voice itself is the problem, a full meter or rising xruns means the block is overrunning. The audio-thread measurement is lock-free (plain atomics, no allocation).
+
 ## v0.15.2 - 2026-06-04
 
 ### Lamath

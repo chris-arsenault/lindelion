@@ -11,10 +11,12 @@ mod tube_body_formant_levels;
 mod tube_body_formant_mix;
 mod tube_bore_steepening;
 mod tube_dynamics;
+mod tube_low_register_pitch;
 mod tube_output_paths;
 mod tube_radiation_shape;
 mod tube_reed_aperture;
 mod tube_reference_match;
+mod tube_register_key_pitch;
 
 const SINGLE_NOTE_DURATION_SECONDS: f32 = 2.5;
 
@@ -363,6 +365,16 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         )
         .chain(
             tube_bore_steepening::TUBE_BORE_STEEPENING_CASES
+                .iter()
+                .cloned(),
+        )
+        .chain(
+            tube_low_register_pitch::TUBE_LOW_REGISTER_PITCH_CASES
+                .iter()
+                .cloned(),
+        )
+        .chain(
+            tube_register_key_pitch::TUBE_REGISTER_KEY_PITCH_CASES
                 .iter()
                 .cloned(),
         )

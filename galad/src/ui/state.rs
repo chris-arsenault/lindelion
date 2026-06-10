@@ -494,8 +494,10 @@ mod tests {
 
     #[test]
     fn engine_fault_stops_and_notifies() {
-        let mut state = HostUiState::default();
-        state.running = true;
+        let mut state = HostUiState {
+            running: true,
+            ..HostUiState::default()
+        };
 
         // A non-fault status leaves the running state alone and posts no notice.
         assert!(!state.react_to_engine_status(EngineStatus::Running));

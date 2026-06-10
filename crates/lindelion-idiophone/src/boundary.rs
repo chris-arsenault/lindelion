@@ -73,3 +73,39 @@ pub(super) fn boundary_lowpass_step(state: &mut f32, coeff: f32, hf_loss: f32, s
     let hf_loss = math::finite_clamp(hf_loss, 0.0, 0.02, DEFAULT_BOUNDARY_HF_LOSS);
     sample - hf_loss * high_band
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MeshBoundaryKind {
+    Fixed,
+    Free,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MeshBoundaryEdge {
+    pub(super) kind: MeshBoundaryKind,
+    pub(super) damping: f32,
+}
+
+impl MeshBoundaryEdge {
+    pub(super) fn fixed(damping: f32) -> Self {
+        Self {
+            kind: MeshBoundaryKind::Fixed,
+            damping,
+        }
+    }
+
+    pub(super) fn free(damping: f32) -> Self {
+        Self {
+            kind: MeshBoundaryKind::Free,
+            damping,
+        }
+    }
+
+    pub(super) fn reflection(self) -> f32 {
+        let sign = match self.kind {
+            MeshBoundaryKind::Fixed => -1.0,
+            MeshBoundaryKind::Free => 1.0,
+        };
+        sign * (1.0 - math::finite_clamp(self.damping, 0.0, 1.0, 0.0))
+    }
+}

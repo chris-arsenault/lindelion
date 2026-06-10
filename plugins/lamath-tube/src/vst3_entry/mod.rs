@@ -1,5 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
+mod edit_controller;
 mod editor;
 mod factory;
 mod processor;

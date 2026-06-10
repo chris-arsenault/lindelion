@@ -231,6 +231,7 @@ fn source_analysis_from_detected_pitch(
                 channels: 1,
                 rms_db: None,
                 peak_db: None,
+                created_at_ms: None,
                 waveform_preview: lindelion_sample_library::SampleWaveformPreview {
                     points: Vec::new(),
                 },

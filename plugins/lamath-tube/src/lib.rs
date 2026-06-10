@@ -11,7 +11,7 @@ mod vst3_entry;
 
 #[cfg(feature = "vst3-entry")]
 pub use lindelion_plugin_metadata::LAMATH_TUBE_VST3_BUNDLE_METADATA as VST3_BUNDLE_METADATA;
-pub use patch::{TubeArticulationPatch, TubeModelSwitchPatch, TubePatch};
+pub use patch::{OUTPUT_GAIN_MAX_DB, TubeArticulationPatch, TubeModelSwitchPatch, TubePatch};
 #[cfg(feature = "vst3-entry")]
 pub use plugin::{DESCRIPTOR, LamathTube};
 pub use processor::{

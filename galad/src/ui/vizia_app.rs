@@ -561,8 +561,8 @@ const STYLE: &str = r#"
 /// rate via [`chain_sample_rate`].
 const CHAIN_SAMPLE_RATE_FALLBACK: f64 = 48_000.0;
 const CHAIN_MAX_FRAMES: usize = 4096;
-const GALAD_WINDOW_TAG: &str = "paramedit-20260603-1";
-const GALAD_WINDOW_TITLE: &str = "Galad [paramedit-20260603-1]";
+const GALAD_WINDOW_TAG: &str = "outputbus-20260604-1";
+const GALAD_WINDOW_TITLE: &str = "Galad [outputbus-20260604-1]";
 
 /// The sample rate to prepare the chain at — the selected input device's actual rate, which is the
 /// rate the engine runs the stream at. Declared to plugins via `setupProcessing`; the host never

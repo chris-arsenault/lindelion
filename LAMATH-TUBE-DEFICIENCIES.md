@@ -1,5 +1,16 @@
 # Lamath Tube (driven wind voice + reed driver) — current deficiencies
 
+> **THREAD COMPLETE (2026-06-10): the register-key voice is audition-approved.** Low E, the
+> register-key high sustain (body color, breath balance, attack, release), and the fast low/high
+> articulation all passed audition. The decision set is recorded in
+> [ADR-0049](docs/adr/0049-lamath-tube-register-key-voice.md); the current model is documented in
+> [docs/plugins/lamath-tube.md](docs/plugins/lamath-tube.md); remaining work (soft-velocity vented
+> range, pre-break G4/G#4 sag, parked tone guards, shaped breath, altissimo) is in
+> [docs/plugins/lamath-backlog.md](docs/plugins/lamath-backlog.md). The interim A/B comparator
+> cases, patch switches, and their unit tests were removed after approval (shipped renders
+> hash-verified bit-identical through the cleanup). The investigation log below is retained as
+> history.
+
 Assessment from ADR-0032, the Lamath spec, the backlog, the reed/bore code
 (`tube_1d.rs`, `driver.rs`, `makeup.rs`), the wind-path wiring in
 `resonator_stack.rs`, the full-synth guards in `tube_voice_tests.rs`, and memory of
@@ -185,6 +196,12 @@ audition of the new cases is the obvious gate before/with any of this.
    pitch — the same fixed-group-delay signature as the reed flatness — so it is a phase-delay/
    fractional-delay compensation residual (`delay_tuning` in `prepared_model`) and is amenable to the
    same closed-form phase-delay-at-f0 correction now used for the reed.
+
+   **Update 2026-06-09:** current low-register probes show this is **not** a global low-register
+   delay error. Sustained D3/G3/C4/E4 are within about ±1.5 cents; the drift only starts near the
+   register break (G4 −5c, G#4 −8c) and the register-key high sustain remains flatter. Treat the
+   remaining pitch problem as a near-break/high-register impedance or mode-locking issue, not a
+   whole-tube static tuning offset.
 
 ### D. Control ranges that aren't fully playable (the user's recurring concern)
 
@@ -372,6 +389,476 @@ Open caveat: the effect is **register dependent**. It works well on the low-E re
 strong on the register-key C# audition. Before treating the knob as finished, Humanize needs
 pitch/register-aware scaling (likely from the tracked note/f0 already available to the Tube processor),
 so the high register gets less pressure/voicing excursion than the low-register sustain.
+
+## Implementation note (2026-06-05) — first register-key bore shunt
+
+The Tube now has a first physical register-key model: a user-settable `Register Break` MIDI note
+(default 69, concert A4 / written B on B-flat clarinet) opens a register vent above the break. The
+processor keeps the sounding pitch high, uses a 2.88 bore-mode ratio, and applies a lossy side-hole
+shunt near one third of the bore length. The shunt scatters pressure inside the traveling-wave pair
+before pickup and bell output. The side-hole flow is also radiated as an **output-only** bright register
+key path, so it can add upper-register reed/vent color without feeding that radiation signal back into
+the bore or reed. A small output-only turbulent side-hole component now fills the missing 2-6 kHz
+non-harmonic floor; it is driven by open-vent flow and band-limited so this stays a register-key/nozzle
+radiation effect, not a full-output noise blanket.
+
+Audition status: `19_tube_reference_match` now includes
+`tube_ref_register_key_high_no_register_vent.wav` as the old short-bore comparison and level-matches
+the vented high sustain. The vented case is now a real timbre A/B, not only a pitch/topology A/B: the
+vent path fills some missing upper partials while keeping the known high-register flatness as a separate
+problem. The latest audition matches the reference's 2-3 kHz broadband floor much better and gets close
+at 3-4 kHz, but the >4 kHz rolloff remains too shallow and h5 is still low. The high sustain also
+remains ~20 cents flat. Treat this as a useful first register-key topology, not a finished
+upper-register model.
+
+## Correction (2026-06-05) — contour is legacy reference only
+
+The note-tracked post-oscillation `clarinet_contour_sample()` path was a bad low-E fix: it forced h3/h5
+and upper contour after the oscillator instead of making the reed/bore/body/radiation system generate
+the right spectrum. The code now keeps that path behind an internal legacy switch, but the normal Tube
+model has it **disabled**. `19_tube_reference_match` includes
+`tube_ref_low_e_sustain_legacy_contour.wav` as a contour-on comparator, while
+`tube_ref_low_e_sustain_current.wav` exposes the physical-only path.
+
+Physical low-E repair now started in the model itself:
+
+- the body resonance can track the true third partial in the low register instead of clamping to
+  ~760 Hz, which had put the "h3 body" on low-E h5;
+- the resonant body coupling was reduced from fitted-EQ strength to a smaller radiated-body
+  contribution;
+- the low body resonance was moved off low-E h2 and reduced, so it no longer acts as an even-partial
+  boost;
+- bell radiation cutoff was raised so the bell no longer re-emits low-E h5/h7 as efficiently as a
+  generic 500 Hz high-pass tap.
+
+Current low-E physical-only audition: h3 and h5 are now close without the contour (`h3 -7.4 dB`,
+`h5 -19.1 dB` vs reference `h3 -9.6`, `h5 -17.2`). A small bell-radiation selectivity move
+(`1600 -> 1750 Hz`) pulled h7/h9 down modestly without the failed upper-loss filter that over-featured
+h5. Remaining misses are h2 still too strong and upper odd periodic peaks (h7/h9) still too hot; h2 is
+not materially affected by body leakage or bell cutoff, so it likely needs reed/bore odd-mode behavior
+rather than more body or bell level changes.
+
+## Investigation checkpoint (2026-06-09) — register-key pitch/tone and low-register probes
+
+This is the current state of the active Tube investigation.
+
+### What is now established
+
+1. **Low E is now a physical-model match, not a post-contour cheat.** The note-tracked
+   `clarinet_contour_sample()` path remains a legacy/internal comparator only; the current low-E
+   path uses the physical reed/bore/body/radiation model. The last low-E work fixed the major
+   h2/h4 even leakage and added the h9/h11/h13 upper odd body/radiation tail. User audition:
+   "probably good enough." Keep low E as the lower-register reference baseline, not the target for
+   register-key work.
+2. **The register-key high sustain is close enough in general timbre to be worth refining, but it is
+   still restrained/stuffed and slightly flat.** Current reference-match auditions live in
+   `19_tube_reference_match`, grouped by `reference_gesture=register_key_high_sustain`.
+3. **The air band is over-present.** The register-key current render still has too much high
+   airy/breathy content relative to the reference, while the reference's musically important
+   register-body region is stronger around the 1.2-2 kHz h3/h4/h5 area. Treat "air" as harmonic/
+   turbulent radiation balance, not as disposable noise; do not solve it by broad final filtering.
+
+### Register-key harmonic/tap read
+
+Steady-window comparison for `tube_ref_register_key_high_reference` vs
+`tube_ref_register_key_high_current`:
+
+- Reference fundamental peak: about 441.3 Hz.
+- Current full sim with register vent and phase compensation: about 437.3 Hz.
+- Current is therefore roughly 16 cents flat against the reference's actual pitch, but the pitch
+  issue is smaller than the timbre issue.
+- Band read after RMS matching:
+  - current is close in 0.2-0.8 kHz fundamental-region energy;
+  - current is too strong around 0.8-1.2 kHz;
+  - current is much too weak in 1.2-2 kHz, the reference's h3/h4/h5 body-color area;
+  - current is still a few dB too hot around 6-12 kHz.
+
+Tap attribution:
+
+- `register_vent_flow` is strong internally, so the vent is affecting the bore topology.
+- `register_vent_output` and `bell_radiated` are very low compared with `body_output`, so direct
+  vent/bell radiation is not carrying the audible register character.
+- The current output is too h1/low-band centered after the vented topology; the model needs better
+  register-mode body/radiation admittance, not a simple vent-output gain boost.
+
+### Register-vent phase A/B result
+
+Implemented a small, physically framed register-vent phase/length correction:
+
+- `ReedTubeParams::register_vent_phase_compensation`
+- derived from register mode ratio, vent admittance, vent position, and a modal velocity-coupling
+  term;
+- folded into the same `delay_offset_samples` path as mouth-loss, damping, and reed-aperture phase;
+- exposed to the catalog only as an internal A/B scalar.
+
+Audition case added:
+
+```text
+tube_ref_register_key_high_vent_phase_off
+```
+
+Measured result:
+
+```text
+reference      peak 441.33 Hz  +5.2c vs 440
+full phase on  peak 437.33 Hz -10.5c vs 440
+phase off      peak 436.67 Hz -13.2c vs 440
+no vent        peak 436.67 Hz -13.2c vs 440
+```
+
+Conclusion: the phase term is auditionable and slightly improves pitch, but only by about 2-3 cents.
+It is **not** the source of the register-key flatness. Do not keep chasing pitch by increasing this
+term unless a later impedance model shows the physical scale is wrong.
+
+### Low-register pitch probe result
+
+Added a dedicated audition group:
+
+```text
+20_tube_low_register_pitch/
+make render-lamath-audio LAMATH_RENDER_ARGS="--group tube_low_register_pitch"
+```
+
+Cases:
+
+```text
+tube_low_register_pitch_d3_m050
+tube_low_register_pitch_g3_m055
+tube_low_register_pitch_c4_m060
+tube_low_register_pitch_e4_m064
+tube_low_register_pitch_g4_m067
+tube_low_register_pitch_g_sharp4_m068
+```
+
+Measured over the steady window:
+
+```text
+D3   MIDI 50  target 146.83 Hz  measured 146.71 Hz   -1.4 cents
+G3   MIDI 55  target 196.00 Hz  measured 195.99 Hz   -0.1 cents
+C4   MIDI 60  target 261.63 Hz  measured 261.67 Hz   +0.3 cents
+E4   MIDI 64  target 329.63 Hz  measured 329.50 Hz   -0.6 cents
+G4   MIDI 67  target 392.00 Hz  measured 390.86 Hz   -5.0 cents
+G#4  MIDI 68  target 415.30 Hz  measured 413.36 Hz   -8.1 cents
+```
+
+Conclusion: flatness is **not systemic between low E and the break**. It emerges near the top of the
+pre-break range, then becomes more obvious in the register-key high case. That rules out a global
+static delay-line correction as the right next move.
+
+### Current next model target
+
+Do **not** solve the next step with final EQ, a per-note cents table, or more broad delay tuning.
+
+The next physical target is the near-break/register-mode impedance model:
+
+1. Improve register-mode body/radiation admittance so the vented high note radiates useful h3/h4/h5
+   body color instead of collapsing into a restrained h1-heavy tone. **✅ done 2026-06-09, see the
+   register-body-admittance checkpoint below — awaiting audition.**
+2. Keep the vent as a bore-topology shunt, but treat direct vent radiation as a secondary color path
+   until tap levels prove otherwise.
+3. Revisit pitch only after the register-mode impedance/body balance is closer; the low-register
+   probe shows the pitch issue is local to the upper-low/register transition, not the entire tube.
+4. Track the high-air band separately from pitch. The reference has reed/air character, but the
+   Lamath air band is too exposed; tune the component balance, not a final high shelf.
+
+## Implementation checkpoint (2026-06-09b) — register-aware body/radiation admittance
+
+Implemented checkpoint item 1 as a register-aware body admittance model in `lindelion-wind`,
+gated behind a new internal A/B scalar `register_body_admittance` (`1.0` = new model, `0.0` =
+legacy chalumeau-style register body; patch field + `ReedTubeParams`, default `1.0`, bit-inert
+below the break). New paired audition case in `19_tube_reference_match`:
+`tube_ref_register_key_high_register_body_legacy` vs `tube_ref_register_key_high_current`, same
+gain class, single variable.
+
+**The decisive finding (from `--tube-tap-analysis` + WAV band reads): the vented bore's standing
+wave carries no sounding h3.** With `register_mode_ratio = 2.88`, 3x the sounding note is not a
+closed-open bore mode, so `body_input` h3 sits ~55 dB under its h1 — no radiation-side gain on the
+pickup path can recover it. Worse, the final output's mid/upper harmonics ride on the plugin's
+output-only `reed_radiated` layer, and the old final h3 was a *phase-cancellation valley* between
+that layer and the body path (boosting the pickup-fed ring made h3 worse, not better). Two
+failed in-loop attempts confirmed a second trap: the body's `reaction_flow` couples every
+radiation gain back into per-band bore damping, so trimming h1 radiation un-damped the bore
+fundamental and boosting the ring damped the very band it should radiate.
+
+What shipped, per mechanism:
+
+- **Source-fed register color (the actual h3 fix).** Above the break, the open tone-hole/vent
+  lattice radiates the *reed source spectrum* (like a real clarion register above the lattice
+  cutoff), not the bore's standing wave: `TubeBody` gains a radiation-only register color path
+  fed by `mouth_wave` — a **cascaded 4th-order bandpass at 3f** (gain 9.4; the cascade is load-
+  bearing — a single biquad's first-order skirts re-injected the source's broadband breath noise
+  an octave either side, +9.6 dB at 6–12 kHz) plus a modest single bandpass at 4f (0.45).
+- **Reaction pinned to legacy gains.** The fundamental/ring reactions onto the bore keep the
+  legacy gains (`low/high_resonance_reaction_gain`), making the register rebalance radiation-only.
+- **h4 even-notch released, h2 notch kept** (the vent breaks the even-cancelling symmetry, but
+  0.8–1.2 kHz was already hot); **bore-period odd-mode projection comb bypassed** in register mode
+  (at ratio 2.88 it is misaligned with the sounding period and attenuates h2–h5).
+- **Fundamental body gain trimmed** (0.95 → 0.55 radiation-only), **pickup-fed ring boost**
+  (scale 2.8 → 9.0; minor in practice — input-starved).
+- **RMS-match gains un-saturated.** The reference-match `output_gain_db` values silently clamped
+  at the +12 dB patch ceiling; the catalog now applies the residual as a render-time scale with a
+  per-case full-scale cap, and the gain classes were recalibrated by measurement
+  (`LowESustainPhysical` 24.0 → 15.9, `RegisterKeyHighSustainVented` 22.9 → 23.9). Current and
+  low-E now match their references within 0.15 dB RMS.
+
+Measured (steady window, RMS-matched, delta vs reference; legacy → current):
+
+```text
+band         legacy   current
+800-1200     +9.0     +4.6
+1200-2000   -14.1     -0.8
+2000-4000    -2.4     -1.4
+4000-6000    +8.8     +8.6   (pre-existing air band, item 4)
+6000-12000   +5.1     +3.5
+h3 line     -25.5    -12.5   (reference -12.8 — the defining clarinet harmonic, on target)
+h2 line     -16.6    -22.6   (reference -24.5)
+pitch       -11.3c    -7.9c  (known near-break flatness, item 3)
+```
+
+Remaining known gaps: the h4 *line* is still weak (-52.9 vs reference -19.0 — the reed source is
+odd-dominant so h4 has no strong carrier; needs its own mechanism if ears ask), the 4–6 kHz air
+band is untouched (item 4), and the ~-8c near-break flatness stands (item 3).
+
+Guards: four new unit tests in `lindelion-wind` (h4 release, ring-up/fundamental-down recolor,
+bit-inert below break, material A/B difference in register mode). Renders refreshed for the
+affected register-key/articulation cases + pitch probes; manifest regenerated; review MP3s
+compressed.
+
+**Pre-existing red tests (NOT from this work — verified by disabling the new mechanism):**
+`lindelion-wind::bell_radiation_does_not_depend_on_effort` (soft-effort bell ratio 2.25),
+`lindelion-wind::driven_onsets_are_continuous_against_held_reference`,
+`lamath-tube::scale_notes_are_tuned_well_enough_for_audition` (note 71 locks 737 Hz — the known
+near-break mode-locking defect), `lamath-tube::phrase_onsets_do_not_click`. These came in with
+the 2026-06-08 "Tune Lamath tube reed radiation" landing, which also left its
+`lindelion-dsp-utils` `notch()` hunk uncommitted (HEAD does not build standalone without the
+working tree). **Update 2026-06-10 (user direction): these tone guards are low-value while the
+model is under audition-driven revision — they encode pre-audition behavior, not accuracy. All
+four are now `#[ignore]`-parked with that reason; re-derive them against the audition-approved
+model, do not "fix" them before then.**
+
+## Audition outcome (2026-06-10) — register body admittance accepted direction; breath dominates
+
+User audition of the 2026-06-09b register-body A/B: **low E sustain sounds good** (keep as the
+approved lower-register baseline). The register-key high sustain is **much closer than it has
+been**, but both the full sim and the vent-off comparison are **dominated by breath sounds with a
+faint / weakly voiced actual note.**
+
+### Diagnosis (objective, 2026-06-10)
+
+Voiced-to-breath ratio over 200 Hz–8 kHz (steady window, harmonic-line energy vs inter-line
+residual): reference **+44.6 dB**, ours **+21.4 dB** — the voiced lines actually *match* the
+reference level; the residual was ~23 dB too hot. Attribution by kill-switch renders (band reads
+and tap floors both misled — the T1 lesson again):
+
+- The **reed's in-loop white breath dither (`REED_BREATH_NOISE = 0.02`) is the wash**: zeroing it
+  alone took V/B to **+42.6** (≈ reference). The loop circulates it and every radiation path
+  (pickup/body, bell, the new source-fed register color) re-emits it.
+- The shed-jet turbulence (`REED_TURBULENCE_NOISE_GAIN`), the output-only register-vent
+  turbulence (the 2026-06-05 "fill the 2–6 kHz floor" stopgap), and the slot radiation each
+  contributed only a few dB.
+
+### Fix — register-mode coherent radiation (2026-06-10, awaiting audition)
+
+New internal A/B scalar `register_coherent_radiation` (patch + `ReedTubeParams` + `ReedParams.
+breath_noise`, default 1.0 = coherent, 0.0 = legacy raw noise; **inert below the break — low E is
+bit-identical**, verified by render hash). Above the break, with the handle at 1.0:
+
+- the reed's in-loop dither is scaled to zero (its period-2-dodge job is a *low-register*
+  full-bore concern; the vented register speaks cleanly without it — same level, same pitch);
+- the reed slot radiation and the register body color radiate the reed's **coherent**
+  (turbulence-free) source flow (`ReedDriver::coherent_source_flow/coherent_output`) instead of
+  the noisy one;
+- the output-only register-vent turbulence stopgap is silenced (it predates the register body
+  color; deliberate spectrally-shaped breath is item 14's future mechanism).
+
+Measured: register-key V/B **+21.4 → +42.6 dB** (reference +44.6). A/B comparator case:
+`tube_ref_register_key_high_breath_raw` (raw radiation) vs `tube_ref_register_key_high_current`.
+Affected register/articulation renders refreshed; manifest + review MP3s regenerated.
+
+Remaining after this round: the per-band line-vs-residual above 2 kHz is still line-poor (the
+sounding h4/h5/h7 lines are weak — needs its own carrier mechanism, same lattice-radiation story
+as h3), pitch ~−8c near the break (item 3), and deliberate breath texture (item 14) once the
+voiced core is approved.
+
+## Audition outcome (2026-06-10b) — breath fix accepted; slow vented attack diagnosed and fixed
+
+User: breath fix "sounds good enough." New complaint: **the vented register takes ~500–700 ms to
+become full-bodied.** Measured: reference reaches 50% level in ~70 ms; ours took **1.3 s** —
+and only when vented (the unvented same-pitch note and low E both reach 50% in ~60 ms). Not
+intentional: the cause was the **frequency-flat resistive vent shunt** (Y = 1.2 → ~4 dB loss per
+bore transit at *every* frequency, including the register mode it exists to enable), leaving a
+sliver of oscillation margin → second-long exponential bloom.
+
+### Fix — vent mode-choke (chimney anti-resonance), `register_vent_mode_choke`
+
+A failed first attempt is itself a finding: a **one-pole inertive shunt** (admittance ∝ 1/ω, √2
+DC boost) freed the mode but its −45° minimum-phase rotation at the bore fundamental weakened and
+detuned f0's suppression — **the low register spoke** (harmonics of 186 Hz). Lesson: the bore
+fundamental's hard, *resistive* (zero-phase) loading is what makes the reed abandon the low
+register; no minimum-phase rolloff can free the mode without rotating f0.
+
+The shipped design instead carves the shunt out in a **narrow band at the played mode only**
+(bandpass-subtraction notch at the sounding frequency, Q 2 — physically the register chimney's
+anti-resonance, where the hole's input impedance peaks and it effectively closes). Zero phase at
+the notch center; f0 sees exactly the legacy resistive shunt. Internal A/B scalar
+`register_vent_mode_choke` (1.0 = choked, 0.0 = legacy flat shunt), case
+`tube_ref_register_key_high_vent_unchoked`.
+
+Two closed-form consequences, both calibrated by measurement:
+
+- **The legacy 2.88 mode ratio was the resistive drag.** With the mode unloaded the bore speaks
+  its natural third mode (measured 2.994× bore f0), so `register_key_state` blends the ratio
+  2.88 → 2.994 with the choke — and the register-key pitch landed at **440.00 Hz (+0.0 c)**: the
+  near-break flatness (item 3) was the shunt drag, now gone. The legacy vent phase-compensation
+  term is scaled out by the choke (the notch is zero-phase at the mode).
+- **+12.8 dB more steady level** (real margin → stronger oscillation): the Vented RMS gain class
+  recalibrated 23.9 → 11.1 dB (now far below the patch ceiling, no render-time residual needed).
+
+Measured (register-key A4 case): onset to-50% **1300 ms → 200 ms** (reference 70 ms), f0
+**−7.9 c → +0.0 c**, V/B **+49.8 dB** (reference +44.6), RMS-match within 0.6 dB. Low E
+bit-identical (hash-verified; the choke only exists with the vent open). All vented-register and
+articulation renders refreshed; manifest + review MP3s regenerated.
+
+Remaining: onset 200 ms vs reference 70 ms (likely excitation kick / residual margins — judge by
+ear whether it matters), the weak h4/h5/h7 line carriers, deliberate breath texture (item 14).
+
+## Audition outcome (2026-06-10c) — attack accepted; reed character restored via lattice window
+
+User: vented attack "pretty good"; **"the reed character is somewhat absent compared to the
+reference."** That is the tracked weak h4–h7 line family (reference h4 −19 / h5 −26 / h7 −33
+rel h1; ours were ~−52). With the coherent (noise-free) source now in place, the fix was the
+planned lattice-radiation extension, made simple:
+
+- **Lattice radiation window** in the register color path: the coherent register source through a
+  **4th-order band window** (HP ×2 at 1,650 Hz, LP ×2 at 2,800 Hz, gain 2.9), replacing the
+  near-inaudible single-biquad h4 resonance. The 4th-order edges are load-bearing again —
+  2nd-order skirts at this gain leaked the source *fundamental* into the radiation (inflating h1
+  itself) below and passed h9+ above.
+- **Post-choke recalibration of the source-fed paths:** the vent mode-choke strengthened the
+  oscillation, so the source got hotter and the pre-choke h3 cascade gain over-delivered by ~12 dB
+  (h3 louder than h1). `TUBE_REGISTER_H3_SOURCE_GAIN` 9.4 → 2.0. Lesson: **source-fed radiation
+  gains are calibrated against a specific oscillation operating point — re-measure them after any
+  loop-margin change.** Vented RMS class 11.1 → 14.1 dB (match within 0.1 dB).
+
+Measured line contour vs reference (rel h1): h3 −12.6 (ref −12.8 ✓), h4 −17.4 (−19.0 ✓), h5
+−28.8 (−26.1, ~3 shy), h6 −40.6 (−35.5, ~5 shy), h8 −42.4 (−41.1 ✓); still off: **h2 −15.5
+(ref −24.5, ~9 hot — even-harmonic leak through the bore/body, stronger since the choke)**, h7
+−46.3 (−32.9, ~13 shy), h9 −42.6 (−52.7, ~10 hot). V/B +46.7 (ref +44.6). Low E bit-identical
+(hash). All vented/articulation/probe renders, manifest, MP3s refreshed.
+
+If ears ask for more reed character later, the next levers are per-line: the hot h2 (even leak),
+the shy h7 (between the window's top edge and the bore's weak carriage), and the h9 tail.
+
+## Pitch analysis (2026-06-10d) — both registers measured; range collapse found above C5
+
+User direction: "let's work on pitch; the reference is a bit sharp, so unsure if our register is
+on target." New probe group `21_tube_register_key_pitch` (sustained MIDI 69/70/71/72/74/76/79/84,
+full vented model). All sustained measurements vs the A440 equal-tempered grid:
+
+**The references are not uniformly sharp.** Chalumeau D3 fixture: **−1.4 c**; register-key A4
+fixture: **+6.2 c**. The player's clarion runs sharp (normal for the instrument); the A440 grid
+is the correct model target, and matching the clarion reference's absolute pitch would be
+matching their intonation, not correctness.
+
+**Ours, sustained:**
+
+```text
+chalumeau   D3 −1.5   G3 −0.1   C4 +0.4   E4 −0.6   G4 −5.1   G#4 −8.3
+clarion     A4 −0.1   A#4 −2.8  B4 −0.8   C5 +2.9
+clarion     D5/E5/G5/C6: DO NOT SPEAK (−60 dBFS noise — silent-config defect)
+```
+
+Findings, prioritized:
+
+1. **Range collapse above C5 (the headline defect).** MIDI ≥ 74 with the vent open fails to
+   oscillate (rms −60 to −65 dBFS, residual colored noise around 2.4–3.3 kHz). The unvented bore
+   speaks these pitches (the C2–C6 sweep claim predates the register key), so this is the vented
+   topology failing to sustain higher register modes. Violates the no-silent-configs rule. This
+   is the next physical investigation: likely the loop gain at the mode through the 3x-longer
+   bore (per-second loss scaling), the reed aperture band-limit at ~600+ Hz sounding, or the
+   choke/vent interaction at higher mode numbers.
+2. **Pre-break sag: G4 −5.1 c, G#4 −8.3 c** (B♭4 region, long unvented bore). Monotonic with
+   pitch right below the break; the same fixed-loop-phase signature family as the old reed drag.
+   Small but audible at sustained dynamics.
+3. **B4 mode-lock is FIXED.** The parked scale test's note-71 → 737 Hz failure no longer exists
+   sustained (B4 −0.8 c); the mode-choke repaired the mode selection.
+4. **Onset pitch for short notes.** The parked scale test still fails at note 72, but for a new
+   reason: it reads pitch 170 ms after note-on with 300 ms notes, inside the ~200 ms bloom (reads
+   620 Hz mid-attack). Fast passages need lock well before 170 ms — same thread as the
+   attack-speed item (reference blooms in 70 ms). User audition agrees: the fast low/high
+   articulation case sounds good low and "like bird noises" high (chirping = notes shorter than
+   the bloom never lock; no DC offset found — baseline wander < 0.001).
+5. A#4 −2.8 c / C5 +2.9 c: minor wiggle across the vent's choke band, acceptable.
+
+## Fix checkpoint (2026-06-10e) — register range collapse solved: tracked embouchure
+
+The user's two-vent hypothesis was tested and ruled out for *this* model: in the silent D5
+renders the vent was doing its job (bore fundamental decaying hard, vent geometry per-note ideal
+since the bore scales with the note). The mode-3 band was getting kicked by the excitation and
+**flatlining** — loop gain ≈ 1.0 − ε. The margin curve measured across the speaking notes
+(growth 44.8/31.8/18.8/5.0 /s for A4/A#4/B4/C5) extrapolates to zero just above C5.
+
+**Root cause: the inertial reed aperture's phase lag at the played mode rises with pitch and the
+reed's energy pumping falls as cos(lag)** — at a fixed ~1.36 kHz aperture resonance the margin
+crosses zero near C#5. Kill-switch confirmation: raising the aperture resonance alone made D5
+speak. A real player firms the embouchure ascending the register; the model now does the same:
+
+- **`ReedParams.tracking_frequency_hz` + `REED_APERTURE_TRACK_RATIO = 3.0`**: above the break the
+  aperture resonance gets a floor of 3x the sounding pitch, pinning the lag (and the reed gain)
+  at its A4 value up the register. At or below A4 the floor sits under the default resonance —
+  the approved A4/low-E tone is bit-identical (hash-verified).
+- **Tracked-lift phase trim** (`REED_TRACKED_PHASE_TRIM_*`): the comp's empirical coupling (1.25)
+  was fitted at the base aperture; tracked notes played sharp on a smooth bump vs the lift ratio
+  (peak +27 c near lift 1.45). Trimmed with a warm-bore-style fitted curve `A·y·e^(1−y)` in the
+  reed comp; the fit nulled all speaking notes in one calibration (the predicted-vs-measured
+  scale was exactly 2x off once — unit conversion — then exact).
+- Ruled out along the way: choke-Q pitch attractor (Q 2→6 changed nothing), register body
+  reaction (kill-switch, nothing).
+
+Measured (sustained, vs A440 grid; previously D5+ were SILENT):
+
+```text
+A4 −0.1   A#4 +0.7   B4 −0.7   C5 −1.3   D5 −1.7   E5 −1.2   G5 −2.4   (blooms 165–230 ms)
+C6 −38.5 (speaks, but concert C6 is altissimo above the written-C6 clarion top — out of scope)
+```
+
+The supported vented register is now **A4–G5 within ±2.4 cents at consistent levels**. Remaining
+pitch work: the pre-break G4/G#4 sag (−5/−8 c, separate unvented-bore mechanism), onset lock
+time for fast passages (the "bird noises" item — notes shorter than the ~200 ms bloom), and
+altissimo tuning if concert C6+ ever matters.
+
+## Fix checkpoint (2026-06-10f) — onset lock: tongue-release attack overpressure
+
+The ~200 ms bloom (and the "bird noises" on fast high notes — notes shorter than the bloom never
+lock) is a seed-and-margin problem: amplitude grows exponentially from the excitation's tiny
+seed at a thin margin. Measured bloom-to-50% vs effective steady pressure (A4/D5): 0.58 (patch
+default) → 180–205 ms, 0.68 → 70–75 ms, 0.75 → 50–60 ms, **0.85 → the reed chokes silent** (the
+overpressure cliff). A real attack transiently overblows — the reed's gain is highest during the
+build — so the processor now models the tongue release:
+
+- On every vented-register note-on (including legato note changes, which must re-lock the new
+  mode), an attack envelope drives the effective pressure toward `ATTACK_PRESSURE_TARGET = 0.75`,
+  decaying to the steady patch pressure with τ = 70 ms.
+- The boosted pressure is hard-ceilinged at `ATTACK_PRESSURE_MAX = 0.78` (humanize walks
+  included) — well under the 0.85 choke cliff.
+- Below the break the envelope never arms: the approved low register is untouched.
+
+Measured: vented bloom-to-50% **180–205 → 65–75 ms** (reference 70 ms). Sustained pitch table
+unchanged (A4–G5 within ±2.4 c). Fast low/high articulation: the high notes now lock within
+their own 170–215 ms windows (back-half pitch +5/+7/+17/+6 c at −24.5 dBFS; previously 620 Hz
+chirps that never arrived). Renders/manifest/MP3s refreshed. The parked scale test's onset
+failure mode should also be re-checked when the tone guards are re-derived post-audition.
+
+### Release discontinuity (2026-06-10g) — register fingering now persists through release
+
+User audition (with waveform screenshot): an abrupt near-discontinuity at the END of the fast
+high notes. Measured: high-note offsets stepped up to **Δ0.252 in one sample** (2x the note's own
+peak; onsets were fine). Cause: `note_off` cleared `current_note`, so `register_key_state`
+snapped to "no vent, ratio 1.0" — the ringing vented long bore re-tuned to the unvented short
+bore in a single sample, truncating the release. Fix: a persistent `sounding_note` carries the
+register fingering (vent topology, bore ratio, embouchure tracking) through the release;
+note-off only stops the breath. Post-release tails now decay smoothly over ~20 ms (worst step
+Δ0.014, equal to the approved low notes). All vented renders refreshed.
 
 ## How I'd prioritize (post-audition)
 

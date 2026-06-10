@@ -1,4 +1,6 @@
 use super::*;
+
+mod bow;
 use crate::patch::{BodySelection, DriverSelection, ModelSwitches};
 use lindelion_dsp_utils::{
     analysis::{
@@ -208,6 +210,54 @@ fn brightness_and_body_balance_are_audible_axes() {
 }
 
 #[test]
+fn repeated_plucks_make_body_balance_material_between_strikes() {
+    let notes = repeated_c4_plucks(5, 0.28, 0.18, 1.0);
+    let pickup = render_phrase_with_patch(
+        StringPatch {
+            body_balance: 0.0,
+            ..StringPatch::default()
+        },
+        &notes,
+    );
+    let body = render_phrase_with_patch(
+        StringPatch {
+            body_balance: 1.0,
+            ..StringPatch::default()
+        },
+        &notes,
+    );
+    let n = pickup.len().min(body.len());
+    let pickup_tail = rms_window(&pickup, 0.22, 0.04);
+    let body_tail = rms_window(&body, 0.22, 0.04);
+    let pickup_late_tail = rms_window(&pickup, 1.34, 0.08);
+    let body_late_tail = rms_window(&body, 1.34, 0.08);
+    let difference = rms_difference(&pickup[..n], &body[..n]);
+
+    assert_all_finite(&pickup);
+    assert_all_finite(&body);
+    assert!(
+        difference > 0.000_08,
+        "repeated pluck difference too small: {difference}"
+    );
+    let first_tail_delta = relative_delta(pickup_tail, body_tail);
+    let late_tail_delta = relative_delta(pickup_late_tail, body_late_tail);
+    assert!(
+        first_tail_delta > 0.30,
+        "first tail change too small: pickup={pickup_tail} body={body_tail} delta={first_tail_delta}"
+    );
+    // Balance is a listening-point control: since tension modulation moved to
+    // the string's own stored energy, the two balance settings render the same
+    // string physics and differ only in the pickup/body mix, so the late-tail
+    // contrast is the genuine body-memory level difference (the old, larger
+    // delta included balance-dependent tension detune through the output-energy
+    // bus, a physics-by-mix artifact).
+    assert!(
+        late_tail_delta > 0.15,
+        "late tail change too small: pickup={pickup_late_tail} body={body_late_tail} delta={late_tail_delta}"
+    );
+}
+
+#[test]
 fn articulation_slots_produce_distinct_attacks() {
     let pick = render_with_selected_slot(0, 60, 0.9, 16_000);
     let sforzando = render_with_selected_slot(1, 60, 0.9, 16_000);
@@ -331,10 +381,13 @@ fn render_with_selected_slot(slot: usize, note: u8, velocity: f32, frames: usize
 }
 
 fn render_phrase(notes: &[(u8, f32, f32, f32)]) -> Vec<f32> {
+    render_phrase_with_patch(StringPatch::default(), notes)
+}
+
+fn render_phrase_with_patch(patch: StringPatch, notes: &[(u8, f32, f32, f32)]) -> Vec<f32> {
     let total_seconds = notes.iter().map(|(_, _, end, _)| *end).fold(0.0, f32::max) + 0.5;
     let total_blocks = ((SAMPLE_RATE * total_seconds).ceil() as usize).div_ceil(BLOCK);
-    let mut processor =
-        StringProcessor::new(SAMPLE_RATE, StringPatch::default(), default_sources());
+    let mut processor = StringProcessor::new(SAMPLE_RATE, patch, default_sources());
     let mut left = vec![0.0; BLOCK];
     let mut right = vec![0.0; BLOCK];
     let mut rendered = Vec::with_capacity(total_blocks * BLOCK);
@@ -346,6 +399,17 @@ fn render_phrase(notes: &[(u8, f32, f32, f32)]) -> Vec<f32> {
         rendered.extend_from_slice(&left);
     }
     rendered
+}
+
+fn rms_window(output: &[f32], start_seconds: f32, duration_seconds: f32) -> f32 {
+    let start = (start_seconds * SAMPLE_RATE) as usize;
+    let len = (duration_seconds * SAMPLE_RATE) as usize;
+    let end = start.saturating_add(len).min(output.len());
+    rms(&output[start..end])
+}
+
+fn relative_delta(a: f32, b: f32) -> f32 {
+    (a - b).abs() / a.abs().max(b.abs()).max(1.0e-9)
 }
 
 fn scheduled_events(
@@ -376,6 +440,56 @@ fn c_major_scale(step: f32, duration: f32, velocity: f32) -> Vec<(u8, f32, f32, 
             (note, start, start + duration, velocity)
         })
         .collect()
+}
+
+fn repeated_c4_plucks(
+    count: usize,
+    step: f32,
+    duration: f32,
+    velocity: f32,
+) -> Vec<(u8, f32, f32, f32)> {
+    (0..count)
+        .map(|index| {
+            let start = index as f32 * step;
+            (60, start, start + duration, velocity)
+        })
+        .collect()
+}
+
+fn bow_smooth_patch() -> StringPatch {
+    StringPatch {
+        driver: DriverSelection::Bow,
+        body: BodySelection::Violin,
+        brightness: 0.58,
+        damping: 0.40,
+        stiffness: 0.42,
+        bow_position: 0.16,
+        bow_pressure: 0.50,
+        bow_speed: 0.38,
+        bow_friction: 0.34,
+        ..StringPatch::default()
+    }
+}
+
+// Scratch = bowing at the chaos boundary (see the BowScratch render recipe
+// for the measured pressure scan): the note stays clearly pitched
+// (autocorrelation ≈ 0.7 at the fundamental lag) while the envelope churns
+// at several times the smooth bow's roughness. Well past the boundary the
+// note disappears into unpitched crunch — distinct, but unusable as an
+// articulation.
+fn bow_scratch_patch() -> StringPatch {
+    StringPatch {
+        driver: DriverSelection::Bow,
+        body: BodySelection::Violin,
+        brightness: 0.58,
+        damping: 0.40,
+        stiffness: 0.42,
+        bow_position: 0.20,
+        bow_pressure: 0.48,
+        bow_speed: 0.32,
+        bow_friction: 0.70,
+        ..StringPatch::default()
+    }
 }
 
 fn note_on(note: u8, velocity: f32) -> MidiEvent {

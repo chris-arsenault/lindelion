@@ -1,39 +1,36 @@
-use lindelion_dsp_utils::math;
+use lindelion_dsp_utils::{filters::OnePoleLowpass, math};
 
 use crate::core;
 
 /// Normalized string wave admittance at the bridge (wave variables are normalized,
 /// so `G_s = 1`); the body admittance is scaled relative to it.
 const STRING_BRIDGE_ADMITTANCE: f32 = 1.0;
-/// Broadband background admittance: a real body is not infinitely stiff between its
-/// resonances, so it moves (and radiates) a little at every frequency the string
-/// drives it. Kept small: it enters the bridge reflectance `y_inf`, so it loads the
-/// string loop with a *uniform* loss at every frequency — too large a value would
-/// override `loop_gain` as the decay control and over-damp the whole string, not
-/// just the partials near body modes (the intended two-way wolf-note coloring lives
-/// in the modal admittance, which is frequency-localized). The String output blends
-/// in a pickup tap that already carries the broadband pitch, so the body no longer
-/// needs a large background just to radiate the fundamental; this is only the body's
-/// faint inter-resonance motion.
-///
-/// M11 P2 step 2: lowered from 0.015 so this flat loss no longer *overrides*
-/// `loop_gain` as the decay control — at the old value it capped the free-pluck
-/// tail near ~1 s regardless of the loop. The body's audible identity is its
-/// frequency-localized modal admittance (`BODY_GAIN_SCALE` × the mode bank),
-/// which is untouched; this is only the characterless broadband term, kept just
-/// large enough to remain present.
-const BODY_BACKGROUND_ADMITTANCE: f32 = 0.000_5;
+/// Broadband body admittance at the bridge. Loading stays deliberately small so
+/// the body does not become the decay control; radiation is larger because the
+/// soundboard can radiate bridge motion without feeding all of that energy back
+/// into the string as uniform loss. The radiation floor also stands in for the
+/// dense bed of higher body modes the reduced bank truncates: with only ~10
+/// modes, notes whose partials fall between the modelled resonances would
+/// otherwise radiate tens of dB below on-resonance notes, far beyond the
+/// level spread of a real instrument.
+/// Sized against the Iowa MIS arco reference: high enough that between-mode
+/// fundamentals stay within an instrument-like level spread, low enough that
+/// the modal formant contrast (the violin's H4–H7 radiation valley before the
+/// bridge hill) survives — a flat floor that drowns the valleys reads as a
+/// reed organ, not a body.
+const BODY_BACKGROUND_LOADING_ADMITTANCE: f32 = 0.000_5;
+const BODY_BACKGROUND_RADIATION_ADMITTANCE: f32 = 0.006;
 /// Global scale on the modal admittance gains: the body colors the timbre (its
 /// *radiated* output) at full strength so the body stays audible, while a separate
 /// `BODY_LOADING_SCALE` governs how much it *loads* the loop.
-const BODY_GAIN_SCALE: f32 = 0.08;
+const BODY_GAIN_SCALE: f32 = 0.10;
 /// M11 P8: fraction of the modal admittance that loads the string loop, decoupled
 /// from the radiated coloration. At the old value (loading == radiation == full
 /// `BODY_GAIN_SCALE`) the high-Q plate modes over-damped any midrange note whose
 /// fundamental landed on them (~1 s vs ~5 s for in-gap notes). Loading the loop
 /// less lets the midrange sustain while the body still radiates its colour. The
 /// reflectance stays passive (|R| ≤ 1), so this never adds loop energy.
-const BODY_LOADING_SCALE: f32 = 0.22;
+const BODY_LOADING_SCALE: f32 = 0.16;
 
 /// A single body resonance as a driving-point **mobility/admittance**: a fixed
 /// **absolute** frequency (a real body resonates at the same Hz regardless of the
@@ -80,120 +77,142 @@ const MAX_BODY_MODES: usize = 12;
 const GUITAR_MODES: &[BodyMode] = &[
     BodyMode {
         frequency_hz: 100.0,
-        q: 28.0,
-        gain: 0.55,
+        q: 10.0,
+        gain: 0.44,
     }, // air/Helmholtz (A0)
     BodyMode {
         frequency_hz: 200.0,
-        q: 26.0,
+        q: 9.0,
         gain: 0.45,
     }, // top plate (T1)
     BodyMode {
         frequency_hz: 230.0,
-        q: 24.0,
-        gain: 0.38,
+        q: 8.0,
+        gain: 0.40,
     }, // back plate
     BodyMode {
         frequency_hz: 280.0,
-        q: 22.0,
-        gain: 0.30,
+        q: 7.5,
+        gain: 0.34,
     },
     BodyMode {
-        frequency_hz: 370.0,
-        q: 20.0,
-        gain: 0.26,
+        frequency_hz: 360.0,
+        q: 7.0,
+        gain: 0.28,
     },
     BodyMode {
-        frequency_hz: 430.0,
-        q: 18.0,
+        frequency_hz: 455.0,
+        q: 6.0,
         gain: 0.22,
     },
     BodyMode {
-        frequency_hz: 550.0,
-        q: 16.0,
+        frequency_hz: 590.0,
+        q: 5.5,
         gain: 0.18,
     },
     BodyMode {
-        frequency_hz: 650.0,
-        q: 15.0,
-        gain: 0.15,
+        frequency_hz: 760.0,
+        q: 5.0,
+        gain: 0.14,
     },
     BodyMode {
-        frequency_hz: 820.0,
-        q: 13.0,
+        frequency_hz: 1_050.0,
+        q: 4.5,
         gain: 0.12,
     },
     BodyMode {
-        frequency_hz: 1_180.0,
-        q: 11.0,
+        frequency_hz: 1_450.0,
+        q: 4.0,
         gain: 0.10,
     },
     BodyMode {
-        frequency_hz: 2_500.0,
-        q: 3.0,
-        gain: 0.18,
+        frequency_hz: 2_700.0,
+        q: 2.2,
+        gain: 0.14,
     }, // broad formant
 ];
 
 /// Violin body: higher air resonance, the B1-/B1+ main wood signature modes, and
-/// a strong "bridge hill" formant near 2.5–3 kHz.
+/// a strong "bridge hill" formant near 2.5–3 kHz. Mode Qs sit near the low end
+/// of measured violin plate/air Qs so neighbouring resonances overlap: with a
+/// reduced bank, sharper modes leave deep radiation valleys between them
+/// (e.g. an E4 fundamental between A0 and B1- would land ~20 dB below an
+/// on-resonance note, far beyond a real violin's note-to-note spread).
 const VIOLIN_MODES: &[BodyMode] = &[
     BodyMode {
         frequency_hz: 280.0,
-        q: 24.0,
+        q: 14.0,
         gain: 0.50,
     }, // air (A0)
     BodyMode {
         frequency_hz: 460.0,
-        q: 22.0,
+        q: 13.0,
         gain: 0.48,
     }, // main wood (B1-)
     BodyMode {
         frequency_hz: 530.0,
-        q: 21.0,
+        q: 12.0,
         gain: 0.45,
     }, // (B1+)
     BodyMode {
         frequency_hz: 600.0,
-        q: 19.0,
+        q: 11.0,
         gain: 0.32,
     },
+    // The 600–900 Hz "transition region" radiates strongly on measured violins
+    // (the Iowa arco C4 reference carries H3 at ≈ −4 dB rel H1), while the
+    // 1–2 kHz region dips before the bridge hill (H4–H7 sit −23..−36 dB).
+    // The gains below voice that contrast: generous 700/900 modes, lean
+    // 1100/1500 modes.
     BodyMode {
         frequency_hz: 700.0,
-        q: 17.0,
-        gain: 0.28,
+        q: 7.0,
+        gain: 0.42,
     },
     BodyMode {
         frequency_hz: 900.0,
-        q: 15.0,
-        gain: 0.24,
+        q: 9.0,
+        gain: 0.30,
     },
     BodyMode {
         frequency_hz: 1_100.0,
-        q: 13.0,
-        gain: 0.20,
+        q: 8.0,
+        gain: 0.12,
     },
     BodyMode {
         frequency_hz: 1_500.0,
-        q: 11.0,
-        gain: 0.17,
+        q: 7.0,
+        gain: 0.10,
     },
     BodyMode {
         frequency_hz: 2_000.0,
-        q: 9.0,
+        q: 6.0,
         gain: 0.15,
     },
     BodyMode {
-        frequency_hz: 2_800.0,
-        q: 4.0,
+        frequency_hz: 2_400.0,
+        q: 5.0,
         gain: 0.34,
-    }, // bridge-hill formant
+    }, // bridge-hill formant (measured violins peak ≈2.1–2.5 kHz, then fall)
 ];
 
 fn family_modes(family: BodyFamily) -> &'static [BodyMode] {
     match family {
         BodyFamily::Guitar => GUITAR_MODES,
         BodyFamily::Violin => VIOLIN_MODES,
+    }
+}
+
+/// High-pass corner of the broadband background *radiation* term, just below
+/// the family's lowest signature mode. A body radiates as a monopole rolling
+/// off ~12 dB/oct below its first resonance; a background floor flat to DC
+/// instead leaks sub-fundamental content straight to the output — audible as
+/// a low rumble in bowed tails, where the bow's mean drag force leaves slowly
+/// decaying quasi-DC circulating on the string after release.
+fn family_radiation_highpass_hz(family: BodyFamily) -> f32 {
+    match family {
+        BodyFamily::Guitar => 60.0,
+        BodyFamily::Violin => 170.0,
     }
 }
 
@@ -283,6 +302,11 @@ pub(super) struct ReducedBody {
     sample_rate: f32,
     family: BodyFamily,
     modes: Vec<BodyResonator>,
+    // Two cascaded one-pole stages give the background radiation its 12 dB/oct
+    // low-frequency roll-off (`hp = x - lp(x)` per stage); the modal terms are
+    // bandpass biquads and already block DC.
+    radiation_lowpass_a: OnePoleLowpass,
+    radiation_lowpass_b: OnePoleLowpass,
 }
 
 impl ReducedBody {
@@ -292,6 +316,8 @@ impl ReducedBody {
             sample_rate,
             family,
             modes: Vec::with_capacity(MAX_BODY_MODES),
+            radiation_lowpass_a: OnePoleLowpass::default(),
+            radiation_lowpass_b: OnePoleLowpass::default(),
         };
         body.configure(family);
         body
@@ -309,12 +335,19 @@ impl ReducedBody {
             self.modes.push(BodyResonator::new(self.sample_rate, *mode));
         }
         self.modes.truncate(table.len());
+        let highpass_hz = family_radiation_highpass_hz(family);
+        self.radiation_lowpass_a
+            .set_cutoff(highpass_hz, self.sample_rate);
+        self.radiation_lowpass_b
+            .set_cutoff(highpass_hz, self.sample_rate);
     }
 
     pub(super) fn reset(&mut self) {
         for mode in &mut self.modes {
             mode.reset();
         }
+        self.radiation_lowpass_a.reset();
+        self.radiation_lowpass_b.reset();
     }
 
     /// Wave-digital bridge junction. Given the string's bridge-incident wave,
@@ -326,7 +359,7 @@ impl ReducedBody {
         let g = STRING_BRIDGE_ADMITTANCE;
         // The flat background admittance contributes to the instantaneous term, so
         // the body loads and radiates the string broadband (not only at its modes).
-        let mut y_inf = BODY_BACKGROUND_ADMITTANCE;
+        let mut y_inf = BODY_BACKGROUND_LOADING_ADMITTANCE;
         let mut v_state = 0.0;
         // The modal admittance loads the loop at `BODY_LOADING_SCALE` of its radiated
         // strength (M11 P8): the body still colours the *output* at full gain, but it
@@ -340,8 +373,14 @@ impl ReducedBody {
         // G(a - b) = Y_inf*(a + b) + v_state  =>  b = [a(G - Y_inf) - v_state]/(G + Y_inf).
         let reflected = (incident * (g - y_inf) - v_state) / (g + y_inf);
         let force = incident + reflected;
-        // Body velocity = Y * force: the broadband background plus the modal peaks.
-        let mut velocity = BODY_BACKGROUND_ADMITTANCE * force;
+        // Body velocity = Y * force: the broadband background (high-passed below
+        // the lowest mode — see `family_radiation_highpass_hz`) plus the modal
+        // peaks.
+        let background = {
+            let stage_a = force - self.radiation_lowpass_a.process(force);
+            stage_a - self.radiation_lowpass_b.process(stage_a)
+        };
+        let mut velocity = BODY_BACKGROUND_RADIATION_ADMITTANCE * background;
         for mode in &mut self.modes {
             velocity += mode.advance(force);
         }
