@@ -15,6 +15,7 @@ dist/
 # Regeneratable Resample Pro fidelity baseline outputs (run the #[ignore] generators)
 docs/plots/data/resample_pro_fidelity/
 /target-release/
+/target-release-native/
 /target-build/
 review/lamath-render-catalog/
 review/lamath-render-catalog-comments.json
