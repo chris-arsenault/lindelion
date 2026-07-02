@@ -115,7 +115,8 @@ impl Default for FftNoiseRemovalParams {
     }
 }
 
-/// `de-esser` — dynamic narrowband sibilance attenuation.
+/// `de-esser` — dynamic narrowband sibilance attenuation. `threshold` is the sibilant-band
+/// envelope relative to the program level (dB), so it is independent of gain staging.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeEsserParams {
@@ -131,7 +132,7 @@ impl Default for DeEsserParams {
         Self {
             center_freq: 6_000.0,
             bandwidth: 2_000.0,
-            threshold: -30.0,
+            threshold: -12.0,
             reduction: 6.0,
             max_range: 10.0,
         }

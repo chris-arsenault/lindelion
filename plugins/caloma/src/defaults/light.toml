@@ -10,7 +10,7 @@ enabled = true
 intensity = 1.0
 
 [patch.high_pass.params]
-cutoff = 60.0
+cutoff = 80.0
 slope = 24.0
 
 [patch.noise_gate]
@@ -53,7 +53,7 @@ intensity = 1.0
 [patch.de_esser.params]
 center_freq = 6000.0
 bandwidth = 2000.0
-threshold = -30.0
+threshold = -24.0
 reduction = 6.0
 max_range = 10.0
 
@@ -71,7 +71,7 @@ low_mid_q = 1.0
 high_mid_gain = 3.0
 high_mid_freq = 3000.0
 high_mid_q = 1.0
-high_shelf_gain = 5.0
+high_shelf_gain = -2.0
 high_shelf_freq = 10000.0
 
 [patch.dynamic_eq]
@@ -94,7 +94,7 @@ ratio = 4.0
 attack = 10.0
 release = 100.0
 knee = 6.0
-makeup = 9.0
+makeup = 0.0
 
 [patch.upward_expander]
 enabled = false

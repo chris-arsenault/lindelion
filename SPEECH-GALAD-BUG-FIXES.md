@@ -100,6 +100,60 @@ Status: all fixed; verification below.
   the committed per-order tuned defaults still pass their fidelity gates with the corrected
   effects (`committed_defaults_pass_per_order_fidelity_gates`, 209 s).
 
+## Open findings from the railed-defaults investigation (2026-07-02, not yet fixed)
+
+Investigated the de-esser threshold rail (−22, the least-active bound, in Clarity + Broadcast).
+Measured on `speech_clean_continuous_48k` at the harness's −12 dBFS operating level, the
+de-esser's own detector (Q≈3 band → 1 ms/50 ms peak follower) sees: p50 −46, p90 −33.6,
+max −22.9 dBFS over speech-active windows. Engagement: thr −40 → 12 % of windows, 2.9 dB mean
+reduction on the sibilant decile vs 0.04 dB on vowels (healthy, selective); thr −30 (shipped
+default) → 2 % (inert); thr −22 → 0 % (fully inert). The duck mechanism itself is correct.
+
+- [x] **F1 — The tuning objective has no sibilance/harshness term** *(fixed: sixth scored term —
+  es-burst prominence over program level, top-decile of 20 ms windows, level-invariant; preserved
+  = 0.5, reduced → 1, raised → 0; weights rebalanced to 1/6 each)*, so de-essing can only cost
+  (HF-presence/clarity) and never earn: the optimizer's true optimum for the de-esser dimension is
+  always "least active", regardless of de-esser health. The rail was the correct argmax of a
+  mis-specified objective. Fix: add a scored sibilance term (e.g. output band/full-level ratio or
+  es-burst overshoot against a target) — or stop searching the de-esser dimension until one exists.
+- [x] **F2 — The de-esser's absolute-dBFS threshold is level-dependent and mis-calibrated for the
+  product's operating level**: the searched range (−40…−22) and shipped default (−30) sit
+  ~10–20 dB above the detector's actual sibilance levels at −12 dBFS staging, so the *default is
+  effectively inert* on realistic material. Established de-esser practice is level-relative
+  detection (band level vs. program level — dbx 902-style ratio, FabFilter Pro-DS "relative"
+  mode) precisely so one setting works at any gain staging; the existing inline
+  `SibilanceEnergy` (band/full normalized) is the natural detector to reuse.
+
+### F1/F2 fix + retune outcome (2026-07-02)
+
+De-esser detection is now **level-relative** (band envelope over a 5 ms/100 ms program envelope,
+−60 dBFS silence floor; default −12 dB sits in the measured vowel/ess gap −26 vs −8…+1 dB), with
+level-invariance + silence-floor regression tests. Retune with the live objective: Clarity 0.73,
+Broadcast 0.73, Light 0.46; full-battery gates green; Clarity/Broadcast integrate at −16 LUFS
+(on target). **The de-esser pathology is confirmed fixed**: its optimum reversed from
+"least-active rail" to active (Broadcast −24 = most aggressive, Light interior −8, Clarity −22).
+
+Second round (same day): capped `limiter.ceiling` range at −1.0 (the documented −1 dBTP intent —
+it railed to −0.5 when allowed), reshaped the clarity reward into a **tent around a +3 dB
+presence lift** (monotone reward had made the high shelf a free win), snapped tuner start values
+into the search ranges (an out-of-range committed value survived descent otherwise), and raised
+descent to 3 early-stopping passes (single-pass left order-dependent, run-to-run rail flips on
+the coupled landscape). Final retune **converged** (Clarity/Light fixed points in one pass,
+Broadcast two): Clarity 0.56 @ −16.1 LUFS, Broadcast 0.60 @ −22.7 LUFS, Light 0.43 @ −33 LUFS;
+full battery green.
+
+Remaining rails, all stable and explainable (see final session report for the table):
+- `limiter.ceiling = −1.0` everywhere — railed at the design target: the cap doing its job.
+- `de_esser.threshold = −24/−24/−22` — most-active bound: the sibilance reward is monotone in
+  prominence reduction (the mirror of the old pathology, mild); a tent around a target prominence
+  would give it an interior optimum. Candidate refinement, not shipped.
+- `compressor.makeup = 0` (Broadcast/Light, hence quiet LUFS) — converged choice: buying loudness
+  through the limiter costs more in clarity/coloration than the loudness term earns; consistent
+  with the D6 decision that loudness is the user's concern (Clarity reaches −16 with headroom).
+- Tonal shelves per-order at bounds (Clarity: high shelf +5; Broadcast: low shelf +5, high shelf
+  −2), `air = 20` low (don't add ess-band energy — coherent), `high_pass.cutoff = 140` in Clarity
+  (weakly-determined dim).
+
 ## Follow-up candidates (not bugs)
 
 - Re-run `make tune-defaults` at leisure: the tuned defaults were optimized against the old

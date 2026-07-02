@@ -17,7 +17,9 @@ use crate::runtime::ChainRuntime;
 
 use super::config::TuningConfig;
 use super::metrics;
-use super::score::{CandidateMetrics, ClarityMetric, DereverbMetric, FixtureMetrics, NoiseMetric};
+use super::score::{
+    CandidateMetrics, ClarityMetric, DereverbMetric, FixtureMetrics, NoiseMetric, SibilanceMetric,
+};
 
 const BLOCK: usize = 512;
 const TAIL_WINDOW: usize = 2_048;
@@ -34,6 +36,8 @@ pub struct BatteryFixture {
     pub measures_dereverb: bool,
     /// Measure clarity (HF presence) + coloration (core-band) of output vs the dry input.
     pub measures_clarity: bool,
+    /// Measure sibilance (es-burst prominence over the program level) of output vs the dry input.
+    pub measures_sibilance: bool,
 }
 
 impl BatteryFixture {
@@ -46,6 +50,7 @@ impl BatteryFixture {
             clean_reference: None,
             measures_dereverb: false,
             measures_clarity: false,
+            measures_sibilance: false,
         }
     }
 }
@@ -154,6 +159,20 @@ impl OrderEvaluator {
         } else {
             (None, None)
         };
+        let sibilance = fixture.measures_sibilance.then(|| SibilanceMetric {
+            prominence_in_db: metrics::sibilance_prominence_db(
+                dry,
+                sr,
+                self.cfg.bands.sib_lo,
+                self.cfg.bands.sib_hi,
+            ),
+            prominence_out_db: metrics::sibilance_prominence_db(
+                aligned,
+                sr,
+                self.cfg.bands.sib_lo,
+                self.cfg.bands.sib_hi,
+            ),
+        });
 
         FixtureMetrics {
             finite: metrics::all_finite(&output),
@@ -164,6 +183,7 @@ impl OrderEvaluator {
             dereverb,
             clarity,
             coloration_db,
+            sibilance,
         }
     }
 
@@ -251,6 +271,7 @@ mod tests {
                 clean_reference: None,
                 measures_dereverb: false,
                 measures_clarity: true,
+                measures_sibilance: true,
             },
             BatteryFixture {
                 name: "noisy".into(),
@@ -259,6 +280,7 @@ mod tests {
                 clean_reference: Some(clean.clone()),
                 measures_dereverb: false,
                 measures_clarity: false,
+                measures_sibilance: false,
             },
             BatteryFixture {
                 name: "reverb".into(),
@@ -267,6 +289,7 @@ mod tests {
                 clean_reference: None,
                 measures_dereverb: true,
                 measures_clarity: false,
+                measures_sibilance: false,
             },
             BatteryFixture::plain("pauses", speech_like(6_144, sr), sr),
         ]
@@ -303,7 +326,11 @@ mod tests {
         // clarity + coloration metric.
         assert!(a.per_fixture[1].noise.is_some());
         assert!(a.per_fixture[2].dereverb.is_some());
-        assert!(a.per_fixture[0].clarity.is_some() && a.per_fixture[0].coloration_db.is_some());
+        assert!(
+            a.per_fixture[0].clarity.is_some()
+                && a.per_fixture[0].coloration_db.is_some()
+                && a.per_fixture[0].sibilance.is_some()
+        );
     }
 
     #[test]

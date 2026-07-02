@@ -62,6 +62,7 @@ fn battery() -> Vec<BatteryFixture> {
             clean_reference: None,
             measures_dereverb: false,
             measures_clarity: true,
+            measures_sibilance: true,
         },
         BatteryFixture {
             name: "noisy".into(),
@@ -70,6 +71,7 @@ fn battery() -> Vec<BatteryFixture> {
             clean_reference: Some(clean.clone()),
             measures_dereverb: false,
             measures_clarity: false,
+            measures_sibilance: false,
         },
         BatteryFixture {
             name: "reverb".into(),
@@ -78,6 +80,7 @@ fn battery() -> Vec<BatteryFixture> {
             clean_reference: None,
             measures_dereverb: true,
             measures_clarity: false,
+            measures_sibilance: false,
         },
     ]
 }

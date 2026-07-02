@@ -4,6 +4,7 @@
 //! none allocate beyond small scratch and none touch I/O or the chain — so they run in `make ci`.
 
 use lindelion_dsp_utils::analysis::{peak_abs, rms, windowed_dft_magnitude_at};
+use lindelion_dsp_utils::filters::{Biquad as DspBiquad, BiquadCoefficients};
 
 /// Whether every sample is finite (a hard-constraint helper).
 pub fn all_finite(signal: &[f32]) -> bool {
@@ -122,6 +123,49 @@ pub fn band_energy_db(signal: &[f32], sample_rate: f32, lo_hz: f32, hi_hz: f32) 
 /// High-frequency presence (clarity term): band energy in the consonant/air band `[lo_hz, hi_hz]`.
 pub fn hf_presence_db(signal: &[f32], sample_rate: f32, lo_hz: f32, hi_hz: f32) -> f32 {
     band_energy_db(signal, sample_rate, lo_hz, hi_hz)
+}
+
+/// Sibilance prominence: how far the es-bursts stand above the program level. Per 20 ms window,
+/// the sibilant-band RMS relative to the full-band RMS (dB), over speech-active windows (those
+/// within 20 dB of the loudest window — the same relative gate as the pumping metric, so the
+/// measure is level-invariant, matching the de-esser's level-relative detection); returns the mean
+/// of the top decile. De-essing lowers it; a static HF cut also lowers it but is caught by the
+/// clarity term — the pair rewards *selective* sibilance control.
+pub fn sibilance_prominence_db(signal: &[f32], sample_rate: f32, lo_hz: f32, hi_hz: f32) -> f32 {
+    const SPEECH_REL_DB: f32 = 20.0;
+    /// Prominence returned when nothing is measurable (silence): far below any real value.
+    const EMPTY_PROMINENCE_DB: f32 = -80.0;
+    let window = ((0.02 * sample_rate) as usize).max(1);
+    let center = (lo_hz.max(1.0) * hi_hz.max(1.0)).sqrt();
+    let q = (center / (hi_hz - lo_hz).max(1.0)).max(0.1);
+    let mut bp = DspBiquad::new(BiquadCoefficients::bandpass(sample_rate, center, q));
+    let banded: Vec<f32> = signal.iter().map(|&s| bp.process(s)).collect();
+
+    let mut frames: Vec<(f32, f32)> = Vec::new(); // (full_rms, prominence_db)
+    let mut start = 0;
+    while start + window <= signal.len() {
+        let full = rms(&signal[start..start + window]);
+        let band = rms(&banded[start..start + window]);
+        frames.push((full, 20.0 * ((band + 1e-9) / (full + 1e-9)).log10()));
+        start += window;
+    }
+    let peak_full = frames.iter().fold(0.0_f32, |m, &(f, _)| m.max(f));
+    if peak_full <= 0.0 {
+        return EMPTY_PROMINENCE_DB;
+    }
+    let floor = peak_full * 10.0_f32.powf(-SPEECH_REL_DB / 20.0);
+    let mut prominences: Vec<f32> = frames
+        .iter()
+        .filter(|&&(f, _)| f >= floor)
+        .map(|&(_, p)| p)
+        .collect();
+    if prominences.is_empty() {
+        return EMPTY_PROMINENCE_DB;
+    }
+    prominences.sort_by(|a, b| a.total_cmp(b));
+    let decile = (prominences.len() / 10).max(1);
+    let top = &prominences[prominences.len() - decile..];
+    top.iter().sum::<f32>() / top.len() as f32
 }
 
 /// Coloration: the mean absolute per-probe magnitude change (dB) of `output` vs `dry` across the
@@ -381,6 +425,39 @@ mod tests {
         assert!(
             v_pump > v_steady + 10.0,
             "a breathing gain must register as pumping: {v_steady:.2} -> {v_pump:.2}"
+        );
+    }
+
+    #[test]
+    fn sibilance_prominence_tracks_es_bursts_and_is_level_invariant() {
+        // "Speech": a 300 Hz voice with periodic 6 kHz es-bursts. Ducking the bursts must lower
+        // the prominence; scaling the whole signal must not change it (relative measure).
+        let n = 48_000;
+        let burst = |i: usize| (i / 4_800) % 4 == 3; // 100 ms es every 400 ms
+        let make = |es_gain: f32, level: f32| -> Vec<f32> {
+            (0..n)
+                .map(|i| {
+                    let t = i as f32 / SR;
+                    let voice = 0.3 * (std::f32::consts::TAU * 300.0 * t).sin();
+                    let es = if burst(i) {
+                        0.25 * es_gain * (std::f32::consts::TAU * 6_000.0 * t).sin()
+                    } else {
+                        0.0
+                    };
+                    level * (voice + es)
+                })
+                .collect()
+        };
+        let full = sibilance_prominence_db(&make(1.0, 1.0), SR, 4_500.0, 9_000.0);
+        let deessed = sibilance_prominence_db(&make(0.5, 1.0), SR, 4_500.0, 9_000.0);
+        let quiet = sibilance_prominence_db(&make(1.0, 0.05), SR, 4_500.0, 9_000.0);
+        assert!(
+            full > deessed + 3.0,
+            "ducking es-bursts must lower prominence: {full:.1} -> {deessed:.1}"
+        );
+        assert!(
+            (full - quiet).abs() < 0.5,
+            "prominence must be level-invariant: {full:.1} vs {quiet:.1}"
         );
     }
 

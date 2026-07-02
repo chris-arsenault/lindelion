@@ -2,6 +2,29 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.23.0 - 2026-07-02
+
+### Calóma speech chain
+
+- The de-esser's detection is now **level-relative** (dbx 902-style): the threshold is the
+  sibilant-band envelope relative to the program level, so one setting works at any gain
+  staging. The previous absolute-dBFS threshold made engagement depend on input level and
+  was effectively inert at a realistic −12 dBFS operating level; the new −12 dB default
+  sits in the measured gap between vowels (~−26 dB) and esses (~−8…+1 dB). A −60 dBFS
+  program floor keeps silence from engaging the gain.
+- The default-tuning objective gained a sixth, evenly-weighted **sibilance-control term**
+  (es-burst prominence over the program level, level-invariant), so de-essing can earn
+  score against the clarity term — previously any de-essing could only be penalized, and
+  the optimizer railed the de-esser to its least-active bound.
+- The clarity reward is now a **tent around a +3 dB presence lift** instead of monotone in
+  HF boost, so excess brightness costs score (the monotone reward railed the EQ high shelf
+  to its bound); the limiter-ceiling search range is capped at the documented −1 dBTP
+  intent; tuner start values snap into the search ranges; and the coordinate descent runs
+  up to three early-stopping passes (a single pass left order-dependent rail flips).
+- Retuned the committed per-order defaults with the corrected objective; the search now
+  converges to stable per-order characters (Clarity bright and at −16 LUFS; Broadcast warm;
+  all orders' limiter at the −1 dBTP target) and the full-battery gates pass.
+
 ## v0.22.0 - 2026-07-02
 
 ### Calóma speech chain

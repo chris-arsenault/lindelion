@@ -26,6 +26,13 @@ pub struct ClarityMetric {
     pub hf_out_db: f32,
 }
 
+/// Sibilance measurement on clean speech (es-burst prominence over the program level, in/out, dB).
+#[derive(Debug, Clone, Copy)]
+pub struct SibilanceMetric {
+    pub prominence_in_db: f32,
+    pub prominence_out_db: f32,
+}
+
 /// The measured metrics for one fixture's chain output. The always-present fields feed the hard
 /// constraints + the loudness term; the optional fields carry the role a particular fixture probes.
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +45,7 @@ pub struct FixtureMetrics {
     pub dereverb: Option<DereverbMetric>,
     pub clarity: Option<ClarityMetric>,
     pub coloration_db: Option<f32>,
+    pub sibilance: Option<SibilanceMetric>,
 }
 
 impl FixtureMetrics {
@@ -53,6 +61,7 @@ impl FixtureMetrics {
             dereverb: None,
             clarity: None,
             coloration_db: None,
+            sibilance: None,
         }
     }
 }
@@ -88,15 +97,28 @@ fn dereverb_reward(m: DereverbMetric) -> f32 {
     clamp01(1.0 - m.wet_tail / m.dry_tail)
 }
 
-/// Reward (0..1) for clarity: HF presence **preserved-or-raised**. Preserved → 0.5; raised by the
-/// scale → 1; cut by the scale → 0.
+/// Reward (0..1) for clarity: a **tent around a modest HF-presence lift**. Full reward at
+/// `clarity_target_db` of lift, falling to 0 at `clarity_scale_db` away on either side — so a cut
+/// costs score *and* excess brightness costs score (a monotone preserved-or-raised reward made
+/// the EQ high shelf a free win and railed it to its bound).
 fn clarity_reward(m: ClarityMetric, cfg: &TuningConfig) -> f32 {
-    clamp01(0.5 + (m.hf_out_db - m.hf_in_db) / (2.0 * cfg.scales.clarity_scale_db))
+    let lift = m.hf_out_db - m.hf_in_db;
+    1.0 - clamp01((lift - cfg.scales.clarity_target_db).abs() / cfg.scales.clarity_scale_db)
 }
 
 /// Reward (0..1) for low coloration: 1 when the core band is untouched, → 0 at `coloration_scale_db`.
 fn coloration_reward(deviation_db: f32, cfg: &TuningConfig) -> f32 {
     1.0 - clamp01(deviation_db / cfg.scales.coloration_scale_db)
+}
+
+/// Reward (0..1) for sibilance control: es-burst prominence **preserved-or-reduced**. Preserved →
+/// 0.5; reduced by the scale → 1; raised by the scale → 0. This is the counter-term that lets the
+/// de-esser earn score — the clarity term alone can only penalize any HF reduction, which railed
+/// the de-esser to its least-active bound.
+fn sibilance_reward(m: SibilanceMetric, cfg: &TuningConfig) -> f32 {
+    clamp01(
+        0.5 + (m.prominence_in_db - m.prominence_out_db) / (2.0 * cfg.scales.sibilance_scale_db),
+    )
 }
 
 /// Mean of an iterator of rewards, or `0.5` (neutral) if none were measured.
@@ -161,6 +183,13 @@ pub fn score(candidate: &CandidateMetrics, cfg: &TuningConfig) -> Option<f32> {
             .filter_map(|f| f.coloration_db)
             .map(|d| coloration_reward(d, cfg)),
     );
+    let sibilance = mean_or_neutral(
+        candidate
+            .per_fixture
+            .iter()
+            .filter_map(|f| f.sibilance)
+            .map(|m| sibilance_reward(m, cfg)),
+    );
 
     let w = cfg.weights;
     Some(
@@ -168,7 +197,8 @@ pub fn score(candidate: &CandidateMetrics, cfg: &TuningConfig) -> Option<f32> {
             + w.noise_reduction * noise
             + w.dereverb * dereverb
             + w.clarity * clarity
-            + w.low_coloration * coloration,
+            + w.low_coloration * coloration
+            + w.sibilance * sibilance,
     )
 }
 
@@ -194,6 +224,10 @@ mod tests {
                     hf_out_db: -20.0,
                 }),
                 coloration_db: Some(0.0),
+                sibilance: Some(SibilanceMetric {
+                    prominence_in_db: -8.0,
+                    prominence_out_db: -8.0, // preserved -> neutral 0.5 reward
+                }),
                 ..FixtureMetrics::passing(loudness)
             }],
         }
@@ -257,6 +291,54 @@ mod tests {
             hf_out_db: -26.0,
         });
         assert!(score(&raised, &cfg).unwrap() > score(&cut, &cfg).unwrap());
+    }
+
+    #[test]
+    fn modest_clarity_lift_beats_excessive_brightness() {
+        // The clarity reward is a tent around a modest lift: a target-sized lift must beat both
+        // preservation and a large boost, so the optimizer cannot buy score with unbounded shelf.
+        let cfg = default_config();
+        let with_lift = |lift: f32| {
+            let mut c = battery(-16.0);
+            c.per_fixture[0].clarity = Some(ClarityMetric {
+                hf_in_db: -20.0,
+                hf_out_db: -20.0 + lift,
+            });
+            score(&c, &cfg).unwrap()
+        };
+        let modest = with_lift(cfg.scales.clarity_target_db);
+        let preserved = with_lift(0.0);
+        let excessive = with_lift(cfg.scales.clarity_target_db + 8.0);
+        assert!(modest > preserved, "target lift must beat preservation");
+        assert!(
+            modest > excessive,
+            "target lift must beat excess brightness"
+        );
+        assert!(
+            preserved > excessive,
+            "excess brightness is worse than doing nothing"
+        );
+    }
+
+    #[test]
+    fn reduced_sibilance_prominence_raises_the_score() {
+        let cfg = default_config();
+        let preserved = battery(-16.0);
+        let mut deessed = battery(-16.0);
+        deessed.per_fixture[0].sibilance = Some(SibilanceMetric {
+            prominence_in_db: -8.0,
+            prominence_out_db: -12.0, // es-bursts tamed by 4 dB
+        });
+        let mut harsher = battery(-16.0);
+        harsher.per_fixture[0].sibilance = Some(SibilanceMetric {
+            prominence_in_db: -8.0,
+            prominence_out_db: -4.0, // es-bursts made more prominent
+        });
+        let p = score(&preserved, &cfg).unwrap();
+        let d = score(&deessed, &cfg).unwrap();
+        let h = score(&harsher, &cfg).unwrap();
+        assert!(d > p, "taming sibilance must earn score: {p} -> {d}");
+        assert!(h < p, "raising sibilance must cost score: {p} -> {h}");
     }
 
     #[test]

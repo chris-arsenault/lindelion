@@ -65,7 +65,7 @@ fn de_esser_defaults() {
         DeEsserParams {
             center_freq: 6_000.0,
             bandwidth: 2_000.0,
-            threshold: -30.0,
+            threshold: -12.0, // level-relative: band envelope over program level, dB
             reduction: 6.0,
             max_range: 10.0
         }

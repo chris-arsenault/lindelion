@@ -5,8 +5,11 @@
 //!   param), not the clip-*reject* threshold: a −1 dB limiter overshoots to ~−0.8 dBFS, so a literal
 //!   −1 dBFS reject would reject the limiter's own normal output. The hard clip constraint therefore
 //!   rejects peak > 0.95 (≈ −0.45 dBFS) — strict (catches real clipping) but physically achievable.
-//! - **Balanced weights** — the five scored terms (loudness, noise reduction, dereverb, clarity,
-//!   low coloration) weighted ~evenly (0.2 each), so no single objective dominates the defaults.
+//! - **Balanced weights** — the six scored terms (loudness, noise reduction, dereverb, clarity,
+//!   low coloration, sibilance control) weighted evenly (1/6 each), so no single objective
+//!   dominates the defaults. The sibilance term exists so subtractive processing (the de-esser)
+//!   can *earn* score: without it the optimizer could only ever be penalized for de-essing (via
+//!   HF presence) and railed the de-esser to its least-active bound.
 //! - **Strict constraints** — reject non-finite, peak > −0.45 dBFS, or pumping (chain gain-envelope
 //!   variance **over speech-present frames**) above a tight bound.
 //!
@@ -35,7 +38,7 @@ pub struct Constraints {
     pub pumping_variance_db2: f32,
 }
 
-/// Balanced weights over the five scored terms (sum to 1).
+/// Balanced weights over the six scored terms (sum to 1).
 #[derive(Debug, Clone, Copy)]
 pub struct Weights {
     pub loudness: f32,
@@ -43,11 +46,17 @@ pub struct Weights {
     pub dereverb: f32,
     pub clarity: f32,
     pub low_coloration: f32,
+    pub sibilance: f32,
 }
 
 impl Weights {
     pub fn sum(&self) -> f32 {
-        self.loudness + self.noise_reduction + self.dereverb + self.clarity + self.low_coloration
+        self.loudness
+            + self.noise_reduction
+            + self.dereverb
+            + self.clarity
+            + self.low_coloration
+            + self.sibilance
     }
 }
 
@@ -56,10 +65,17 @@ impl Weights {
 pub struct TermScales {
     /// SNR improvement (dB) that earns full noise-reduction reward.
     pub noise_improvement_db: f32,
-    /// |HF-presence change| (dB) that earns full clarity reward above the preserved baseline.
+    /// HF-presence lift (dB) at which the clarity reward peaks; the reward is a tent around this
+    /// target, so both cuts and excessive brightness cost score (a monotone reward railed the EQ
+    /// high shelf to its bound).
+    pub clarity_target_db: f32,
+    /// dB distance from `clarity_target_db` at which the clarity reward reaches 0.
     pub clarity_scale_db: f32,
     /// Core-band coloration (dB) at which the low-coloration reward reaches 0.
     pub coloration_scale_db: f32,
+    /// Sibilance-prominence reduction (dB) that earns full sibilance reward above the
+    /// preserved baseline.
+    pub sibilance_scale_db: f32,
 }
 
 /// Analysis bands (Hz).
@@ -69,6 +85,9 @@ pub struct Bands {
     pub core_hi: f32,
     pub hf_lo: f32,
     pub hf_hi: f32,
+    /// Sibilance band for the prominence metric (es-burst energy vs the program level).
+    pub sib_lo: f32,
+    pub sib_hi: f32,
 }
 
 /// The full D6 tuning configuration.
@@ -93,22 +112,27 @@ pub const fn default_config() -> TuningConfig {
             pumping_variance_db2: 9.0, // dB² over speech frames (~3 dB gain-swing stdev); empirical
         },
         weights: Weights {
-            loudness: 0.2,
-            noise_reduction: 0.2,
-            dereverb: 0.2,
-            clarity: 0.2,
-            low_coloration: 0.2,
+            loudness: 1.0 / 6.0,
+            noise_reduction: 1.0 / 6.0,
+            dereverb: 1.0 / 6.0,
+            clarity: 1.0 / 6.0,
+            low_coloration: 1.0 / 6.0,
+            sibilance: 1.0 / 6.0,
         },
         scales: TermScales {
             noise_improvement_db: 6.0,
+            clarity_target_db: 3.0, // gentle presence lift, broadcast-speech practice
             clarity_scale_db: 6.0,
             coloration_scale_db: 6.0,
+            sibilance_scale_db: 6.0,
         },
         bands: Bands {
             core_lo: 300.0,
             core_hi: 3_000.0,
             hf_lo: 4_000.0,
             hf_hi: 8_000.0,
+            sib_lo: 4_500.0,
+            sib_hi: 9_000.0,
         },
     }
 }
@@ -165,13 +189,16 @@ const ALL_DIMS: &[ParamDim] = &[
         step: 3.0,
     },
     ParamDim {
+        // Level-relative threshold (band envelope over program level, dB). Measured on real
+        // speech the detector reads ~-26 dB on vowels and -8..+1 dB on esses, so this grid spans
+        // "aggressive" (into the upper vowel region) to "light" (extreme esses only).
         label: "de_esser.threshold",
         slot: Some(SlotId::DeEsser),
         get: |p| p.de_esser.params.threshold,
         set: |p, v| p.de_esser.params.threshold = v,
-        min: -40.0,
-        max: -22.0,
-        step: 6.0,
+        min: -24.0,
+        max: -4.0,
+        step: 4.0,
     },
     ParamDim {
         label: "five_band_eq.low_shelf_gain",
@@ -210,12 +237,15 @@ const ALL_DIMS: &[ParamDim] = &[
         step: 10.0,
     },
     ParamDim {
+        // Top capped at -1.0: the D6 loudness decision names -1 dBTP as the limiter target, so
+        // the search must not buy loudness by raising the ceiling past it (it railed to -0.5
+        // when allowed).
         label: "limiter.ceiling",
         slot: Some(SlotId::Limiter),
         get: |p| p.limiter.params.ceiling,
         set: |p, v| p.limiter.params.ceiling = v,
         min: -2.0,
-        max: -0.5,
+        max: -1.0,
         step: 0.5,
     },
 ];

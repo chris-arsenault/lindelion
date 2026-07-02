@@ -63,6 +63,7 @@ fn search_battery() -> Vec<BatteryFixture> {
             clean_reference: None,
             measures_dereverb: false,
             measures_clarity: true,
+            measures_sibilance: true,
         },
         BatteryFixture {
             name: "noisy".into(),
@@ -71,6 +72,7 @@ fn search_battery() -> Vec<BatteryFixture> {
             clean_reference: Some(clean.clone()),
             measures_dereverb: false,
             measures_clarity: false,
+            measures_sibilance: false,
         },
         BatteryFixture {
             name: "reverb".into(),
@@ -79,6 +81,7 @@ fn search_battery() -> Vec<BatteryFixture> {
             clean_reference: None,
             measures_dereverb: true,
             measures_clarity: false,
+            measures_sibilance: false,
         },
     ]
 }
@@ -98,7 +101,10 @@ fn tune_committed_defaults() {
     let cfg = default_config();
     let opts = SearchOpts {
         seed: 0xCA10_0DEF,
-        max_passes: 1,
+        // Multiple passes (early-stopping when a pass improves nothing): the landscape couples
+        // dims — e.g. compressor makeup only earns loudness reward once the tonal dims stop
+        // costing clarity — and a single pass left order-dependent, run-to-run rail flips.
+        max_passes: 3,
         restarts: 0,
     };
 
@@ -110,6 +116,14 @@ fn tune_committed_defaults() {
         let mut start = default_patch_for(order);
         start.input_level_db = 0.0;
         start.output_level_db = 0.0;
+        // Snap the start into each searched dimension's range: committed values from an earlier
+        // round may lie outside a since-tightened range (e.g. the limiter-ceiling cap), and the
+        // range is authoritative — descent only ever *keeps* a start value, so an out-of-range
+        // start would survive the search.
+        for dim in &dims {
+            let v = (dim.get)(&start).clamp(dim.min, dim.max);
+            (dim.set)(&mut start, v);
+        }
         let baseline = evaluator.objective(&start);
 
         let mut evals = 0usize;
