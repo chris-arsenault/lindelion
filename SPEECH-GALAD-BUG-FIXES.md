@@ -57,6 +57,20 @@ Status: all fixed; verification below.
   −3 dB × N droop at cutoff instead of the Butterworth −3 dB. Fixed: proper Butterworth pole Qs
   per stage count (0.541/1.307 for 24 dB/oct, …). New test `cutoff_sits_at_butterworth_minus_3_db`.
 
+- [x] **B11 — Patch knob params were never applied to the DSP** (`plugins/caloma/src/chain_effect.rs`,
+  `plugins/caloma/src/runtime.rs`) — *found by evaluating the tuner after the first fix round.*
+  The typed `slot_params` structs were serialized, persisted, and "tuned", but no code ever called
+  `Effect::set_parameter`: every effect ran at its crate defaults forever, loaded patches' knob
+  values were decorative, and the default-tuning search's objective was **flat** (bit-identical
+  score for an EQ shelf at −2 vs +5 dB — the searched dims were exactly the params that never
+  reached the chain, so `make tune-defaults` silently "confirmed" its starting values). It went
+  unnoticed because the struct defaults mirror the effect defaults. Fixed: `apply_slot_params`
+  (exhaustive over `SlotId`) pushes each slot's params through `set_parameter`; the runtime
+  applies it whenever the patch changes and after every chain build (allocation-free change
+  detection — `CalomaPatch` is all-`Copy`). Guards: a fast unit test
+  (`patch_knob_params_reach_the_effects`) and a flat-objective assertion inside the tuner itself
+  (distinct scores required across the search).
+
 ## Galad host
 
 - [x] **B8 — No capture/render sample-rate reconciliation** (`galad/src/audio/wasapi/engine.rs`)

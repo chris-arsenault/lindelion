@@ -113,6 +113,7 @@ fn tune_committed_defaults() {
         let baseline = evaluator.objective(&start);
 
         let mut evals = 0usize;
+        let mut scores_seen: Vec<f32> = Vec::new();
         let (best, best_score) = coordinate_descent(
             start,
             &dims,
@@ -121,7 +122,11 @@ fn tune_committed_defaults() {
                 if evals.is_multiple_of(20) {
                     eprintln!("  {order:?}: {evals} evals…");
                 }
-                evaluator.objective(p)
+                let s = evaluator.objective(p);
+                if let Some(s) = s {
+                    scores_seen.push(s);
+                }
+                s
             },
             opts,
         );
@@ -133,6 +138,21 @@ fn tune_committed_defaults() {
         assert!(
             best_score.is_finite() && best_score > 0.0,
             "{order:?}: tuned patch must pass the hard constraints and score > 0"
+        );
+        // Guard against a flat objective: with continuous metrics, dozens of candidates spread
+        // across every dimension's grid must produce more than one distinct score. A flat
+        // objective means the evaluator is not applying the candidate patches (the search would
+        // silently "confirm" whatever it started from).
+        let min = scores_seen.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = scores_seen
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            max - min > 1e-5,
+            "{order:?}: objective is flat across {} candidates (all scored {max}) — \
+             candidate patches are not reaching the chain",
+            scores_seen.len()
         );
 
         // The committed default = the search's tonal/dynamics tuning at **unity gain staging**.

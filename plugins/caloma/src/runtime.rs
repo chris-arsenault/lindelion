@@ -14,7 +14,7 @@
 use lindelion_dsp_utils::db_to_gain;
 use lindelion_speech_signals::SignalSnapshot;
 
-use crate::chain_effect::{ChainEffect, build_chain_slot};
+use crate::chain_effect::{ChainEffect, apply_slot_params, build_chain_slot};
 use crate::order::SignalOrder;
 use crate::patch::CalomaPatch;
 use crate::slot::SlotId;
@@ -72,6 +72,10 @@ pub struct ChainRuntime {
     max_block: usize,
     /// Pre-allocated scratch holding a slot's dry input during a dry/wet intensity blend.
     dry_scratch: Vec<f32>,
+    /// The patch whose per-effect knob params were last pushed into the built effects
+    /// (`None` = not yet applied, e.g. right after a rebuild). `CalomaPatch` is all-`Copy`
+    /// fields, so the compare and the stored copy are allocation-free (ADR-0001).
+    applied_params: Option<CalomaPatch>,
 }
 
 impl ChainRuntime {
@@ -90,12 +94,16 @@ impl ChainRuntime {
             sample_rate,
             max_block,
             dry_scratch: vec![0.0; max_block],
+            applied_params: None,
         };
         runtime.rebuild(ids);
         runtime
     }
 
     fn rebuild(&mut self, ids: &[SlotId]) {
+        // Freshly built effects carry their crate defaults; the next `process` re-applies the
+        // patch's knob params.
+        self.applied_params = None;
         self.slots = ids
             .iter()
             .map(|&id| {
@@ -162,8 +170,21 @@ impl ChainRuntime {
         snapshot: &SignalSnapshot,
     ) -> BlockMeters {
         let Self {
-            slots, dry_scratch, ..
+            slots,
+            dry_scratch,
+            applied_params,
+            ..
         } = self;
+        // Push the patch's per-effect knob params into the effects whenever the patch changes
+        // (and on the first block after a build). Without this application the effects would run
+        // at their crate defaults forever — the persisted patch and the committed per-order
+        // defaults would be decorative.
+        if applied_params.as_ref() != Some(patch) {
+            for slot in slots.iter_mut() {
+                apply_slot_params(slot.effect.as_mut(), slot.id, patch);
+            }
+            *applied_params = Some(patch.clone());
+        }
         apply_gain(buffer, db_to_gain(patch.input_level_db));
         let input_peak = block_peak(buffer);
         for slot in slots.iter_mut() {
@@ -475,6 +496,40 @@ mod tests {
         for (u, i) in unity.iter().zip(input.iter()) {
             assert!((*u - i).abs() < 1e-5, "+6/-6 dB must round-trip to unity");
         }
+    }
+
+    #[test]
+    fn patch_knob_params_reach_the_effects() {
+        // Regression: the persisted per-effect knob params must be pushed into the built effects
+        // (they were once serialized but never applied, so every effect ran at its crate defaults
+        // and the tuner's objective was flat). Two patches differing only in the EQ high-shelf
+        // gain must produce audibly different output from the same runtime — including on the
+        // block right after the change.
+        let mut runtime = ChainRuntime::from_slots(&[SlotId::FiveBandEq], 48_000.0, 4_096);
+        let mut patch = CalomaPatch::default();
+        patch.five_band_eq.enabled = true;
+        let input: Vec<f32> = (0..4_096)
+            .map(|i| 0.3 * (std::f32::consts::TAU * 8_000.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let tail_rms = |b: &[f32]| {
+            let tail = &b[b.len() / 2..];
+            (tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32).sqrt()
+        };
+
+        patch.five_band_eq.params.high_shelf_gain = -24.0;
+        let mut cut = input.clone();
+        runtime.process(&mut cut, &patch, &SignalSnapshot::default());
+
+        patch.five_band_eq.params.high_shelf_gain = 24.0;
+        let mut boosted = input.clone();
+        runtime.process(&mut boosted, &patch, &SignalSnapshot::default());
+
+        assert!(
+            tail_rms(&boosted) > tail_rms(&cut) * 4.0,
+            "knob params must reach the DSP: cut {} vs boost {}",
+            tail_rms(&cut),
+            tail_rms(&boosted)
+        );
     }
 
     #[test]

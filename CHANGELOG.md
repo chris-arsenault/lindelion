@@ -2,6 +2,24 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.22.0 - 2026-07-02
+
+### Calóma speech chain
+
+- The patch's per-effect knob parameters now actually reach the DSP. They were serialized,
+  persisted, and "tuned", but no code ever pushed them through `Effect::set_parameter`, so
+  every effect ran at its crate defaults forever and loaded patches' knob values were
+  decorative. The chain runtime now applies each slot's typed params whenever the patch
+  changes (allocation-free change detection) and after every chain rebuild.
+- The default-tuning harness (`make tune-defaults`) is consequently doing real work for the
+  first time — its objective was flat because the searched dimensions were exactly the
+  parameters that never reached the chain. The tuner now asserts the objective produces
+  distinct scores across candidates, so a flat objective can never silently "confirm" its
+  starting values again.
+- Retuned the committed per-order defaults with the corrected DSP and the live tuner:
+  battery scores rose from 0.53 → 0.76 (Clarity), 0.53 → 0.76 (Broadcast), and
+  0.22 → 0.33 (Light); all orders pass the full-battery fidelity gates.
+
 ## v0.21.0 - 2026-07-02
 
 ### Calóma speech chain

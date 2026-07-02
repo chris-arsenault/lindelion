@@ -10,7 +10,7 @@ enabled = true
 intensity = 1.0
 
 [patch.high_pass.params]
-cutoff = 100.0
+cutoff = 60.0
 slope = 24.0
 
 [patch.noise_gate]
@@ -63,7 +63,7 @@ intensity = 1.0
 
 [patch.five_band_eq.params]
 hpf_freq = 80.0
-low_shelf_gain = 3.0
+low_shelf_gain = -2.0
 low_shelf_freq = 120.0
 low_mid_gain = -3.0
 low_mid_freq = 300.0
@@ -71,7 +71,7 @@ low_mid_q = 1.0
 high_mid_gain = 3.0
 high_mid_freq = 3000.0
 high_mid_q = 1.0
-high_shelf_gain = 2.0
+high_shelf_gain = 5.0
 high_shelf_freq = 10000.0
 
 [patch.dynamic_eq]
@@ -89,12 +89,12 @@ enabled = true
 intensity = 1.0
 
 [patch.compressor.params]
-threshold = -20.0
+threshold = -26.0
 ratio = 4.0
 attack = 10.0
 release = 100.0
 knee = 6.0
-makeup = 0.0
+makeup = 9.0
 
 [patch.upward_expander]
 enabled = false
