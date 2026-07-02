@@ -117,6 +117,7 @@ fn resonator_family(recipe: &PatchRecipe) -> ResonatorFamily {
         PatchRecipe::Edge(edge) => edge_family(*edge),
         PatchRecipe::ReferenceWav { .. }
         | PatchRecipe::TubePhrase { .. }
+        | PatchRecipe::TubeArticulationPhrase { .. }
         | PatchRecipe::TubePathAuditPhrase { .. }
         | PatchRecipe::TubeBodyFormantPhrase { .. }
         | PatchRecipe::TubeBodyFormantMixPhrase { .. }
@@ -177,6 +178,7 @@ fn recipe_axes(recipe: &PatchRecipe) -> Vec<AxisCoord> {
             polyphony_axis(*polyphony),
             retrigger_axis(*retrigger),
         ],
+        PatchRecipe::TubeArticulationPhrase { slot } => vec![articulation_slot_axis(*slot)],
         PatchRecipe::TubePathAuditPhrase {
             bell_enabled,
             body_enabled,
@@ -410,6 +412,20 @@ fn polyphony_axis(polyphony: u8) -> AxisCoord {
 
 fn retrigger_axis(retrigger: bool) -> AxisCoord {
     bool_axis("retrigger", retrigger, "Re-strike", "Ring through")
+}
+
+fn articulation_slot_axis(slot: u8) -> AxisCoord {
+    let (value, label) = match slot {
+        0 => ("tongue", "Tongue"),
+        1 => ("sforzando", "Sforzando"),
+        2 => ("legato", "Legato"),
+        3 => ("staccato", "Staccato"),
+        4 => ("marcato", "Marcato"),
+        5 => ("breath", "Breath"),
+        6 => ("accent", "Accent"),
+        _ => ("slur", "Slur"),
+    };
+    AxisCoord::new("articulation", value, label)
 }
 
 fn bool_axis(axis: &'static str, value: bool, on_label: &str, off_label: &str) -> AxisCoord {

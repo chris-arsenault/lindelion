@@ -2,6 +2,76 @@
 
 All notable user-visible changes to Lindelion are recorded here.
 
+## v0.21.0 - 2026-07-02
+
+### Calóma speech chain
+
+- Gain-normalized the shared saturation shaper (`tanh(k·x)/k`): drive knobs now control
+  curvature only, never loudness. The Saturation effect's Warmth no longer swings level
+  by up to ±14 dB (and no longer near-silences the signal at low non-zero Warmth), the
+  Vitalizer's tube stage is level-neutral, and the Air Exciter / Bass Enhancer taps are
+  bounded to ≤ +6 dB of band blend plus harmonics.
+- Rebuilt the limiter's gain computer as a true brickwall: a release-smoothed target gain
+  runs through a sliding-window minimum and a box average over the lookahead, so isolated
+  transients can no longer overshoot the ceiling (previously up to ~1.3 dB at the 10 ms
+  release) and gain onsets ramp across the lookahead instead of stepping (clicks).
+- Rebuilt the dereverberation estimator Lebart-style: the late-reverb estimate is now the
+  spectral power from ~64 ms ago decayed by an assumed-T60 room, instead of the previous
+  5.3 ms frame (the direct sound). Sustained vowels now lose ≲1 dB at the default amount
+  (previously ~7 dB); true reverb tails are still pushed to the gain floor.
+- The Bass Enhancer's harmonics tap is DC-blocked (asymmetric clipping rectifies; the
+  offset previously rode through to the limiter and ate headroom).
+- The Air Exciter's shaper input is band-limited to 4–8 kHz so its distortion products
+  stay under Nyquist at 48 kHz instead of aliasing back as inharmonic fizz.
+- The High-Pass Filter uses proper Butterworth pole Qs per stage (the corner now sits at
+  −3 dB at every slope instead of drooping −3 dB per stage) and no longer resets filter
+  state on parameter changes, so cutoff sweeps are click-free.
+
+### Galad
+
+- The engine refuses to start when the capture and render devices run at different sample
+  rates (`SampleRateMismatch`), instead of playing pitch-shifted audio with chronic ring
+  under-runs (the transport has no resampler).
+- Capture honors `AUDCLNT_BUFFERFLAGS_SILENT`: silent packets feed zeros to the chain
+  instead of undefined buffer contents.
+- A chain slot whose `process()` fails now acts bypassed for that block; previously the
+  chain re-emitted the failing slot's stale buffer from an earlier block.
+
+## v0.20.0 - 2026-06-13
+
+### Lamath Cymbal
+
+- Replaced the membrane waveguide mesh with a stiff-plate (Kirchhoff + tension) physical
+  model ([ADR-0050](docs/adr/0050-cymbal-stiff-plate-fdtd.md)): plate-correct partial
+  layout and modal density, distributed frequency-dependent losses calibrated in closed
+  form to the damping control's T60 band (highs die first by physics), free or
+  simply-supported boundaries from the material control, and a stability-derived grid
+  from physical bronze parameters.
+- Added the nonlinear bloom cascade: per-edge tension modulation (energy-conserving
+  divergence form) generates the velocity-dependent mid/high wash and 6 kHz air of a hard
+  strike; soft strikes stay essentially linear. The gong pitch glide is dosed per voicing
+  (thin gongs bend, stiff rides hold pitch).
+- Replaced the sign-alternating striker wavelets with physical contact-force pulses whose
+  duration carries hardness (hard stick ≈ 0.45 ms, soft mallet ≈ 3.5 ms, jazz brush =
+  eight light contacts over ≈ 15 ms, bell stick ≈ 0.2 ms).
+- Replaced the radiated output stage: a sparse point-cluster velocity tap through a
+  band-limited volume-acceleration filter with the per-voicing coincidence corner, with
+  click-free tap crossfades on note retunes. The crash voicing's octave-band balance now
+  tracks the Iowa reference recording within a few dB from 500 Hz up.
+- Re-voiced the Ride (stiffer, pitch holds through the ring) and Triangle (true bell
+  register via a new low end of the size span — ≈ 6 cm plates) presets; all nine voices
+  audition-approved.
+
+## v0.19.0 - 2026-06-10
+
+### Lamath Tube
+
+- Articulation slots now drive real note-start physics instead of only injecting a sub-millisecond seed click: each slot sets the tongue-release overpressure arm (per register), the boost's decay time, the seed-transient weight, an onset breath-turbulence burst, and whether the note enters through the phrase engine's legato seam. Tongue (slot 0) is the identity style, so the shipped default attack is unchanged; the other seven are derived from clarinet technique (sforzando holds its emphasis past the bloom, legato/slur enter with the smallest boost that still re-locks the vented mode, breath starts from air). Low-register accents (sforzando/staccato/marcato/accent) arm a pressure accent the neutral tongue deliberately does not have. Eight `tube_articulation_slot_*` audition cases render the same two-register probe through every slot.
+- The MODEL card's "Reed" switch is now a live "Reed noise" toggle gating the reed's direct slot radiation (it was a locked, decorative button while `reed_radiation_enabled` had no UI control).
+- Editor model-switch toggles and articulation-slot picks are no longer silently dropped when a click lands while the audio thread holds the plugin borrow: they queue through lock-free pending cells (like knob edits) and drain at the head of the next block, with the editor view updated optimistically. Articulation WAV load/clear retries the borrow briefly instead of giving up.
+- The Tube editor now re-polls knobs, switches, and articulation slots on its sync tick, so host automation and queued edits converge visually.
+- The per-switch and per-articulation guard tests now assert audible-scale signatures (level dB deltas, spectral-centroid shifts, HF-band shares) measured at the shipped default, replacing the old not-bit-identical RMS epsilon.
+
 ## v0.18.0 - 2026-06-10
 
 ### Lamath song demo

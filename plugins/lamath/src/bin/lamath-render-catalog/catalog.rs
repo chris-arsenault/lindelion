@@ -76,6 +76,12 @@ pub(crate) enum PatchRecipe {
         bell: bool,
         reed_aperture: TubeReedAperture,
     },
+    /// Driven wind Tube on the shipped default patch with one articulation
+    /// slot selected, so each slot's note-start physics audition against the
+    /// neutral Tongue slot.
+    TubeArticulationPhrase {
+        slot: u8,
+    },
     TubePathAuditPhrase {
         bell_enabled: bool,
         body_enabled: bool,
@@ -284,7 +290,7 @@ pub(crate) enum CatalogError {
     UnsafeOutputPath(String),
 }
 
-const GROUPS: [CatalogGroup; 21] = [
+const GROUPS: [CatalogGroup; 22] = [
     CatalogGroup {
         id: "baseline_dynamics",
         directory: "01_baseline_dynamics",
@@ -410,6 +416,12 @@ const GROUPS: [CatalogGroup; 21] = [
         directory: "21_tube_register_key_pitch",
         title: "Tube Register-Key Pitch",
         question: "Is the vented register tuning on target across sustained notes at and above the register break?",
+    },
+    CatalogGroup {
+        id: "tube_mono_stack",
+        directory: "22_tube_mono_stack",
+        title: "Tube Mono Stack & Break Transition",
+        question: "Does a trill over a held key fall back to the held note, and does a legato run cross the register break with a brief swell instead of a snap?",
     },
 ];
 

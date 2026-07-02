@@ -92,13 +92,16 @@ render-lamath-audio:
 		cargo run -q --release -p lamath --bin lamath-render-catalog -- \
 		--out "$(LAMATH_REVIEW_DIR)" $(LAMATH_RENDER_ARGS)
 
-# Song demo render: a 32-bar multi-track piece for the four Lamath instrument
-# families. Renders each track to its own stem WAV, then sums them into a mix.
+# Symphony render: the multi-movement piece for the four Lamath instrument
+# families. Each movement renders per-track stems plus its own mix and MIDI
+# under review/lamath-song/<movement>/; the combined master lands at
+# review/lamath-song/lamath-symphony.wav. Pass MOVEMENT=<slug> to render one
+# movement while iterating (skips the combined master).
 # Release build routed to LINDELION_RELEASE_TARGET_DIR like render-lamath-audio.
 render-lamath-song:
 	CARGO_TARGET_DIR="$(LINDELION_RELEASE_TARGET_DIR)" \
 		cargo run -q --release -p lamath --bin lamath-song -- \
-		--out "$(REPO_ROOT)/review/lamath-song"
+		--out "$(REPO_ROOT)/review/lamath-song" $(if $(MOVEMENT),--movement $(MOVEMENT),)
 
 compress-review-audio:
 	cargo run -p xtask -- compress-review-audio --source "$(REVIEW_AUDIO_SOURCE_DIR)" --out "$(REVIEW_AUDIO_PREVIEW_DIR)" --encoder "$(REVIEW_AUDIO_ENCODER)" --bitrate "$(REVIEW_AUDIO_BITRATE)" $(REVIEW_AUDIO_ARGS)

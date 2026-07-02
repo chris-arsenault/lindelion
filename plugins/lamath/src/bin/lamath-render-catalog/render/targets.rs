@@ -64,6 +64,7 @@ pub(crate) fn target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
         PatchRecipe::ReferenceWav { path } => RenderTarget::ReferenceWav(path),
         PatchRecipe::Edge(recipe) => edge_target(recipe),
         recipe @ (PatchRecipe::TubePhrase { .. }
+        | PatchRecipe::TubeArticulationPhrase { .. }
         | PatchRecipe::TubePathAuditPhrase { .. }
         | PatchRecipe::TubeBodyFormantPhrase { .. }
         | PatchRecipe::TubeBodyFormantMixPhrase { .. }

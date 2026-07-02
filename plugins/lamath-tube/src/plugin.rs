@@ -70,7 +70,7 @@ impl LamathTube {
 
     pub fn set_model_switch(&mut self, id: LamathTubeSwitchId, enabled: bool) {
         match id {
-            LamathTubeSwitchId::Reed => {}
+            LamathTubeSwitchId::Reed => self.patch.switches.reed_radiation_enabled = enabled,
             LamathTubeSwitchId::Bell => self.patch.switches.bell_enabled = enabled,
             LamathTubeSwitchId::BoreSteepening => {
                 self.patch.switches.bore_steepening_enabled = enabled;
@@ -139,9 +139,9 @@ impl LamathTube {
         vec![
             LamathTubeModelSwitch {
                 id: LamathTubeSwitchId::Reed,
-                label: "Reed",
-                enabled: true,
-                editable: false,
+                label: "Reed noise",
+                enabled: self.patch.switches.reed_radiation_enabled,
+                editable: true,
             },
             LamathTubeModelSwitch {
                 id: LamathTubeSwitchId::Bell,
@@ -251,6 +251,10 @@ impl AudioPlugin for LamathTube {
         self.setup = context.setup;
         self.processor
             .process(context.events, context.buffer.left, context.buffer.right);
+        // Keyswitches change the slot inside the processor; mirror it back so the next
+        // patch push (any parameter edit clones this patch over the processor) and the
+        // editor's slot list both see the keyswitch instead of silently reverting it.
+        self.patch.selected_articulation = self.processor.selected_slot();
     }
 
     fn state(&self) -> PluginState {
@@ -267,6 +271,32 @@ impl AudioPlugin for LamathTube {
 
 fn builtin_sources() -> [ExcitationSource<'static>; ARTICULATION_SLOT_COUNT] {
     std::array::from_fn(ExcitationSource::builtin)
+}
+
+/// Stable dense index for each editor model switch, for the lock-free pending
+/// queue that carries editor toggles past the audio thread's plugin borrow.
+pub(crate) const MODEL_SWITCH_COUNT: usize = 4;
+
+#[cfg_attr(
+    not(any(test, target_os = "macos", target_os = "windows")),
+    allow(dead_code)
+)]
+pub(crate) fn model_switch_index(id: LamathTubeSwitchId) -> usize {
+    match id {
+        LamathTubeSwitchId::Reed => 0,
+        LamathTubeSwitchId::Bell => 1,
+        LamathTubeSwitchId::BoreSteepening => 2,
+        LamathTubeSwitchId::Body => 3,
+    }
+}
+
+pub(crate) fn model_switch_id(index: usize) -> LamathTubeSwitchId {
+    match index {
+        0 => LamathTubeSwitchId::Reed,
+        1 => LamathTubeSwitchId::Bell,
+        2 => LamathTubeSwitchId::BoreSteepening,
+        _ => LamathTubeSwitchId::Body,
+    }
 }
 
 /// Editor card for each host parameter (reed → bore, played by a player).
@@ -297,6 +327,107 @@ mod tests {
 
         assert!((restored.patch.damping - plugin.patch.damping).abs() < 0.000_001);
         assert!(!restored.patch.switches.bell_enabled);
+    }
+
+    #[test]
+    fn every_model_switch_is_editable_and_reaches_the_patch() {
+        let mut plugin = LamathTube::default();
+        for switch in plugin.model_switches() {
+            assert!(switch.editable, "{} switch must be editable", switch.label);
+        }
+
+        plugin.set_model_switch(LamathTubeSwitchId::Reed, false);
+        assert!(!plugin.patch.switches.reed_radiation_enabled);
+        let reed = &plugin.model_switches()[model_switch_index(LamathTubeSwitchId::Reed)];
+        assert!(!reed.enabled);
+
+        for index in 0..MODEL_SWITCH_COUNT {
+            assert_eq!(model_switch_index(model_switch_id(index)), index);
+        }
+    }
+
+    #[test]
+    fn editor_slot_pick_changes_the_attack() {
+        let attack_db = |plugin: &mut LamathTube, note: u8| {
+            let mut left = vec![0.0; 4_800];
+            let mut right = vec![0.0; 4_800];
+            let events = [MidiEvent::Note(NoteEvent::On {
+                channel: 0,
+                note,
+                velocity: 0.9,
+            })];
+            plugin.process(ProcessContext::new(
+                ProcessSetup::default(),
+                AudioBuffer {
+                    left: &mut left,
+                    right: &mut right,
+                },
+                &events,
+            ));
+            let window = &left[..2_400];
+            let rms = (window.iter().map(|x| x * x).sum::<f32>() / window.len() as f32).sqrt();
+            20.0 * rms.max(1.0e-9).log10()
+        };
+        let render = |slot: usize| {
+            let mut plugin = LamathTube::default();
+            plugin.select_articulation_slot(slot);
+            attack_db(&mut plugin, 74)
+        };
+        let tongue = render(0);
+        let legato = render(2);
+        assert!(
+            legato < tongue - 6.0,
+            "editor slot pick must reach the voice: tongue {tongue:.1} legato {legato:.1} dB"
+        );
+    }
+
+    #[test]
+    fn keyswitch_articulation_survives_parameter_changes() {
+        let mut plugin = LamathTube::default();
+        let mut left = [0.0; 64];
+        let mut right = [0.0; 64];
+        // Keyswitch to the Legato slot (note 2 in the keyswitch octave).
+        let keyswitch = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 2,
+            velocity: 1.0,
+        })];
+        plugin.process(ProcessContext::new(
+            ProcessSetup::default(),
+            AudioBuffer {
+                left: &mut left,
+                right: &mut right,
+            },
+            &keyswitch,
+        ));
+        assert_eq!(plugin.patch.selected_articulation, 2);
+
+        // A host parameter edit clones the shell patch over the processor; the keyswitch
+        // slot must survive it.
+        plugin.set_parameter_normalized(ParameterId(parameters::BRIGHTNESS_ID), 0.7);
+
+        let mut note_left = vec![0.0; 4_800];
+        let mut note_right = vec![0.0; 4_800];
+        let note = [MidiEvent::Note(NoteEvent::On {
+            channel: 0,
+            note: 74,
+            velocity: 0.9,
+        })];
+        plugin.process(ProcessContext::new(
+            ProcessSetup::default(),
+            AudioBuffer {
+                left: &mut note_left,
+                right: &mut note_right,
+            },
+            &note,
+        ));
+        let window = &note_left[..2_400];
+        let rms = (window.iter().map(|x| x * x).sum::<f32>() / window.len() as f32).sqrt();
+        let attack = 20.0 * rms.max(1.0e-9).log10();
+        assert!(
+            attack < -45.0,
+            "the legato keyswitch should still shape the next attack: {attack:.1} dB"
+        );
     }
 
     #[test]

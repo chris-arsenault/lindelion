@@ -2,9 +2,14 @@
 //!
 //! Ports hot-mic's `Enhance-Bass-Enhancer.md`. The low band is isolated and soft-clipped to
 //! generate harmonics; the ear perceives bass from the harmonic series even without low-end
-//! power ("missing fundamental"). The blend is keyed by VoicingScore (from the injected analysis
-//! snapshot) with a baseline so bass is emphasized on voiced speech but not fully gated off.
-//! Reuses dsp-utils filters + saturation.
+//! power ("missing fundamental"). The gain-normalized `soft_clip` keeps the tap at unity
+//! small-signal gain, so Amount adds at most a bounded (≤ +6 dB) low blend plus the harmonics —
+//! the un-normalized shaper multiplied the band by the drive (~3×). A DC-blocking high-pass
+//! strips the rectification offset the asymmetric shaper produces — asymmetric clipping of a
+//! symmetric band has a nonzero mean, which would otherwise ride through to the limiter and eat
+//! headroom. The blend is keyed by VoicingScore (from the injected analysis snapshot) with a
+//! baseline so bass is emphasized on voiced speech but not fully gated off. Reuses dsp-utils
+//! filters + saturation.
 
 #![forbid(unsafe_code)]
 
@@ -16,6 +21,8 @@ use lindelion_speech_signals::SignalSnapshot;
 pub const PARAM_AMOUNT_PCT: u32 = 0;
 
 const LOW_LPF_HZ: f32 = 180.0;
+/// Cutoff of the DC blocker on the harmonics tap — well under the lowest harmonic (2 × 60 Hz).
+const DC_BLOCK_HZ: f32 = 20.0;
 const DRIVE: f32 = 3.0;
 const ASYMMETRY: f32 = 0.2;
 const VOICING_BASELINE: f32 = 0.4;
@@ -40,6 +47,7 @@ pub struct BassEnhancer {
     bypassed: bool,
     snapshot: SignalSnapshot,
     lpf: Biquad,
+    dc_block: Biquad,
 }
 
 impl BassEnhancer {
@@ -49,6 +57,7 @@ impl BassEnhancer {
             bypassed: false,
             snapshot: SignalSnapshot::default(),
             lpf: Biquad::new(BiquadCoefficients::identity()),
+            dc_block: Biquad::new(BiquadCoefficients::identity()),
         }
     }
 
@@ -83,6 +92,11 @@ impl Effect for BassEnhancer {
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
         self.lpf
             .set_coefficients(BiquadCoefficients::lowpass(sample_rate, LOW_LPF_HZ, 0.707));
+        self.dc_block.set_coefficients(BiquadCoefficients::highpass(
+            sample_rate,
+            DC_BLOCK_HZ,
+            0.707,
+        ));
     }
 
     fn process(&mut self, buffer: &mut [f32]) {
@@ -93,7 +107,9 @@ impl Effect for BassEnhancer {
         let gain = bass_gain(self.amount_pct / 100.0, voicing);
         for sample in buffer.iter_mut() {
             let dry = *sample;
-            let harmonics = soft_clip(self.lpf.process(dry), DRIVE, ASYMMETRY);
+            let low = self.lpf.process(dry);
+            // The DC blocker strips the rectification offset the asymmetric shaper adds.
+            let harmonics = self.dc_block.process(soft_clip(low, DRIVE, ASYMMETRY));
             *sample = dry + gain * harmonics;
         }
     }
@@ -112,6 +128,7 @@ impl Effect for BassEnhancer {
 
     fn reset(&mut self) {
         self.lpf.reset();
+        self.dc_block.reset();
         self.snapshot = SignalSnapshot::default();
     }
 
@@ -184,6 +201,20 @@ mod tests {
             other_fields_set, unvoiced,
             "bass enhancer must read voicing_score only"
         );
+    }
+
+    #[test]
+    fn output_carries_no_dc_offset() {
+        // Regression: asymmetric clipping of the low band rectifies (nonzero mean); the DC
+        // blocker must strip that offset before the blend. Measure over whole periods (16 × 480
+        // samples at 100 Hz / 48 kHz) so the tone itself contributes no mean.
+        let out = process_with(SignalSnapshot {
+            voicing_score: 1.0,
+            ..SignalSnapshot::default()
+        });
+        let tail = &out[8_192..8_192 + 16 * 480];
+        let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+        assert!(mean.abs() < 5.0e-4, "output carries DC: mean {mean}");
     }
 
     #[test]

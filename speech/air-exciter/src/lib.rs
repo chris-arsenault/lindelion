@@ -1,9 +1,14 @@
 //! Air Exciter: keyed high-frequency exciter, de-ess-aware.
 //!
-//! Ports hot-mic's `Enhance-Air-Exciter.md`. A high-passed copy of the signal is soft-clipped to
-//! generate high-frequency harmonics ("air"), blended back in. The excitation is keyed down by
-//! SibilanceEnergy so it backs off on sibilants (avoids harsh esses). Reuses dsp-utils filters +
-//! saturation + the inline sibilance signal.
+//! Ports hot-mic's `Enhance-Air-Exciter.md`. A band-passed copy of the signal (4–8 kHz) is
+//! soft-clipped to generate high-frequency harmonics ("air") and blended back in. The
+//! gain-normalized `soft_clip` keeps the tap at unity small-signal gain, so Amount adds at most a
+//! bounded (≤ +6 dB) presence shelf plus the harmonics — the un-normalized shaper multiplied the
+//! band by the drive (~4×, a ~+14 dB shelf rather than excitation). The low-pass leg of the band
+//! limit keeps the shaper's dominant (3rd-order) products under Nyquist at 48 kHz; without it,
+//! harmonics of content above ~8 kHz fold back as inharmonic fizz. The excitation is keyed down
+//! by SibilanceEnergy so it backs off on sibilants (avoids harsh esses). Reuses dsp-utils filters
+//! + saturation + the inline sibilance signal.
 
 #![forbid(unsafe_code)]
 
@@ -15,6 +20,8 @@ use lindelion_speech_signals::SibilanceEnergy;
 pub const PARAM_AMOUNT_PCT: u32 = 0;
 
 const AIR_HPF_HZ: f32 = 4_000.0;
+/// Upper edge of the excitation band: 3rd-order products of 8 kHz land at the 48 kHz Nyquist.
+const AIR_LPF_HZ: f32 = 8_000.0;
 const DRIVE: f32 = 4.0;
 
 const PARAMS: &[EffectParam] = &[EffectParam {
@@ -37,6 +44,7 @@ pub struct AirExciter {
     bypassed: bool,
     sample_rate: f32,
     hpf: Biquad,
+    lpf: Biquad,
     sibilance: SibilanceEnergy,
 }
 
@@ -47,6 +55,7 @@ impl AirExciter {
             bypassed: false,
             sample_rate: 48_000.0,
             hpf: Biquad::new(BiquadCoefficients::identity()),
+            lpf: Biquad::new(BiquadCoefficients::identity()),
             sibilance: SibilanceEnergy::new(),
         }
     }
@@ -55,6 +64,11 @@ impl AirExciter {
         self.hpf.set_coefficients(BiquadCoefficients::highpass(
             self.sample_rate,
             AIR_HPF_HZ,
+            0.707,
+        ));
+        self.lpf.set_coefficients(BiquadCoefficients::lowpass(
+            self.sample_rate,
+            AIR_LPF_HZ,
             0.707,
         ));
         self.sibilance.prepare(self.sample_rate);
@@ -95,7 +109,8 @@ impl Effect for AirExciter {
         for sample in buffer.iter_mut() {
             let dry = *sample;
             let sibilance = self.sibilance.process(dry);
-            let air = soft_clip(self.hpf.process(dry), DRIVE, 0.0);
+            let band = self.lpf.process(self.hpf.process(dry));
+            let air = soft_clip(band, DRIVE, 0.0);
             *sample = dry + excitation_gain(amount, sibilance) * air;
         }
     }
@@ -114,6 +129,7 @@ impl Effect for AirExciter {
 
     fn reset(&mut self) {
         self.hpf.reset();
+        self.lpf.reset();
         self.sibilance.reset();
     }
 
@@ -155,9 +171,34 @@ mod tests {
         effect.process(&mut buffer);
         let h3_in = windowed_dft_magnitude_at(&input, 48_000.0, 13_500.0);
         let h3_out = windowed_dft_magnitude_at(&buffer, 48_000.0, 13_500.0);
+        // Threshold calibrated to the gain-normalized shaper: its harmonics-only tap sits ~4×
+        // below the old un-normalized tap (which also carried a linear-band level boost).
         assert!(
-            h3_out > h3_in + 0.005,
+            h3_out > h3_in + 0.002,
             "no HF harmonics added: {h3_in} -> {h3_out}"
         );
+    }
+
+    #[test]
+    fn band_boost_is_bounded_by_amount() {
+        // Regression: the excitation tap must have unity small-signal gain, so Amount 100 % can
+        // raise the in-band content by at most ~2x (dry + the compressed band copy). The
+        // un-normalized shaper multiplied the band by the drive, shelving it ~3x and more.
+        let mut effect = AirExciter::new();
+        effect.set_parameter(PARAM_AMOUNT_PCT, 100.0);
+        effect.prepare(48_000.0, 1_024);
+        let n = 8_192;
+        let input: Vec<f32> = (0..n)
+            .map(|i| 0.4 * (std::f32::consts::TAU * 4_500.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let mut buffer = input.clone();
+        effect.process(&mut buffer);
+        let f_in = windowed_dft_magnitude_at(&input, 48_000.0, 4_500.0);
+        let f_out = windowed_dft_magnitude_at(&buffer, 48_000.0, 4_500.0);
+        assert!(
+            f_out < f_in * 2.0,
+            "band shelved beyond the unity-gain bound: {f_in} -> {f_out}"
+        );
+        assert!(f_out > f_in * 1.1, "no presence added: {f_in} -> {f_out}");
     }
 }

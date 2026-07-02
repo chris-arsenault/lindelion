@@ -41,6 +41,34 @@ const REED_TRACKED_PHASE_TRIM_SAMPLES: f32 = 3.5;
 const REED_TRACKED_PHASE_TRIM_PEAK_LIFT: f32 = 1.45;
 const REED_LOOP_PHASE_COUPLING: f32 = 1.25;
 const REED_EFFORT_PHASE_SLOPE: f32 = 0.35;
+// Untracked (low-register) loop-phase law, fitted against sustained-pitch measurement at the
+// shipped default across 131-415 Hz and velocities 0.31/0.79/1.0 (two independent law settings
+// cross-validated the fit; one compensation sample moves the quarter-wave bore's period by two
+// samples, i.e. cents-per-sample = 3462*f_bore/sr). The legacy law saturated the tube's
+// 24-sample compensation clamp across the whole low register, freezing the compensation at 24
+// round-trip samples for every effort: velocity ~0.79 happened to land in tune (the auditioned
+// renders), full velocity played up to +14 cents sharp, and soft playing sagged 17-50 cents
+// flat. The measured requirement is nearly frequency-flat in absolute time — `coupling*phi`
+// anchors effort 1.0 (phi =~ 19.4 samples at the 96 kHz fit rate, requirement =~ 22.75) and the
+// soft-playing leverage is an absolute round-trip time slope, not a multiple of phi (6.23
+// samples at 96 kHz; expressed in seconds so the law holds at any model rate).
+const REED_UNTRACKED_PHASE_COUPLING: f32 = 1.166;
+const REED_UNTRACKED_EFFORT_PHASE_SECONDS: f32 = 6.23 / 96_000.0;
+// Pre-break sag correction: the last ~4 semitones of the *unvented* bore need steeply more
+// compensation than the flat law (measured +0.30/+0.36/+0.45/+0.67/+0.92 round-trip samples at
+// E4..G#4, i.e. the backlog's G4/G#4 -5/-8 cent sag). The rise fits a logistic in the
+// sounding-to-aperture-resonance ratio r = f/f_aperture_base (the nonlinear coupling's leverage
+// growing as the aperture lag angle steepens), saturating at 1.5 samples at the 96 kHz fit rate
+// (expressed in seconds) so high configured break notes stay bounded. Vented notes sit on the
+// bare law (A4's measured requirement has no sag), so the correction gates on the embouchure
+// being untracked.
+const REED_PRE_BREAK_SAG_SECONDS: f32 = 1.5 / 96_000.0;
+const REED_PRE_BREAK_SAG_KNEE_RATIO: f32 = 0.289;
+const REED_PRE_BREAK_SAG_WIDTH_RATIO: f32 = 0.034;
+// The tracked-embouchure law (the fitted coupling/slope/trim above) was approved by audition
+// with the vented register within +-2.4 cents; it takes over from the untracked law as the
+// embouchure tracking lifts the aperture, fully by lift 1.15 (~C5 at the default break).
+const REED_TRACKED_LAW_BLEND_LIFT: f32 = 0.15;
 const REED_TURBULENCE_VELOCITY_THRESHOLD: f32 = 0.42;
 const REED_TURBULENCE_VELOCITY_RANGE: f32 = 0.90;
 const REED_TURBULENT_LOSS_CUTOFF_HZ: f32 = 2_800.0;
@@ -122,6 +150,8 @@ pub struct ReedDriver {
     aperture_inertia: f32,
     aperture_omega: f32,
     aperture_lift: f32,
+    aperture_base_hz: f32,
+    tracking_active: bool,
     breath: f32,
     breath_coeff: f32,
     breath_noise_scale: f32,
@@ -148,6 +178,8 @@ impl ReedDriver {
             aperture_inertia: params.aperture_inertia,
             aperture_omega: aperture_omega(params, sample_rate),
             aperture_lift: aperture_lift(params),
+            aperture_base_hz: aperture_base_frequency_hz(params),
+            tracking_active: params.tracking_frequency_hz > 0.0,
             breath: 0.0,
             breath_coeff: 1.0 - (-1.0 / (REED_BREATH_RAMP_SECONDS * sample_rate)).exp(),
             breath_noise_scale: params.breath_noise,
@@ -181,6 +213,8 @@ impl ReedDriver {
         self.aperture_inertia = params.aperture_inertia;
         self.aperture_omega = aperture_omega(params, self.sample_rate);
         self.aperture_lift = aperture_lift(params);
+        self.aperture_base_hz = aperture_base_frequency_hz(params);
+        self.tracking_active = params.tracking_frequency_hz > 0.0;
         self.aperture = self.aperture.clamp(0.0, REED_MAX_OPENING);
         self.breath_noise_scale = params.breath_noise;
     }
@@ -369,18 +403,44 @@ impl ReedDriver {
     ///   notes play flat relative to loud ones.
     ///
     /// Returns `0.0` for the massless (instant) aperture, which adds no loop phase.
+    ///
+    /// Two fitted laws cover the two embouchure regimes, crossfaded over the tracking lift:
+    /// - **Untracked** (low register, and vented notes whose 3x tracking target sits below the
+    ///   base resonance): anchor coupling at full effort, an absolute round-trip sample slope
+    ///   for the soft-playing leverage, plus the logistic pre-break sag correction.
+    /// - **Tracked** (lift > 1): the audition-approved coupling/effort-slope/lift-trim law,
+    ///   unchanged.
     pub fn aperture_phase_delay_samples(&self, frequency_hz: f32, effort: f32) -> f32 {
         if self.aperture_inertia <= f32::EPSILON {
             return 0.0;
         }
         let effort = math::finite_clamp(effort, 0.0, 1.0, 0.0);
-        let coupling = REED_LOOP_PHASE_COUPLING * (1.0 + REED_EFFORT_PHASE_SLOPE * (1.0 - effort));
-        let trim = tracked_phase_trim_samples(self.aperture_lift);
-        (coupling
-            * aperture_filter_phase_delay(self.aperture_omega, self.sample_rate, frequency_hz)
-            - trim)
-            .max(0.0)
+        let phi = aperture_filter_phase_delay(self.aperture_omega, self.sample_rate, frequency_hz);
+        let sag = if self.tracking_active {
+            0.0
+        } else {
+            pre_break_sag_samples(
+                frequency_hz / self.aperture_base_hz.max(1.0),
+                self.sample_rate,
+            )
+        };
+        let untracked = REED_UNTRACKED_PHASE_COUPLING * phi
+            + REED_UNTRACKED_EFFORT_PHASE_SECONDS * self.sample_rate * (1.0 - effort)
+            + sag;
+        let tracked =
+            REED_LOOP_PHASE_COUPLING * (1.0 + REED_EFFORT_PHASE_SLOPE * (1.0 - effort)) * phi
+                - tracked_phase_trim_samples(self.aperture_lift);
+        let blend = ((math::finite_or(self.aperture_lift, 1.0) - 1.0)
+            / REED_TRACKED_LAW_BLEND_LIFT)
+            .clamp(0.0, 1.0);
+        (untracked + (tracked - untracked) * blend).max(0.0)
     }
+}
+
+fn pre_break_sag_samples(ratio: f32, sample_rate: f32) -> f32 {
+    let ratio = math::finite_or(ratio, 0.0);
+    REED_PRE_BREAK_SAG_SECONDS * sample_rate
+        / (1.0 + (-(ratio - REED_PRE_BREAK_SAG_KNEE_RATIO) / REED_PRE_BREAK_SAG_WIDTH_RATIO).exp())
 }
 
 fn tracked_phase_trim_samples(lift: f32) -> f32 {

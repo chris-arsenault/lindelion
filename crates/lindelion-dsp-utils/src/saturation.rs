@@ -1,12 +1,17 @@
-//! Saturation waveshaper: an asymmetric tanh soft-clip.
+//! Saturation waveshaper: a gain-normalized asymmetric tanh soft-clip.
 //!
 //! Ports the intent of hot-mic's saturation core — an asymmetric `tanh` with split curvature
 //! (`kPos`/`kNeg`) so positive and negative halves saturate differently. Asymmetry adds even
-//! harmonics ("warmth"); symmetric drive adds odd harmonics. `drive` controls curvature; at
-//! `drive == 0` the shaper is passthrough.
+//! harmonics ("warmth"); symmetric drive adds odd harmonics.
+//!
+//! The shaper is `tanh(k·x)/k`, so the small-signal gain is exactly 1 for any drive: `drive`
+//! controls curvature only, never loudness, and the shape is continuous as `drive → 0`
+//! (the un-normalized `tanh(k·x)` form had small-signal gain `k`, which made every drive knob a
+//! volume knob and jumped ~−26 dB between drive 0 and drive ε).
 
-/// Asymmetric tanh soft-clip. `drive` (>= 0) sets curvature; `asymmetry` in `[-1, 1]` biases the
-/// positive vs negative half — nonzero asymmetry adds even harmonics.
+/// Asymmetric tanh soft-clip with unity small-signal gain. `drive` (>= 0) sets curvature;
+/// `asymmetry` in `[-1, 1]` biases the positive vs negative half's curvature — nonzero asymmetry
+/// adds even harmonics without skewing the linear gain of either half.
 pub fn soft_clip(input: f32, drive: f32, asymmetry: f32) -> f32 {
     let drive = drive.max(0.0);
     if drive <= f32::EPSILON {
@@ -18,7 +23,10 @@ pub fn soft_clip(input: f32, drive: f32, asymmetry: f32) -> f32 {
     } else {
         drive * (1.0 - asym)
     };
-    (k * input).tanh()
+    if k <= f32::EPSILON {
+        return input;
+    }
+    (k * input).tanh() / k
 }
 
 #[cfg(test)]
@@ -33,6 +41,23 @@ mod tests {
         (0..4_096)
             .map(|n| amp * (std::f32::consts::TAU * F0 * n as f32 / SR).sin())
             .collect()
+    }
+
+    #[test]
+    fn small_signal_gain_is_unity_for_any_drive_and_asymmetry() {
+        // The drive knob must control curvature only, never loudness: for a small input the
+        // shaper is transparent at every drive (including the drive -> 0 limit), on both halves.
+        for drive in [0.0_f32, 0.01, 0.5, 2.5, 5.0] {
+            for asym in [0.0_f32, 0.3, -0.5, 1.0] {
+                for input in [0.001_f32, -0.001] {
+                    let output = soft_clip(input, drive, asym);
+                    assert!(
+                        (output - input).abs() < 1.0e-5,
+                        "drive {drive} asym {asym}: {input} -> {output}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

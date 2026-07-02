@@ -5,13 +5,12 @@
 //! deinterleaves to planar L/R, ping-pongs between two preallocated buffer pairs across stages, and
 //! interleaves the result back. Bypass skips a stage (the signal stays in the "current" buffer).
 //!
-//! The chain does **not** own its plugins — it holds `Arc<PluginInstance>` shared with the
-//! controller's persistent instance pool ([`PoolSlot`]). Reordering/bypassing/adding/removing
-//! rebuilds only this ordering over the *same* live instances, so plugin state (parameters and
-//! transient DSP state) is preserved across edits; an instance is torn down (its `Drop` runs
-//! `setActive`/`terminate`) only when the last `Arc` — the pool slot and every chain that referenced
-//! it — is gone, which always happens on the control thread (the hand-off reclaims off the audio
-//! thread), never while the audio thread is processing it.
+//! The chain does **not** own its plugins exclusively — it holds `Arc<PluginInstance>` and
+//! `Arc<LoadedModule>` shared with the controller's persistent instance pool ([`PoolSlot`]).
+//! Reordering/bypassing/adding/removing rebuilds only this ordering over the *same* live instances,
+//! so plugin state (parameters and transient DSP state) is preserved across edits. The module/DLL is
+//! retained by every live or retired chain that can still reference the instance, so removing a pool
+//! slot cannot unload plugin code out from under the audio thread.
 
 use std::sync::Arc;
 
@@ -23,20 +22,22 @@ use super::editor_controller::EditorController;
 use super::instance::PluginInstance;
 use super::module::LoadedModule;
 use super::parameters::{MAX_BLOCK_PARAMETER_EDITS, ParameterEdit};
-use super::processing::ProcessBusScratch;
+use super::processing::{ProcessBusScratch, vst_ok};
 
 /// One live, prepared plugin the controller keeps alive for the life of its chain slot: the shared
-/// instance and the loaded module that owns its DLL. Field order is teardown order: the instance must
-/// release/terminate before the module unloads.
+/// controller, instance, and loaded module that owns its DLL. Field order is teardown order: the
+/// controller and instance must release/terminate before the module unloads.
 pub struct PoolSlot {
+    pub controller: Option<Arc<EditorController>>,
     pub instance: Arc<PluginInstance>,
     pub module: Arc<LoadedModule>,
-    pub controller: Option<Arc<EditorController>>,
 }
 
 /// One slot: a shared (pooled) plugin and its bypass flag.
 pub struct ChainSlot {
     instance: Arc<PluginInstance>,
+    /// Keeps the plugin DLL mapped for as long as this chain can call into `instance`.
+    _module: Option<Arc<LoadedModule>>,
     bypassed: bool,
     process_buses: ProcessBusScratch,
     parameter_edits: [ParameterEdit; MAX_BLOCK_PARAMETER_EDITS],
@@ -67,21 +68,56 @@ impl ChainProcessor {
         max_frames: usize,
         sample_rate: f64,
     ) -> Self {
+        Self::from_entries(
+            instances.into_iter().map(|instance| (instance, None)),
+            bypass,
+            max_frames,
+            sample_rate,
+        )
+    }
+
+    /// Build a chain over pooled instances and the modules that own their DLLs.
+    pub fn new_with_modules(
+        instances: Vec<(Arc<PluginInstance>, Arc<LoadedModule>)>,
+        bypass: Vec<bool>,
+        max_frames: usize,
+        sample_rate: f64,
+    ) -> Self {
+        Self::from_entries(
+            instances
+                .into_iter()
+                .map(|(instance, module)| (instance, Some(module))),
+            bypass,
+            max_frames,
+            sample_rate,
+        )
+    }
+
+    fn from_entries(
+        instances: impl IntoIterator<Item = (Arc<PluginInstance>, Option<Arc<LoadedModule>>)>,
+        bypass: Vec<bool>,
+        max_frames: usize,
+        sample_rate: f64,
+    ) -> Self {
         let mut bypass = bypass.into_iter();
         let slots = instances
             .into_iter()
-            .map(|instance| ChainSlot {
-                process_buses: ProcessBusScratch::from_component(
+            .map(|(instance, module)| {
+                let process_buses = ProcessBusScratch::from_component(
                     instance.debug_name(),
                     instance.component(),
                     instance.processor(),
                     max_frames,
                     sample_rate,
                 )
-                .expect("prepared plugin exposes process buses"),
-                instance,
-                bypassed: bypass.next().unwrap_or(false),
-                parameter_edits: [ParameterEdit::default(); MAX_BLOCK_PARAMETER_EDITS],
+                .expect("prepared plugin exposes process buses");
+                ChainSlot {
+                    instance,
+                    _module: module,
+                    bypassed: bypass.next().unwrap_or(false),
+                    process_buses,
+                    parameter_edits: [ParameterEdit::default(); MAX_BLOCK_PARAMETER_EDITS],
+                }
             })
             .collect();
         Self {
@@ -116,14 +152,23 @@ impl ChainProcessor {
                 .instance
                 .parameter_edits()
                 .drain(&mut slot.parameter_edits);
-            unsafe {
+            // Clear the destination first: a plugin that fails (or writes nothing) must not
+            // re-emit whatever the previous block left in the ping-pong buffer.
+            self.b_left[..frames].fill(0.0);
+            self.b_right[..frames].fill(0.0);
+            let result = unsafe {
                 slot.process_buses.drive_stereo_with_events(
                     slot.instance.processor(),
                     [&self.a_left[..frames], &self.a_right[..frames]],
                     [&mut self.b_left[..frames], &mut self.b_right[..frames]],
                     midi,
                     &slot.parameter_edits[..parameter_count],
-                );
+                )
+            };
+            if !vst_ok(result) {
+                // A failed slot acts bypassed for this block: keep the signal in the current
+                // buffers instead of taking the (zeroed/garbage) output.
+                continue;
             }
             std::mem::swap(&mut self.a_left, &mut self.b_left);
             std::mem::swap(&mut self.a_right, &mut self.b_right);
@@ -160,7 +205,7 @@ mod tests {
     use crate::vst3_host::fixture::{
         context_fixture_factory, gain_fixture_factory, midi_note_fixture_factory,
         nan_fixture_factory, output_only_midi_note_fixture_factory, parameter_fixture_factory,
-        strict_sidechain_fixture_factory,
+        process_error_factory, strict_sidechain_fixture_factory,
     };
     use crate::vst3_host::{HostContext, ProcessDriver};
     use vst3::ComPtr;
@@ -428,6 +473,30 @@ mod tests {
             },
         );
         assert!(stereo.iter().all(|&sample| sample == 0.5));
+    }
+
+    #[test]
+    fn failing_slot_acts_bypassed_and_never_replays_stale_audio() {
+        // Regression: a slot whose `process` fails must be skipped for that block — previously the
+        // ping-pong buffers swapped unconditionally, so the chain re-emitted whatever the failing
+        // slot's destination buffer held from an earlier block.
+        let mut chain = ChainProcessor::new(
+            vec![
+                prepared_from_factory(process_error_factory()),
+                prepared(0.5, 0),
+            ],
+            vec![false, false],
+            512,
+            TEST_SAMPLE_RATE,
+        );
+        // The failing slot contributes nothing; the healthy gain slot still runs.
+        let mut first = vec![1.0f32, 1.0, 2.0, 2.0];
+        chain.process_in_place(&mut first);
+        assert_eq!(first, vec![0.5, 0.5, 1.0, 1.0]);
+        // A second, different block must reflect its own input, not the first block's audio.
+        let mut second = vec![0.2f32, 0.2];
+        chain.process_in_place(&mut second);
+        assert_eq!(second, vec![0.1, 0.1]);
     }
 
     #[test]

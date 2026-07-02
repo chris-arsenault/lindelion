@@ -75,7 +75,7 @@ pub const PARAMETERS: &[ParameterInfo] = &[
         OUTPUT_GAIN_ID,
         "Output",
         "dB",
-        ParameterRange::linear(OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB, -8.0),
+        ParameterRange::linear(OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB, 0.0),
     ),
 ];
 

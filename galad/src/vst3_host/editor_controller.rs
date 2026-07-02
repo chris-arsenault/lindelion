@@ -188,9 +188,11 @@ impl Drop for EditorController {
         if !self.terminate_on_drop {
             return;
         }
+        crate::diagnostics::log("editor-controller: terminate begin");
         unsafe {
             self.controller.terminate();
         }
+        crate::diagnostics::log("editor-controller: terminate done");
     }
 }
 

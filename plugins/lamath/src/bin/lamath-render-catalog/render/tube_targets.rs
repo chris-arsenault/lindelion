@@ -25,6 +25,13 @@ pub(crate) fn tube_target_for_recipe(recipe: PatchRecipe) -> RenderTarget {
             };
             RenderTarget::Tube(patch)
         }
+        PatchRecipe::TubeArticulationPhrase { slot } => {
+            let patch = TubePatch {
+                selected_articulation: slot as usize,
+                ..TubePatch::default()
+            };
+            RenderTarget::Tube(patch)
+        }
         PatchRecipe::TubePathAuditPhrase {
             bell_enabled,
             body_enabled,
@@ -229,12 +236,16 @@ pub(crate) fn tube_reference_articulation_slot(articulation: TubeReferenceArticu
     }
 }
 
+/// Rebased for the Tube's native radiated-level makeup (and the patch default knob moving
+/// -8 -> 0 dB): each value is the old fixture-matched absolute output minus the new per-note
+/// makeup (+14.2 dB at D3 after the chalumeau's -4 dB by-ear anchor, +13.0 dB in the vented
+/// register; the mixed articulation case uses the average of its two notes).
 pub(crate) fn tube_reference_match_gain_db(gain: TubeReferenceMatchGain) -> f32 {
     match gain {
-        TubeReferenceMatchGain::LowESustainPhysical => 15.9,
-        TubeReferenceMatchGain::LowESustainBodyOff => 3.8,
-        TubeReferenceMatchGain::RegisterKeyHighSustainVented => 14.1,
-        TubeReferenceMatchGain::LowHighArticulation => 8.35,
+        TubeReferenceMatchGain::LowESustainPhysical => -6.3,
+        TubeReferenceMatchGain::LowESustainBodyOff => -18.4,
+        TubeReferenceMatchGain::RegisterKeyHighSustainVented => -6.9,
+        TubeReferenceMatchGain::LowHighArticulation => -13.2,
     }
 }
 

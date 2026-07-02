@@ -8,11 +8,13 @@ mod edges;
 mod mesh_strikers;
 mod mesh_timbre;
 mod surrounding;
+mod tube_articulation_slots;
 mod tube_body_formant_levels;
 mod tube_body_formant_mix;
 mod tube_bore_steepening;
 mod tube_dynamics;
 mod tube_low_register_pitch;
+mod tube_mono_stack;
 mod tube_output_paths;
 mod tube_radiation_shape;
 mod tube_reed_aperture;
@@ -344,6 +346,11 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
         .chain(chords::CHORD_CASES.iter().cloned())
         .chain(edges::EDGE_CASES.iter().cloned())
         .chain(articulation::ARTICULATION_CASES.iter().cloned())
+        .chain(
+            tube_articulation_slots::TUBE_ARTICULATION_SLOT_CASES
+                .iter()
+                .cloned(),
+        )
         .chain(mesh_timbre::MESH_TIMBRE_CASES.iter().cloned())
         .chain(tube_dynamics::TUBE_DYNAMICS_CASES.iter().cloned())
         .chain(tube_reed_aperture::TUBE_REED_APERTURE_CASES.iter().cloned())
@@ -384,6 +391,7 @@ pub(crate) fn catalog_cases() -> Vec<CatalogCase> {
                 .iter()
                 .cloned(),
         )
+        .chain(tube_mono_stack::TUBE_MONO_STACK_CASES.iter().cloned())
         .collect()
 }
 

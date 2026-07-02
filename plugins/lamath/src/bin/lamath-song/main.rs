@@ -1,32 +1,42 @@
-//! Lamath song renderer: composes a 32-bar piece for the four Lamath
-//! instrument families (Modal, String, Tube, Mesh), renders every track to its
-//! own stem WAV, then sums the stems through a simple mixer: per-stem cleanup
-//! highpass, per-track leveling (active-RMS or peak target), constant-power
-//! pan, per-section fader rides, and master peak normalization into one mix.
+//! Lamath symphony renderer: composes the multi-movement piece for the four
+//! Lamath instrument families (Modal, String, Tube, Mesh). Each movement
+//! renders every track to its own stem WAV and sums the stems through a simple
+//! mixer: per-stem cleanup highpass, per-track leveling (active-RMS or peak
+//! target), constant-power pan, per-section fader rides, and master peak
+//! normalization into the movement mix. The movement mixes are then
+//! concatenated — un-normalized, so the per-track dBFS targets carry the
+//! inter-movement balance — with silence gaps into one combined master.
 //!
-//! Usage: `lamath-song [--out <dir>]` (default `review/lamath-song`).
-//! Stems land in `<out>/tracks/`, the mix at `<out>/lamath-song.wav`.
+//! Usage: `lamath-song [--out <dir>] [--movement <slug>]`
+//! (default `review/lamath-song`). Each movement lands in `<out>/<slug>/`
+//! (mix, MIDI, and `tracks/` stems); the combined master at
+//! `<out>/lamath-symphony.wav` (skipped when `--movement` filters the run).
 
 mod composition;
+mod midi;
+mod movements;
 mod render;
 mod score;
 
 use crate::composition::Level;
+use crate::movements::Movement;
 use lindelion_dsp_utils::filters::{Svf, SvfMode};
 use lindelion_sample_library::write_wav_stereo_pcm16;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// Stems are trimmed so an RMS-normalized track can never clip on its own.
 const STEM_PEAK_CEILING: f32 = 0.85;
-/// The summed mix is normalized to just below full scale.
+/// Movement mixes and the combined master are normalized just below full scale.
 const MIX_PEAK_CEILING: f32 = 0.989;
 /// Cap on per-track makeup gain so a near-silent track is not blown up.
 const MAX_TRACK_GAIN: f32 = 16.0;
 /// Frames quieter than this on both channels do not count toward active RMS.
 const ACTIVE_FLOOR: f32 = 1.0e-4;
-/// Rumble cleanup on the summed mix.
+/// Rumble cleanup on each movement's summed mix.
 const MIX_HIGHPASS_HZ: f32 = 30.0;
+/// Silence between movements in the combined master.
+const GAP_SECONDS: f32 = 1.5;
 
 fn main() -> ExitCode {
     match run() {
@@ -39,21 +49,98 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let out_dir = parse_out_dir()?;
-    let tracks_dir = out_dir.join("tracks");
+    let args = parse_args()?;
+    let movements = movements::all();
+    if let Some(filter) = &args.movement
+        && !movements.iter().any(|movement| movement.slug == *filter)
+    {
+        let known = movements
+            .iter()
+            .map(|movement| movement.slug)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!("unknown movement {filter}; known: {known}"));
+    }
+
+    let mut rendered = Vec::new();
+    for movement in &movements {
+        if args
+            .movement
+            .as_ref()
+            .is_some_and(|filter| *filter != movement.slug)
+        {
+            continue;
+        }
+        rendered.push(render_movement(movement, &args.out_dir)?);
+    }
+
+    if args.movement.is_none() {
+        write_combined(&args.out_dir, &rendered)?;
+    }
+    Ok(())
+}
+
+struct Args {
+    out_dir: PathBuf,
+    movement: Option<String>,
+}
+
+fn parse_args() -> Result<Args, String> {
+    let mut args = std::env::args().skip(1);
+    let mut parsed = Args {
+        out_dir: PathBuf::from("review/lamath-song"),
+        movement: None,
+    };
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--out" => {
+                parsed.out_dir = args
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "--out requires a directory argument".to_string())?;
+            }
+            "--movement" => {
+                parsed.movement = Some(
+                    args.next()
+                        .ok_or_else(|| "--movement requires a movement slug".to_string())?,
+                );
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+    Ok(parsed)
+}
+
+/// One movement's summed mix (highpassed, un-normalized) for the combined master.
+struct MovementMix {
+    left: Vec<f32>,
+    right: Vec<f32>,
+}
+
+/// Renders a movement's stems, per-movement mix WAV, and MIDI under
+/// `<out>/<slug>/`, returning the un-normalized mix for the combined master.
+fn render_movement(movement: &Movement, out_root: &Path) -> Result<MovementMix, String> {
+    let movement_dir = out_root.join(movement.slug);
+    let tracks_dir = movement_dir.join("tracks");
     std::fs::create_dir_all(&tracks_dir)
         .map_err(|error| format!("failed to create {}: {error}", tracks_dir.display()))?;
 
-    let frames = composition::total_frames();
-    let specs = composition::tracks();
+    let frames = movement.total_frames();
+    let specs = movement.tracks();
+    let midi_path = movement_dir.join(format!("{}.mid", movement.slug));
+    midi::write_song_midi(&midi_path, movement.title, movement.meter, &specs)
+        .map_err(|error| format!("failed to write {}: {error}", midi_path.display()))?;
+    println!("MIDI: {}", midi_path.display());
+
     let mut mix_left = vec![0.0f32; frames];
     let mut mix_right = vec![0.0f32; frames];
 
     println!(
-        "Rendering {} tracks, {} bars at {} BPM ({:.1}s each)...",
+        "Rendering {}: {} tracks, {} bars at {} BPM ({:.1}s)...",
+        movement.title,
         specs.len(),
-        composition::TOTAL_BARS,
-        score::BPM,
+        movement.total_bars,
+        movement.meter.bpm,
         frames as f32 / render::SAMPLE_RATE as f32,
     );
 
@@ -63,8 +150,9 @@ fn run() -> Result<(), String> {
         highpass(&mut right, spec.mix.highpass_hz);
         let gain = track_gain(&left, &right, spec.mix.level);
         let (pan_left, pan_right) = pan_gains(spec.mix.pan);
-        apply_ride(&mut left, gain * pan_left, spec.mix.ride);
-        apply_ride(&mut right, gain * pan_right, spec.mix.ride);
+        let frames_per_bar = movement.meter.seconds_per_bar() * render::SAMPLE_RATE as f32;
+        apply_ride(&mut left, gain * pan_left, spec.mix.ride, frames_per_bar);
+        apply_ride(&mut right, gain * pan_right, spec.mix.ride, frames_per_bar);
         accumulate(&mut mix_left, &left);
         accumulate(&mut mix_right, &right);
 
@@ -83,9 +171,12 @@ fn run() -> Result<(), String> {
 
     highpass(&mut mix_left, MIX_HIGHPASS_HZ);
     highpass(&mut mix_right, MIX_HIGHPASS_HZ);
-    let master = normalize(&mut mix_left, &mut mix_right);
-    let mix_path = out_dir.join("lamath-song.wav");
-    let metrics = write_wav_stereo_pcm16(&mix_path, &mix_left, &mix_right, render::SAMPLE_RATE)
+
+    let mut wav_left = mix_left.clone();
+    let mut wav_right = mix_right.clone();
+    let master = normalize(&mut wav_left, &mut wav_right);
+    let mix_path = movement_dir.join(format!("{}.wav", movement.slug));
+    let metrics = write_wav_stereo_pcm16(&mix_path, &wav_left, &wav_right, render::SAMPLE_RATE)
         .map_err(|error| format!("failed to write {}: {error:?}", mix_path.display()))?;
     println!(
         "Mix: {}  master {:+.1} dB  peak {:.1} dBFS  rms {:.1} dBFS  {:.1}s",
@@ -95,24 +186,43 @@ fn run() -> Result<(), String> {
         metrics.rms_dbfs,
         metrics.duration_seconds,
     );
-    Ok(())
+
+    Ok(MovementMix {
+        left: mix_left,
+        right: mix_right,
+    })
 }
 
-fn parse_out_dir() -> Result<PathBuf, String> {
-    let mut args = std::env::args().skip(1);
-    let mut out_dir = PathBuf::from("review/lamath-song");
-    while let Some(argument) = args.next() {
-        match argument.as_str() {
-            "--out" => {
-                out_dir = args
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or_else(|| "--out requires a directory argument".to_string())?;
-            }
-            other => return Err(format!("unknown argument: {other}")),
+/// Concatenates the un-normalized movement mixes with silence gaps and
+/// normalizes the whole master once, preserving inter-movement balance.
+fn write_combined(out_root: &Path, rendered: &[MovementMix]) -> Result<(), String> {
+    let gap_frames = (GAP_SECONDS * render::SAMPLE_RATE as f32).round() as usize;
+    let total: usize = rendered.iter().map(|mix| mix.left.len()).sum::<usize>()
+        + gap_frames * rendered.len().saturating_sub(1);
+    let mut left = Vec::with_capacity(total);
+    let mut right = Vec::with_capacity(total);
+    for (index, mix) in rendered.iter().enumerate() {
+        if index > 0 {
+            left.resize(left.len() + gap_frames, 0.0);
+            right.resize(right.len() + gap_frames, 0.0);
         }
+        left.extend_from_slice(&mix.left);
+        right.extend_from_slice(&mix.right);
     }
-    Ok(out_dir)
+
+    let master = normalize(&mut left, &mut right);
+    let path = out_root.join("lamath-symphony.wav");
+    let metrics = write_wav_stereo_pcm16(&path, &left, &right, render::SAMPLE_RATE)
+        .map_err(|error| format!("failed to write {}: {error:?}", path.display()))?;
+    println!(
+        "Symphony: {}  master {:+.1} dB  peak {:.1} dBFS  rms {:.1} dBFS  {:.1}s",
+        path.display(),
+        to_db(master),
+        metrics.peak_dbfs,
+        metrics.rms_dbfs,
+        metrics.duration_seconds,
+    );
+    Ok(())
 }
 
 /// Gain that brings the track to its level target: active-region RMS (capped
@@ -179,13 +289,12 @@ fn highpass(samples: &mut [f32], cutoff_hz: f32) {
     }
 }
 
-/// Applies the static gain shaped by the track's fader ride over song bars.
-fn apply_ride(samples: &mut [f32], base_gain: f32, ride: &[(f32, f32)]) {
+/// Applies the static gain shaped by the track's fader ride over movement bars.
+fn apply_ride(samples: &mut [f32], base_gain: f32, ride: &[(f32, f32)], frames_per_bar: f32) {
     if ride.is_empty() {
         scale(samples, base_gain);
         return;
     }
-    let frames_per_bar = score::beats_to_seconds(score::BEATS_PER_BAR) * render::SAMPLE_RATE as f32;
     for (index, sample) in samples.iter_mut().enumerate() {
         let bar = index as f32 / frames_per_bar + 1.0;
         *sample *= base_gain * db_to_gain(ride_db_at(ride, bar));

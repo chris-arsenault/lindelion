@@ -318,11 +318,12 @@ impl ProcessBusScratch {
 
     fn update_process_context(&mut self, _frames: usize) {
         const TEMPO: f64 = 120.0;
-        self.context.state = ProcessContext_::StatesAndFlags_::kPlaying
+        let state = ProcessContext_::StatesAndFlags_::kPlaying
             | ProcessContext_::StatesAndFlags_::kContTimeValid
             | ProcessContext_::StatesAndFlags_::kProjectTimeMusicValid
             | ProcessContext_::StatesAndFlags_::kTempoValid
             | ProcessContext_::StatesAndFlags_::kTimeSigValid;
+        self.context.state = state as _;
         self.context.sampleRate = self.sample_rate;
         self.context.projectTimeSamples = self.project_time_samples;
         self.context.continousTimeSamples = self.project_time_samples;
@@ -851,7 +852,7 @@ fn bus_direction_label(direction: BusDirection) -> &'static str {
     }
 }
 
-fn vst_ok(result: tresult) -> bool {
+pub(super) fn vst_ok(result: tresult) -> bool {
     result == kResultOk || result == kResultTrue
 }
 

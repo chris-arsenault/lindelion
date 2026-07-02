@@ -380,8 +380,10 @@ fn run_session_command(file: Option<String>) {
         }
     }
     let bypass: Vec<bool> = session.chain.iter().map(|slot| slot.bypassed).collect();
-    let chain = ChainProcessor::new(
-        pool.iter().map(|slot| slot.instance.clone()).collect(),
+    let chain = ChainProcessor::new_with_modules(
+        pool.iter()
+            .map(|slot| (slot.instance.clone(), slot.module.clone()))
+            .collect(),
         bypass,
         4096,
         sample_rate,

@@ -731,9 +731,13 @@ impl Runtime {
     /// bypass from the UI state. No instantiation, no preparation — the instances are shared, so this
     /// never disturbs their state.
     fn build_chain(&self, state: &HostUiState) -> Box<ChainProcessor> {
-        let instances = self.pool.iter().map(|slot| slot.instance.clone()).collect();
+        let instances = self
+            .pool
+            .iter()
+            .map(|slot| (slot.instance.clone(), slot.module.clone()))
+            .collect();
         let bypass: Vec<bool> = state.chain.iter().map(|slot| slot.bypassed).collect();
-        Box::new(ChainProcessor::new(
+        Box::new(ChainProcessor::new_with_modules(
             instances,
             bypass,
             CHAIN_MAX_FRAMES,
@@ -963,9 +967,9 @@ impl AppData {
                 .prepare(&instance)?;
         }
         self.runtime.pool.push(PoolSlot {
-            module: Arc::new(module),
-            instance,
             controller,
+            instance,
+            module: Arc::new(module),
         });
         Ok(())
     }
@@ -1333,6 +1337,7 @@ impl AppData {
         let Some(engine) = &self.runtime.engine else {
             return;
         };
+        engine.reclaim_retired_chains();
         // `status`/`meter` are `Copy`, so the engine borrow ends before we mutate `self`.
         let status = engine.status();
         let meter = engine.meter_reader().read();

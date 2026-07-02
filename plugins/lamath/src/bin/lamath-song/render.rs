@@ -34,10 +34,14 @@ pub(crate) enum Voice {
     TubeLead,
     /// Tube family, darker embouchure (harmony and pads).
     TubeDark,
+    /// Tube family, brighter and hotter (battle/finale lead).
+    TubeBattle,
     /// Mesh family, ride gong (timekeeping).
     CymbalRide,
     /// Mesh family, crash (swells and section accents).
     CymbalCrash,
+    /// Mesh family, small damped low drum (battle/finale drive layer).
+    CymbalTom,
 }
 
 pub(crate) fn render_voice(
@@ -50,10 +54,12 @@ pub(crate) fn render_voice(
         Voice::ModalBells => render_modal(modal_bells_patch(), notes, target_frames),
         Voice::StringBow => render_stringed(string_bow_patch(), notes, target_frames),
         Voice::StringPick => render_stringed(string_pick_patch(), notes, target_frames),
-        Voice::TubeLead => render_tube(TubePatch::default(), notes, target_frames),
+        Voice::TubeLead => render_tube(tube_lead_patch(), notes, target_frames),
         Voice::TubeDark => render_tube(tube_dark_patch(), notes, target_frames),
+        Voice::TubeBattle => render_tube(tube_battle_patch(), notes, target_frames),
         Voice::CymbalRide => render_cymbal(cymbal_ride_patch(), notes, target_frames),
         Voice::CymbalCrash => render_cymbal(cymbal_crash_patch(), notes, target_frames),
+        Voice::CymbalTom => render_cymbal(cymbal_tom_patch(), notes, target_frames),
     }
 }
 
@@ -109,10 +115,43 @@ fn string_pick_patch() -> StringPatch {
     }
 }
 
+// The Tube now plays ~21 dB hotter natively (radiated-level makeup + the default knob moving
+// -8 -> 0 dB); these offsets hold the archived Olorelinde mix balance on re-render.
+const TUBE_SONG_LEVEL_OFFSET_DB: f32 = -21.0;
+
+fn tube_lead_patch() -> TubePatch {
+    TubePatch {
+        output_gain_db: TUBE_SONG_LEVEL_OFFSET_DB,
+        ..TubePatch::default()
+    }
+}
+
 fn tube_dark_patch() -> TubePatch {
     TubePatch {
         brightness: 0.35,
+        output_gain_db: TUBE_SONG_LEVEL_OFFSET_DB,
         ..TubePatch::default()
+    }
+}
+
+fn tube_battle_patch() -> TubePatch {
+    TubePatch {
+        brightness: 0.68,
+        output_gain_db: TUBE_SONG_LEVEL_OFFSET_DB,
+        ..TubePatch::default()
+    }
+}
+
+/// Small, tight, heavily damped mesh played mid-membrane: a low drum thump
+/// for the fast movements' drive layer rather than a ringing cymbal.
+fn cymbal_tom_patch() -> CymbalPatch {
+    CymbalPatch {
+        size: 0.38,
+        tension: 0.28,
+        damping: 0.62,
+        material: 0.30,
+        strike_position: 0.45,
+        ..CymbalPatch::default()
     }
 }
 

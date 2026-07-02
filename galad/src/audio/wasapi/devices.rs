@@ -36,6 +36,13 @@ pub enum AudioError {
     Com(windows::core::Error),
     /// The device's stream format is not one the engine handles (f32 / i16).
     UnsupportedFormat,
+    /// Capture and render devices run at different sample rates. The transport moves samples 1:1
+    /// (no resampler), so a mismatch would pitch-shift the audio and chronically under-run the
+    /// ring; the engine refuses to start instead.
+    SampleRateMismatch {
+        input_hz: u32,
+        output_hz: u32,
+    },
     /// The realtime audio thread failed to report its setup result.
     ThreadSetup,
 }

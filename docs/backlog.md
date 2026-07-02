@@ -7,6 +7,7 @@ Per-product backlogs cover product-specific work:
 | Product | Backlog |
 | ---- | ---- |
 | Lamath | [plugins/lamath-backlog.md](plugins/lamath-backlog.md) |
+| Lamath Cymbal | [plugins/lamath-cymbal-backlog.md](plugins/lamath-cymbal-backlog.md) |
 | Glirdir | [plugins/glirdir-backlog.md](plugins/glirdir-backlog.md) |
 | Linnod | [plugins/linnod-backlog.md](plugins/linnod-backlog.md) |
 

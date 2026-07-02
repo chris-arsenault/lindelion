@@ -54,7 +54,7 @@ impl Default for TubePatch {
             damping: 0.28,
             bell: 0.5,
             bell_radiation_shape: 0.0,
-            output_gain_db: -8.0,
+            output_gain_db: 0.0,
             switches: TubeModelSwitchPatch::default(),
             selected_articulation: 0,
             articulations: std::array::from_fn(|_| TubeArticulationPatch::default()),

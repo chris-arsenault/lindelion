@@ -6,10 +6,10 @@ use std::{
     cell::{Cell, RefCell},
     mem::MaybeUninit,
     ptr,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
 use lindelion_plugin_shell::vst3::restart_vst3_parameter_values_changed;
 use lindelion_plugin_shell::{
     AudioPlugin, MidiEvent, MidiEventNormalizer, ParameterId,
@@ -21,11 +21,11 @@ use lindelion_plugin_shell::{
         vst_event_to_midi, vst3_bus_count, write_plugin_state_to_stream,
     },
 };
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
 use lindelion_ui::lamath_tube_vizia::LamathTubeSwitchId;
 use vst3::{Class, ComRef, Steinberg::Vst::*, Steinberg::*, uid};
 
-use crate::{LamathTube, parameters};
+use crate::{LamathTube, parameters, plugin};
 
 use super::MAX_BLOCK_EVENTS;
 
@@ -34,12 +34,28 @@ const TUBE_BUSES: [Vst3BusInfo; 2] = [
     Vst3BusInfo::event_input(1, "MIDI Input"),
 ];
 
+/// Retry budget for editor file edits (load/clear excitation): the audio
+/// thread holds the plugin borrow only while rendering one block, so a short
+/// UI-thread retry window makes these rare, filesystem-touching edits
+/// effectively lossless without queueing their work onto the audio thread.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const EDITOR_EDIT_BORROW_RETRIES: usize = 400;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const EDITOR_EDIT_RETRY_SLEEP_MICROS: u64 = 500;
+
 pub(crate) struct LamathTubeVst3Processor {
     plugin: RefCell<LamathTube>,
     setup: Cell<ShellProcessSetup>,
     pub(super) values: Vst3ParameterMirror<{ parameters::PARAMETER_COUNT }>,
     pending_values: [AtomicU32; parameters::PARAMETER_COUNT],
     pending_dirty: [AtomicBool; parameters::PARAMETER_COUNT],
+    /// Editor model-switch toggles and articulation-slot picks queued past a
+    /// busy audio-thread borrow, drained at the head of the next process
+    /// block; without this, a click landing mid-block was silently dropped.
+    pending_switch_values: [AtomicBool; plugin::MODEL_SWITCH_COUNT],
+    pending_switch_dirty: [AtomicBool; plugin::MODEL_SWITCH_COUNT],
+    pending_articulation_slot: AtomicUsize,
+    pending_articulation_dirty: AtomicBool,
     #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     editor_switches: RwLock<Vec<lindelion_ui::lamath_tube_vizia::LamathTubeModelSwitch>>,
     #[cfg(any(test, target_os = "macos", target_os = "windows"))]
@@ -79,6 +95,10 @@ impl LamathTubeVst3Processor {
                 AtomicU32::new((default_values[index] as f32).to_bits())
             }),
             pending_dirty: std::array::from_fn(|_| AtomicBool::new(false)),
+            pending_switch_values: std::array::from_fn(|_| AtomicBool::new(false)),
+            pending_switch_dirty: std::array::from_fn(|_| AtomicBool::new(false)),
+            pending_articulation_slot: AtomicUsize::new(0),
+            pending_articulation_dirty: AtomicBool::new(false),
             #[cfg(any(test, target_os = "macos", target_os = "windows"))]
             editor_switches: RwLock::new(editor_switches),
             #[cfg(any(test, target_os = "macos", target_os = "windows"))]
@@ -130,28 +150,62 @@ impl LamathTubeVst3Processor {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn set_model_switch(&self, id: LamathTubeSwitchId, enabled: bool) {
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return;
-        };
-        plugin.set_model_switch(id, enabled);
-        self.replace_editor_switches(plugin.model_switches());
+        if let Ok(mut plugin) = self.plugin.try_borrow_mut() {
+            // Older queued toggles apply first so this click stays the newest.
+            self.apply_pending_model_switches(&mut plugin);
+            plugin.set_model_switch(id, enabled);
+            self.replace_editor_switches(plugin.model_switches());
+        } else {
+            let index = plugin::model_switch_index(id);
+            self.pending_switch_values[index].store(enabled, Ordering::Release);
+            self.pending_switch_dirty[index].store(true, Ordering::Release);
+            let mut switches = self.cached_editor_switches();
+            if let Some(switch) = switches.iter_mut().find(|switch| switch.id == id) {
+                switch.enabled = enabled;
+            }
+            self.replace_editor_switches(switches);
+        }
         unsafe { restart_vst3_parameter_values_changed(self.handler.get()) };
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(test, target_os = "macos", target_os = "windows"))]
     pub(super) fn select_articulation_slot(&self, slot: usize) {
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
-            return;
-        };
-        plugin.select_articulation_slot(slot);
-        self.replace_editor_slots(plugin.articulation_slot_list_view());
+        if let Ok(mut plugin) = self.plugin.try_borrow_mut() {
+            // A stale queued pick must not override this newer one in process.
+            self.pending_articulation_dirty
+                .store(false, Ordering::Release);
+            plugin.select_articulation_slot(slot);
+            self.replace_editor_slots(plugin.articulation_slot_list_view());
+        } else {
+            let slot = slot.min(crate::processor::ARTICULATION_SLOT_COUNT - 1);
+            self.pending_articulation_slot
+                .store(slot, Ordering::Release);
+            self.pending_articulation_dirty
+                .store(true, Ordering::Release);
+            let mut slots = self.cached_editor_slots();
+            slots.selected = lindelion_ui::audio_file_slot::AudioFileSlotId(slot);
+            self.replace_editor_slots(slots);
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn borrow_plugin_for_editor_edit(&self) -> Option<std::cell::RefMut<'_, LamathTube>> {
+        for _ in 0..EDITOR_EDIT_BORROW_RETRIES {
+            if let Ok(plugin) = self.plugin.try_borrow_mut() {
+                return Some(plugin);
+            }
+            std::thread::sleep(std::time::Duration::from_micros(
+                EDITOR_EDIT_RETRY_SLEEP_MICROS,
+            ));
+        }
+        None
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(super) fn load_excitation_from_path(&self, slot: usize, path: &Path) {
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
+        let Some(mut plugin) = self.borrow_plugin_for_editor_edit() else {
             return;
         };
         let _ = plugin.load_excitation_from_path(slot, path);
@@ -163,7 +217,7 @@ impl LamathTubeVst3Processor {
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(super) fn clear_excitation(&self, slot: usize) {
-        let Ok(mut plugin) = self.plugin.try_borrow_mut() else {
+        let Some(mut plugin) = self.borrow_plugin_for_editor_edit() else {
             return;
         };
         plugin.clear_excitation(slot);
@@ -307,6 +361,24 @@ impl LamathTubeVst3Processor {
                 let normalized = f32::from_bits(self.pending_values[index].load(Ordering::Acquire));
                 let _ = plugin.set_parameter_normalized(parameter.id, normalized);
             }
+        }
+    }
+
+    fn apply_pending_model_switches(&self, plugin: &mut LamathTube) {
+        for index in 0..crate::plugin::MODEL_SWITCH_COUNT {
+            if self.pending_switch_dirty[index].swap(false, Ordering::AcqRel) {
+                let enabled = self.pending_switch_values[index].load(Ordering::Acquire);
+                plugin.set_model_switch(crate::plugin::model_switch_id(index), enabled);
+            }
+        }
+    }
+
+    fn apply_pending_articulation_slot(&self, plugin: &mut LamathTube) {
+        if self
+            .pending_articulation_dirty
+            .swap(false, Ordering::AcqRel)
+        {
+            plugin.select_articulation_slot(self.pending_articulation_slot.load(Ordering::Acquire));
         }
     }
 }
@@ -472,6 +544,8 @@ impl IAudioProcessorTrait for LamathTubeVst3Processor {
             return kResultFalse;
         };
         self.apply_pending_values(&mut plugin);
+        self.apply_pending_model_switches(&mut plugin);
+        self.apply_pending_articulation_slot(&mut plugin);
         plugin.process(ShellProcessContext::new(
             self.setup.get(),
             buffer,
@@ -500,72 +574,4 @@ fn empty_midi_event() -> MidiEvent {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reports_output_and_midi_buses() {
-        assert_eq!(
-            vst3_bus_count(
-                &TUBE_BUSES,
-                MediaTypes_::kAudio as MediaType,
-                BusDirections_::kOutput as BusDirection,
-            ),
-            1
-        );
-        assert_eq!(
-            vst3_bus_count(
-                &TUBE_BUSES,
-                MediaTypes_::kEvent as MediaType,
-                BusDirections_::kInput as BusDirection,
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn exposes_sparse_parameter_count() {
-        let processor = LamathTubeVst3Processor::new();
-        assert_eq!(
-            unsafe { processor.getParameterCount() },
-            parameters::PARAMETER_COUNT as i32
-        );
-    }
-
-    #[test]
-    fn editor_state_does_not_collapse_while_plugin_is_borrowed() {
-        let processor = LamathTubeVst3Processor::new();
-        let _busy = processor.plugin.borrow_mut();
-
-        assert_eq!(processor.editor_knobs().len(), parameters::PARAMETER_COUNT);
-        assert!(!processor.model_switches().is_empty());
-        assert_eq!(
-            processor.articulation_slot_list_view().slots.len(),
-            crate::processor::ARTICULATION_SLOT_COUNT
-        );
-    }
-
-    #[test]
-    fn editor_parameter_change_queues_while_plugin_is_borrowed() {
-        let processor = LamathTubeVst3Processor::new();
-        let parameter = parameters::PARAMETERS[0];
-        let _busy = processor.plugin.borrow_mut();
-
-        processor.set_editor_parameter(parameter.id.0, 0.83);
-        let knob = processor
-            .editor_knobs()
-            .into_iter()
-            .find(|knob| knob.id == parameter.id.0)
-            .expect("queued parameter should remain visible in editor knobs");
-        assert!((knob.normalized - 0.83).abs() < 0.000_001);
-
-        drop(_busy);
-        let mut plugin = processor.plugin.borrow_mut();
-        crate::assert_no_allocations("lamath_tube_pending_editor_parameter", || {
-            processor.apply_pending_values(&mut plugin);
-        });
-        let normalized =
-            parameters::normalized_value(plugin.patch(), parameter.id.0).expect("known parameter");
-        assert!((normalized - 0.83).abs() < 0.000_001);
-    }
-}
+mod tests;

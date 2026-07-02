@@ -2,7 +2,11 @@
 //!
 //! Ports hot-mic's `HighPassFilterPlugin` (Cutoff, Slope). The slope is realized as a cascade of
 //! 12 dB/oct biquad high-pass stages (`stages = round(slope / 12)`), so the selectable slope is
-//! quantized to 12 dB/oct steps — a pure biquad cascade as the plan specifies.
+//! quantized to 12 dB/oct steps — a pure biquad cascade as the plan specifies. Each stage takes
+//! its proper Butterworth pole Q for the total order (0.541/1.307 for 24 dB/oct, …): identical
+//! Q = 0.707 stages would droop −3 dB × N at the cutoff instead of the Butterworth −3 dB.
+//! Parameter changes swap coefficients without clearing filter state, so a cutoff sweep does not
+//! click; only a slope change resets the stages it adds (their state is stale).
 
 #![forbid(unsafe_code)]
 
@@ -18,8 +22,16 @@ const MIN_CUTOFF: f32 = 40.0;
 const MAX_CUTOFF: f32 = 200.0;
 const MIN_SLOPE: f32 = 12.0;
 const MAX_SLOPE: f32 = 48.0;
-const Q: f32 = 0.707;
 const MAX_STAGES: usize = 4;
+
+/// Butterworth pole Qs per stage for a cascade of `n` second-order sections (order `2n`):
+/// `Q_k = 1 / (2·cos((2k+1)·π / (4n)))`.
+const BUTTERWORTH_QS: [&[f32]; MAX_STAGES] = [
+    &[std::f32::consts::FRAC_1_SQRT_2],
+    &[0.541_2, 1.306_6],
+    &[0.517_6, std::f32::consts::FRAC_1_SQRT_2, 1.931_9],
+    &[0.509_8, 0.601_3, 0.899_9, 2.562_9],
+];
 
 const PARAMS: &[EffectParam] = &[
     EffectParam {
@@ -65,12 +77,23 @@ impl HighPass {
         hp
     }
 
+    /// Apply the current cutoff/slope: coefficients swap in place (no state reset — a cutoff
+    /// sweep must not click); stages a slope increase newly activates are reset (stale state).
     fn reconfigure(&mut self) {
+        let previous_active = self.active;
         self.active = ((self.slope_db_oct / 12.0).round() as usize).clamp(1, MAX_STAGES);
-        let coeffs = BiquadCoefficients::highpass(self.sample_rate, self.cutoff_hz, Q);
-        for stage in self.stages.iter_mut() {
-            stage.set_coefficients(coeffs);
-            stage.reset();
+        let qs = BUTTERWORTH_QS[self.active - 1];
+        for (stage, &q) in self.stages[..self.active].iter_mut().zip(qs) {
+            stage.set_coefficients(BiquadCoefficients::highpass(
+                self.sample_rate,
+                self.cutoff_hz,
+                q,
+            ));
+        }
+        if self.active > previous_active {
+            for stage in self.stages[previous_active..self.active].iter_mut() {
+                stage.reset();
+            }
         }
     }
 }
@@ -102,6 +125,7 @@ impl Effect for HighPass {
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
         self.sample_rate = sample_rate;
         self.reconfigure();
+        self.reset();
     }
 
     fn process(&mut self, buffer: &mut [f32]) {
@@ -178,5 +202,39 @@ mod tests {
     fn passband_unity_stopband_attenuated() {
         assert!(response_db(4_000.0).abs() < 1.0, "passband not unity");
         assert!(response_db(30.0) < -15.0, "stopband not attenuated");
+    }
+
+    #[test]
+    fn cutoff_sits_at_butterworth_minus_3_db() {
+        // Proper per-stage pole Qs give the Butterworth −3 dB corner at any slope; identical
+        // Q = 0.707 stages would droop to −3 dB × stages here.
+        let db = response_db(100.0);
+        assert!((db + 3.0).abs() < 1.0, "24 dB/oct corner off: {db} dB");
+    }
+
+    #[test]
+    fn cutoff_sweep_does_not_click() {
+        // Coefficient changes must not clear filter state: sweeping the cutoff over a steady
+        // passband tone stays smooth (a state reset per change produced per-block transients).
+        let mut hp = HighPass::new();
+        hp.prepare(48_000.0, 256);
+        let tone = |i: usize| 0.5 * (std::f32::consts::TAU * 500.0 * i as f32 / 48_000.0).sin();
+        let mut previous = 0.0_f32;
+        let mut max_step = 0.0_f32;
+        for block in 0..40 {
+            hp.set_parameter(PARAM_CUTOFF_HZ, 40.0 + block as f32 * 4.0);
+            let mut buffer: Vec<f32> = (block * 256..(block + 1) * 256).map(tone).collect();
+            hp.process(&mut buffer);
+            if block >= 2 {
+                for &s in &buffer {
+                    max_step = max_step.max((s - previous).abs());
+                    previous = s;
+                }
+            } else {
+                previous = *buffer.last().expect("block");
+            }
+        }
+        // The tone's own max adjacent step is ~0.033; allow modest coefficient-change ripple.
+        assert!(max_step < 0.1, "cutoff sweep clicked: max step {max_step}");
     }
 }

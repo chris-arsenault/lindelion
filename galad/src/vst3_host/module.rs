@@ -34,13 +34,17 @@ impl LoadedModule {
 
 impl Drop for LoadedModule {
     fn drop(&mut self) {
+        crate::diagnostics::log("vst3-module: drop begin");
         // Release the factory while the DLL is still mapped, then call ExitDll, then unload.
         self.factory.take();
+        crate::diagnostics::log("vst3-module: factory released");
         unsafe {
             if let Ok(exit) = self.library.get::<ExitDllFn>(b"ExitDll\0") {
-                exit();
+                let result = exit();
+                crate::diagnostics::log(format!("vst3-module: ExitDll result={result}"));
             }
         }
+        crate::diagnostics::log("vst3-module: drop end");
     }
 }
 

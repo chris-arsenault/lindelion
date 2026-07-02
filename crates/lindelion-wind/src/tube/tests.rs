@@ -213,6 +213,10 @@ fn bell_radiation_does_not_depend_on_effort() {
 
 #[test]
 fn effort_changes_level_while_preserving_tuning() {
+    // Efforts sit above this generic 48 kHz configuration's speaking threshold (~0.6; the
+    // shipped voice always runs the model at 2x the host rate, where soft efforts speak), and
+    // both windows must actually speak — comparing the pitch of a non-oscillating bore's noise
+    // ring is meaningless.
     let sample_rate = 48_000.0;
     let params = ReedTubeParams {
         frequency_hz: 196.0,
@@ -221,13 +225,20 @@ fn effort_changes_level_while_preserving_tuning() {
         loop_gain: 0.985,
         ..ReedTubeParams::default()
     };
-    let quiet = render_reed_tube(sample_rate, params, 0.35, 24_000);
+    let quiet = render_reed_tube(sample_rate, params, 0.65, 24_000);
     let loud = render_reed_tube(sample_rate, params, 1.0, 24_000);
     let quiet_window = &quiet[12_000..20_000];
     let loud_window = &loud[12_000..20_000];
 
     assert_all_finite(&quiet);
     assert_all_finite(&loud);
+    let dbfs = |samples: &[f32]| 20.0 * rms(samples).max(1.0e-9).log10();
+    assert!(
+        dbfs(quiet_window) > -40.0 && dbfs(loud_window) > -40.0,
+        "both efforts must speak: quiet {} dB loud {} dB",
+        dbfs(quiet_window),
+        dbfs(loud_window)
+    );
     assert!(
         rms(loud_window) > rms(quiet_window) * 1.05,
         "quiet_rms={} loud_rms={}",
@@ -237,12 +248,12 @@ fn effort_changes_level_while_preserving_tuning() {
 
     let estimate =
         |samples: &[f32]| estimate_f0_autocorrelation_refined(samples, sample_rate, 100.0, 260.0);
-    if let (Some(quiet_f0), Some(loud_f0)) = (estimate(quiet_window), estimate(loud_window)) {
-        assert!(
-            cents_between(quiet_f0, loud_f0).abs() < 40.0,
-            "quiet_f0={quiet_f0} loud_f0={loud_f0}"
-        );
-    }
+    let quiet_f0 = estimate(quiet_window).expect("quiet pitch");
+    let loud_f0 = estimate(loud_window).expect("loud pitch");
+    assert!(
+        cents_between(quiet_f0, loud_f0).abs() < 40.0,
+        "quiet_f0={quiet_f0} loud_f0={loud_f0}"
+    );
 }
 
 #[test]

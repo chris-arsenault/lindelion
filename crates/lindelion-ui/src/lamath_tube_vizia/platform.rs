@@ -22,9 +22,9 @@ const STYLE: &str = r#"
         padding: 16px;
         vertical-gap: 12px;
     }
-    .tube-header { horizontal-gap: 12px; }
-    .tube-header-text { width: 1s; vertical-gap: 2px; }
-    .tube-card-row { horizontal-gap: 12px; }
+    .tube-header { horizontal-gap: 12px; height: auto; }
+    .tube-header-text { width: 1s; height: auto; vertical-gap: 2px; }
+    .tube-card-row { horizontal-gap: 12px; height: auto; }
     .tube-reed-card { width: 1s; }
     .tube-bore-card { width: auto; }
     .tube-player-card { width: 1s; }
@@ -36,13 +36,14 @@ const STYLE: &str = r#"
         background-color: #171c1d;
         border-width: 1px;
         border-color: #313a3b;
-        border-radius: 6px;
+        corner-radius: 6px;
+        height: auto;
         padding: 10px;
         vertical-gap: 8px;
     }
     .tube-section { color: #aab6b0; font-size: 13px; }
-    .tube-knob-row { horizontal-gap: 10px; }
-    .tube-knob-cell { width: 78px; vertical-gap: 4px; alignment: center; }
+    .tube-knob-row { horizontal-gap: 10px; width: auto; height: auto; }
+    .tube-knob-cell { width: 78px; height: auto; vertical-gap: 4px; alignment: center; }
     .tube-knob { width: 44px; height: 44px; }
     .tube-knob .knob-track { color: #d6a94f; background-color: #2a3031; }
     .tube-knob .knob-head {
@@ -60,24 +61,24 @@ const STYLE: &str = r#"
     }
     .tube-knob-label { color: #d5ddd8; font-size: 11px; text-align: center; }
     .tube-knob-value { color: #8d9a96; font-size: 10px; text-align: center; }
-    .tube-switch-row { horizontal-gap: 8px; }
+    .tube-switch-row { horizontal-gap: 8px; width: auto; height: auto; }
     .tube-switch {
         background-color: #22292a;
         border-width: 1px;
         border-color: #3b4647;
-        border-radius: 5px;
+        corner-radius: 5px;
         color: #b8c4bf;
         height: 30px;
         width: 142px;
     }
     .tube-switch-on { border-color: #d6a94f; color: #f1e5cb; }
     .tube-switch-locked { border-color: #496158; color: #9fc9b8; }
-    .tube-slot-row { horizontal-gap: 6px; }
+    .tube-slot-row { horizontal-gap: 6px; height: auto; }
     .tube-slot {
         background-color: #202728;
         border-width: 1px;
         border-color: #394445;
-        border-radius: 5px;
+        corner-radius: 5px;
         width: 68px;
         height: 58px;
         padding: 5px;
@@ -87,11 +88,11 @@ const STYLE: &str = r#"
     .tube-slot-key { color: #95a39e; font-size: 10px; text-align: center; }
     .tube-slot-label { color: #dde5e0; font-size: 10px; text-align: center; }
     .tube-slot-source { color: #7f908a; font-size: 10px; text-align: center; }
-    .tube-action-row { horizontal-gap: 8px; alignment: center; }
+    .tube-action-row { horizontal-gap: 8px; height: auto; alignment: center; }
     .tube-selected-label { color: #d3ded8; width: 300px; }
     .tube-button {
         background-color: #232b2c;
-        border-radius: 5px;
+        corner-radius: 5px;
         border-width: 1px;
         border-color: #3c4748;
         color: #dce4df;
@@ -178,16 +179,26 @@ impl Model for TubeModel {
                     match dialog.poll_path() {
                         Poll::Ready(Some(path)) => {
                             self.articulations.surface.load_audio_file(*slot, &path);
-                            self.signals
-                                .slots
-                                .set(self.articulations.surface.slot_list_view());
-                            self.signals.knobs.set(self.controls.knobs());
-                            self.signals.switches.set(self.controls.model_switches());
                             self.pending_dialog = None;
                         }
                         Poll::Ready(None) => self.pending_dialog = None,
                         Poll::Pending => {}
                     }
+                }
+                // Converge on the plugin's actual state: host automation and
+                // editor edits queued past a busy audio thread land between
+                // ticks, so the polled views are the source of truth.
+                let knobs = self.controls.knobs();
+                if self.signals.knobs.get() != knobs {
+                    self.signals.knobs.set(knobs);
+                }
+                let switches = self.controls.model_switches();
+                if self.signals.switches.get() != switches {
+                    self.signals.switches.set(switches);
+                }
+                let slots = self.articulations.surface.slot_list_view();
+                if self.signals.slots.get() != slots {
+                    self.signals.slots.set(slots);
                 }
             }
         });
@@ -528,12 +539,15 @@ impl LamathTubeViziaEditor {
         let parent = ParentWindow(parent);
         let window = build_application(host, size).open_parented(&parent);
         #[cfg(target_os = "macos")]
+        // Estimated for the auto-height card layout (header ~73, two card
+        // rows ~114/~132, 12px gaps, panel padding); recalibrate against a
+        // macOS screenshot if drop hotspots drift from the slot cells.
         let drop_targets = crate::vizia_audio_file_drop::NativeAudioFileDropTargets::install(
             &window,
             Arc::clone(&drop_host.articulations.surface),
             crate::vizia_audio_file_drop::AudioDropGrid {
                 left: 26.0,
-                top: 332.0,
+                top: 402.0,
                 width: 588.0,
                 height: 58.0,
                 gap: 6.0,

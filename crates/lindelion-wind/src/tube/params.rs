@@ -158,10 +158,14 @@ impl ReedTubeParams {
                 fallback.body_odd_mode_projection,
             ),
             body_upper_odd_modes: unit(self.body_upper_odd_modes, fallback.body_upper_odd_modes),
+            // Sanity bound only: must sit above the deepest legitimate compensation (the
+            // untracked law reaches ~35 round-trip samples at effort 0). The previous 24-sample
+            // bound silently pinned the whole low register's compensation (see
+            // `ReedDriver::aperture_phase_delay_samples`).
             reed_phase_delay_samples: math::finite_clamp(
                 self.reed_phase_delay_samples,
                 0.0,
-                24.0,
+                40.0,
                 fallback.reed_phase_delay_samples,
             ),
             switches: ReedTubeSwitches {

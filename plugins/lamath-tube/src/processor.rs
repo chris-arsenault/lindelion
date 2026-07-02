@@ -17,12 +17,18 @@ pub const ARTICULATION_SLOT_COUNT: usize = 8;
 use taps::{FINAL_OUTPUT_TAP_INDEX, FINAL_POST_GAIN_TAP_INDEX, FINAL_PRE_GAIN_TAP_INDEX};
 pub use taps::{TUBE_RENDER_TAP_COUNT, TUBE_RENDER_TAP_NAMES, TubeRenderTaps};
 
+mod articulation;
 mod excitation;
+mod level;
+mod note_lifecycle;
 mod params;
 mod phrasing;
 mod taps;
 mod variance_source;
 
+use articulation::{ArticulationStyle, HELD_RETURN, ONSET_NOISE_TAU_SECONDS, articulation_style};
+use level::VENTED_EFFORT_FLOOR;
+use note_lifecycle::HELD_NOTE_CAPACITY;
 use params::*;
 use phrasing::{PHRASE_DEVELOPMENT_START, phrase_params_for_knobs};
 use variance_source::{SteadyVarianceSource, TubeSteadyVariance};
@@ -67,6 +73,20 @@ const REGISTER_VENT_POSITION: f32 = 1.0 / 3.0;
 const ATTACK_PRESSURE_TARGET: f32 = 0.75;
 const ATTACK_PRESSURE_MAX: f32 = 0.78;
 const ATTACK_PRESSURE_TAU_SECONDS: f32 = 0.07;
+/// Scale on the low-register in-loop breath dither. Historically a period-2 stability aid at
+/// 1.0, but the current reed (inertial aperture + register-voice rebuild) shows an identical
+/// worst-case f/2 ratio (0.278, note 43 at pressure 1.0) at every dither scale including zero —
+/// the dither no longer stabilizes anything. Its loop-circulated white noise reads as a loud
+/// breath wash against the deliberately clean vented register (glaring on runs over the break),
+/// so it is held at a whisper for air character only.
+const LOW_REGISTER_BREATH_WASH: f32 = 0.25;
+/// A note change waiting at the bottom of the register-break dip.
+#[derive(Debug, Clone, Copy)]
+struct PendingBreakNote {
+    note: u8,
+    velocity: f32,
+    style: ArticulationStyle,
+}
 #[derive(Debug)]
 pub struct TubeProcessor<'a> {
     sample_rate: f32,
@@ -88,6 +108,13 @@ pub struct TubeProcessor<'a> {
     /// snapping the vented long bore back to the unvented short one at note-off retunes the
     /// delay line mid-ring and truncates the release with a hard waveform step.
     sounding_note: Option<u8>,
+    /// Monophonic note stack: keys physically down right now, oldest first, with their played
+    /// velocities. Releasing the sounding note returns to the most recent entry (finger-lift
+    /// slur) instead of cutting to silence under still-held keys.
+    held_notes: [(u8, f32); HELD_NOTE_CAPACITY],
+    held_note_count: usize,
+    pending_break_note: Option<PendingBreakNote>,
+    break_dip_remaining: u32,
     frequency_hz: f32,
     effort: f32,
     drive_gate: f32,
@@ -96,7 +123,13 @@ pub struct TubeProcessor<'a> {
     drive_target: f32,
     gate_coeff: f32,
     attack_envelope: f32,
+    /// Transient effort push above the played velocity, riding the attack envelope
+    /// (the articulation's air-push accent; see `ArticulationStyle::effort_accent`).
+    effort_accent: f32,
     attack_coeff: f32,
+    onset_noise_envelope: f32,
+    onset_noise_coeff: f32,
+    breath_wash_scale: f32,
     steady_variance_source: SteadyVarianceSource,
 }
 
@@ -126,15 +159,23 @@ impl<'a> TubeProcessor<'a> {
             injector: Injector::default(),
             current_note: None,
             sounding_note: None,
+            held_notes: [(0, 0.0); HELD_NOTE_CAPACITY],
+            held_note_count: 0,
+            pending_break_note: None,
+            break_dip_remaining: 0,
             frequency_hz: midi_note_to_hz(60.0),
             effort: 0.0,
             drive_gate: 0.0,
             phrase_engine: PhraseEngine::new(model_sample_rate),
             host_expression: HostExpression::new(model_sample_rate),
             drive_target: 0.0,
-            gate_coeff: gate_coeff(model_sample_rate),
+            gate_coeff: gate_coeff(model_sample_rate, 1.0),
             attack_envelope: 0.0,
-            attack_coeff: 1.0 - (-1.0 / (ATTACK_PRESSURE_TAU_SECONDS * model_sample_rate)).exp(),
+            effort_accent: 0.0,
+            attack_coeff: attack_coeff(model_sample_rate, 1.0),
+            onset_noise_envelope: 0.0,
+            onset_noise_coeff: onset_noise_coeff(model_sample_rate),
+            breath_wash_scale: LOW_REGISTER_BREATH_WASH,
             steady_variance_source: SteadyVarianceSource::new(model_sample_rate),
         }
     }
@@ -153,13 +194,23 @@ impl<'a> TubeProcessor<'a> {
         self.injector.clear();
         self.current_note = None;
         self.sounding_note = None;
+        self.held_notes = [(0, 0.0); HELD_NOTE_CAPACITY];
+        self.held_note_count = 0;
+        self.pending_break_note = None;
+        self.break_dip_remaining = 0;
         self.frequency_hz = midi_note_to_hz(60.0);
         self.effort = 0.0;
         self.drive_gate = 0.0;
         self.phrase_engine = PhraseEngine::new(self.model_sample_rate);
         self.host_expression = HostExpression::new(self.model_sample_rate);
         self.drive_target = 0.0;
-        self.gate_coeff = gate_coeff(self.model_sample_rate);
+        self.gate_coeff = gate_coeff(self.model_sample_rate, 1.0);
+        self.attack_envelope = 0.0;
+        self.effort_accent = 0.0;
+        self.attack_coeff = attack_coeff(self.model_sample_rate, 1.0);
+        self.onset_noise_envelope = 0.0;
+        self.onset_noise_coeff = onset_noise_coeff(self.model_sample_rate);
+        self.breath_wash_scale = LOW_REGISTER_BREATH_WASH;
         self.steady_variance_source.reset(self.model_sample_rate);
     }
 
@@ -227,87 +278,11 @@ impl<'a> TubeProcessor<'a> {
         }
     }
 
-    #[cfg(test)]
+    /// The active articulation slot (editor pick, patch, or the last keyswitch). The plugin
+    /// shell mirrors this back into its patch after each block so keyswitch changes survive
+    /// later patch pushes (parameter edits clone the shell's patch over the processor's).
     pub fn selected_slot(&self) -> usize {
         self.selected_slot
-    }
-
-    fn handle_events(&mut self, events: &[MidiEvent]) {
-        for event in events {
-            let note = match *event {
-                MidiEvent::Note(note) => note,
-                MidiEvent::Control(control) => {
-                    self.handle_control(control);
-                    continue;
-                }
-            };
-            match note {
-                NoteEvent::On { note, velocity, .. } if velocity > 0.0 => {
-                    if let Some(slot) = keyswitch_slot(note) {
-                        self.select_slot(slot);
-                    } else {
-                        self.note_on(note, velocity);
-                    }
-                }
-                NoteEvent::Off { note, .. } => self.note_off(note),
-                NoteEvent::On { note, .. } => self.note_off(note),
-            }
-        }
-    }
-
-    /// Host performance layer: the CC dynamics line (CC1/CC11) multiplies the
-    /// breath intensity, channel pressure swells above it, pitch bend retunes
-    /// the bore. Inert until the host sends something.
-    fn handle_control(&mut self, control: ControlEvent) {
-        match control {
-            ControlEvent::ContinuousController {
-                controller: 1 | 11,
-                value,
-                ..
-            } => self.host_expression.set_expression(value),
-            ControlEvent::ChannelPressure { value, .. } => {
-                self.host_expression.set_aftertouch(value)
-            }
-            ControlEvent::PitchBend { semitones, .. } => {
-                self.host_expression.set_bend_semitones(semitones)
-            }
-            _ => {}
-        }
-    }
-
-    fn select_slot(&mut self, slot: usize) {
-        self.selected_slot = slot.min(ARTICULATION_SLOT_COUNT - 1);
-        self.patch.selected_articulation = self.selected_slot;
-    }
-
-    fn note_on(&mut self, note: u8, velocity: f32) {
-        // Note overlap is the legato/rearticulation seam: an overlapping note
-        // keeps the developed breath and blooming vibrato (slurred); a note
-        // from silence is a fresh tongued attack.
-        let legato = self.current_note.is_some();
-        self.phrase_engine
-            .note_on(velocity.clamp(0.0, 1.0), legato, PHRASE_DEVELOPMENT_START);
-        self.current_note = Some(note);
-        self.sounding_note = Some(note);
-        self.frequency_hz = midi_note_to_hz(note as f32);
-        self.effort = velocity.clamp(0.0, 1.0);
-        self.drive_target = 1.0;
-        // Tongue-release overpressure: every vented-register attack (including legato note
-        // changes, which must re-lock the new mode) starts with the boost armed.
-        if register_key_state(&self.patch, self.sounding_note).vent_admittance > 0.0 {
-            self.attack_envelope = 1.0;
-        }
-        let gain = self.effort.sqrt();
-        let source = self.sources[self.selected_slot];
-        self.injector.trigger(source, gain, self.model_sample_rate);
-    }
-
-    fn note_off(&mut self, note: u8) {
-        if self.current_note == Some(note) {
-            self.current_note = None;
-            self.phrase_engine.note_off();
-            self.drive_target = 0.0;
-        }
     }
 
     fn process_model_sample(&mut self) -> f32 {
@@ -327,7 +302,10 @@ impl<'a> TubeProcessor<'a> {
         let register_active =
             register_key_state(&self.patch, self.sounding_note).vent_admittance > 0.0;
         let coherent_amount = if register_active { 1.0 } else { 0.0 };
-        self.attack_envelope *= 1.0 - self.attack_coeff;
+        // The overpressure decays on the breath's clock: a swelled (slow-gate) entry keeps its
+        // attack boost until the air actually arrives, instead of spending it into silence.
+        self.attack_envelope *= 1.0 - self.attack_coeff * self.drive_gate;
+        self.onset_noise_envelope *= 1.0 - self.onset_noise_coeff;
         let steady_pressure = math::finite_clamp(
             self.patch.pressure * (1.0 + pressure_mod),
             0.0,
@@ -345,11 +323,20 @@ impl<'a> TubeProcessor<'a> {
         } else {
             0.0
         };
+        // Onset turbulence rides on top of the register's steady noise floor
+        // (full breath wash below the break, none above it), so a breath
+        // articulation reads as air in either register.
+        let breath_noise = math::finite_clamp(
+            self.breath_wash_scale * (1.0 - coherent_amount) + self.onset_noise_envelope,
+            0.0,
+            2.0,
+            self.breath_wash_scale * (1.0 - coherent_amount),
+        );
         self.reed.set_params(reed_params_with_mod(
             &self.patch,
             pressure_mod,
             embouchure_mod,
-            1.0 - coherent_amount,
+            breath_noise,
             tracking_frequency_hz,
         ));
         coherent_amount
@@ -381,10 +368,30 @@ impl<'a> TubeProcessor<'a> {
         }
     }
 
+    /// The played effort line: host expression scales it, the articulation's air-push accent
+    /// rides the attack envelope, [`VENTED_EFFORT_FLOOR`] maps onto the speaking region.
+    fn shaped_effort(&self, effort_signal: f32, intensity_factor: f32) -> f32 {
+        let effort_signal = (effort_signal * intensity_factor
+            + self.effort_accent * self.attack_envelope)
+            .clamp(0.0, 1.0);
+        let register_active =
+            register_key_state(&self.patch, self.sounding_note).vent_admittance > 0.0;
+        if register_active {
+            VENTED_EFFORT_FLOOR + (1.0 - VENTED_EFFORT_FLOOR) * effort_signal
+        } else {
+            effort_signal
+        }
+    }
+
     fn process_model_sample_with_taps(&mut self, taps: Option<&mut TubeRenderTaps>) -> f32 {
+        let transition_loop_scale = self.process_break_transition();
         let (effort_signal, phrase_breath_mod) = self.phrase_drive();
+        if self.pending_break_note.is_some() {
+            // The break dip outranks the phrase engine's gate.
+            self.drive_target = 0.0;
+        }
         let expression = self.host_expression.process();
-        let effort_signal = (effort_signal * expression.intensity_factor).clamp(0.0, 1.0);
+        let effort_signal = self.shaped_effort(effort_signal, expression.intensity_factor);
         let frequency_hz = self.frequency_hz * phrase::cents_ratio(expression.bend_cents);
         self.drive_gate += (self.drive_target - self.drive_gate) * self.gate_coeff;
         let excitation = self.injector.process();
@@ -395,6 +402,7 @@ impl<'a> TubeProcessor<'a> {
         let pressure_mod = humanize_pressure_mod + phrase_breath_mod;
         let mut params =
             tube_params_with_mod(&self.patch, self.sounding_note, frequency_hz, voicing_mod);
+        params.loop_gain *= transition_loop_scale;
         let coherent_amount = self.apply_register_performance(pressure_mod, embouchure_mod);
         params.reed_phase_delay_samples = self
             .reed
@@ -420,12 +428,13 @@ impl<'a> TubeProcessor<'a> {
         } else {
             0.0
         };
+        let radiated_makeup = self.radiated_makeup(frequency_hz);
         if let Some(taps) = taps {
             let mut tube_taps = ReedTubeTaps::default();
             let tube_output = self
                 .tube
                 .process_wind_with_taps(mouth_wave, params, &mut tube_taps);
-            let output = tube_output + reed_radiated;
+            let output = (tube_output + reed_radiated) * radiated_makeup;
             *taps = TubeRenderTaps {
                 excitation,
                 drive_gate: self.drive_gate,
@@ -466,7 +475,7 @@ impl<'a> TubeProcessor<'a> {
             };
             output
         } else {
-            self.tube.process_wind(mouth_wave, params) + reed_radiated
+            (self.tube.process_wind(mouth_wave, params) + reed_radiated) * radiated_makeup
         }
     }
 
@@ -486,8 +495,18 @@ impl<'a> TubeProcessor<'a> {
     }
 }
 
-fn gate_coeff(sample_rate: f32) -> f32 {
-    1.0 - (-1.0 / (GATE_RAMP_SECONDS * sanitize_sample_rate(sample_rate))).exp()
+fn gate_coeff(sample_rate: f32, ramp_scale: f32) -> f32 {
+    let ramp = GATE_RAMP_SECONDS * ramp_scale.clamp(0.25, 16.0);
+    1.0 - (-1.0 / (ramp * sanitize_sample_rate(sample_rate))).exp()
+}
+
+fn attack_coeff(model_sample_rate: f32, tau_scale: f32) -> f32 {
+    let tau = ATTACK_PRESSURE_TAU_SECONDS * tau_scale.clamp(0.25, 2.5);
+    1.0 - (-1.0 / (tau * sanitize_sample_rate(model_sample_rate))).exp()
+}
+
+fn onset_noise_coeff(model_sample_rate: f32) -> f32 {
+    1.0 - (-1.0 / (ONSET_NOISE_TAU_SECONDS * sanitize_sample_rate(model_sample_rate))).exp()
 }
 
 fn reed_radiation_highpass(sample_rate: f32) -> Biquad {
@@ -542,5 +561,7 @@ fn soft_limit(sample: f32) -> f32 {
     }
 }
 
+#[cfg(test)]
+mod mono_stack_tests;
 #[cfg(test)]
 mod tests;

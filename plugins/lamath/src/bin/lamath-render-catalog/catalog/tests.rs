@@ -171,10 +171,10 @@ fn catalog_selection_handles_articulation_group() {
     validate_catalog(&cases).unwrap();
 
     let selected = select_group(&cases, "articulation");
-    assert_eq!(selected.len(), 11);
+    assert_eq!(selected.len(), 19);
     assert_all_paths_safe(&selected);
     assert_eq!(selected.first().unwrap().id, "tube_scale_tongued_c4_c5");
-    assert_eq!(selected.last().unwrap().id, "mesh_expressive_16");
+    assert_eq!(selected.last().unwrap().id, "tube_articulation_slot_slur");
 }
 
 #[test]
@@ -205,7 +205,7 @@ fn catalog_selection_handles_mesh_strikers_group() {
 fn catalog_selection_handles_edges_group() {
     let cases = catalog_cases();
     validate_catalog(&cases).unwrap();
-    assert_eq!(cases.len(), 188);
+    assert_eq!(cases.len(), 199);
 
     let selected = select_group(&cases, "edges");
     assert_eq!(selected.len(), 8);

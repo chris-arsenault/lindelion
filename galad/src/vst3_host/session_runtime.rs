@@ -70,9 +70,9 @@ pub fn restore_pool(
             .ok()
             .map(Arc::new);
         pool.push(PoolSlot {
-            module: Arc::new(module),
-            instance: Arc::new(instance),
             controller,
+            instance: Arc::new(instance),
+            module: Arc::new(module),
         });
     }
     Ok(pool)

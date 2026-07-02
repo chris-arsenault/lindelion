@@ -12,6 +12,7 @@ use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
 
 use windows::Win32::Foundation::WAIT_OBJECT_0;
+use windows::Win32::Media::Audio::AUDCLNT_BUFFERFLAGS_SILENT;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::System::Threading::WaitForMultipleObjects;
 
@@ -143,6 +144,12 @@ impl AudioEngine {
     /// Publish a new chain to the running engine; the audio thread swaps it in without dropouts.
     pub fn publish_chain(&self, chain: Box<ChainProcessor>) {
         self.handoff.publish(chain);
+    }
+
+    /// Drop any graph the audio thread has already swapped away from. This runs on the control/UI
+    /// thread so VST teardown never happens in the realtime callback.
+    pub fn reclaim_retired_chains(&self) {
+        self.handoff.reclaim();
     }
 
     /// Update post-chain master settings without restarting the engine.
@@ -300,6 +307,14 @@ fn setup_streams(
     let render = WasapiStream::open_render(output)?;
     let in_fmt = capture.format();
     let out_fmt = render.format();
+    // The transport moves samples 1:1 between the streams (no resampler): mismatched device rates
+    // would play pitch-shifted and chronically under-run the ring. Refuse to start instead.
+    if in_fmt.sample_rate != out_fmt.sample_rate {
+        return Err(AudioError::SampleRateMismatch {
+            input_hz: in_fmt.sample_rate,
+            output_hz: out_fmt.sample_rate,
+        });
+    }
 
     let max_frames = capture.buffer_frames().max(render.buffer_frames()) as usize;
     // Generous ring (several buffers of stereo) so a late callback does not under-run.
@@ -420,7 +435,13 @@ fn pump_capture(
             let mut flags: u32 = 0;
             client.GetBuffer(&mut data, &mut frames, &mut flags, None, None)?;
             let samples = frames as usize * format.channels.max(1) as usize;
-            let n = if data.is_null() {
+            // A packet flagged silent carries undefined data (WASAPI contract): feed zeros of the
+            // packet's length so the stream stays continuous without leaking buffer garbage.
+            let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
+            let n = if silent {
+                scratch[..samples].fill(0.0);
+                samples
+            } else if data.is_null() {
                 0
             } else {
                 let bytes = samples * format.sample.bytes_per_sample();
