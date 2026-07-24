@@ -8,7 +8,7 @@ This file tracks work that is not part of the current implemented Linnod spec in
 
 - Build, stage, install, inspect, and validate `Linnod.vst3` on a macOS machine with Steinberg's validator installed.
 - Confirm Ableton scans Linnod as a separate instrument and lists it independently from Lamath and Glirdir.
-- In Ableton, validate source load, source ingest, marker edits, slice edits, pad mode, chromatic mode, tune selected, tune all, scale snap, editor open/close, project save/reload, and missing-source recovery.
+- In Ableton, validate source load, source ingest, marker edits, slice edits, pad mode, chromatic mode, pitch-map mode with sparse keys at recorded and corrected pitch, tune selected, tune all, scale snap, editor open/close, project save/reload, and missing-source recovery.
 - Record Apple Silicon runtime numbers for 1, 8, and 16 active voices with formant-preserving pitch shift active.
 
 ---

@@ -177,6 +177,7 @@ impl LinnodVst3Controller {
         self.patch.borrow_mut().trigger_mode = match mode {
             LinnodEditorTriggerMode::Pad => TriggerMode::Pad,
             LinnodEditorTriggerMode::Chromatic => TriggerMode::Chromatic,
+            LinnodEditorTriggerMode::PitchMap => TriggerMode::PitchMap,
         };
         self.refresh_summary();
         self.send_patch_to_processor()
@@ -532,7 +533,9 @@ impl IEditControllerTrait for LinnodVst3Controller {
 }
 
 fn source_summary_cache_must_clear(current: &LinnodPatch, next: &LinnodPatch) -> bool {
-    current.source_sample != next.source_sample || current.detection != next.detection
+    current.source_sample != next.source_sample
+        || current.detection != next.detection
+        || current.tuning != next.tuning
 }
 
 pub(super) fn default_parameter_values() -> [f64; VST3_PARAMETER_COUNT] {

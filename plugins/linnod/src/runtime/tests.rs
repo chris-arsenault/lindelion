@@ -15,6 +15,8 @@ use lindelion_test_allocator::assert_no_allocations;
 mod auto_tune;
 #[path = "tests/crunch_fixture.rs"]
 mod crunch_fixture;
+#[path = "tests/pitch_map.rs"]
+mod pitch_map;
 #[path = "tests/pitch_quality.rs"]
 mod pitch_quality;
 #[path = "tests/prepared_resample_pro.rs"]
@@ -123,27 +125,6 @@ fn pad_mode_distinct_choke_groups_can_overlap() {
     );
 
     assert_eq!(fixture.processor.active_voice_count(), 2);
-}
-
-#[test]
-fn chromatic_mode_resolves_selected_pad_and_pitch_delta() {
-    let mut patch = LinnodPatch {
-        trigger_mode: TriggerMode::Chromatic,
-        active_chromatic_pad: PadId(2),
-        pad_map: vec![PadAssignment {
-            pad: PadId(2),
-            slice_index: 7,
-            midi_note: 64,
-            choke_group: None,
-        }],
-        ..LinnodPatch::default()
-    };
-    patch.normalize_layout();
-
-    let resolved = resolve_note_trigger(&patch, 76).unwrap();
-
-    assert_eq!(resolved.slice_index, 7);
-    assert_eq!(resolved.chromatic_semitones, 12.0);
 }
 
 #[test]
@@ -544,6 +525,7 @@ fn source_analysis_from_samples(
         audio: RuntimeMonoAudioBuffer::from_owned(owned_audio),
         pitch_contour,
         markers,
+        pitch_map: Vec::new(),
         pitch_shift_cache,
     }
 }

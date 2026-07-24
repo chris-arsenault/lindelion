@@ -6,8 +6,8 @@ use lindelion_ui::{
     linnod_vizia::{
         LinnodEditorDetectionAlgorithm, LinnodEditorDetectionConfig, LinnodEditorMarker,
         LinnodEditorMarkerKind, LinnodEditorPadSummary, LinnodEditorPatchSummary,
-        LinnodEditorPitchShiftAlgorithm, LinnodEditorSliceSummary, LinnodEditorSourceStatus,
-        LinnodEditorTriggerMode,
+        LinnodEditorPitchMappedRegion, LinnodEditorPitchShiftAlgorithm, LinnodEditorSliceSummary,
+        LinnodEditorSourceStatus, LinnodEditorTriggerMode,
     },
     waveform_points_from_samples,
 };
@@ -39,11 +39,13 @@ pub(super) fn editor_summary_from_patch(patch: &LinnodPatch) -> LinnodEditorPatc
             .iter()
             .map(|pad| editor_pad(patch, pad))
             .collect(),
+        pitch_map: Vec::new(),
         slices: patch.slices.iter().enumerate().map(editor_slice).collect(),
         playback: editor_playback_config(patch.playback),
         auto_tune: editor_auto_tune_config(patch.auto_tune),
         detection: editor_detection(patch.detection),
         trigger_mode: editor_trigger_mode(patch.trigger_mode),
+        pitch_map_tolerance_cents: crate::DEFAULT_PITCH_MAP_TOLERANCE_CENTS,
         pitch_shift_algorithm: editor_pitch_shift_algorithm(patch.engine.pitch_shift_algorithm),
         tuning_reference_hz: patch.tuning.reference_hz,
         tuning_root_label: format!("{:?}", patch.tuning.root),
@@ -95,6 +97,17 @@ pub(super) fn source_summary_payload_from_plugin(
                 }
             })
             .collect(),
+        pitch_map: analysis
+            .pitch_mapped_regions()
+            .iter()
+            .map(|region| super::messages::LinnodPitchMappedRegionPayload {
+                midi_note: region.midi_note,
+                start_sample: region.start_sample,
+                end_sample: region.end_sample,
+                detected_f0_hz: region.detected_f0_hz,
+                cents_deviation: region.cents_deviation,
+            })
+            .collect(),
     })
 }
 
@@ -105,6 +118,17 @@ pub(super) fn apply_source_summary_payload(
     summary.source_label.clone_from(&payload.source_label);
     summary.source_sample_rate = payload.source_sample_rate;
     summary.waveform = payload.waveform.iter().copied().map(Into::into).collect();
+    summary.pitch_map = payload
+        .pitch_map
+        .iter()
+        .map(|region| LinnodEditorPitchMappedRegion {
+            midi_note: region.midi_note,
+            start_sample: region.start_sample,
+            end_sample: region.end_sample,
+            detected_f0_hz: region.detected_f0_hz,
+            cents_deviation: region.cents_deviation,
+        })
+        .collect();
     for source_slice in &payload.slices {
         if let Some(slice) = summary.slices.get_mut(source_slice.index) {
             slice.start_sample = source_slice.start_sample;
@@ -294,6 +318,7 @@ fn editor_trigger_mode(mode: TriggerMode) -> LinnodEditorTriggerMode {
     match mode {
         TriggerMode::Pad => LinnodEditorTriggerMode::Pad,
         TriggerMode::Chromatic => LinnodEditorTriggerMode::Chromatic,
+        TriggerMode::PitchMap => LinnodEditorTriggerMode::PitchMap,
     }
 }
 

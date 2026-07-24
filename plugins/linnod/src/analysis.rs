@@ -15,7 +15,10 @@ use lindelion_pitch_shift::{
 };
 use lindelion_sample_library::{OwnedMonoAudioBuffer, RuntimeMonoAudioBuffer, SampleMetadata};
 
-use crate::patch::SLICE_COUNT;
+use crate::{
+    patch::SLICE_COUNT,
+    pitch_map::{PitchMappedRegion, detect_pitch_mapped_regions},
+};
 
 pub use lindelion_pitch_shift::PitchShiftSliceSummary as SlicePitchSummary;
 
@@ -25,12 +28,24 @@ pub struct SourceAnalysis {
     pub audio: RuntimeMonoAudioBuffer,
     pub pitch_contour: PitchContour,
     pub markers: Vec<SliceMarker>,
+    pub pitch_map: Vec<PitchMappedRegion>,
     pub pitch_shift_cache: PitchShiftSourceCache,
 }
 
 impl SourceAnalysis {
     pub fn slice_pitch_summaries(&self) -> &[PitchShiftSliceSummary] {
         &self.pitch_shift_cache.slice_summaries
+    }
+
+    pub fn pitch_mapped_regions(&self) -> &[PitchMappedRegion] {
+        &self.pitch_map
+    }
+
+    pub fn pitch_mapped_region(&self, midi_note: u8) -> Option<PitchMappedRegion> {
+        self.pitch_map
+            .iter()
+            .find(|region| region.midi_note == midi_note)
+            .copied()
     }
 
     pub fn render_shifted_slice_to(
@@ -114,12 +129,16 @@ where
         source: SampleMetadata,
         audio: OwnedMonoAudioBuffer,
         detection: DetectionConfig,
+        tuning_reference_hz: f32,
         patch_markers: &[SliceMarker],
     ) -> Result<SourceAnalysis, SourceAnalysisError> {
         self.analyze_with_marker_policy(
-            source,
-            audio,
-            detection,
+            SourceAnalysisInput {
+                source,
+                audio,
+                detection,
+                tuning_reference_hz,
+            },
             patch_markers,
             MarkerAnalysisPolicy::DetectAndMergeUserMarkers,
         )
@@ -130,12 +149,16 @@ where
         source: SampleMetadata,
         audio: OwnedMonoAudioBuffer,
         detection: DetectionConfig,
+        tuning_reference_hz: f32,
         patch_markers: &[SliceMarker],
     ) -> Result<SourceAnalysis, SourceAnalysisError> {
         self.analyze_with_marker_policy(
-            source,
-            audio,
-            detection,
+            SourceAnalysisInput {
+                source,
+                audio,
+                detection,
+                tuning_reference_hz,
+            },
             patch_markers,
             MarkerAnalysisPolicy::UseSavedMarkers,
         )
@@ -143,12 +166,16 @@ where
 
     fn analyze_with_marker_policy(
         &self,
-        source: SampleMetadata,
-        audio: OwnedMonoAudioBuffer,
-        detection: DetectionConfig,
+        input: SourceAnalysisInput,
         patch_markers: &[SliceMarker],
         marker_policy: MarkerAnalysisPolicy,
     ) -> Result<SourceAnalysis, SourceAnalysisError> {
+        let SourceAnalysisInput {
+            source,
+            audio,
+            detection,
+            tuning_reference_hz,
+        } = input;
         if audio.samples.is_empty() {
             return Err(SourceAnalysisError::EmptySource);
         }
@@ -191,12 +218,20 @@ where
             &pitch_contour,
             &markers,
         )?;
+        let pitch_map = detect_pitch_mapped_regions(
+            &pitch_contour,
+            audio.samples.len(),
+            audio.sample_rate,
+            tuning_reference_hz,
+            detection.min_slice_ms,
+        );
 
         Ok(SourceAnalysis {
             source,
             audio: RuntimeMonoAudioBuffer::from_owned(audio),
             pitch_contour,
             markers,
+            pitch_map,
             pitch_shift_cache,
         })
     }
@@ -221,6 +256,13 @@ where
         };
         select_strongest_markers(markers, input.audio, SLICE_COUNT, input.min_gap_samples)
     }
+}
+
+struct SourceAnalysisInput {
+    source: SampleMetadata,
+    audio: OwnedMonoAudioBuffer,
+    detection: DetectionConfig,
+    tuning_reference_hz: f32,
 }
 
 struct MarkerDetectionInput<'a> {
@@ -285,6 +327,7 @@ mod tests {
                     min_slice_ms: 10.0,
                     ..DetectionConfig::default()
                 },
+                440.0,
                 &[],
             )
             .unwrap();
@@ -298,6 +341,14 @@ mod tests {
         assert_eq!(
             result.slice_pitch_summaries()[1].detected_f0_hz,
             Some(440.0)
+        );
+        assert_eq!(
+            result
+                .pitch_mapped_regions()
+                .iter()
+                .map(|region| region.midi_note)
+                .collect::<Vec<_>>(),
+            vec![57, 69]
         );
         assert_eq!(result.pitch_shift_cache.source_len_samples, 4_800);
         let mut rendered = vec![0.0; 2_400];
@@ -340,6 +391,7 @@ mod tests {
                     min_slice_ms: 10.0,
                     ..DetectionConfig::default()
                 },
+                440.0,
                 &[SliceMarker {
                     position_samples: 2_450,
                     kind: MarkerKind::User,
@@ -389,6 +441,7 @@ mod tests {
                     min_slice_ms: 10.0,
                     ..DetectionConfig::default()
                 },
+                440.0,
                 &saved_markers,
             )
             .unwrap();
@@ -424,6 +477,7 @@ mod tests {
                     min_slice_ms: 10.0,
                     ..DetectionConfig::default()
                 },
+                440.0,
                 &[],
             )
             .unwrap();

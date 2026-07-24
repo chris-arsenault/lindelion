@@ -24,9 +24,9 @@ use super::{
     LinnodEditorControlKind, LinnodEditorDetectionAlgorithm, LinnodEditorDetectionEdit,
     LinnodEditorEnvelope, LinnodEditorHost, LinnodEditorMarker, LinnodEditorMarkerEdit,
     LinnodEditorMarkerKind, LinnodEditorPadEdit, LinnodEditorPadSummary,
-    LinnodEditorParameterBinding, LinnodEditorPatchSummary, LinnodEditorPitchShiftAlgorithm,
-    LinnodEditorPlaybackEdit, LinnodEditorPlaybackMode, LinnodEditorSliceEdit,
-    LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorStatus,
+    LinnodEditorParameterBinding, LinnodEditorPatchSummary, LinnodEditorPitchMappedRegion,
+    LinnodEditorPitchShiftAlgorithm, LinnodEditorPlaybackEdit, LinnodEditorPlaybackMode,
+    LinnodEditorSliceEdit, LinnodEditorSliceSummary, LinnodEditorSourceStatus, LinnodEditorStatus,
     LinnodEditorSurfaceSlot, LinnodEditorTelemetry, LinnodEditorTriggerMode,
 };
 use crate::{PadId, WaveformPoint};

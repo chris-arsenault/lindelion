@@ -3,7 +3,7 @@
 **Name:** Linnod
 **Name etymology:** Sindarin, a measured verse unit: a half-line of 4+3 syllables forming a distinct portion of a larger song.
 **Target:** macOS VST3 instrument, Apple Silicon primary.
-**Status:** VST3 melodic sample-slicer instrument with patch/state persistence, source loading and analysis, shared marker/slice domain logic, SwiftF0-backed tuning, setup-time Resample Stretch slice rendering, allocation-free slice playback, typed editor/VST3 messaging, and macOS bundle automation.
+**Status:** VST3 melodic sample-slicer instrument with patch/state persistence, source loading and analysis, shared marker/slice domain logic, SwiftF0-backed tuning and sparse keyboard mapping, setup-time Resample Stretch slice rendering, allocation-free slice playback, typed editor/VST3 messaging, and macOS bundle automation.
 
 This document describes the behavior implemented in the workspace today. Deferred product extensions and external host-validation follow-up live in [linnod-backlog.md](linnod-backlog.md).
 
@@ -11,7 +11,7 @@ This document describes the behavior implemented in the workspace today. Deferre
 
 ## 1. Product Intent
 
-Linnod is Lindelion's melodic sample slicer. It targets monophonic melodic source material such as wind, voice, and bowed strings, detects or accepts slice markers, and turns those slices into MIDI-triggered rhythmic chops.
+Linnod is Lindelion's melodic sample slicer. It targets monophonic melodic source material such as wind, voice, and bowed strings. Marker modes turn onset-derived slices into MIDI-triggered rhythmic chops; pitch-map mode finds stable chromatic regions across the complete source and places them on their detected keyboard notes.
 
 The core design keeps product policy local to `plugins/linnod` while shared Lindelion crates carry reusable plugin-shell, sample-library, onset, pitch-detect, pitch-shift, MIDI, UI, DSP, and state machinery.
 
@@ -25,8 +25,8 @@ Implemented modules:
 
 - `patch.rs`: serde-backed `LinnodPatch`, 16-slice layout, pad map, pad choke groups, trigger mode, tuning config, and per-slice persisted controls.
 - `parameters.rs`: three host parameters: master gain, detection sensitivity, and tuning reference. Per-slice controls persist in the patch and are intentionally not host automation parameters.
-- `analysis.rs` and `analysis_job.rs`: off-thread source load/ingest, sample-library recovery, waveform metadata, SwiftF0 pitch contour, onset detection, marker reconciliation, slice pitch summaries, and shared pitch-shift cache construction.
-- `runtime.rs`: 16-voice slice playback with pad/chromatic triggering, cross-pad choke groups, forward/reverse cursors, one-shot/gated/looped playback, ADSR, gain, pan, low-pass filtering, master gain, MIDI expression, and bounded output.
+- `analysis.rs`, `analysis_job.rs`, and `pitch_map.rs`: off-thread source load/ingest, sample-library recovery, waveform metadata, SwiftF0 pitch contour, onset detection, marker reconciliation, slice pitch summaries, sparse pitch-map derivation, and shared pitch-shift cache construction.
+- `runtime.rs`: 16-voice slice playback with pad, chromatic, and sparse pitch-map triggering; cross-pad choke groups; forward/reverse cursors; one-shot/gated/looped playback; ADSR; gain; pan; low-pass filtering; master gain; MIDI expression; and bounded output.
 - `tuning.rs`: tune selected slice, tune all slices, and scale snap using the shared pitch-shift analysis cache.
 - `vst3_entry/`: VST3 processor, controller, factory, typed messages, editor bridge, state streams, MIDI normalization, and worker result routing.
 - `lindelion-ui::linnod_vizia`: editor host contract for parameters, waveform markers, detection/tuning controls, pad grid, selected-slice editing, slice list, status, and telemetry.
@@ -50,7 +50,7 @@ Audio-thread behavior:
 - marker list with auto/user marker kind;
 - 16 default `SliceParams` entries;
 - tuning reference, scale, and root;
-- pad/chromatic trigger mode;
+- pad, chromatic, or pitch-map trigger mode;
 - active chromatic pad;
 - 16 default pad assignments mapped to MIDI notes 36-51, each with an optional persisted choke group.
 
@@ -82,7 +82,12 @@ The source-analysis worker builds:
 - auto markers from `lindelion-onset-detect`;
 - reconciled markers using shared auto/user marker policy;
 - per-slice pitch summaries;
+- one independent pitch-mapped region per detected absolute MIDI note;
 - a deterministic `lindelion-pitch-shift::PitchShiftSourceCache`.
+
+Pitch-map analysis scans the complete SwiftF0 contour independently of the onset-marker slices. Frames qualify when their detected pitch is voiced and within ±25 cents of an absolute MIDI note under the patch tuning reference. Consecutive qualifying frames form a candidate region; for a repeated pitch, the longest stable region wins, followed by confidence and tuning distance. The existing minimum-slice duration is the minimum accepted region duration.
+
+Pitch-map playback routes each accepted region to its detected MIDI note and applies the global playback mode and envelope. The global Auto tune option corrects the accepted region's measured deviation to the mapped key; the correction is bounded by the same ±25-cent mapping tolerance and uses the configured pitch-shift engine. With Auto tune disabled, the region plays at its recorded pitch. Unmapped notes remain silent. The editor's pitch mode shows the first 16 mapped keys in the matrix, reports the complete mapped-key count and correction state, and keeps every derived mapping playable from MIDI.
 
 Pitch shifting is a required Linnod capability for pad and chromatic playback, not an optional enhancement. Small shifts such as 1 cent should remain nearly identical to the source except for the intended pitch change, and semitone shifts should avoid added high-frequency noise, saturation-like coloration, or loop-boundary discontinuities. Fixes must preserve Linnod's fixed-duration pitch-shift semantics unless the user explicitly approves a product behavior change.
 
@@ -152,4 +157,5 @@ The benchmark scope and release-measurement procedure are documented in [../perf
 - **Pitch-shift cache:** deterministic source-derived analysis from audio, markers, and SwiftF0 pitch contours used by formant-preserving synthesis.
 - **Pad mode:** pads trigger assigned slices at original pitch.
 - **Chromatic mode:** one selected slice plays across the keyboard.
+- **Pitch-map mode:** independently detected stable-pitch regions play on their absolute MIDI notes, with optional automatic correction of deviations within ±25 cents.
 - **Choke group:** optional pad assignment group where a new pad trigger stops other active voices in the same group on the same MIDI channel.

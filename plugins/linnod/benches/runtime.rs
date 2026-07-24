@@ -116,6 +116,7 @@ fn source_analysis() -> SourceAnalysis {
         audio: RuntimeMonoAudioBuffer::from_owned(owned_audio),
         pitch_contour,
         markers,
+        pitch_map: Vec::new(),
         pitch_shift_cache,
     }
 }

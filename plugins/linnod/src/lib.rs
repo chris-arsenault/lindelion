@@ -5,6 +5,7 @@ pub mod patch;
 mod patch_detection;
 mod patch_engine;
 pub mod patch_io;
+mod pitch_map;
 mod plugin;
 mod runtime;
 pub mod tuning;
@@ -24,6 +25,7 @@ pub use patch::{
     TriggerMode, TuningConfig, default_pad_assignments, normalize_pad_assignments,
     pad_assignment_for_note, slice_index_for_pad,
 };
+pub use pitch_map::{DEFAULT_PITCH_MAP_TOLERANCE_CENTS, PitchMappedRegion};
 pub use plugin::{DESCRIPTOR, Linnod};
 pub use tuning::{
     SliceTuneTarget, SliceTuningInfo, chromatic_auto_tune_correction_cents,

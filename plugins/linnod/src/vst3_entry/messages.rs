@@ -146,6 +146,8 @@ pub(super) struct LinnodSourceSummaryPayload {
     pub(super) source_sample_rate: u32,
     pub(super) waveform: Vec<LinnodWaveformPointPayload>,
     pub(super) slices: Vec<LinnodSourceSlicePayload>,
+    #[serde(default)]
+    pub(super) pitch_map: Vec<LinnodPitchMappedRegionPayload>,
 }
 
 impl LinnodSourceSummaryPayload {
@@ -199,6 +201,15 @@ pub(super) struct LinnodSourceSlicePayload {
     pub(super) nearest_scale_midi_note_hz: Option<f32>,
     pub(super) cents_deviation: Option<f32>,
     pub(super) root_target_f0_hz: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub(super) struct LinnodPitchMappedRegionPayload {
+    pub(super) midi_note: u8,
+    pub(super) start_sample: usize,
+    pub(super) end_sample: usize,
+    pub(super) detected_f0_hz: f32,
+    pub(super) cents_deviation: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

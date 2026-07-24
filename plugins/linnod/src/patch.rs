@@ -206,6 +206,7 @@ pub enum TriggerMode {
     #[default]
     Pad,
     Chromatic,
+    PitchMap,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

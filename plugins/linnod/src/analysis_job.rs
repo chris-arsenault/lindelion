@@ -134,11 +134,16 @@ impl SourceAnalysisJob {
                 metadata,
                 audio,
                 self.patch.detection,
+                self.patch.tuning.reference_hz,
                 &self.patch.markers,
             ),
-            SourceMarkerPolicy::DetectAndMergeUserMarkers => {
-                analyzer.analyze(metadata, audio, self.patch.detection, &self.patch.markers)
-            }
+            SourceMarkerPolicy::DetectAndMergeUserMarkers => analyzer.analyze(
+                metadata,
+                audio,
+                self.patch.detection,
+                self.patch.tuning.reference_hz,
+                &self.patch.markers,
+            ),
         }?;
         Ok(analysis)
     }

@@ -160,17 +160,31 @@ fn trigger_mode_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> 
         match summary.get().trigger_mode {
             LinnodEditorTriggerMode::Pad => "Pad",
             LinnodEditorTriggerMode::Chromatic => "Chromatic",
+            LinnodEditorTriggerMode::PitchMap => "Pitch map",
         }
         .to_string()
     })
 }
 
 fn slice_count_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
-    Memo::new(move |_| format!("{}", summary.get().slices.len()))
+    Memo::new(move |_| {
+        let summary = summary.get();
+        let count = if matches!(summary.trigger_mode, LinnodEditorTriggerMode::PitchMap) {
+            summary.pitch_map.len()
+        } else {
+            summary.slices.len()
+        };
+        count.to_string()
+    })
 }
 
-fn pad_title(pad: PadId) -> String {
-    format!("Pad {}", pad.0)
+fn pad_title(summary: Signal<LinnodEditorPatchSummary>, pad: PadId) -> Memo<String> {
+    Memo::new(move |_| {
+        let summary = summary.get();
+        pitch_mapped_region(&summary, pad)
+            .map(|region| midi_note_text(region.midi_note as f32))
+            .unwrap_or_else(|| format!("Pad {}", pad.0))
+    })
 }
 
 fn pad_choke_text(summary: Signal<LinnodEditorPatchSummary>, pad: PadId) -> Memo<String> {
@@ -182,7 +196,11 @@ fn pad_choke_text(summary: Signal<LinnodEditorPatchSummary>, pad: PadId) -> Memo
 
 fn pad_slice_text(summary: Signal<LinnodEditorPatchSummary>, pad: PadId) -> Memo<String> {
     Memo::new(move |_| {
-        pad_summary(&summary.get(), pad)
+        let summary = summary.get();
+        if let Some(region) = pitch_mapped_region(&summary, pad) {
+            return format!("{:+.0} ct", region.cents_deviation);
+        }
+        pad_summary(&summary, pad)
             .map(|pad| format!("Slice {}", pad.slice_index + 1))
             .unwrap_or_else(|| "Slice --".to_string())
     })
@@ -190,13 +208,20 @@ fn pad_slice_text(summary: Signal<LinnodEditorPatchSummary>, pad: PadId) -> Memo
 
 fn pad_midi_text(summary: Signal<LinnodEditorPatchSummary>, pad: PadId) -> Memo<String> {
     Memo::new(move |_| {
-        pad_summary(&summary.get(), pad)
+        let summary = summary.get();
+        if let Some(region) = pitch_mapped_region(&summary, pad) {
+            return format!("MIDI {}", region.midi_note);
+        }
+        pad_summary(&summary, pad)
             .map(|pad| format!("MIDI {}", pad.midi_note))
             .unwrap_or_else(|| "MIDI --".to_string())
     })
 }
 
 fn pad_selected(summary: &LinnodEditorPatchSummary, pad: PadId) -> bool {
+    if matches!(summary.trigger_mode, LinnodEditorTriggerMode::PitchMap) {
+        return false;
+    }
     pad_summary(summary, pad).is_some_and(|pad| pad.selected)
 }
 
@@ -206,6 +231,19 @@ fn pad_summary(summary: &LinnodEditorPatchSummary, pad: PadId) -> Option<LinnodE
         .iter()
         .find(|summary| summary.pad == pad)
         .cloned()
+}
+
+fn pitch_mapped_region(
+    summary: &LinnodEditorPatchSummary,
+    pad: PadId,
+) -> Option<LinnodEditorPitchMappedRegion> {
+    if !matches!(summary.trigger_mode, LinnodEditorTriggerMode::PitchMap) {
+        return None;
+    }
+    summary
+        .pitch_map
+        .get(pad.0.saturating_sub(1) as usize)
+        .copied()
 }
 
 fn slice_index_text(index: usize) -> String {
@@ -327,9 +365,22 @@ fn selected_filter_octave_value(summary: Signal<LinnodEditorPatchSummary>) -> Me
 fn selected_pad_text(summary: Signal<LinnodEditorPatchSummary>) -> Memo<String> {
     Memo::new(move |_| {
         let summary = summary.get();
+        if matches!(summary.trigger_mode, LinnodEditorTriggerMode::PitchMap) {
+            let correction = if summary.auto_tune.enabled {
+                "correction on"
+            } else {
+                "source pitch"
+            };
+            return format!(
+                "{} keys mapped / ±{:.0} ct / {correction}",
+                summary.pitch_map.len(),
+                summary.pitch_map_tolerance_cents
+            );
+        }
         let prefix = match summary.trigger_mode {
             LinnodEditorTriggerMode::Pad => "Pad",
             LinnodEditorTriggerMode::Chromatic => "Root pad",
+            LinnodEditorTriggerMode::PitchMap => unreachable!(),
         };
         selected_pad(&summary)
             .map(|pad| {

@@ -242,7 +242,8 @@ mod tests {
     #[test]
     fn plugin_state_preserves_patch_and_slice_edits() {
         let mut plugin = Linnod::default();
-        plugin.patch.trigger_mode = TriggerMode::Chromatic;
+        plugin.patch.trigger_mode = TriggerMode::PitchMap;
+        plugin.patch.auto_tune.enabled = true;
         plugin
             .patch
             .apply_slice_edit(0, SliceEdit::Name("Lead".to_string()));
@@ -251,7 +252,8 @@ mod tests {
         let mut restored = Linnod::default();
         restored.load_state(state);
 
-        assert_eq!(restored.patch.trigger_mode, TriggerMode::Chromatic);
+        assert_eq!(restored.patch.trigger_mode, TriggerMode::PitchMap);
+        assert!(restored.patch.auto_tune.enabled);
         assert_eq!(restored.patch.slices[0].name, "Lead");
     }
 
@@ -430,6 +432,7 @@ mod tests {
             audio: RuntimeMonoAudioBuffer::from_owned(owned_audio),
             pitch_contour,
             markers,
+            pitch_map: Vec::new(),
             pitch_shift_cache,
         }
     }

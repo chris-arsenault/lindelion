@@ -238,6 +238,7 @@ fn source_analysis_from_detected_pitch(
             },
             OwnedMonoAudioBuffer::new(samples, sample_rate),
             detection,
+            440.0,
             &markers(&[0]),
         )
         .unwrap()

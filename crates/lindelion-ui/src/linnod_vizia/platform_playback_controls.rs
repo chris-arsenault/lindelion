@@ -467,8 +467,16 @@ fn playback_scope_detail(
         let summary = summary.get();
         match scope.get() {
             ControlScope::Global => {
+                let target = if matches!(
+                    summary.trigger_mode,
+                    LinnodEditorTriggerMode::PitchMap
+                ) {
+                    "pitch map"
+                } else {
+                    "all slices"
+                };
                 format!(
-                    "all slices / {} / {}",
+                    "{target} / {} / {}",
                     playback_mode_label(summary.playback.mode),
                     auto_tune_label(summary.auto_tune.enabled)
                 )

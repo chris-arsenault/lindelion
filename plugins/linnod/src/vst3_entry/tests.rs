@@ -4,7 +4,11 @@ use vst3::Steinberg::*;
 
 #[path = "tests/auto_tune_messages.rs"]
 mod auto_tune_messages;
+#[path = "tests/engine.rs"]
+mod engine;
 mod fixtures;
+#[path = "tests/pitch_map.rs"]
+mod pitch_map;
 
 use super::{
     LinnodMessageKind, LinnodPluginMessage, LinnodVst3Controller, LinnodVst3Processor,
@@ -168,24 +172,6 @@ fn controller_applies_source_summary_and_preserves_it_across_patch_updates() {
 }
 
 #[test]
-fn controller_sets_linnod_pitch_shift_algorithm() {
-    let controller = LinnodVst3Controller::new();
-
-    controller.set_pitch_shift_algorithm(
-        lindelion_ui::linnod_vizia::LinnodEditorPitchShiftAlgorithm::ResampleStretch,
-    );
-
-    assert_eq!(
-        controller.patch.borrow().engine.pitch_shift_algorithm,
-        PitchShiftAlgorithm::ResampleStretch
-    );
-    assert_eq!(
-        controller.summary.borrow().pitch_shift_algorithm,
-        lindelion_ui::linnod_vizia::LinnodEditorPitchShiftAlgorithm::ResampleStretch
-    );
-}
-
-#[test]
 fn controller_clears_source_summary_when_analysis_inputs_change() {
     let controller = LinnodVst3Controller::new();
     let mut patch = LinnodPatch {
@@ -213,6 +199,18 @@ fn controller_clears_source_summary_when_analysis_inputs_change() {
     assert_eq!(controller.summary.borrow().source_label, "source.wav");
     assert!(controller.summary.borrow().waveform.is_empty());
     assert_eq!(controller.summary.borrow().slices[0].end_sample, 0);
+
+    notify_controller(
+        &controller,
+        LinnodPluginMessage::SourceSummaryResponse(source_summary_payload().encode().unwrap()),
+    );
+    patch.tuning.reference_hz = 442.0;
+    notify_controller(
+        &controller,
+        LinnodPluginMessage::patch_update(patch_payload(&patch)),
+    );
+
+    assert!(controller.summary.borrow().pitch_map.is_empty());
 }
 
 #[test]

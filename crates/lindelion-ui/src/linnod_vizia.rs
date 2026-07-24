@@ -79,6 +79,7 @@ pub enum LinnodEditorTriggerMode {
     #[default]
     Pad,
     Chromatic,
+    PitchMap,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -211,6 +212,15 @@ pub struct LinnodEditorPadSummary {
     pub selected: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinnodEditorPitchMappedRegion {
+    pub midi_note: u8,
+    pub start_sample: usize,
+    pub end_sample: usize,
+    pub detected_f0_hz: f32,
+    pub cents_deviation: f32,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LinnodEditorDetectionAlgorithm {
     #[default]
@@ -263,11 +273,13 @@ pub struct LinnodEditorPatchSummary {
     pub waveform: Vec<WaveformPoint>,
     pub markers: Vec<LinnodEditorMarker>,
     pub pads: Vec<LinnodEditorPadSummary>,
+    pub pitch_map: Vec<LinnodEditorPitchMappedRegion>,
     pub slices: Vec<LinnodEditorSliceSummary>,
     pub playback: LinnodEditorPlaybackConfig,
     pub auto_tune: LinnodEditorAutoTuneConfig,
     pub detection: LinnodEditorDetectionConfig,
     pub trigger_mode: LinnodEditorTriggerMode,
+    pub pitch_map_tolerance_cents: f32,
     pub pitch_shift_algorithm: LinnodEditorPitchShiftAlgorithm,
     pub tuning_reference_hz: f32,
     pub tuning_root_label: String,
@@ -284,11 +296,13 @@ impl Default for LinnodEditorPatchSummary {
             waveform: Vec::new(),
             markers: Vec::new(),
             pads: Vec::new(),
+            pitch_map: Vec::new(),
             slices: (0..16).map(LinnodEditorSliceSummary::empty).collect(),
             playback: LinnodEditorPlaybackConfig::default(),
             auto_tune: LinnodEditorAutoTuneConfig::default(),
             detection: LinnodEditorDetectionConfig::default(),
             trigger_mode: LinnodEditorTriggerMode::Pad,
+            pitch_map_tolerance_cents: 25.0,
             pitch_shift_algorithm: LinnodEditorPitchShiftAlgorithm::SpectralPeak,
             tuning_reference_hz: 440.0,
             tuning_root_label: "A".to_string(),

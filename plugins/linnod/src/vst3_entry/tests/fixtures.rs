@@ -8,7 +8,10 @@ use lindelion_sample_library::{
 
 use super::super::{
     LinnodStatusPayload,
-    messages::{LinnodSourceSlicePayload, LinnodSourceSummaryPayload, LinnodWaveformPointPayload},
+    messages::{
+        LinnodPitchMappedRegionPayload, LinnodSourceSlicePayload, LinnodSourceSummaryPayload,
+        LinnodWaveformPointPayload,
+    },
 };
 
 pub(super) fn status_payload() -> LinnodStatusPayload {
@@ -51,6 +54,13 @@ pub(super) fn source_summary_payload() -> LinnodSourceSummaryPayload {
             cents_deviation: Some(0.0),
             root_target_f0_hz: Some(220.0),
         }],
+        pitch_map: vec![LinnodPitchMappedRegionPayload {
+            midi_note: 57,
+            start_sample: 0,
+            end_sample: 4_800,
+            detected_f0_hz: 220.0,
+            cents_deviation: 0.0,
+        }],
     }
 }
 
@@ -91,6 +101,7 @@ pub(super) fn source_analysis() -> SourceAnalysis {
         audio: RuntimeMonoAudioBuffer::from_owned(owned_audio),
         pitch_contour,
         markers,
+        pitch_map: Vec::new(),
         pitch_shift_cache,
     }
 }

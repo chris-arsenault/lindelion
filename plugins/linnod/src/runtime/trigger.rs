@@ -6,10 +6,10 @@ use lindelion_dsp_utils::{
 use lindelion_pitch_shift::{PitchShiftRatios, PitchShiftSynthesisAlgorithm};
 
 use crate::{
-    SourceAnalysis,
+    DEFAULT_PITCH_MAP_TOLERANCE_CENTS, SourceAnalysis,
     patch::{
-        ChokeGroupId, EnvelopeConfig, LinnodPatch, PlaybackMode, SLICE_COUNT, SliceParams,
-        TriggerMode, pad_assignment_for_note,
+        ChokeGroupId, DEFAULT_FILTER_CUTOFF_HZ, EnvelopeConfig, LinnodPatch, PlaybackMode,
+        SLICE_COUNT, SliceParams, TriggerMode, pad_assignment_for_note,
     },
     tuning::chromatic_auto_tune_pitch_ratio,
 };
@@ -41,6 +41,10 @@ pub(super) fn voice_trigger_from_note(
     output_sample_rate: f32,
     _velocity: f32,
 ) -> Option<LinnodVoiceTrigger> {
+    if matches!(patch.trigger_mode, TriggerMode::PitchMap) {
+        return pitch_mapped_voice_trigger(patch, analysis, note, output_sample_rate);
+    }
+
     let resolved = resolve_note_trigger(patch, note)?;
     let slice = patch.slice(resolved.slice_index)?;
     let summary = analysis
@@ -129,6 +133,11 @@ pub(super) fn for_each_preparable_trigger_note(patch: &LinnodPatch, mut visit: i
                 .unwrap_or(60);
             visit(root_note);
         }
+        TriggerMode::PitchMap => {
+            for note in 0..=127 {
+                visit(note);
+            }
+        }
     }
 }
 
@@ -164,7 +173,70 @@ pub(super) fn resolve_note_trigger(patch: &LinnodPatch, note: u8) -> Option<Note
                 choke_group: None,
             })
         }
+        TriggerMode::PitchMap => None,
     }
+}
+
+fn pitch_mapped_voice_trigger(
+    patch: &LinnodPatch,
+    analysis: &SourceAnalysis,
+    note: u8,
+    output_sample_rate: f32,
+) -> Option<LinnodVoiceTrigger> {
+    let mapped = analysis.pitch_mapped_region(note)?;
+    let source_sample_rate = analysis.audio.sample_rate();
+    let playback = patch.playback.sanitized();
+    let region = PlaybackRegion::new(0.0, mapped.duration_samples() as f32);
+    if region.is_empty() {
+        return None;
+    }
+    let correction_pitch_ratio =
+        pitch_map_correction_ratio(patch.auto_tune.sanitized().enabled, mapped.cents_deviation);
+    let playback_pitch_ratio = patch.playback_pitch_ratio(correction_pitch_ratio);
+    let (algorithm, ratios) = if correction_pitch_ratio == 1.0 {
+        (
+            PitchShiftSynthesisAlgorithm::Auto,
+            PitchShiftRatios::identity(),
+        )
+    } else {
+        (
+            patch.pitch_shift_synthesis_algorithm(),
+            patch.pitch_shift_ratios(correction_pitch_ratio),
+        )
+    };
+
+    Some(LinnodVoiceTrigger {
+        slice_index: note as usize,
+        source_start_sample: mapped.start_sample,
+        source_end_sample: mapped.end_sample,
+        cursor: PlaybackCursor::new(
+            region,
+            0.0,
+            playback_increment(source_sample_rate, output_sample_rate, playback_pitch_ratio),
+            PlaybackDirection::Forward,
+            matches!(playback.mode, PlaybackMode::Looped),
+        ),
+        declick: PlaybackDeclick::new(region, output_sample_rate),
+        algorithm,
+        ratios,
+        reverse: false,
+        playback_mode: playback.mode,
+        choke_group: None,
+        envelope: playback.envelope,
+        gain: 1.0,
+        pan: 0.0,
+        filter_cutoff: DEFAULT_FILTER_CUTOFF_HZ,
+    })
+}
+
+fn pitch_map_correction_ratio(enabled: bool, cents_deviation: f32) -> f32 {
+    if !enabled
+        || !cents_deviation.is_finite()
+        || cents_deviation.abs() > DEFAULT_PITCH_MAP_TOLERANCE_CENTS
+    {
+        return 1.0;
+    }
+    semitones_to_ratio(-cents_deviation / 100.0)
 }
 
 fn slice_playback_region(

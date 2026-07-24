@@ -120,7 +120,7 @@ fn linnod_pad_section(cx: &mut Context, signals: EditorSignals) {
 fn linnod_pad_button(cx: &mut Context, signals: EditorSignals, pad: PadId) {
     Button::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
-            Label::new(cx, pad_title(pad))
+            Label::new(cx, pad_title(signals.summary, pad))
                 .class("ll-control-value")
                 .alignment(Alignment::Center);
             Label::new(cx, pad_slice_text(signals.summary, pad))
@@ -161,6 +161,12 @@ fn linnod_trigger_controls(cx: &mut Context, signals: EditorSignals) {
             signals.summary,
             "chrom",
             LinnodEditorTriggerMode::Chromatic,
+        );
+        trigger_button(
+            cx,
+            signals.summary,
+            "pitch",
+            LinnodEditorTriggerMode::PitchMap,
         );
     })
     .class("segmented")
